@@ -195,7 +195,7 @@ Relocate deployed ground units:
 ### Via Chat Commands
 
 `-action <group-id> <command>`: Control unit
-`-bind <group-id>`: Bind unit for control
+`-bind <uuid>`: link your pilot to the web dashboard (**not** for groups)
 `-delete <group-id>`: Remove unit
 
 ### Via F10 Waypoint Actions

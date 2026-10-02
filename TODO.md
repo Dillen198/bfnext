@@ -1,30 +1,15 @@
-# JTAC Stuff
-
-- add a default laser code for red and blue
-- save the jtac settings when loading/unloading troops
-
 # Carriers
 
 - investigate issues with spawning aircraft on carriers
 
-# Ground Forces
-
-- Troop carriers
-
-# Logistics
-
-- C130 internal crates should not block spawning more crates
-
 # Interface
 
-- Client side plugin for richer ui
-- Don't show the points message when the change is 0
+- Client side plugin for richer ui (in progress: bfcockpit, CockpitPage/KneeboardTab; F10 menu not yet replaced)
 
-# Lua APU
+# Lua API
 
-- lua api for use by e.g. special k bot
-- server functions, replicate netidx rpc interface
-- spawning deployables
-- ai orders/missions
-- actions
-- info extraction, stats, etc
+- ai orders/missions beyond `move_group`
+- actions (tanker, AWACS, CAP, ...) callable from the API
+- replicate the rest of the netidx rpc interface (queries, spawn_deployable/spawn_troop, move_group, add_points already exist in `bflib/src/api.rs`)
+
+See ROADMAP.md for feature status, and its "Audit Sept 2026" section for new ideas.

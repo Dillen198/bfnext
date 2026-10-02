@@ -1,0 +1,182 @@
+# Vector Strike DCSServerBot Plugin
+
+The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaign to Discord. It features a continuously updating live campaign status, objective capture alerts, killstreak achievements, and interactive Discord slash commands for player stats and commander logistics.
+
+## Features
+
+- **Live Campaign Status Embed:** A single, continuously updating Discord embed showing objective and player counts per faction, what is under attack and ready to capture (the engine's own flags), the latest captures and who took them, the mission weather, commander-priority targets and the next rotation time — with a **snapshot of the campaign map** as its picture. The snapshot is the dashboard's public SITREP map (objectives and front line only, never fog-of-war contacts), rendered by bfweb's chromeless `/snapshot` route and captured with headless Edge/Chrome over the DevTools protocol (`mapsnap.py`); it is re-captured only when the map changes, plus a periodic refresh. See `status_map*` in `fowlengine.sample.yaml`.
+- **Live Engine Log Relay:** Tails bfdb's `/ws/engine-logs` websocket (the raw `bflib` engine log) into a Discord channel — one message is continuously edited with a rolling tail, and `[ERROR]`/`[WARN]` lines are additionally posted as standalone alerts so they don't get missed.
+- **Capture/Neutral/Ready-to-Capture Alerts:** Polls bfdb's public `/api/objectives` every ~20s and diffs owner/health against the previous poll to detect captures, objectives going neutral, and objectives dropping to capturable health.
+- **Per-Faction Alert Threads:** `alerts_channel` only needs to be set once — the plugin auto-creates a "Blue Ops" and "Red Ops" thread under it and routes alerts by relevance: a defending faction gets "ready to capture, defend it!" while the opposing faction gets "opportunity!" for the same event; captures post to both. Set `use_faction_threads: false` to go back to one shared channel.
+- **Killstreak Achievements:** Polls bfdb's public `/api/kills` every ~20s to track each pilot's consecutive kills (reset on death) and announces streaks of 5 (Ace), 10 (Unstoppable), and 15 (God of War).
+- **Mission-Briefing Welcome Message:** Posts an embed to `welcome_channel` when someone joins the Discord server, pulling the active scenario, round duration, and current front (objective counts per faction) from bfdb — same data as the live status embed — plus a customizable briefing blurb and dashboard link.
+- **Per-Coalition Briefing Channels:** two channels per DCS server, one per faction, each holding a single embed the bot edits in place from bfdb's `GET /api/situation` — the same auto-generated situation report that backs the in-game F10 → Info → Situation pages, the dashboard BRIEFING page and the kneeboard PDF. Posture, ranked tasking, hotspots, the air-defence areas *that side has earned intel on*, the air picture, logistics and the comms card. `/fe_briefing` gives any pilot their own side's copy privately. `/feops briefing_lock` applies the channel permissions.
+- **Engine-Mirrored Coalition Roles:** every ~5 minutes the bot reads bfdb's admin-only `/api/admin/pilot-sides` — the engine's own registrations for that instance — and makes the Discord Blue/Red roles agree, revoking any coalition role the engine does not back. The mirror runs one way only: Discord never assigns a side, it only reflects the one the engine gave out on first slot pick or `-switch`. That is what makes the briefing channels honest — you cannot read Red's intel without actually flying Red.
+- **Custom Icon Set:** every embed, alert, ops notice and admin reply renders with the Vector Strike glyph set (`assets/icons/`, drawn by `render_icons.py`) uploaded as *application* emoji, so the bot's output matches the dashboard rather than looking like a group chat. Every icon has a unicode fallback, so nothing is broken before `/feops icons_install` is run. See [Icon Set](#icon-set).
+- **Server Performance Embed:** Posts and edits a live CPU/RAM/GPU/disk/temp + DCS frame-time embed every 5 minutes, pulled from bfdb's admin-only `/api/admin/perf`.
+- **Dual-Login Dashboard:** Supports both standard Discord OAuth web-login and securely generated HMAC bot-tokens to seamlessly bridge the `bfweb` dashboard.
+- **Interactive Commander Terminal:** A UI terminal (`/fe_terminal`) to drop crates/infantry at airbases **and** set objective priority, directly from Discord.
+- **bfdb + netidx Process Ownership:** With `bfdb.manage: true` the plugin runs `bfdb.exe` and the netidx resolver as child processes of the bot: renders `gci.json` from YAML, builds bfdb's arg list, health-checks it, and relaunches on crash/hang. Replaces `bfsystem.ps1`. Combined with running the bot as a Windows service (`deploy/windows-service/`), a reboot brings the whole stack back with no RDP.
+- **GCI from YAML:** the `gci:` block in `fowlengine.yaml` is rendered to `<bfdb.home>\gci.json` on every bfdb start (bfdb reads it only at startup). `/feops gci_show` prints the effective config with secrets masked; `/feops bfdb_restart` reloads it.
+- **GCI transcript relay:** set `gci_transcript_channel` and the bot tails bfdb's `/ws/gci`, posting every AWACS call to that channel prefixed 🔵/🔴 (replaces the raw `discord_webhook_url`).
+- **War diary feed:** set `news_channel` (per server) and each newly *filed* daily dispatch of the war diary (bfdb's `GET /api/news`, filed a little after 00:00 UTC) is posted once: headline, the dispatch, a "Read more" link to the dashboard's War Diary, and the day's picture attached when bfdb draws them (`bfdb.news_image_*`). A picture still being drawn is waited for up to 10 minutes, then the dispatch goes out without one. Posted ids live in the state file, so restarts never repost; switching it on posts only the latest dispatch.
+- **Comms, Rules & Links embed:** set `server_info_channel` for one auto-updating embed with the GCI/AWACS frequencies, each side's planned comms channels, the campaign rules (lives, side lock, what earns and costs points) and the dashboard (and optional `wiki_url`) links — only what DCSServerBot's own server-status embed doesn't already show. Comms and rules are the static config from bfdb's public `/api/wiki/facts` (`serverinfo.py` formats them); the live comms overlay stays in the per-side briefing channels. `/fe_gci` gives any player the current GCI freqs on demand.
+- **Staged engine updates:** drag `bflib.dll` or `bfdb.exe` into the bot's admin channel -> staged, then swapped in (after a timestamped backup) on the next scheduled DCS restart. `bflib.dll` via the `BFBinaries` extension, `bfdb.exe` via this plugin. `/feops stage_status | stage_cancel | stage_apply` to control it. No manual server shutdown needed to stage.
+- **Engine Error Feed:** bfdb keeps a rolling buffer of ERROR/WARN lines from the live engine log and exposes it at the admin-only `/api/admin/engine-errors` endpoint, shown as a persistent panel on the `bfweb` admin page -- so recent errors are visible even if nobody had the dashboard or Discord open when they happened, alongside the existing Discord relay (Live Engine Log Relay, above).
+
+## Installation
+
+1. Copy the `vectorstrike` folder into your `DCSServerBot\plugins` directory.
+2. Ensure you have the `vectorstrike.yaml` configuration file set up (see Configuration below).
+3. Restart your DCSServerBot instance so it loads the plugin.
+
+## Configuration
+
+In your DCSServerBot `config/plugins/` folder, create a file named `vectorstrike.yaml` and populate it with your channel IDs and secrets:
+
+```yaml
+DEFAULT:
+  # The Discord channel where the live status embed will be continuously updated
+  status_channel: 123456789012345678
+  
+  # The Discord channel for killstreaks (Ace, God of War)
+  achievements_channel: 123456789012345678
+  
+  # The Discord channel for objective captures and team alerts
+  alerts_channel: 123456789012345678
+
+  # URL to your existing bfweb instance
+  dashboard_url: "https://bfweb.your-domain.com"
+
+  # The base URL to your bfdb REST API
+  api_url: "http://localhost:8765"
+
+  # (Optional) Discord channel for the live engine log relay. Omit to disable.
+  engine_log_channel: 123456789012345678
+
+  # (Optional) Whether alerts_channel gets auto-created "Blue Ops"/"Red Ops"
+  # threads for faction-relevant routing. Defaults to true. Set to false to
+  # post every alert straight to alerts_channel instead.
+  use_faction_threads: true
+
+  # (Optional) Discord channel for the mission-briefing welcome message,
+  # posted whenever someone joins the Discord server. Omit to disable.
+  welcome_channel: 123456789012345678
+
+  # (Optional) Discord channel for the server performance/hardware embed
+  # (CPU/RAM/GPU/disk/temps + DCS frame-time), updated every 5 minutes.
+  # Omit to disable. bfdb must be running on the machine it's reporting on.
+  perf_channel: 123456789012345678
+
+  # Required if engine_log_channel or perf_channel is set -- must match
+  # bfdb's own --admin-username/--admin-password startup flags.
+  admin_username: "admin"
+  admin_password: "YOUR_BFDB_ADMIN_PASSWORD"
+
+  # Ops notices (bfdb relaunched, staged binary applied). Falls back to
+  # alerts_channel if unset.
+  ops_channel: 123456789012345678
+```
+
+See `fowlengine.sample.yaml` for the full `bfdb:` (process management) and
+`gci:` (Live GCI) blocks. The `BFBinaries` extension (staged `bflib.dll`
+swap) is configured in `nodes.yaml`, not here.
+
+## Slash Commands
+
+### Player
+- `/fe_dashboard` - your web-dashboard login link (Discord OAuth).
+- `/fe_objective <name>` - owner / health / priority for one objective (substring match).
+- `/fe_gci` - current GCI (AWACS) frequencies, callsigns and usage.
+- `/fe_briefing <server>` - your own coalition's live situation report, privately. Side comes from your in-game registration; there is no way to ask for the other one.
+
+Live stats, the leaderboard, who's online and the full objective list all
+live on the web dashboard now -- `/fe_dashboard` points there.
+
+### Commander & Admin (`DCS Admin`)
+- `/fe_terminal` - interactive Commander Terminal: drop cargo/infantry at an airbase, and set/clear objective priority.
+- `/fe_ban <ucid> <name> [reason] [until]` / `/fe_unban <ucid>` - campaign ban management.
+- `/feops bfdb_restart` - restart bfdb (re-renders `gci.json`, picks up a staged `bfdb.exe`).
+- `/feops gci_show` - print the effective `gci.json` (secrets masked).
+- `/feops stage_status | stage_cancel <which> | stage_apply <server> <which>` - manage staged engine binaries.
+- `/feops briefing_lock <server> [confirm]` - show, then apply, the channel overwrites that lock each briefing channel to its coalition role. Dry-run unless `confirm: True`.
+- `/feops icons_install` / `icons_status` / `icons_uninstall` - manage the custom emoji set. `icons_install` uploads only the icons that are missing and says what it added, skipped and failed; safe to re-run.
+- **Upload:** drop `bflib.dll` / `bfdb.exe` into the admin channel (the bot's `Admin` role only; `binary_upload_role` changes it) to stage it. Each staged file is posted to `ops_channel` with its sha256.
+
+## Icon Set
+
+Everything the bot posts to Discord goes through `icons.py`: code asks for an
+icon by key (`icon("warning")`), never for a literal emoji. Until
+`/feops icons_install` has run, each key renders as the unicode emoji the bot
+always used; afterwards, as the matching `vs_<key>` application emoji. Config
+templates (`messages:`, `welcome_message`) can use `{icon:<key>}`; plain emoji
+typed there keep working.
+
+Glyphs (one PNG each, drawn by `assets/icons/render_icons.py`; `_preview.png`
+is the contact sheet):
+
+| Group | Keys |
+|---|---|
+| Briefing: urgency | `critical` `high` `routine` (red/amber/green chevrons) |
+| Briefing: task kinds | `defend` shield, `capture` flag, `strike` burst, `sead` struck-out radar, `cas` crosshair, `intercept` delta jet, `logistics` crate, `recon` magnifier, `csar` rotor + cross |
+| Briefing: sections | `posture` bars, `weather` cloud, `air` radar scope, `tasking` clipboard, `hotspot` filled caution triangle, `threat` SAM ring, `supply` truck, `comms` antenna, `recent` clock |
+| Sides and status | `blue` / `red` / `unowned` roundels, `live` green lamp, `down` red lamp, `offline` hollow ring, `good` tick, `bad` cross, `neutral` dash, `link` arrow out |
+| Notices | `warning` outlined triangle, `blocked` no-entry, `info` i, `alert` beacon, `pending` hourglass, `paused` bars, `restart` loop arrow, `rollback` rewind, `forward` fast-forward, `update` arrow into tray, `build` puzzle piece, `probation` flask, `new` sparkle, `priority` star, `campaign` folder, `settings` gear |
+| Hardware | `cpu` chip, `memory` RAM stick, `disk` floppy, `temp` thermometer, `perf` pulse trace, `server` rack, `connect` plug |
+| Results and people | `captured` trophy, `neutralised` white flag, `gold` / `silver` / `bronze` medals, `players` two figures |
+| Range feed | `day` sun, `night` crescent, `wind` streamlines, `fuel` drop, `carrier` anchor |
+
+Aliases keep their own unicode stand-in but borrow a glyph once installed, so
+the uploaded set stays small: `target`→`cas`, `inspect`→`recon`,
+`caution`→`high`, `stale`→`warning`, `hot`→`down`, `cold`→`offline`,
+`side_blue`→`blue`, `side_red`→`red`, `rotation`→`restart`, `gpu`→`cpu`,
+`briefing`→`tasking`, `ban`→`blocked`, `discard`→`bad`, `resume`→`live`,
+`uptime`→`recent`, `url`→`link`, `upload`→`update`, `achievement`→`gold`,
+`all_clear`→`good`, `welcome`→`players`.
+
+**Adding an icon**
+
+1. Draw it in `assets/icons/render_icons.py` with the shared helpers (`_canvas`,
+   `_line`, `_ring`, `_arc`, `_dot`, `_path`, `_arrowhead`, `_star`), stroke
+   `W`, margin `PAD` and the palette (a colour only where it means something),
+   and add it to the `ICONS` table as `"vs_<key>"`.
+2. `python render_icons.py` (needs Pillow) and look at `_preview.png` -- the
+   icon has to read at 32 px, next to the rest of the set.
+3. Add `"<key>": "<unicode it replaces>"` to `FALLBACK` in `icons.py` (or, if an
+   existing glyph already means it, add the key to `ALIASES` instead of drawing).
+4. Use `icon("<key>")` in the code. `tests/test_fowlengine_icons.py` fails on a
+   key with no fallback or PNG, and on any raw emoji left in a plugin string.
+5. Deploy and run `/feops icons_install` -- it uploads just the new icon.
+
+Emoji names are the contract: renaming a key orphans its uploaded emoji (it
+silently drops back to unicode until the new name is installed).
+
+## Architecture & Integration
+
+- **Read-only data** (status/welcome embeds, capture & achievement polling, engine-log relay): plain HTTP/WebSocket to bfdb.
+- **Commander actions** (`/fe_terminal`): bfdb -> bflib netidx RPCs (`bflib/src/bg/rpcs.rs`); needs `admin_username`/`admin_password` and bfdb started with `--base`.
+- **Coalition briefings** (`briefing.py`): `GET /api/situation?side=…&server=…`, fetched with the bfdb admin login. The endpoint is coalition-locked — a logged-in *player* only ever gets their own side — and a bfdb admin with no in-game registration is the one caller allowed to name a side, which is exactly what the bot is. The fog of war is then re-imposed by which Discord channel each embed lands in, and by the role gating that channel.
+- **Coalition roles** (`/api/admin/pilot-sides` → `db.all_pilot_sides`): admin-gated, because the full roster of who flies for whom is itself something the fog of war hides. One pass over `pilot_round_info` with the same rule as `pilot_current_side` — the active round's registration wins, else the most recent Blue/Red on record, which after a `reset_campaign_data` means "this campaign".
+- **War diary pictures, free setup:** bfdb draws them (`bfdb/src/news_image.rs`); set, under `bfdb:` in `fowlengine.yaml`:
+  1. **Pollinations with your account key** (simplest): `news_image_provider: pollinations` and `news_image_key: "sk_..."`. Calls are spaced `news_image_min_interval` seconds apart (default 3).
+  2. **Cloudflare Workers AI** (10,000 free neurons/day, ~40 per picture): create an API token with the **Workers AI** permission, copy your **account id**, then set `news_image_provider: cloudflare`, `news_image_cf_account_id` and `news_image_key` (the token). Optional `news_image_fallback: pollinations` tries anonymous Pollinations once when Cloudflare fails; the token is never sent there.
+  3. **Pollinations anonymous**: `news_image_provider: pollinations` alone. One call per 15 s, possible watermark, and the legacy host it uses is no longer documented.
+
+  The key goes to bfdb through its environment, never the command line, and is masked in logs. Paid OpenAI-compatible endpoints (`news_image_provider: openai`) work too; see `fowlengine.sample.yaml`.
+- **War diary** (`newsfeed.py`): public `GET /api/news?instance=…` (each filed day carries `image` / `image_pending`) and `GET /api/news/image/<day>`; the picture is downloaded from bfdb and uploaded as an attachment, so Discord never needs bfdb's public URL. Pictures themselves are drawn by bfdb (`bfdb/src/news_image.rs`), never by the bot.
+- **Process ownership** (`bfdb.manage`, `procman.py`): the bot runs `bfdb.exe` + the netidx resolver as children, health-checks bfdb, renders `gci.json` from YAML.
+- **Restart-cycle binary swap** (`extensions/bfbinaries`): `prepare()` swaps a staged `bflib.dll` while DCS is down; a staged `bfdb.exe` is applied by procman on its next restart. Both back up the previous binary and never block a restart.
+- **View lock** (`extensions/bfviewlock`): `prepare()` writes the camera restrictions DCS only reads from the *server's* `Config/options.lua` -- F5 nearest-aircraft, F11 free camera and spectator external views, all off by default. These cannot go in a mission's `forcedOptions` (they are not enforceable there), unlike the per-role F10 map view, which `bftools miz` bakes into every generated mission. Re-applied on every restart, idempotent, and never blocks a start.
+
+- **Multiple DCS servers on one machine:** one bfdb fronts them all. Add a
+  `bfdb.instances:` list to `fowlengine.yaml` and procman renders bfdb's
+  `instances.json` (plus one `gci.<id>.json` per server) and starts it with
+  `--instances`. Every request the plugin makes carries
+  `?server=<DCS server name>`, which bfdb maps to an instance via that
+  instance's `dcs_server_name` -- so each server's status embed, alerts,
+  achievements, engine-log relay, GCI transcript, perf embed and commander
+  terminal are about that server only. Channel ids can be split per server
+  using DCSServerBot's normal per-server config sections. See
+  [`deploy/multi-instance.md`](../../deploy/multi-instance.md).
+
+`lua/callbacks.lua` / `lua/commands.lua` are unwired legacy stubs.

@@ -1,0 +1,250 @@
+import asyncio
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+
+from core import Extension, MizFile, Server, utils
+from typing_extensions import override
+
+__all__ = [
+    "BFWeather",
+    "BFWeatherException",
+]
+
+ANSI_ESCAPE_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+REQUIRED_PATH_KEYS = ('bftools', 'base', 'weapon', 'options')
+
+# F10 map views bftools accepts (see parse_map_view in bftools/src/mission_edit.rs).
+# Checked here so a typo drops the flag with a warning instead of failing the
+# whole rebuild -- a failed bftools means the restart keeps the OLD mission,
+# which is a much worse outcome than one unenforced setting.
+MAP_VIEWS = ('all', 'allies', 'onlyallies', 'myaircraft', 'onlymap')
+
+
+class BFWeatherException(Exception):
+    pass
+
+
+class BFWeather(Extension):
+    """
+    Regenerates the mission from the bfnext-vector `bftools miz` build
+    pipeline (base + weapon + options + warehouse templates) with live
+    real-world weather baked in, every time DCSServerBot is about to load
+    it -- so a scheduled restart always comes back with fresh conditions
+    instead of whatever was authored in the template.
+
+    This intentionally does NOT touch the mission bflib itself is running
+    off of while the server is still up (unlike bflib's own live_weather
+    config, which patches the already-running mission's zip in place right
+    before shutdown). This extension only ever writes to a fresh temp file
+    and hands DCSServerBot a new filename to load; if bftools fails for any
+    reason, the existing mission is loaded unchanged and the failure is
+    logged -- a bad weather fetch or template edit can never corrupt the
+    live mission slot or block a restart.
+
+    Campaign save progress is unaffected: bflib keys its saved campaign
+    state off the mission's "sortie" field, which bftools carries through
+    unchanged from the --base template. As long as --base stays the same
+    template (same sortie, same objective zones), every rebuild resumes the
+    same campaign save regardless of how many times the mission itself gets
+    regenerated.
+
+    nodes.yaml:
+      MyNode:
+        instances:
+          MyInstance:
+            extensions:
+              BFWeather:
+                bftools: 'E:\\Github\\bfnext-vector\\target\\release\\bftools.exe'
+                base: 'E:\\Saved Games\\DCS\\Missions\\Vector\\v2\\base-odf2.1d6.miz'
+                weapon: 'E:\\Saved Games\\DCS\\Missions\\Vector\\v2\\weapons.miz'
+                options: 'E:\\Saved Games\\DCS\\Missions\\Vector\\v2\\options.miz'
+                warehouse: 'E:\\Saved Games\\DCS\\Missions\\Vector\\v2\\warehouse.miz'  # optional
+                checkwx_api_key: 'your-checkwxapi.com-key'
+                metar_station: 'UGKO'                 # ICAO the weather comes from
+                live_time: false                      # optional, default false
+                options_overrides: 'E:\\...\\overrides.json'  # optional -- a path that does not
+                # exist is skipped with a warning rather than failing the build
+                map_view: 'onlyallies'                # optional F10 map view for
+                # players in a slot: all | allies (fog of war) | onlyallies |
+                # myaircraft | onlymap. Unset => whatever the options template
+                # forces. Spectators and observers are locked to map-only by
+                # bftools itself either way; spectator_map_view overrides that,
+                # and no_force_map_view: true turns the whole thing off
+                timeout: 120                          # optional, seconds, default 120
+
+    The ICAO is the whole weather configuration: the station's decoded METAR
+    is the surface layer, and its own coordinates are where the winds aloft
+    are sampled. Pick a station that is also an airfield on the map you're
+    running -- UGKO (Kutaisi) for Caucasus, OSDI (Damascus) for Syria -- so
+    the reported conditions are the conditions over the fight.
+    """
+
+    def __init__(self, server: Server, config: dict):
+        super().__init__(server, config)
+
+    @override
+    def is_available(self) -> bool:
+        for key in REQUIRED_PATH_KEYS:
+            path = self.config.get(key)
+            if not path:
+                self.log.error(f"  => {self.name}: missing '{key}' in your nodes.yaml.")
+                return False
+            if not os.path.exists(os.path.expandvars(path)):
+                self.log.error(f"  => {self.name}: {key} path {path!r} not found.")
+                return False
+        warehouse = self.config.get('warehouse')
+        if warehouse and not os.path.exists(os.path.expandvars(warehouse)):
+            self.log.error(f"  => {self.name}: warehouse path {warehouse!r} not found.")
+            return False
+        # the station is both the weather and the position it's sampled at, so
+        # it's the one thing we can't run without.
+        for key in ('checkwx_api_key', 'metar_station'):
+            if not self.config.get(key):
+                self.log.error(f"  => {self.name}: missing '{key}' in your nodes.yaml.")
+                return False
+        return True
+
+    def _optional_path(self, key: str) -> str | None:
+        """A configured path that is allowed to be missing.
+
+        `options_overrides` is an extra on top of the build, not part of it:
+        a mission without one builds fine. But a stale or mistyped path would
+        make bftools exit non-zero, and a failed bftools means no rebuild at
+        all -- so one dead file would silently cost every restart its live
+        weather. Drop the flag and say so instead.
+        """
+        raw = self.config.get(key)
+        if not raw:
+            return None
+        path = os.path.expandvars(raw)
+        if not os.path.exists(path):
+            self.log.warning(
+                f"  => {self.name}: {key} {raw!r} does not exist -- building without it."
+            )
+            return None
+        return path
+
+    def _map_view(self, key: str) -> str | None:
+        """A configured F10 map view, or None if unset/unusable."""
+        raw = self.config.get(key)
+        if raw is None:
+            return None
+        value = str(raw).strip().lower()
+        if value not in MAP_VIEWS:
+            self.log.warning(
+                f"  => {self.name}: {key} {raw!r} is not one of {', '.join(MAP_VIEWS)} "
+                f"-- building without it."
+            )
+            return None
+        return value
+
+    def _build_command(self, output: str) -> list[str]:
+        cfg = self.config
+        cmd = [
+            os.path.expandvars(cfg['bftools']), 'miz',
+            '--base', os.path.expandvars(cfg['base']),
+            '--weapon', os.path.expandvars(cfg['weapon']),
+            '--options', os.path.expandvars(cfg['options']),
+            '--output', output,
+            '--live-weather',
+            '--checkwx-api-key', str(cfg['checkwx_api_key']),
+            '--metar-station', str(cfg['metar_station']),
+        ]
+        if cfg.get('warehouse'):
+            cmd += ['--warehouse', os.path.expandvars(cfg['warehouse'])]
+        if cfg.get('live_time'):
+            cmd.append('--live-time')
+        options_overrides = self._optional_path('options_overrides')
+        if options_overrides:
+            cmd += ['--options-overrides', options_overrides]
+        # F10 map view. Left alone, bftools still locks spectators and
+        # observers to map-only on its own -- these only exist to set the
+        # in-slot view (and to opt out of the whole thing).
+        if cfg.get('no_force_map_view'):
+            cmd.append('--no-force-map-view')
+        else:
+            map_view = self._map_view('map_view')
+            if map_view:
+                cmd += ['--map-view', map_view]
+            spectator_map_view = self._map_view('spectator_map_view')
+            if spectator_map_view:
+                cmd += ['--spectator-map-view', spectator_map_view]
+        if cfg.get('blue_production_template'):
+            cmd += ['--blue-production-template', cfg['blue_production_template']]
+        if cfg.get('red_production_template'):
+            cmd += ['--red-production-template', cfg['red_production_template']]
+        return cmd
+
+    def _run_bftools(self, output: str):
+        cmd = self._build_command(output)
+        timeout = self.config.get('timeout', 120)
+        redacted = [
+            '***' if i > 0 and cmd[i - 1] == '--checkwx-api-key' else a
+            for i, a in enumerate(cmd)
+        ]
+        self.log.debug(f"{self.name}: running {' '.join(redacted)}")
+        # bftools uses plain env_logger::init(), which only shows error-level
+        # logs unless RUST_LOG is set -- without this, its own info! lines
+        # (including the applied temperature/QNH/wind values) are silently
+        # dropped before we ever get a chance to see them.
+        env = dict(os.environ, RUST_LOG=self.config.get('rust_log', 'info'))
+        process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env
+        )
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise BFWeatherException(f"bftools timed out after {timeout}s")
+        # env_logger writes to stderr; log it regardless of outcome so the
+        # actual applied weather values show up in the DCSServerBot log.
+        text = ANSI_ESCAPE_RE.sub('', (stderr or b'').decode('utf-8', errors='replace')).strip()
+        if text:
+            for line in text.splitlines():
+                self.log.info(f"{self.name}: {line}")
+        if process.returncode != 0:
+            out_text = (stdout or b'').decode('utf-8', errors='replace')
+            raise BFWeatherException(
+                f"bftools exited with {process.returncode}: {ANSI_ESCAPE_RE.sub('', out_text) or text}"
+            )
+        if not os.path.exists(output) or os.path.getsize(output) == 0:
+            raise BFWeatherException(f"bftools reported success but {output} is missing or empty")
+
+    @override
+    async def beforeMissionLoad(self, filename: str) -> tuple[str, bool]:
+        if not self.is_available():
+            return filename, False
+        tmpfd, tmpname = tempfile.mkstemp(suffix='.miz')
+        os.close(tmpfd)
+        os.remove(tmpname)  # bftools must create the file itself
+        try:
+            await asyncio.to_thread(self._run_bftools, tmpname)
+            # proof step: make sure the rebuilt mission actually parses
+            # before it ever touches the live mission slot
+            await asyncio.to_thread(MizFile, tmpname)
+            new_filename = utils.create_writable_mission(filename)
+            await asyncio.to_thread(shutil.copy2, tmpname, new_filename)
+            self.log.info(f"{self.name}: applied live weather/time to {new_filename}.")
+            return new_filename, True
+        except Exception as ex:
+            self.log.error(
+                f"{self.name}: failed to regenerate mission with live weather, "
+                f"loading the existing mission unchanged: {ex}"
+            )
+            return filename, False
+        finally:
+            if os.path.exists(tmpname):
+                os.remove(tmpname)
+
+    @override
+    async def render(self, param: dict | None = None) -> dict:
+        return {
+            "name": self.name,
+            "version": self.version,
+            "value": str(self.config.get('metar_station') or "not configured"),
+        }

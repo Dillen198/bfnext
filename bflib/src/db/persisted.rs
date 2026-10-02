@@ -20,10 +20,16 @@ use super::{
     player::Player,
     Map, MapM, MapS, Set, SetM, SetS,
 };
+use super::ground_insertion::GroundInsertion;
+use super::logistics::PendingCargo;
+use super::tasks::{Task, TaskId};
+use crate::navaids::Navaid;
+use compact_str::CompactString;
 use bfprotocols::db::{
     group::{GroupId, UnitId},
     objective::ObjectiveId,
 };
+use chrono::prelude::*;
 use dcso3::{coalition::Side, net::Ucid, String};
 use serde_derive::{Deserialize, Serialize};
 
@@ -49,6 +55,30 @@ pub struct Persisted {
     #[serde(default)]
     pub logistics_hubs: SetS<ObjectiveId>,
     #[serde(default)]
+    pub naval_bases: SetS<ObjectiveId>,
+    #[serde(default)]
+    pub carrier_groups: SetS<ObjectiveId>,
+    #[serde(default)]
+    pub factories: SetS<ObjectiveId>,
+    #[serde(default)]
+    pub special_sam_sites: SetS<ObjectiveId>,
+    #[serde(default)]
+    pub command_centers: SetS<ObjectiveId>,
+    /// SAM site -> its auto-linked nearest friendly CommandCenter (set at
+    /// mission init, same pattern as CarrierGroup.parent_naval_base). A SAM
+    /// site missing an entry here, or whose linked command center is dead
+    /// or enemy-owned, loses IADN network cueing and falls back to plain
+    /// DCS AI.
+    #[serde(default)]
+    pub sam_command_center_link: MapS<ObjectiveId, ObjectiveId>,
+    #[serde(default)]
+    pub downed_pilots: SetS<GroupId>,
+    #[serde(default)]
+    pub dismounts: SetS<GroupId>,
+    /// Spawn UTC timestamp for each downed pilot (used for capture timer)
+    #[serde(default)]
+    pub downed_pilot_spawn_times: MapS<GroupId, DateTime<Utc>>,
+    #[serde(default)]
     pub nukes_used: u32,
     #[serde(default)]
     pub logistics_ticks_since_delivery: u32,
@@ -60,10 +90,130 @@ pub struct Persisted {
     pub uid: i64,
     #[serde(default)]
     pub migrated_v0: bool,
+    /// Coalition treasury balances (Smart Commander).
+    #[serde(default)]
+    pub blue_treasury: i64,
+    #[serde(default)]
+    pub red_treasury: i64,
+    /// Auto-generated navaids per objective (see `crate::navaids`). One entry
+    /// for a ground objective; one per aircraft-carrying ship for a carrier
+    /// task force. Rebuilt deterministically whenever the objective set
+    /// changes, so it's safe if this loads empty (or single-valued) from an
+    /// older save.
+    #[serde(default, deserialize_with = "de_navaids_compat")]
+    pub navaids: MapS<ObjectiveId, Vec<Navaid>>,
+    /// Cargo taken out of a warehouse and handed to an in-flight convoy /
+    /// air route / sea route, keyed by that route's id. The routes
+    /// themselves are ephemeral (their DCS groups don't survive a mission
+    /// load), so this ledger is what lets a restart refund the stock that
+    /// was on the road instead of deleting it. See
+    /// `Db::reconcile_pending_cargo`.
+    #[serde(default)]
+    pub pending_cargo: MapS<CompactString, PendingCargo>,
+    /// Each side's territory score at the start of the campaign. Production
+    /// scaling is the ratio of a side's current score to this, so it has to
+    /// survive restarts -- re-baselining on load would hand a side that has
+    /// lost half the map its full production back.
+    #[serde(default)]
+    pub production_baseline: MapS<Side, f64>,
+    /// How many of each objective's logistics buildings have been bombed out,
+    /// under `logi_from_scenery`.
+    ///
+    /// DCS's own terrain destruction does not survive a server restart, so
+    /// without this the campaign's whole logistics picture healed itself every
+    /// time the mission reloaded: a hub you spent a night flattening was back
+    /// at 100% after the next scheduled restart. The rubble does come back
+    /// standing in-game -- this is the campaign remembering that it shouldn't
+    /// count.
+    #[serde(default)]
+    pub scenery_destroyed: MapS<ObjectiveId, u32>,
+    /// The coalition tasking boards -- player posted CAP / CAS / LOGISTICS
+    /// requests drawn on the F10 map. See `crate::db::tasks`.
+    #[serde(default)]
+    pub tasks: MapS<TaskId, Task>,
+    /// When each dismount squad was spawned, for `dismount_ttl_secs`. A
+    /// squad missing an entry (older save) starts its clock on the first
+    /// check. See `Db::expire_dismounts`.
+    #[serde(default)]
+    pub dismount_spawned: MapS<GroupId, DateTime<Utc>>,
+    /// Mirror of `Ephemeral::last_stand_state`, written on snapshot and read
+    /// back on load. The live value is ephemeral so readers outside the db
+    /// module keep working; persisting it is what stops a scheduled restart
+    /// from quietly cancelling a losing side's last-stand countdown.
+    #[serde(default)]
+    pub last_stand_state: Option<(DateTime<Utc>, Side)>,
+    /// Mirror of `Ephemeral::last_owner_change` (same arrangement as
+    /// `last_stand_state`), so the post-capture cooldown survives a restart
+    /// instead of a restart re-opening every freshly flipped base at once.
+    #[serde(default)]
+    pub last_owner_change: MapS<ObjectiveId, DateTime<Utc>>,
+    /// Troop insertions on their way in by road after the helo failed, by
+    /// id. Persisted so a restart can refund them: the vehicle itself is not
+    /// respawned. See `crate::db::ground_insertion`.
+    #[serde(default)]
+    pub ground_insertions: MapS<CompactString, GroundInsertion>,
+    /// Ground formations in the field (`Cfg::ground_war`), by id. Their
+    /// groups are out of their home objective's `groups` while they are
+    /// here. See `crate::db::formation`.
+    #[serde(default)]
+    pub formations: MapS<super::formation::FormationId, super::formation::Formation>,
+}
+
+/// Backward compatibility: saves written before the per-ship rework stored
+/// `navaids` as `MapS<ObjectiveId, Navaid>` (one navaid per objective), and
+/// the `Navaid` struct itself has changed shape a few times. Read the field
+/// as raw JSON and convert best-effort — anything that doesn't parse is
+/// dropped, which is safe because `navaids::reallocate` regenerates the
+/// whole table on the next objective-set change anyway.
+fn de_navaids_compat<'de, D>(d: D) -> std::result::Result<MapS<ObjectiveId, Vec<Navaid>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: serde_json::Value = serde::Deserialize::deserialize(d)?;
+    let Some(obj) = raw.as_object() else {
+        return Ok(MapS::default());
+    };
+    let mut out: Vec<(ObjectiveId, Vec<Navaid>)> = Vec::new();
+    for (k, v) in obj {
+        let Ok(id) = k.parse::<i64>() else { continue };
+        let oid = ObjectiveId::from(id);
+        let navs: Vec<Navaid> = if v.is_array() {
+            serde_json::from_value(v.clone()).unwrap_or_default()
+        } else if v.is_object() {
+            match serde_json::from_value::<Navaid>(v.clone()) {
+                Ok(n) => vec![n],
+                Err(_) => continue,
+            }
+        } else {
+            continue;
+        };
+        if !navs.is_empty() {
+            out.push((oid, navs));
+        }
+    }
+    Ok(out.into_iter().collect())
 }
 
 impl Persisted {
     pub fn players(&self) -> &Map<Ucid, Player> {
         &self.players
+    }
+
+    pub fn treasury(&self, side: Side) -> i64 {
+        match side {
+            Side::Blue => self.blue_treasury,
+            Side::Red => self.red_treasury,
+            _ => 0,
+        }
+    }
+
+    pub fn adjust_treasury(&mut self, side: Side, delta: i64) -> i64 {
+        let t = match side {
+            Side::Blue => &mut self.blue_treasury,
+            Side::Red => &mut self.red_treasury,
+            _ => return 0,
+        };
+        *t = (*t + delta).max(0);
+        *t
     }
 }

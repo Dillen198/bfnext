@@ -13,14 +13,14 @@ FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::as_tbl;
 use crate::{
-    airbase::Airbase, cvt_err, lua_err, simple_enum, wrapped_table, LuaEnv, MizLua, String,
+    airbase::Airbase, lua_err, simple_enum_unknown, wrapped_table, LuaEnv, MizLua, String,
 };
 use anyhow::Result;
 use mlua::{prelude::*, Value};
 use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
-simple_enum!(LiquidType, u8, [
+simple_enum_unknown!(LiquidType, u8, [
     JetFuel => 0,
     Avgas => 1,
     MW50 => 2,
@@ -33,13 +33,18 @@ impl LiquidType {
 
 wrapped_table!(ItemInventory, None);
 
+// Inventory counts are decoded as f64 and clamped by `count_to_u32` for the
+// same reason as get_item_count: one unlimited/negative/huge entry decoded
+// straight into u32 used to abort the whole get_inventory walk.
 impl<'lua> ItemInventory<'lua> {
     pub fn item(&self, name: &str) -> Result<u32> {
-        Ok(self.t.raw_get(name)?)
+        Ok(count_to_u32(self.t.raw_get(name)?))
     }
 
     pub fn for_each<F: FnMut(String, u32) -> Result<()>>(&self, mut f: F) -> Result<()> {
-        Ok(self.t.for_each(|k, v| f(k, v).map_err(lua_err))?)
+        Ok(self
+            .t
+            .for_each(|k, v: f64| f(k, count_to_u32(v)).map_err(lua_err))?)
     }
 }
 
@@ -47,11 +52,13 @@ wrapped_table!(LiquidInventory, None);
 
 impl<'lua> LiquidInventory<'lua> {
     pub fn item(&self, name: LiquidType) -> Result<u32> {
-        Ok(self.t.raw_get(name)?)
+        Ok(count_to_u32(self.t.raw_get(name)?))
     }
 
     pub fn for_each<F: FnMut(LiquidType, u32) -> Result<()>>(&self, mut f: F) -> Result<()> {
-        Ok(self.t.for_each(|k, v| f(k, v).map_err(lua_err))?)
+        Ok(self
+            .t
+            .for_each(|k, v: f64| f(k, count_to_u32(v)).map_err(lua_err))?)
     }
 }
 
@@ -245,6 +252,35 @@ impl<'lua> From<WSType<'lua>> for WarehouseItem<'lua> {
 
 wrapped_table!(Warehouse, Some("Warehouse"));
 
+/// A count DCS reported, as a u32. DCS answers outside u32 for a warehouse
+/// that doesn't keep count (an unlimited one: a negative sentinel or a huge
+/// number), and decoding that straight into a u32 failed the whole read -- one
+/// such item aborted the objective's entire warehouse sync every tick. Treat
+/// anything out of range as "as much as it wants": callers clamp to their own
+/// capacity, so that reads as full, which is what unlimited means.
+fn count_to_u32(n: f64) -> u32 {
+    if n.is_finite() && (0.0..=u32::MAX as f64).contains(&n) {
+        n as u32
+    } else {
+        u32::MAX
+    }
+}
+
+#[cfg(test)]
+mod count_tests {
+    use super::count_to_u32;
+
+    #[test]
+    fn out_of_range_counts_read_as_unlimited() {
+        assert_eq!(count_to_u32(0.0), 0);
+        assert_eq!(count_to_u32(1234.0), 1234);
+        assert_eq!(count_to_u32(12.7), 12);
+        assert_eq!(count_to_u32(-1.0), u32::MAX);
+        assert_eq!(count_to_u32(1e12), u32::MAX);
+        assert_eq!(count_to_u32(f64::NAN), u32::MAX);
+    }
+}
+
 impl<'lua> Warehouse<'lua> {
     pub fn get_by_name(lua: MizLua<'lua>, name: String) -> Result<Self> {
         let wh: LuaTable = lua.inner().globals().raw_get("Warehouse")?;
@@ -275,9 +311,10 @@ impl<'lua> Warehouse<'lua> {
     }
 
     pub fn get_item_count<T: Into<WarehouseItem<'lua>>>(&self, item: T) -> Result<u32> {
-        Ok(self
+        let n: f64 = self
             .t
-            .call_method("getItemCount", Into::<WarehouseItem>::into(item))?)
+            .call_method("getItemCount", Into::<WarehouseItem>::into(item))?;
+        Ok(count_to_u32(n))
     }
 
     pub fn add_liquid(&self, typ: LiquidType, count: u32) -> Result<()> {
@@ -289,7 +326,8 @@ impl<'lua> Warehouse<'lua> {
     }
 
     pub fn get_liquid_amount(&self, typ: LiquidType) -> Result<u32> {
-        Ok(self.t.call_method("getLiquidAmount", typ)?)
+        let n: f64 = self.t.call_method("getLiquidAmount", typ)?;
+        Ok(count_to_u32(n))
     }
 
     pub fn set_liquid_amount(&self, typ: LiquidType, count: u32) -> Result<()> {

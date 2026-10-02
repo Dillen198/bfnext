@@ -7,7 +7,7 @@ This page covers initial setup for the Fowl Engine dynamic campaign.
 When you first connect to a Fowl Engine server:
 
 1. **Read the briefing**: Check the mission briefing for current campaign status
-2. **Join a team**: You must register for either Blue or Red coalition
+2. **Join a team**: Pick Blue or Red on the DCS slot screen — taking your first slot registers you to that coalition
 3. **Choose your role**: Select an appropriate aircraft or ground unit
 4. **Learn the basics**: Familiarize yourself with chat commands and F10 menus
 
@@ -22,7 +22,7 @@ Unlike traditional DCS missions that reset after each flight:
 ### Strategic Depth
 - Capture objectives to expand your coalition's territory
 - Manage logistics and supply lines
-- Deploy reinforcements strategically
+
 - Coordinate with teammates for maximum effectiveness
 
 ### Reward System

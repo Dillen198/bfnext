@@ -1,0 +1,27 @@
+{
+  "miscellaneous": {
+    "chat_window_at_start": true,
+    "TrackIR_external_views": true,
+    "f11_free_camera": true,
+    "force_feedback_enabled_custom_stick": false,
+    "f10_awacs": true,
+    "Coordinate_Display": "Lat Long Decimal",
+    "accidental_failures": false,
+    "autologin": true,
+    "show_pilot_body": true,
+    "collect_stat": true,
+    "synchronize_controls": false,
+    "backup": false,
+    "force_feedback_enabled_custom_pedals": false,
+    "headmove": true,
+    "f5_nearest_ac": true,
+    "F2_view_effects": 1,
+    "launcher": true,
+    "backupTime": 5,
+    "allow_server_screenshots": true,
+    "mgrs_grid_visible": true,
+    "collect_stat_defined": false,
+    "geo_grid_visible": false,
+    "force_feedback_enabled": false
+  }
+}

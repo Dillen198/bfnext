@@ -1,0 +1,31 @@
+[package]
+name = "bfcockpit-installer"
+version = "1.0.0"
+edition = "2021"
+publish = false
+description = "Installer for the BFNext cockpit overlay, a client-side DCS plugin"
+
+# Both front ends sit on this, so they cannot disagree about what "install"
+# means. The overlay script is embedded with include_str!, so the installer
+# ships as one self-contained file with nothing to unzip beside it.
+[lib]
+name = "bfcockpit_installer"
+path = "src/lib.rs"
+
+# What players run: a window.
+[[bin]]
+name = "bfcockpit-install"
+path = "src/main.rs"
+
+# For scripted rollouts and for diagnosing a machine where the window found
+# nothing and you want to see exactly where it looked.
+[[bin]]
+name = "bfcockpit-install-cli"
+path = "src/bin/bfcockpit-install-cli.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+# Thin Win32 bindings -- no toolkit, no runtime for the player to install.
+# Windows, labels and buttons are core; the rest are opt-in features.
+native-windows-gui = { version = "1", default-features = false, features = ["listbox", "textbox", "file-dialog"] }
