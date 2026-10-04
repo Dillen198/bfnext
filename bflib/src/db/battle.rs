@@ -39,6 +39,7 @@ use bfprotocols::{
 use chrono::{prelude::*, Duration};
 use compact_str::format_compact;
 use dcso3::{
+    coalition::Side,
     land::Land,
     trigger::{CircleSpec, LineType, MarkId, SideFilter, SmokePreset, TextSpec, Trigger},
     Color, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
@@ -79,8 +80,23 @@ pub struct Battle {
     pub live: bool,
     pub formations: SmallVec<[FormationId; 4]>,
     pub near: Option<String>,
+    /// Vehicles each side has lost in it, on the map and in DCS.
+    pub blue_losses: u32,
+    pub red_losses: u32,
+    /// How hard it is being fought, 0..1: bumped by every loss, cooling off
+    /// between them.
+    pub heat: f64,
     marks: Option<(MarkId, MarkId, Vector2)>,
     smoke: Option<String>,
+}
+
+impl Battle {
+    pub fn losses(&self, side: Side) -> u32 {
+        match side {
+            Side::Red => self.red_losses,
+            _ => self.blue_losses,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -99,6 +115,22 @@ pub struct BattleRt {
 impl BattleRt {
     pub fn battles(&self) -> &[Battle] {
         &self.battles
+    }
+
+    /// `side` lost `n` vehicles at `pos`: charge them to the battle there.
+    pub(super) fn note_losses(&mut self, pos: Vector2, side: Side, n: u32) {
+        let b = self
+            .battles
+            .iter_mut()
+            .filter(|b| dist(b.pos, pos) <= SAME_M)
+            .min_by(|a, b| dist(a.pos, pos).total_cmp(&dist(b.pos, pos)));
+        if let Some(b) = b {
+            match side {
+                Side::Red => b.red_losses += n,
+                _ => b.blue_losses += n,
+            }
+            b.heat = (b.heat + 0.2 * n as f64).min(1.);
+        }
     }
 }
 
@@ -244,6 +276,8 @@ impl Db {
                     b.last_seen = now;
                     b.live = live;
                     b.formations = forms;
+                    // Cools off between losses; never cold while fought.
+                    b.heat = (b.heat * 0.97).max(if live { 0.35 } else { 0.2 });
                     seen.insert(b.id);
                 }
                 None => {
@@ -259,6 +293,9 @@ impl Db {
                         live,
                         formations: forms,
                         near,
+                        blue_losses: 0,
+                        red_losses: 0,
+                        heat: if live { 0.35 } else { 0.2 },
                         marks: None,
                         smoke: None,
                     });
@@ -273,6 +310,7 @@ impl Db {
                 // Nobody in contact any more: smoke out now, marks after the lull.
                 b.live = false;
                 b.formations.clear();
+                b.heat *= 0.9;
             }
             if !b.live {
                 if let Some(name) = b.smoke.take() {
@@ -308,13 +346,15 @@ impl Db {
     pub(super) fn wreck_fires(&mut self, rt: &mut FormationRt, cfg: &GroundWarCfg, lua: MizLua, now: DateTime<Utc>) {
         let mut alive: FxHashSet<UnitId> = FxHashSet::default();
         let mut died: SmallVec<[Vector2; 8]> = smallvec::smallvec![];
-        let live: SmallVec<[GroupId; 32]> = self
+        // (formation, side, where) for every live vehicle that died.
+        let mut lost: SmallVec<[(FormationId, Side, Vector2); 8]> = smallvec::smallvec![];
+        let live: SmallVec<[(GroupId, FormationId, Side); 32]> = self
             .formations()
-            .flat_map(|f| f.groups.iter().copied())
-            .filter(|g| rt.live_group(g))
+            .flat_map(|f| f.groups.iter().map(move |g| (*g, f.id, f.side)))
+            .filter(|(g, ..)| rt.live_group(g))
             .collect();
         {
-            for gid in &live {
+            for (gid, fid, side) in &live {
                 let Some(g) = self.persisted.groups.get(gid) else { continue };
                 for uid in &g.units {
                     let Some(u) = self.persisted.units.get(uid) else { continue };
@@ -322,6 +362,7 @@ impl Db {
                         if rt.battle.alive.contains(uid) {
                             if let Some(p) = rt.battle.last_pos.get(uid) {
                                 died.push(*p);
+                                lost.push((*fid, *side, *p));
                             }
                         }
                     } else {
@@ -333,6 +374,16 @@ impl Db {
         }
         rt.battle.last_pos.retain(|u, _| alive.contains(u));
         rt.battle.alive = alive;
+        for (fid, side, pos) in lost {
+            // Morale takes a loss in DCS the way it takes one on the map, a
+            // vehicle's share of the formation.
+            if let Some(f) = self.persisted.formations.get_mut_cow(&fid) {
+                f.losses += 1;
+                let share = 1. / f.strength0.max(1) as f64;
+                f.morale = (f.morale - cfg.combat.morale_per_loss * share).max(0.);
+            }
+            rt.battle.note_losses(pos, side, 1);
+        }
         while let Some((name, out)) = rt.battle.fires.front().cloned() {
             if out > now {
                 break;

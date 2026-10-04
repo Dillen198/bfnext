@@ -14,7 +14,13 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{cargo::C130CargoState, ephemeral::SlotInfo, objective::ObjGroupClass, player::SlotAuth, Db, SetS};
+use super::{
+    cargo::C130CargoState,
+    ephemeral::{LaunchRequest, QueuedDrive, SlotInfo},
+    objective::ObjGroupClass,
+    player::SlotAuth,
+    Db, SetS,
+};
 use crate::{
     group, group_health, group_mut,
     spawnctx::{Despawn, SpawnCtx, SpawnLoc},
@@ -23,7 +29,7 @@ use crate::{
 use anyhow::{anyhow, bail, Context, Result};
 use bfprotocols::{
     cfg::{Action, ActionKind, Crate, Deployable, LifeType, SpecialSamUnitCfg, Troop, UnitTag, UnitTags, Vehicle},
-    db::objective::ObjectiveId,
+    db::objective::{ObjectiveId, ObjectiveKind},
     stats::{self, EnId},
 };
 use bfprotocols::{
@@ -40,7 +46,7 @@ use dcso3::{
     env::miz,
     env::miz::{Group, GroupKind, MizIndex},
     group::GroupCategory,
-    land::{Land, SurfaceType},
+    land::{Land, RoadType, SurfaceType},
     net::{SlotId, Ucid},
     object::{DcsObject, DcsOid},
     rotate2d_gen,
@@ -62,6 +68,96 @@ use std::{cmp::max, collections::VecDeque};
 /// objective label and ring on the map, so redrawing it every second for every
 /// vehicle under way is what actually froze the F10 picture.
 const GROUP_MARK_MIN_MOVE: f64 = 500.;
+
+/// A friendly field a flight takes off from, and the spot on it where the
+/// flight starts (see `Db::launch_spot`).
+#[derive(Debug, Clone)]
+pub(crate) struct LaunchField {
+    pub(crate) oid: ObjectiveId,
+    pub(crate) name: String,
+    pub(crate) pos: Vector2,
+}
+
+/// Can an aircraft of this kind operate out of an objective of this kind?
+/// Helicopters fly from airbases, FARPs and FOBs; fixed wing only from
+/// airbases, plus the fields the config lists in `extra_fixed_wing_objectives`.
+/// Carrier decks are left out for both: the deck airbase moves with the ship.
+pub(crate) fn is_launch_kind(kind: &ObjectiveKind, rotary: bool, extra_fixed_wing: bool) -> bool {
+    if rotary {
+        matches!(kind, ObjectiveKind::Airbase | ObjectiveKind::Farp { .. } | ObjectiveKind::Fob)
+    } else {
+        matches!(kind, ObjectiveKind::Airbase) || extra_fixed_wing
+    }
+}
+
+/// `candidates` at least `min_dist` from `near`, nearest first.
+pub(crate) fn rank_launch_fields<T: Copy>(
+    candidates: impl IntoIterator<Item = (T, Vector2)>,
+    near: Vector2,
+    min_dist: f64,
+) -> Vec<T> {
+    let mut v: Vec<(T, f64)> = candidates
+        .into_iter()
+        .map(|(id, p)| (id, (p - near).norm()))
+        .filter(|(_, d)| *d >= min_dist)
+        .collect();
+    v.sort_by(|a, b| a.1.total_cmp(&b.1));
+    v.into_iter().map(|(id, _)| id).collect()
+}
+
+/// A planned ground drive: (point, on road) legs, point 0 being where the
+/// group starts, and its length.
+#[derive(Debug, Clone)]
+pub(crate) struct DrivePlan {
+    pub(crate) points: Vec<(Vector2, bool)>,
+    pub(crate) route_m: f64,
+    pub(crate) by_road: bool,
+}
+
+/// How far a road may start from the drive's origin, or end from its
+/// destination, and still count as serving it. The gap is driven off road.
+const ROAD_ACCESS_M: f64 = 3_000.;
+/// DCS's road polylines run to thousands of vertices, which chokes the
+/// ground AI; "On Road" follows the road between sparse points anyway.
+const DRIVE_WAYPOINT_SPACING_M: f64 = 3_000.;
+const MAX_DRIVE_WAYPOINTS: usize = 40;
+
+fn drive_length(points: &[(Vector2, bool)]) -> f64 {
+    points.windows(2).map(|w| (w[1].0 - w[0].0).norm()).sum()
+}
+
+/// The drive from `from` to `to` along `road` (a DCS road polyline between
+/// them), or `None` if the road doesn't serve both ends. On road the whole
+/// way, then off road for the last stretch: "On Road" stops at the road
+/// point nearest the destination, which can be well short of it.
+pub(crate) fn plan_road_drive(from: Vector2, to: Vector2, road: &[Vector2]) -> Option<DrivePlan> {
+    let (first, last) = (road.first()?, road.last()?);
+    if (first - from).norm() > ROAD_ACCESS_M || (last - to).norm() > ROAD_ACCESS_M {
+        return None;
+    }
+    let mut points = vec![(from, true)];
+    let mut kept = 0;
+    let mut last_kept: Option<Vector2> = None;
+    for (i, p) in road.iter().enumerate() {
+        let far_enough = last_kept
+            .map(|l| (p - l).norm() >= DRIVE_WAYPOINT_SPACING_M)
+            .unwrap_or(true);
+        if (far_enough || i + 1 == road.len()) && kept < MAX_DRIVE_WAYPOINTS {
+            points.push((*p, true));
+            last_kept = Some(*p);
+            kept += 1;
+        }
+    }
+    points.push((to, false));
+    let route_m = drive_length(&points);
+    Some(DrivePlan { points, route_m, by_road: true })
+}
+
+/// Straight across country from `from` to `to`.
+pub(crate) fn plan_cross_country(from: Vector2, to: Vector2) -> DrivePlan {
+    let points = vec![(from, false), (to, false)];
+    DrivePlan { route_m: drive_length(&points), points, by_road: false }
+}
 
 #[derive(Debug, Clone)]
 pub enum BirthRes {
@@ -136,6 +232,11 @@ pub enum DeployKind {
         /// saves that predate it and for groups nobody paid for.
         #[serde(default)]
         paid_by: Option<(Ucid, u32)>,
+        /// What a transport action carries -- for Reinforce, the number of
+        /// groups on the trailers (the materiel drawn for them is returned
+        /// if the convoy has to be recalled).
+        #[serde(default)]
+        carried: u32,
     },
     /// Infantry that bailed out of a destroyed vehicle
     Dismount {
@@ -1150,15 +1251,20 @@ impl Db {
         Ok(gid)
     }
 
-    /// Spawn an air group from `template` in the air at `pos` and fly
-    /// `mission` instead of the template's route, right now rather than via
-    /// the spawn queue. The group is tagged `EventSpawn`, so it is session
-    /// scoped: a restart drops it instead of respawning it with nothing left
-    /// to manage it. `origin` is only bookkeeping (the friendly objective it
-    /// is attributed to); nothing about the start resolves an airbase.
+    /// Spawn an air group from `template` on the ground at friendly field
+    /// `origin`, engines running, and fly `mission` instead of the template's
+    /// route, right now rather than via the spawn queue. `pos` is the spot on
+    /// the field it starts at (see `launch_spot`), and waypoint 0 of `mission`
+    /// must sit there too: `spawn_group` turns that waypoint into the takeoff
+    /// -- a parking start on the field's ramp, or a lift-off from open ground
+    /// for a helicopter (or a fixed-wing airframe with `open_ground`, which
+    /// needs no runway). A flight that can do neither is refused, never
+    /// air-started over the field.
     ///
-    /// On a failed spawn the group is removed from the db again, so the
-    /// caller never has to clean up a phantom.
+    /// The group is tagged `EventSpawn`, so it is session scoped: a restart
+    /// drops it instead of respawning it with nothing left to manage it. On a
+    /// failed spawn the group is removed from the db again, so the caller
+    /// never has to clean up a phantom.
     pub fn spawn_air_flight<'lua>(
         &mut self,
         perf: &mut bfprotocols::perf::PerfInner,
@@ -1169,29 +1275,192 @@ impl Db {
         origin: ObjectiveId,
         pos: Vector2,
         heading: f64,
-        altitude: f64,
-        speed: f64,
+        open_ground: bool,
         mission: Vec<dcso3::controller::MissionPoint<'lua>>,
     ) -> Result<GroupId> {
         let gid = self.add_group(
             spctx,
             idx,
             side,
-            SpawnLoc::InAir { pos, heading, altitude, speed },
+            SpawnLoc::AtPosExact { pos, group_heading: heading },
             template,
             DeployKind::Objective { origin },
-            UnitTag::EventSpawn.into(),
+            UnitTag::EventSpawn | UnitTag::HotStart,
         )?;
+        self.ephemeral.launch_requests.insert(
+            gid,
+            LaunchRequest { field: origin, cold: false, open_ground },
+        );
         let spawned = group!(self, gid).and_then(|group| {
             self.ephemeral
                 .spawn_group(perf, &self.persisted, idx, spctx, group, mission)
         });
         if let Err(e) = spawned {
+            self.ephemeral.launch_requests.remove(&gid);
             if let Err(de) = self.delete_group(&gid) {
                 error!("could not remove unspawned air flight {gid:?}: {de:?}");
             }
             return Err(e);
         }
+        Ok(gid)
+    }
+
+    /// The spot on friendly field `oid` an aircraft of this kind takes off
+    /// from, or `None` if it can't launch from there.
+    ///
+    /// Fixed wing need a live DCS airbase with at least one free spot their
+    /// terminal type can use -- the same check `spawn_group` builds the
+    /// parking start from -- and start at that airbase's reference point
+    /// (the parking plan moves them onto their spots). Helicopters can always
+    /// go: a pad is used if the field has one free, and otherwise they lift
+    /// off from open ground, so they start on the clearest patch near the
+    /// zone centre rather than inside its garrison.
+    /// Airframes too big for a fighter's spot: bombers, tankers, AWACS,
+    /// transports and airliners only fit a large open stand (`OPEN_BIG`).
+    pub(crate) fn needs_big_spot(typ: &str) -> bool {
+        const HEAVY: &[&str] = &[
+            "B-1B", "B-52H", "Tu-22M3", "Tu-95MS", "Tu-142", "Tu-160", "E-3A", "E-2C", "A-50", "KJ-2000",
+            "KC-135", "KC135MPRS", "KC130", "KC130J", "IL-78M", "IL-76MD", "C-130", "C-130J-30", "C-17A",
+            "An-26B", "An-30M", "Yak-40", "A_320", "A_330", "A_380", "B_727", "B_737", "B_747", "B_757",
+            "Boeing_C-17A", "Hercules", "P-3C", "S-3B", "S-3B Tanker",
+        ];
+        HEAVY.contains(&typ)
+    }
+
+    pub(crate) fn launch_spot(&self, lua: MizLua, oid: &ObjectiveId, rotary: bool, heavy: bool) -> Option<Vector2> {
+        let obj = self.persisted.objectives.get(oid)?;
+        if rotary {
+            return Some(self.clear_helo_spot(obj.zone.pos()));
+        }
+        match self.ephemeral.usable_parking(lua, &self.persisted, oid, false, heavy) {
+            Some((pos, n)) if n > 0 => Some(pos),
+            Some(_) => {
+                info!(
+                    "[LAUNCH] {} has no free {} parking",
+                    obj.name,
+                    if heavy { "large (heavy aircraft)" } else { "fixed-wing" }
+                );
+                None
+            }
+            None => {
+                info!("[LAUNCH] {} has no DCS airbase to park fixed wing at", obj.name);
+                None
+            }
+        }
+    }
+
+    /// The nearest friendly field to `near`, at least `min_dist_m` from it,
+    /// that an aircraft of this kind can really take off from right now,
+    /// nearest first: helicopters from an airbase, FARP or FOB; fixed wing
+    /// from an airbase (or an `extra_fixed_wing_objectives` field) with free
+    /// parking. A field that fails the parking check is passed over for the
+    /// next one out, not used anyway. Bases still in their post-capture hold
+    /// are skipped -- the fight for them isn't over.
+    pub(crate) fn pick_launch_field(
+        &self,
+        lua: MizLua,
+        side: Side,
+        near: Vector2,
+        rotary: bool,
+        heavy: bool,
+        min_dist_m: f64,
+    ) -> Option<LaunchField> {
+        // Each candidate costs a couple of Lua calls (airbase + parking);
+        // past this many the next field out is too far to matter anyway.
+        const MAX_FIELDS_TRIED: usize = 8;
+        let extra = &self.ephemeral.cfg.extra_fixed_wing_objectives;
+        let ranked = rank_launch_fields(
+            self.persisted
+                .objectives
+                .into_iter()
+                .filter(|(_, o)| {
+                    o.owner == side
+                        && !o.captureable()
+                        && is_launch_kind(&o.kind, rotary, extra.contains(&o.name))
+                })
+                .map(|(id, o)| (*id, o.zone.pos())),
+            near,
+            min_dist_m,
+        );
+        for oid in ranked.into_iter().take(MAX_FIELDS_TRIED) {
+            if let Some(pos) = self.launch_spot(lua, &oid, rotary, heavy) {
+                let name = self
+                    .persisted
+                    .objectives
+                    .get(&oid)
+                    .map(|o| String::from(o.name.as_str()))
+                    .unwrap_or_default();
+                return Some(LaunchField { oid, name, pos });
+            }
+        }
+        None
+    }
+
+    /// Plan a ground drive from `from` to `to`: along the road network when
+    /// DCS has a road that serves both ends, else straight across country if
+    /// `cross_country`, else `None`.
+    pub(crate) fn plan_drive(
+        &self,
+        lua: MizLua,
+        from: Vector2,
+        to: Vector2,
+        cross_country: bool,
+    ) -> Option<DrivePlan> {
+        let land = Land::singleton(lua).ok()?;
+        let road: Option<Vec<Vector2>> = land
+            .find_path_on_roads(RoadType::Road, LuaVec2(from), LuaVec2(to))
+            .ok()
+            .map(|seq| seq.into_iter().filter_map(|p| p.ok()).map(|p| p.0).collect());
+        road.as_deref()
+            .and_then(|r| plan_road_drive(from, to, r))
+            .or_else(|| cross_country.then(|| plan_cross_country(from, to)))
+    }
+
+    /// Queue a ground group from `template` that starts at objective `origin`
+    /// (point 0 of `plan`) and drives `plan` the moment the spawn queue puts
+    /// it into DCS. Queued rather than spawned on the spot so it is safe from
+    /// event handlers: `coalition.addGroup` fires Birth synchronously.
+    pub(crate) fn queue_drive_from_objective(
+        &mut self,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        side: Side,
+        origin: ObjectiveId,
+        template: &str,
+        plan: &DrivePlan,
+        speed_mps: f64,
+        tags: BitFlags<UnitTag>,
+    ) -> Result<GroupId> {
+        let from = plan
+            .points
+            .first()
+            .map(|(p, _)| *p)
+            .ok_or_else(|| anyhow!("empty drive"))?;
+        let dir = plan
+            .points
+            .get(1)
+            .map(|(p, _)| *p - from)
+            .filter(|d| d.norm() > 1.)
+            .map(|d| d.normalize())
+            .unwrap_or(Vector2::new(1., 0.));
+        let gid = self.add_group(
+            spctx,
+            idx,
+            side,
+            SpawnLoc::AtPos {
+                pos: from,
+                offset_direction: dir,
+                group_heading: dir.y.atan2(dir.x),
+            },
+            template,
+            DeployKind::Objective { origin },
+            tags,
+        )?;
+        self.ephemeral.queued_drives.insert(
+            gid,
+            QueuedDrive { points: plan.points.clone(), speed_mps },
+        );
+        self.ephemeral.push_spawn(gid);
         Ok(gid)
     }
 
@@ -1535,7 +1804,13 @@ impl Db {
                     if let DeployKind::Action { player, spec, .. } =
                         &group!(self, gid)?.origin
                     {
-                        if self.group_health(&gid)?.0 == 0 {
+                        if self.group_health(&gid)?.0 == 0
+                            && matches!(spec.kind, ActionKind::Reinforce(_))
+                        {
+                            // Says so to both sides and charges its own
+                            // penalty (reinforce.rs).
+                            self.reinforcements_lost(gid, now);
+                        } else if self.group_health(&gid)?.0 == 0 {
                             if let Some((penalty, ucid)) = spec
                                 .penalty
                                 .and_then(|p| player.as_ref().map(|pl| (p, pl.clone())))
@@ -1819,5 +2094,54 @@ impl Db {
             }
             Some((*uid, oid, su.side))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_fields_rank_nearest_first_past_the_minimum() {
+        let near = Vector2::new(0., 0.);
+        let fields = [
+            (1, Vector2::new(50_000., 0.)),
+            (2, Vector2::new(5_000., 0.)),
+            (3, Vector2::new(0., 20_000.)),
+        ];
+        assert_eq!(rank_launch_fields(fields, near, 10_000.), vec![3, 1]);
+        assert_eq!(rank_launch_fields(fields, near, 0.), vec![2, 3, 1]);
+    }
+
+    #[test]
+    fn helicopters_and_jets_launch_from_their_own_kinds() {
+        assert!(is_launch_kind(&ObjectiveKind::Airbase, true, false));
+        assert!(is_launch_kind(&ObjectiveKind::Fob, true, false));
+        assert!(!is_launch_kind(&ObjectiveKind::Logistics, true, false));
+        assert!(!is_launch_kind(&ObjectiveKind::Fob, false, false));
+        assert!(is_launch_kind(&ObjectiveKind::Fob, false, true));
+        assert!(is_launch_kind(&ObjectiveKind::Airbase, false, false));
+    }
+
+    #[test]
+    fn road_drive_ends_off_road_at_the_destination() {
+        let from = Vector2::new(0., 0.);
+        let to = Vector2::new(20_000., 500.);
+        let road: Vec<Vector2> = (0..=200).map(|i| Vector2::new(i as f64 * 100., 0.)).collect();
+        let plan = plan_road_drive(from, to, &road).expect("road serves both ends");
+        assert!(plan.by_road);
+        assert_eq!(plan.points.first(), Some(&(from, true)));
+        assert_eq!(plan.points.last(), Some(&(to, false)));
+        // Thinned to roughly one point every 3 km plus the road exit.
+        assert!(plan.points.len() <= 12, "{} points", plan.points.len());
+        assert!((plan.route_m - 20_000.).abs() < 1_000.);
+    }
+
+    #[test]
+    fn a_road_that_misses_either_end_is_no_drive() {
+        let road = [Vector2::new(0., 0.), Vector2::new(10_000., 0.)];
+        assert!(plan_road_drive(Vector2::new(0., 5_000.), Vector2::new(10_000., 0.), &road).is_none());
+        assert!(plan_road_drive(Vector2::new(0., 0.), Vector2::new(10_000., 9_000.), &road).is_none());
+        assert!(plan_road_drive(Vector2::new(0., 0.), Vector2::new(1., 1.), &[]).is_none());
     }
 }

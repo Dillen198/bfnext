@@ -625,7 +625,7 @@ fn deliver_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
                 // reward on top (see tick_csar).
                 if rescue_reward > 0 {
                     if let Some(ucid) = rescuer_ucid.as_ref().filter(|u| **u != pilot.ucid) {
-                        ctx.db.adjust_points(
+                        ctx.db.earn_points(
                             ucid,
                             rescue_reward as i32,
                             &format_compact!("for CSAR rescue of {}", pilot.name),

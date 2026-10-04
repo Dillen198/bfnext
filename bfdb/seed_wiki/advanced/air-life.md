@@ -10,13 +10,17 @@ three.
 
 ## Calling a wingman
 
-**F10 > Wingman > Request Wingman** puts an AI flight in the air behind you.
-It closes up off your right wing and escorts you: it goes after threats within
+**F10 > Wingman > Request Wingman** sends an AI flight up to join you. It
+starts up at the nearest friendly field that can launch it (a jet needs free
+parking at an airfield, a helicopter any airbase, FARP or FOB), takes off and
+flies out to you; you are told where it is coming from and how far away that
+is. Once it reaches you it closes up off your right wing and escorts you: it
+goes after threats within
 {{cfg:air_life.wingman.engage_dist_m|40000}} m of you and comes back to your
 wing afterwards.
 
-- **Call it once you are airborne.** It spawns in the air next to you, so on
-  the ground the request is refused.
+- **Call it once you are airborne.** On the ground the request is refused.
+  Allow for the start-up and the flight out: call it before you need it.
 - **Jets get a fighter, helicopters get an attack helicopter.** A helicopter
   wingman stays close
   ({{cfg:air_life.wingman.rotary_engage_dist_m|8000}} m) and engages
@@ -54,6 +58,10 @@ flights you can buy from the Actions menu:
 
 If one of your side's pilots is in the air, the package is sent to the part of
 the front nearest them. That way the help shows up where you are flying.
+
+Every package starts on the ground at a friendly airfield and takes off; nothing
+appears in the air. On a server running the [Theatre HQ](./theatre-hq.md), the
+HQ flies the air war instead and these packages stand down.
 
 A side can have up to {{cfg:air_life.packages.max_active_per_side|2}}
 packages up at once, and launches at most one every

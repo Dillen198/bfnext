@@ -38,8 +38,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{
         ActionKind, AiPlaneCfg, AwacsCfg, BomberCfg, Cfg, Crate, Deployable, DeployableCfg,
-        DeployableKind, DeployableObjective, DroneCfg, Troop, UnitTag, Vehicle, VictoryCondition,
-        WarehouseConfig,
+        DeployableKind, DeployableObjective, DroneCfg, ReinforceCfg, Troop, UnitTag, Vehicle,
+        VictoryCondition, WarehouseConfig,
     },
     db::{
         group::{GroupId, UnitId},
@@ -141,6 +141,71 @@ pub(super) struct TrackedScenery {
     pub(super) marker_side: Option<Side>,
 }
 
+/// A start on the ground that `spawn_group` should build for a group whose
+/// origin alone doesn't ask for one. Action aircraft are `DeployKind::Action`,
+/// which the waypoint-0 rewrite never looks at, so the field they take off
+/// from has to be handed over separately -- and only for the spawn that
+/// launches them: the same group respawned mid-flight after a restart has to
+/// come back in the air where it was, not on the ramp again.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct LaunchRequest {
+    pub(super) field: ObjectiveId,
+    pub(super) cold: bool,
+    /// May start from open ground at waypoint 0 when the field has no
+    /// parking this airframe can use. Always true for helicopters; set for
+    /// fixed wing only where the airframe launches without a runway (raid
+    /// drones).
+    pub(super) open_ground: bool,
+}
+
+/// The road (or cross-country) drive a queued ground group is to start on
+/// the moment the spawn queue puts it into DCS. Kept free of Lua so it can
+/// wait in the queue; `mission` turns it into waypoints at spawn time.
+#[derive(Debug, Clone)]
+pub(super) struct QueuedDrive {
+    /// (point, on road). Point 0 is where the group starts.
+    pub(super) points: Vec<(Vector2, bool)>,
+    pub(super) speed_mps: f64,
+}
+
+impl QueuedDrive {
+    fn mission<'lua>(&self, lua: MizLua<'lua>) -> Vec<MissionPoint<'lua>> {
+        use dcso3::controller::{ActionTyp, AltType, Task, VehicleFormation};
+        let land = dcso3::land::Land::singleton(lua).ok();
+        self.points
+            .iter()
+            .enumerate()
+            .map(|(i, (pos, on_road))| {
+                let first = i == 0;
+                MissionPoint {
+                    action: Some(ActionTyp::Ground(if *on_road {
+                        VehicleFormation::OnRoad
+                    } else {
+                        VehicleFormation::OffRoad
+                    })),
+                    airdrome_id: None,
+                    helipad: None,
+                    typ: PointType::TurningPoint,
+                    link_unit: None,
+                    pos: LuaVec2(*pos),
+                    alt: land
+                        .as_ref()
+                        .and_then(|l| l.get_height(LuaVec2(*pos)).ok())
+                        .unwrap_or(0.),
+                    alt_typ: Some(AltType::BARO),
+                    time_re_fu_ar: None,
+                    eta: first.then_some(dcso3::Time(0.)),
+                    eta_locked: first.then_some(true),
+                    speed: self.speed_mps,
+                    speed_locked: first.then_some(true),
+                    name: None,
+                    task: Box::new(Task::ComboTask(vec![])),
+                }
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Equipment {
     pub(super) production: u32,
@@ -209,6 +274,11 @@ pub struct Ephemeral {
     /// AI helo mission tracking (F10-callable troop insertion / resource
     /// delivery): mission_id -> HeloMission
     pub(super) active_helo_missions: FxHashMap<super::logistics::HeloMissionId, super::logistics::HeloMission>,
+    /// Convoy / cargo flight / sea route / helo mission ids the theatre HQ
+    /// launched and wants to hear the end of (`crate::hq`).
+    pub(crate) hq_watch: FxHashSet<CompactString>,
+    /// How each watched transport ended: true = delivered. The HQ drains it.
+    pub(crate) hq_outcomes: FxHashMap<CompactString, bool>,
     /// Threat-aware routing state for those missions, see `helo_route`. Not
     /// persisted: a mission load drops the helos anyway.
     pub(super) helo_routes: FxHashMap<super::logistics::HeloMissionId, super::helo_route::HeloRouteState>,
@@ -304,6 +374,9 @@ pub struct Ephemeral {
     pub(super) last_capture_debug: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Last time treasury income was deposited (Smart Commander).
     pub(crate) last_treasury_income: DateTime<Utc>,
+    /// The mission clock's hour (0-23), sampled each time kills are
+    /// scored, for the night kill bonus. `None` until first read.
+    pub(crate) mission_hour: Option<u8>,
     /// Last time objectives were funded (Smart Commander).
     pub(crate) last_objective_fund: DateTime<Utc>,
     /// Centralised F10 map drawing layer.
@@ -333,6 +406,12 @@ pub struct Ephemeral {
     /// from the queue on the first error (see process_spawn_queue).
     spawn_failures: FxHashMap<GroupId, u8>,
     despawn_failures: FxHashMap<GroupId, u8>,
+    /// Ground starts asked for by the caller that is about to spawn the
+    /// group (see `LaunchRequest`). Consumed by that one `spawn_group`.
+    pub(super) launch_requests: FxHashMap<GroupId, LaunchRequest>,
+    /// Drives for ground groups waiting in the spawn queue (see
+    /// `QueuedDrive`). Dropped once the group is in DCS or given up on.
+    pub(super) queued_drives: FxHashMap<GroupId, QueuedDrive>,
     /// Side announcements held back until players have had time to join
     /// after a mission load; see `queue_restart_notice`.
     restart_notices: Vec<(DateTime<Utc>, Side, CompactString)>,
@@ -397,6 +476,8 @@ impl Default for Ephemeral {
             last_sea_route_spawn: FxHashMap::default(),
             sea_route_counter: 0,
             active_helo_missions: FxHashMap::default(),
+            hq_watch: FxHashSet::default(),
+            hq_outcomes: FxHashMap::default(),
             helo_routes: FxHashMap::default(),
             helo_mission_counter: 0,
             deployable_idx: FxHashMap::default(),
@@ -448,6 +529,7 @@ impl Default for Ephemeral {
             last_owner_change: FxHashMap::default(),
             last_capture_debug: FxHashMap::default(),
             last_treasury_income: DateTime::<Utc>::default(),
+            mission_hour: None,
             last_objective_fund: DateTime::<Utc>::default(),
             map_layer: MapLayer::default(),
             gci_tasks: Vec::new(),
@@ -458,6 +540,8 @@ impl Default for Ephemeral {
             pending_airbase_coalition: Vec::new(),
             spawn_failures: FxHashMap::default(),
             despawn_failures: FxHashMap::default(),
+            launch_requests: FxHashMap::default(),
+            queued_drives: FxHashMap::default(),
             restart_notices: Vec::new(),
             last_under_attack_notif: FxHashMap::default(),
             carrier_repair_crates: FxHashMap::default(),
@@ -493,6 +577,25 @@ fn bucket_pct(pct: u8) -> u8 {
 }
 
 impl Ephemeral {
+    /// Where `side`'s convoys, cargo flights, supply ships and helo missions
+    /// are headed.
+    pub(crate) fn transport_destinations(&self, side: Side) -> impl Iterator<Item = ObjectiveId> + '_ {
+        self.active_convoys
+            .values()
+            .filter(move |c| c.side == side)
+            .map(|c| c.destination)
+            .chain(self.active_air_routes.values().filter(move |r| r.side == side).map(|r| r.destination))
+            .chain(self.active_sea_routes.values().filter(move |r| r.side == side).map(|r| r.destination))
+            .chain(self.active_helo_missions.values().filter(move |m| m.side == side).map(|m| m.destination))
+    }
+
+    /// A transport has ended; if the theatre HQ is following it, tell it how.
+    pub(super) fn note_transport_outcome(&mut self, id: &str, delivered: bool) {
+        if self.hq_watch.remove(id) {
+            self.hq_outcomes.insert(id.into(), delivered);
+        }
+    }
+
     fn do_bg(&self, task: Task) {
         if let Some(to_bg) = &self.to_bg {
             match to_bg.send(task) {
@@ -540,6 +643,34 @@ impl Ephemeral {
                         .filter(|ab| ab.is_exist().unwrap_or(false))
                 })
             })
+    }
+
+    /// Where on objective `oid`'s DCS airbase a flight would start, and how
+    /// many free spots there this airframe can actually take -- the same
+    /// resolver and the same spot filter `spawn_group` builds the parking
+    /// start from, so a field that passes here really puts the flight on the
+    /// ramp. `None` when no live airbase resolves at all.
+    pub(super) fn usable_parking(
+        &self,
+        lua: MizLua,
+        persisted: &Persisted,
+        oid: &ObjectiveId,
+        helicopter: bool,
+        heavy: bool,
+    ) -> Option<(Vector2, usize)> {
+        let ab = self.resolve_airbase(lua, persisted, oid)?;
+        let p = ab.get_point().ok()?;
+        let n = ab
+            .get_parking_spots(true)
+            .map(|spots| {
+                spots
+                    .iter()
+                    .filter(|s| s.usable_by(helicopter))
+                    .filter(|s| !heavy || s.term_type == dcso3::airbase::term_type::OPEN_BIG)
+                    .count()
+            })
+            .unwrap_or(0);
+        Some((Vector2::new(p.0.x, p.0.z), n))
     }
 
     pub fn get_airbase_by_oid(&self, oid: &ObjectiveId) -> Option<&DcsOid<ClassAirbase>> {
@@ -989,11 +1120,17 @@ impl Ephemeral {
             // Deleted while it sat in the queue: nothing to spawn.
             let Some(group) = persisted.groups.get(&gid) else {
                 self.spawn_failures.remove(&gid);
+                self.queued_drives.remove(&gid);
                 continue;
             };
-            match self.spawn_group(perf, persisted, idx, spctx, group, vec![]) {
+            let mission = match self.queued_drives.get(&gid) {
+                Some(drive) => drive.mission(spctx.lua()),
+                None => vec![],
+            };
+            match self.spawn_group(perf, persisted, idx, spctx, group, mission) {
                 Ok(_) => {
                     self.spawn_failures.remove(&gid);
+                    self.queued_drives.remove(&gid);
                 }
                 Err(e) => {
                     let n = self.spawn_failures.entry(gid).or_default();
@@ -1008,6 +1145,7 @@ impl Ephemeral {
                             group.name
                         );
                         self.spawn_failures.remove(&gid);
+                        self.queued_drives.remove(&gid);
                     }
                 }
             }
@@ -1528,7 +1666,8 @@ impl Ephemeral {
                     | ActionKind::Fighters(AiPlaneCfg { template, .. })
                     | ActionKind::Attackers(AiPlaneCfg { template, .. })
                     | ActionKind::LogisticsRepair(AiPlaneCfg { template, .. })
-                    | ActionKind::LogisticsTransfer(AiPlaneCfg { template, .. }) => {
+                    | ActionKind::LogisticsTransfer(AiPlaneCfg { template, .. })
+                    | ActionKind::Reinforce(ReinforceCfg { template, .. }) => {
                         miz.get_group_by_name(mizidx, GroupKind::Any, *side, template.as_str())?
                             .ok_or_else(|| anyhow!("missing template for action {act:?}"))?;
                     }
@@ -2087,16 +2226,26 @@ impl Ephemeral {
                 route.points().ok().map(|seq| seq.into_iter().filter_map(|p| p.ok()).collect()).unwrap_or_default()
             };
 
+            // Taken whether or not it is used: it belongs to this one spawn.
+            let launch_req = self.launch_requests.remove(&group.id);
             if group.tags.contains(UnitTag::CAP)
                 || group.tags.contains(UnitTag::HotStart)
                 || group.tags.contains(UnitTag::ColdStart)
+                || launch_req.is_some()
             {
                 // Engines off on the ramp instead of turning. Everything else
                 // about the start -- parking spot selection, airdromeId, field
                 // elevation, locked zero speed/ETA -- is identical; DCS picks
                 // cold vs hot purely from the waypoint type/action pair, and
                 // getting only one of the two right air-starts the flight.
-                let cold = group.tags.contains(UnitTag::ColdStart);
+                let cold = group.tags.contains(UnitTag::ColdStart)
+                    || launch_req.map(|r| r.cold).unwrap_or(false);
+                // The field this flight takes off from: the one its caller
+                // asked for, else the objective it belongs to.
+                let launch_oid = launch_req.map(|r| r.field).or(match &group.origin {
+                    DeployKind::Objective { origin } => Some(*origin),
+                    _ => None,
+                });
                 // Resolve the origin airbase FIRST -- we need its id AND its
                 // position to build a valid parking start. A `TakeOffParkingHot`
                 // waypoint with no airdromeId (or one whose x/y/alt point
@@ -2104,13 +2253,15 @@ impl Ephemeral {
                 // is exactly the bug we're fighting. If we can't resolve the
                 // base, leave WP0 alone (ugly air start, but survivable) and
                 // let `enforce_cap_ground_start` scrap the event.
-                let airbase = match &group.origin {
-                    DeployKind::Objective { origin } => {
-                        self.resolve_airbase(spctx.lua(), persisted, origin)
-                    }
-                    _ => None,
-                };
+                let airbase = launch_oid
+                    .as_ref()
+                    .and_then(|oid| self.resolve_airbase(spctx.lua(), persisted, oid));
                 let helicopter = template.category == GroupKind::Helicopter;
+                let heavy = alive_units.iter().any(|u| super::Db::needs_big_spot(u.typ.as_str()));
+                // Whether this airframe may lift off from open ground when the
+                // field gives it no spot to park on.
+                let open_ground =
+                    helicopter || launch_req.map(|r| r.open_ground).unwrap_or(false);
                 // Set when we fall back to starting a helicopter on open
                 // ground; the group-table fixups below key off it the same way
                 // they key off a parking start.
@@ -2125,12 +2276,10 @@ impl Ephemeral {
                     // FARP -- an HL## FOB came back as Airdrome and put a helo
                     // in the ground -- so what the campaign says this objective
                     // is wins, and DCS's answer is only the fallback.
-                    let kind = match &group.origin {
-                        DeployKind::Objective { origin } => {
-                            persisted.objectives.get(origin).map(|o| o.kind.clone())
-                        }
-                        _ => None,
-                    };
+                    let kind = launch_oid
+                        .as_ref()
+                        .and_then(|oid| persisted.objectives.get(oid))
+                        .map(|o| o.kind.clone());
                     let cat = match kind {
                         Some(ObjectiveKind::Farp { .. }) | Some(ObjectiveKind::Fob) => {
                             dcso3::airbase::AirbaseCategory::Helipad
@@ -2160,7 +2309,12 @@ impl Ephemeral {
                             let (mut usable, rejected): (
                                 Vec<dcso3::airbase::ParkingSpot>,
                                 Vec<dcso3::airbase::ParkingSpot>,
-                            ) = spots.into_iter().partition(|s| s.usable_by(helicopter));
+                            ) = spots.into_iter().partition(|s| {
+                                // A heavy on a fighter's spot is a wreck on
+                                // the taxiway: large open stands only.
+                                s.usable_by(helicopter)
+                                    && (!heavy || s.term_type == dcso3::airbase::term_type::OPEN_BIG)
+                            });
                             usable.sort_by(|a, b| {
                                 a.preference(helicopter)
                                     .cmp(&b.preference(helicopter))
@@ -2233,7 +2387,7 @@ impl Ephemeral {
                         // start below instead; fixed wing has no such option
                         // and still has to try the field.
                         (Some((abid, p, cat)), Some(anchor))
-                            if !helicopter || !parking_plan.is_empty() =>
+                            if !open_ground || !parking_plan.is_empty() =>
                         {
                             // The exact shape DCS itself uses when it spawns a
                             // ground-starting flight at runtime (see
@@ -2299,7 +2453,7 @@ impl Ephemeral {
                                 parking_plan.len()
                             );
                         }
-                        _ if helicopter => {
+                        _ if open_ground => {
                             // Most FOBs have no DCS airbase or FARP pad at all,
                             // so there is nothing to park at -- but a helicopter
                             // does not need one. "From Ground Area Hot" starts
@@ -2351,6 +2505,17 @@ impl Ephemeral {
                                 first.pos.y
                             );
                         }
+                        // The caller asked for a takeoff from a field that has
+                        // nothing to take off from. Every runtime aircraft is
+                        // meant to come off a friendly field, so refuse the
+                        // spawn rather than let DCS put it in the air over
+                        // the field -- the caller refunds or picks another.
+                        _ if launch_req.is_some() => bail!(
+                            "{} cannot start on the ground at {:?}: no DCS airbase with \
+                             parking resolves there",
+                            group.name,
+                            launch_oid
+                        ),
                         // An action whose spawn location *is* an air start
                         // asked for this. Reporting it as a failure to find an
                         // airbase reads like a broken drone every mission

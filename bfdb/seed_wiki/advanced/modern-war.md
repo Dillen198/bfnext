@@ -64,8 +64,8 @@ runs dry.
 Mostly at night, each side raids the other's factories, logistics hubs,
 airbases and naval bases:
 
-- **One-way attack drones** launch from deep behind the lines and fly low to
-  the target. SAMs, AAA and **you** can shoot them down. The defending side
+- **One-way attack drones** launch from the ground at a base deep behind the
+  lines and fly low to the target. SAMs, AAA and **you** can shoot them down. The defending side
   gets an **air raid warning** with the target and an arrival estimate, so a
   fighter or helicopter on patrol has a clear job.
 - **Ballistic missiles** fire from the side's own deployed launchers in range.
@@ -103,6 +103,12 @@ truck convoy.
 **Fuel convoys** can be tractor-trailer refuelers: a KrAZ or MAZ truck towing
 a fuel tank trailer. The trailers are hitched when the convoy sets off. Kill
 the tractor and its trailer goes nowhere.
+
+**Tank transporters** carry replacement armour when a player calls
+**Reinforcements** from the Actions menu. They drive from the nearest friendly
+base, so an objective that has lost its garrison can be rebuilt. Every
+transporter killed on the road is armour that never arrives. See
+[Action Types](../reference/action-types.md#reinforce).
 
 ## Offensives and pauses
 

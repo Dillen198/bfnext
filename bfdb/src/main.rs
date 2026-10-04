@@ -53,6 +53,8 @@ struct SiteAssets;
 mod geo;
 mod news;
 mod news_llm;
+mod hq_strategist;
+mod groundfeed;
 mod news_image;
 mod db;
 mod db_id;
@@ -292,6 +294,21 @@ struct Args {
     /// right one. Falls back to $BFDB_NEWS_LLM_MODEL.
     #[arg(long = "news-llm-model")]
     news_llm_model: Option<String>,
+    /// Model endpoint for the HQ strategist (`hq_strategist.rs`), which sets
+    /// each coalition's posture, main effort and priorities for the engine's
+    /// theatre HQ. Same formats as --news-llm-url. Unset: the strategist uses
+    /// the war diary's model; neither set: no strategist, and the HQ runs on
+    /// its own rules.
+    #[arg(long = "hq-llm-url")]
+    hq_llm_url: Option<String>,
+    #[arg(long = "hq-llm-key")]
+    hq_llm_key: Option<String>,
+    #[arg(long = "hq-llm-model")]
+    hq_llm_model: Option<String>,
+    /// Minutes between strategist reviews, per instance (two model calls each,
+    /// one per side). Default 15. 0 turns the strategist off.
+    #[arg(long = "hq-strategist-minutes", default_value_t = 15)]
+    hq_strategist_minutes: u64,
     /// Who draws one picture per filed war-diary dispatch (see
     /// `news_image.rs`): `pollinations` (with an account key via
     /// --news-image-key; anonymous without one, rate limited and may
@@ -1443,6 +1460,102 @@ async fn api_groundwar_command(
         &inst,
         "ground-command",
         vec![("ucid", Value::from(ucid.to_string())), ("cmd", Value::from(cmd))],
+    )
+    .await?;
+    Ok(json_response(raw))
+}
+
+/// GET /api/hq — the caller's coalition's theatre HQ: its posture, main
+/// effort and intent, the operations it is running, the support requests
+/// waiting, its record, and the fog-of-war picture it plans from.
+///
+/// Coalition-locked like `/api/groundwar`. `can_command` comes from the
+/// engine (the HQ's `override_rule`, or a server admin); a dashboard admin
+/// may always command. `can_request` says whether this viewer can ask for
+/// support (a pilot registered on the side).
+async fn api_hq(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    use netidx::publisher::Value;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let side_str = match c.side {
+        dcso3::coalition::Side::Red => "red",
+        _ => "blue",
+    };
+    let ucid = c.ucid().map(|u| u.to_string()).unwrap_or_default();
+    let raw = call_engine_rpc_str_optional(
+        &db,
+        &inst,
+        "query-hq",
+        vec![("side", Value::from(side_str.to_string())), ("ucid", Value::from(ucid))],
+    )
+    .await?;
+    let mut v: serde_json::Value = serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
+    if let Some(o) = v.as_object_mut() {
+        let engine_says = o.get("can_command").and_then(|b| b.as_bool()).unwrap_or(false);
+        o.insert("can_command".into(), serde_json::json!(c.session.is_admin || engine_says));
+        o.insert("can_request".into(), serde_json::json!(!c.god_mode && c.ucid().is_some()));
+        o.insert("god_mode".into(), serde_json::json!(c.god_mode));
+    }
+    Ok(json_response(v.to_string()))
+}
+
+/// POST /api/hq/command — a support request, or (for a commander) orders to
+/// the caller's coalition's HQ. The body is an `HqCommand`. Requests go as
+/// the caller's linked pilot; orders from a dashboard admin go with the
+/// admin's authority (an empty ucid), everyone else's as their pilot, and the
+/// engine decides whether that pilot may give them.
+async fn api_hq_command(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: bfprotocols::hq::HqCommand,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    use bfprotocols::hq::HqCommand;
+    use netidx::publisher::Value;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let is_request = matches!(body, HqCommand::Request { .. } | HqCommand::CancelRequest { .. });
+    let ucid = if is_request {
+        if c.god_mode {
+            return Err(websec::forbidden("asking for support needs a pilot registered on a side this campaign").into());
+        }
+        match c.ucid() {
+            Some(u) => u.to_string(),
+            None => {
+                return Err(websec::forbidden(
+                    "account not linked -- type -linkme <token> in DCS chat (get the token with /linkme in Discord)",
+                )
+                .into())
+            }
+        }
+    } else if c.session.is_admin {
+        String::new()
+    } else {
+        match c.ucid() {
+            Some(u) => u.to_string(),
+            None => return Err(websec::forbidden("account not linked").into()),
+        }
+    };
+    let side_str = match c.side {
+        dcso3::coalition::Side::Red => "red",
+        _ => "blue",
+    };
+    let cmd = serde_json::to_string(&body).map_err(anyhow::Error::from)?;
+    let raw = call_engine_rpc_str_optional(
+        &db,
+        &inst,
+        "hq-command",
+        vec![
+            ("side", Value::from(side_str.to_string())),
+            ("ucid", Value::from(ucid)),
+            ("cmd", Value::from(cmd)),
+        ],
     )
     .await?;
     Ok(json_response(raw))
@@ -6670,6 +6783,8 @@ struct InstanceLive {
     live: LiveState,
     live_tx: broadcast::Sender<String>,
     tac: TacState,
+    /// The ground war per side, for `/ws/groundwar` (`groundfeed`).
+    ground: groundfeed::GroundState,
 }
 
 type LiveMap = Arc<std::collections::HashMap<InstanceId, InstanceLive>>;
@@ -7312,6 +7427,15 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_groundwar);
 
+    let hq = warp::path!("api" / "hq")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(api_hq);
+
     let kills = warp::path!("api" / "kills")
         .and(with_db(db.clone()))
         .and(warp::query::<std::collections::HashMap<String, String>>())
@@ -7438,6 +7562,29 @@ async fn main() -> Result<()> {
             "news: no --news-llm-url/--news-llm-key -- the war diary will use its template bank"
         ),
     }
+    // The HQ strategist's model: its own flags, else the diary's. See
+    // `hq_strategist.rs`.
+    let hq_writer = if args.hq_strategist_minutes == 0 {
+        None
+    } else if args.hq_llm_url.is_some() || args.hq_llm_key.is_some() {
+        news_llm::WriterCfg::resolve(args.hq_llm_url.clone(), args.hq_llm_key.clone(), args.hq_llm_model.clone())
+    } else {
+        news_writer.clone().map(|mut w| {
+            if let Some(m) = args.hq_llm_model.clone() {
+                w.model = m;
+            }
+            w
+        })
+    };
+    match &hq_writer {
+        Some(w) => log::info!(
+            "hq strategist: {} at {}, every {} min",
+            w.model,
+            w.url,
+            args.hq_strategist_minutes
+        ),
+        None => log::info!("hq strategist: off -- the engine's HQ runs on its own rules"),
+    }
     // Pictures for the diary. Off unless named -- see `news_image.rs`.
     // A misconfigured provider turns pictures off with an error rather than
     // stopping bfdb: they are decoration, the rest of the server is not.
@@ -7486,6 +7633,7 @@ async fn main() -> Result<()> {
             let live: LiveState = Arc::new(tokio::sync::RwLock::new((0.0, Vec::new(), Vec::new())));
             let (live_tx, _) = broadcast::channel::<String>(64);
             let tac: TacState = Arc::new(tokio::sync::RwLock::new(TacCache::default()));
+            let ground: groundfeed::GroundState = Default::default();
 
             match cfg.export_port {
                 Some(port) => {
@@ -7508,6 +7656,7 @@ async fn main() -> Result<()> {
             // about. Its live state is polled on demand by `range::api`.
             if cfg.base.is_some() && !cfg.is_range() {
                 tokio::spawn(tacmap_poller(db.clone(), inst.clone(), tac.clone()));
+                tokio::spawn(groundfeed::poller(db.clone(), inst.clone(), ground.clone()));
                 tokio::spawn(unitdb_refresher(db.clone(), inst.clone()));
                 tokio::spawn(news_generator(
                     db.clone(),
@@ -7515,8 +7664,16 @@ async fn main() -> Result<()> {
                     news_writer.clone(),
                     news_images.clone(),
                 ));
+                if let Some(w) = hq_writer.clone() {
+                    tokio::spawn(hq_strategist::run(
+                        db.clone(),
+                        inst.clone(),
+                        w,
+                        std::time::Duration::from_secs(args.hq_strategist_minutes.max(1) * 60),
+                    ));
+                }
             }
-            m.insert(id, InstanceLive { live, live_tx, tac });
+            m.insert(id, InstanceLive { live, live_tx, tac, ground });
         }
         Arc::new(m)
     };
@@ -7587,6 +7744,19 @@ async fn main() -> Result<()> {
         gci_map.insert(id, (tx, hist));
     }
     let gci_map = Arc::new(gci_map);
+
+    let ws_groundwar_route = warp::path!("ws" / "groundwar")
+        .and(websec::ws_limited())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .and(with_live(live_map.clone()))
+        .then(|ws, ip, sid, q, db, bot, inst: Inst, map: LiveMap| async move {
+            let l = live_for(&map, &inst);
+            groundfeed::handler(ws, ip, sid, q, db, bot, inst, l.ground).await
+        });
 
     let ws_tacmap_route = warp::path!("ws" / "tacmap")
         .and(websec::ws_limited())
@@ -8251,6 +8421,17 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_groundwar_command);
 
+    let hq_command_route = warp::path!("api" / "hq" / "command")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<bfprotocols::hq::HqCommand>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_hq_command);
+
     let intel_markup_delete_route = warp::path!("api" / "intel" / "markup" / "delete")
         .and(warp::post())
         .and(extract_session_cookie())
@@ -8287,6 +8468,7 @@ async fn main() -> Result<()> {
         .or(briefing)
         .or(situation)
         .or(groundwar)
+        .or(hq)
         .or(warehouse)
         .or(kills)
         .or(capture_events)
@@ -8425,6 +8607,7 @@ async fn main() -> Result<()> {
                 .or(auth_routes)
                 .or(ws_units_route)
                 .or(ws_tacmap_route)
+                .or(ws_groundwar_route)
                 .or(ws_logs_route)
                 .or(ws_gci_route)
                 .or(gci_transcript_route)
@@ -8455,6 +8638,7 @@ async fn main() -> Result<()> {
             .or(intel_markup_add_route)
             .or(intel_markup_delete_route)
             .or(groundwar_command_route)
+            .or(hq_command_route)
             .boxed())
         .or(admin_bot_start
             .or(admin_bot_stop)

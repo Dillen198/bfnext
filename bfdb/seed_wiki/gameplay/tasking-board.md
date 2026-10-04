@@ -113,3 +113,11 @@ against clickable pins.
 - [The Auto-Generated Briefing](./briefing.md) — how tasks are ranked into the briefing
 - [Live GCI (AWACS Calls)](./gci.md) — the voice net that announces new tasks
 - [AI Helo Missions](../advanced/helo-missions.md) — the fastest way to close a SUPPLY task
+
+## Tasks from the HQ
+
+On servers running the [Theatre HQ](../advanced/theatre-hq.md), the HQ posts its
+own asks to the board, marked **posted by command**: capture its main effort,
+supply the base that needs it most, CAS on the main effort, CAP over a base
+under air threat. It keeps no more than
+{{cfg:smart_commander.hq.max_tasks|3}} of its own up at once.

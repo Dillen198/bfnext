@@ -338,6 +338,12 @@ pub struct Player {
     pub jtac_or_spectators: bool,
     #[serde(skip)]
     pub provisional_points: i32,
+    /// The late-joiner head start above `new_player_join` (see
+    /// `Db::late_joiner_start`). It can be spent but not `-transfer`red:
+    /// only points above it can be given away, so an alt account can't be
+    /// made just to hand its start to a main.
+    #[serde(default)]
+    pub untransferable: i32,
 }
 
 impl Db {
@@ -407,6 +413,17 @@ impl Db {
                 "insufficient balance, you have {}, you requested {}",
                 sp.points,
                 amount
+            )
+        }
+        // Whatever of the head start has been spent is spent: the lock only
+        // ever shrinks to the balance.
+        sp.untransferable = sp.untransferable.clamp(0, sp.points.max(0));
+        let transferable = sp.points - sp.untransferable;
+        if transferable < amount as i32 {
+            bail!(
+                "you can transfer {} -- the other {} is your starting grant, which you can spend but not give away",
+                transferable,
+                sp.untransferable
             )
         }
         sp.points -= amount as i32;
@@ -1357,13 +1374,14 @@ impl Db {
             Some(p) if p.side != side => Err(RegErr::AlreadyRegistered(p.side_switches, p.side)),
             Some(_) => Err(RegErr::AlreadyOn(side)),
             None => {
-                let points = self
-                    .ephemeral
-                    .cfg
-                    .points
-                    .as_ref()
-                    .map(|p| p.new_player_join as i32)
-                    .unwrap_or(0);
+                // Late joiners start at a share of what their side's pilots
+                // typically hold, not at the bare join grant.
+                let (points, untransferable) = self.late_joiner_start(side);
+                if untransferable > 0 {
+                    info!(
+                        "[ECONOMY] {name} joins {side:?} with {points} points ({untransferable} late-joiner start)"
+                    );
+                }
                 self.persisted.players.insert_cow(
                     ucid,
                     Player {
@@ -1384,6 +1402,7 @@ impl Db {
                         kill_streak: 0,
                         total_kills: 0,
                         flight: None,
+                        untransferable,
                     },
                 );
                 self.ephemeral.stat(Stat::Register {
@@ -1761,12 +1780,14 @@ impl Db {
                             if player_side != Some(obj.owner()) {
                                 return Ok(());
                             }
-                            // A base with no DCS warehouse (a zone-only FOB, a
-                            // command center, a FARP whose pad is gone) has
-                            // nothing to credit -- that was logged as an error
-                            // on every such deslot.
+                            // A zone-only FOB or command center, or a carrier
+                            // whose deck mapping went with a capture, has no
+                            // DCS warehouse: there is nothing to credit, and
+                            // takeoff from there debited nothing either. This
+                            // used to log "unable to fix warehouse no such
+                            // airbase ObjectiveId(N)" as an ERROR every time.
                             let Some(id) = self.ephemeral.airbase_by_oid.get(&oid).cloned() else {
-                                debug!("deslot at {oid:?}: no warehouse there to return the airframe to");
+                                debug!("{} has no DCS warehouse, nothing to credit for {typ}", obj.name);
                                 return Ok(());
                             };
                             let airbase = Airbase::get_instance(lua, &id).context("get airbase")?;
@@ -1975,7 +1996,7 @@ impl Db {
     }
 
     pub fn award_kill_points(&mut self, cfg: &PointsCfg, dead: &Dead) {
-        let mut hit_by: SmallVec<[(Ucid, bool); 16]> = smallvec![];
+        let econ = self.ephemeral.cfg.economy.clone();
         let valid_shots = || {
             // why are you hitting yourself
             dead.shots
@@ -1999,52 +2020,82 @@ impl Db {
                     }
                 })
         };
-        for shot in valid_shots() {
-            let k = match shot.shooter {
-                Who::Player { ucid, .. } => (ucid, cfg.provisional),
-                Who::AI { ucid, .. } => match ucid {
-                    Some(ucid) => (ucid, false),
-                    None => continue,
-                },
-            };
-            if shot.hit && !hit_by.contains(&k) {
-                hit_by.push(k)
+        // Who gets credit, keyed by (player, credited through their deployed
+        // AI), weighted by hits; the killing blow counts extra. It used to be
+        // `ceil(total / shooters)` each, which minted points on every shared
+        // kill and paid a single gun hit the same as the missile that killed.
+        let credit_key = |shooter: &Who| match shooter {
+            Who::Player { ucid, .. } => Some((*ucid, false)),
+            Who::AI { ucid: Some(ucid), .. } => Some((*ucid, true)),
+            Who::AI { ucid: None, .. } => None,
+        };
+        fn add_credit(
+            credit: &mut SmallVec<[((Ucid, bool), f64); 8]>,
+            k: (Ucid, bool),
+            w: f64,
+        ) {
+            match credit.iter_mut().find(|(c, _)| *c == k) {
+                Some(e) => e.1 += w,
+                None => credit.push((k, w)),
             }
         }
-        if hit_by.is_empty() {
+        let mut credit: SmallVec<[((Ucid, bool), f64); 8]> = smallvec![];
+        let mut last_hit: Option<((Ucid, bool), DateTime<Utc>)> = None;
+        for shot in valid_shots().filter(|s| s.hit) {
+            let Some(k) = credit_key(&shot.shooter) else { continue };
+            add_credit(&mut credit, k, 1.);
+            if last_hit.map_or(true, |(_, t)| shot.time >= t) {
+                last_hit = Some((k, shot.time));
+            }
+        }
+        if let Some((k, _)) = last_hit {
+            add_credit(&mut credit, k, econ.killing_blow_weight.max(0.));
+        }
+        if credit.is_empty() {
+            // Nobody registered a hit: everyone who fired at it in the last
+            // three minutes shares it evenly.
             for shot in valid_shots() {
-                let k = match shot.shooter {
-                    Who::Player { ucid, .. } => (ucid, cfg.provisional),
-                    Who::AI { ucid, .. } => match ucid {
-                        Some(ucid) => (ucid, false),
-                        None => continue,
-                    },
-                };
-                if dead.time - shot.time <= Duration::minutes(3) && !hit_by.contains(&k) {
-                    hit_by.push(k);
+                let Some(k) = credit_key(&shot.shooter) else { continue };
+                if dead.time - shot.time <= Duration::minutes(3)
+                    && !credit.iter().any(|(c, _)| *c == k)
+                {
+                    credit.push((k, 1.));
                 }
             }
         }
-        if !hit_by.is_empty() {
-            let base_points = (&dead.shots)
-                .into_iter()
+        if !credit.is_empty() {
+            let victim_typ = dead
+                .shots
+                .iter()
                 .find(|s| s.target_typ.trim() != "")
-                .map(|s| &s.target_typ)
+                .map(|s| s.target_typ.clone());
+            let base_points = victim_typ
+                .as_ref()
                 .and_then(|typ| self.ephemeral.cfg.unit_classification.get(typ.as_str()))
                 .map(|tags| {
-                    if tags.contains(UnitTag::LR | UnitTag::TrackRadar | UnitTag::SAM) {
-                        cfg.ground_kill + cfg.lr_sam_bonus
-                    } else if tags.contains(UnitTag::Aircraft) || tags.contains(UnitTag::Helicopter)
-                    {
+                    if tags.contains(UnitTag::Aircraft) || tags.contains(UnitTag::Helicopter) {
                         cfg.air_kill
                     } else {
-                        cfg.ground_kill
+                        // Priced by what it was: a rifleman is worth less
+                        // than a tank, a radar more.
+                        let v = (cfg.ground_kill as f64 * econ.ground_kill_multiplier(tags.0))
+                            .round() as u32;
+                        let v = if cfg.ground_kill > 0 { v.max(1) } else { v };
+                        if tags.contains(UnitTag::LR | UnitTag::TrackRadar | UnitTag::SAM) {
+                            v + cfg.lr_sam_bonus
+                        } else {
+                            v
+                        }
                     }
                 })
                 .unwrap_or(cfg.ground_kill);
-            // Apply night kill bonus if configured
+            // Apply night kill bonus if configured. Night is the mission's
+            // night, not the server's wall clock.
             let total_points = if let Some(tod_cfg) = self.ephemeral.cfg.time_of_day_effects.as_ref() {
-                let hour = dead.time.hour() as u8;
+                let hour = self
+                    .ephemeral
+                    .mission_hour
+                    .unwrap_or_else(|| dead.time.hour() as u8);
                 let is_night = if tod_cfg.night_start_hour > tod_cfg.night_end_hour {
                     // Wraps midnight (e.g. 22-06)
                     hour >= tod_cfg.night_start_hour || hour < tod_cfg.night_end_hour
@@ -2059,7 +2110,8 @@ impl Db {
             } else {
                 base_points
             };
-            let pps = (total_points as f32 / hit_by.len() as f32).ceil() as i32;
+            let weights: SmallVec<[f64; 8]> = credit.iter().map(|(_, w)| *w).collect();
+            let shares = bfprotocols::cfg::split_by_weight(total_points as i32, &weights);
             let victim_info = match &dead.victim {
                 Who::Player { ucid, .. } => self.persisted.players.get(ucid).map(|p| VictimInfo {
                     ucid: *ucid,
@@ -2077,51 +2129,63 @@ impl Db {
                     })
                 }
             };
-            // Only a pilot's own shots go on their debrief -- not kills their
-            // deployed AI made while they flew.
-            let victim_typ = dead
-                .shots
-                .iter()
-                .find(|s| s.target_typ.trim() != "")
-                .map(|s| s.target_typ.clone());
-            let pilot_shooters: SmallVec<[Ucid; 4]> = dead
-                .shots
-                .iter()
-                .filter_map(|s| match &s.shooter {
-                    Who::Player { ucid, .. } => Some(*ucid),
-                    Who::AI { .. } => None,
-                })
-                .collect();
-            for (ucid, provisional) in hit_by {
-                if let Some(player) = self.persisted.players.get_mut_cow(&ucid) {
-                    let msg = if player.side == *dead.victim.side() {
-                        self.apply_teamkill_penalty(ucid, total_points, &victim_info)
+            for (((ucid, via_ai), _), share) in credit.iter().copied().zip(shares) {
+                let Some((side, streak)) = self
+                    .persisted
+                    .players
+                    .get(&ucid)
+                    .map(|p| (p.side, p.kill_streak))
+                else {
+                    continue;
+                };
+                let msg = if side == *dead.victim.side() {
+                    self.apply_teamkill_penalty(ucid, total_points, &victim_info)
+                } else {
+                    // A kill by the player's deployed SAMs/troops pays a
+                    // share, less while they aren't flying -- it used to pay
+                    // in full, offline included, which out-earned actually
+                    // hauling the stuff. Streaks are the pilot's own.
+                    let ai_frac = if via_ai {
+                        econ.owned_ai_fraction(self.is_slotted(&ucid))
                     } else {
-                        // Apply kill streak bonus
-                        let streak_mult = cfg.kill_streak_bonuses
+                        1.
+                    };
+                    let streak_mult = if via_ai {
+                        1.0
+                    } else {
+                        cfg.kill_streak_bonuses
                             .iter()
                             .rev()
-                            .find(|(min_streak, _)| player.kill_streak >= *min_streak)
+                            .find(|(min_streak, _)| streak >= *min_streak)
                             .map(|(_, mult)| *mult)
-                            .unwrap_or(1.0);
-                        let pps_with_streak = (pps as f64 * streak_mult).ceil() as i32;
-                        let tp = if provisional {
-                            player.provisional_points += pps_with_streak;
-                            player.provisional_points
-                        } else {
-                            player.points += pps_with_streak;
-                            player.points
-                        };
-                        if pilot_shooters.contains(&ucid)
-                            && let Some(f) = player.flight.as_mut()
-                        {
-                            let typ = victim_typ.as_ref().map(|t| t.as_str()).unwrap_or("unknown");
-                            f.tally.add_kill(typ, pps_with_streak);
-                        }
-                        // Increment streak and total kills
+                            .unwrap_or(1.0)
+                    };
+                    let raw = (share as f64 * ai_frac * streak_mult).round() as i32;
+                    let earned = self.scale_earning(&ucid, raw);
+                    let pts = earned.amount;
+                    let provisional = !via_ai && cfg.provisional;
+                    let player = match self.persisted.players.get_mut_cow(&ucid) {
+                        Some(p) => p,
+                        None => continue,
+                    };
+                    let tp = if provisional {
+                        player.provisional_points += pts;
+                        player.provisional_points
+                    } else {
+                        player.points += pts;
+                        player.points
+                    };
+                    // Only a pilot's own kills go on their debrief -- not
+                    // kills their deployed AI made while they flew.
+                    if !via_ai
+                        && let Some(f) = player.flight.as_mut()
+                    {
+                        let typ = victim_typ.as_ref().map(|t| t.as_str()).unwrap_or("unknown");
+                        f.tally.add_kill(typ, pts);
+                    }
+                    player.total_kills = player.total_kills.saturating_add(1);
+                    if !via_ai {
                         player.kill_streak = player.kill_streak.saturating_add(1);
-                        player.total_kills = player.total_kills.saturating_add(1);
-                        
                         if player.kill_streak == 5 {
                             self.ephemeral.pending_achievements.push(format!("{} is now an Ace! (5 kill streak)", player.name).into());
                         } else if player.kill_streak == 10 {
@@ -2129,31 +2193,32 @@ impl Db {
                         } else if player.kill_streak == 15 {
                             self.ephemeral.pending_achievements.push(format!("{} is a god of war! (15 kill streak)", player.name).into());
                         }
-                        
-                        let pm = if provisional { " provisional" } else { "" };
-                        let streak_msg = if streak_mult > 1.0 {
-                            format_compact!(" [x{:.1} streak]", streak_mult)
-                        } else {
-                            format_compact!("")
-                        };
-                        match &victim_info {
-                            None => format_compact!("{tp}(+{pps_with_streak}){pm}{streak_msg} points"),
-                            Some(vi) => {
-                                if vi.ai_deployable {
-                                    format_compact!(
-                                        "{tp}(+{pps_with_streak}){pm}{streak_msg} points, killed {}'s deployed ai unit",
-                                        vi.name
-                                    )
-                                } else {
-                                    format_compact!("{tp}(+{pps_with_streak}){pm}{streak_msg} points, killed {}", vi.name)
-                                }
+                    }
+                    let pm = if provisional { " provisional" } else { "" };
+                    let streak_msg = if streak_mult > 1.0 {
+                        format_compact!(" [x{:.1} streak]", streak_mult)
+                    } else {
+                        format_compact!("")
+                    };
+                    let who = if via_ai { "your deployed ai " } else { "" };
+                    let note = earned.note();
+                    match &victim_info {
+                        None => format_compact!("{tp}(+{pts}){pm}{streak_msg}{note} points, {who}kill"),
+                        Some(vi) => {
+                            if vi.ai_deployable {
+                                format_compact!(
+                                    "{tp}(+{pts}){pm}{streak_msg}{note} points, {who}killed {}'s deployed ai unit",
+                                    vi.name
+                                )
+                            } else {
+                                format_compact!("{tp}(+{pts}){pm}{streak_msg}{note} points, {who}killed {}", vi.name)
                             }
                         }
-                    };
-                    debug!("{ucid} kill message: {msg}");
-                    self.ephemeral
-                        .panel_to_player(&self.persisted, 10, &ucid, msg)
-                }
+                    }
+                };
+                debug!("{ucid} kill message: {msg}");
+                self.ephemeral
+                    .panel_to_player(&self.persisted, 10, &ucid, msg)
             }
         }
     }

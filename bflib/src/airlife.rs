@@ -17,8 +17,9 @@ for more details.
 //! Air activity for thin servers (`Cfg::air_life`).
 //!
 //! Three independent parts:
-//! - **Wingman**: F10 > Wingman spawns an AI flight in the air behind the
-//!   requesting player, flying DCS's Escort task on their aircraft.
+//! - **Wingman**: F10 > Wingman starts an AI flight up at the friendly field
+//!   nearest the requesting player, which takes off and flies DCS's Escort
+//!   task on their aircraft.
 //! - **Packages**: while a side has few human pilots, the engine launches that
 //!   side's own Fighters / Attackers / SEAD actions against the front.
 //! - **Civil traffic**: neutral airliners overfly the map and use airports
@@ -228,7 +229,7 @@ pub(crate) fn air_point<'lua>(
 /// Order `gid` to land at the nearest friendly airbase and hand it to the RTB
 /// sweep, which deletes it once it is down. Deletes it outright if it can't
 /// be ordered (not in DCS, no friendly field).
-fn send_home(lua: MizLua, ctx: &mut Context, gid: GroupId, now: DateTime<Utc>) {
+pub(crate) fn send_home(lua: MizLua, ctx: &mut Context, gid: GroupId, now: DateTime<Utc>) {
     let Some(group) = ctx.db.persisted.groups.get(&gid) else { return };
     let (name, side) = (group.name.clone(), group.side);
     let ordered = (|| -> Result<()> {
@@ -405,39 +406,41 @@ fn request_wingman(
     }
     let unit_name = inst.unit_name.clone();
     let here = Vector2::new(inst.position.p.x, inst.position.p.z);
-    let fwd = {
-        let f = Vector2::new(inst.position.x.x, inst.position.x.z);
-        if f.norm() > 1e-6 { f.normalize() } else { Vector2::new(1., 0.) }
-    };
-    let right = Vector2::new(-fwd.y, fwd.x);
     let player_alt = inst.position.p.y;
     let speed = {
         let v = inst.velocity.norm();
         if rotary { v.max(40.) } else { v.max(130.) }
     };
-    let origin: ObjectiveId = ctx
-        .db
-        .objectives()
-        .filter(|(_, o)| o.owner() == side)
-        .min_by(|(_, a), (_, b)| dist(a.pos(), here).total_cmp(&dist(b.pos(), here)))
-        .map(|(id, _)| *id)
-        .ok_or_else(|| anyhow!("your side holds no objectives"))?;
+    // It comes up from the nearest friendly field that can launch it -- a
+    // jet needs free parking at an airbase, a helicopter any airbase, FARP
+    // or FOB -- starts up there and flies out to join, instead of appearing
+    // in the air behind the player.
+    let Some(field) = ctx.db.pick_launch_field(lua, side, here, rotary, false, 0.) else {
+        return Ok(format_compact!(
+            "No friendly {} near you has room to launch a wingman right now.",
+            if rotary { "airbase, FARP or FOB" } else { "airfield" }
+        ));
+    };
+    let origin: ObjectiveId = field.oid;
     // The player's DCS group is what the Escort task follows.
     let escorted = Unit::get_by_name(lua, unit_name.as_str())
         .and_then(|u| u.get_group())
         .and_then(|g| g.id())
         .context("finding your aircraft")?;
 
-    // Behind and off the right wing, so it closes into position rather than
-    // appearing in front of the player.
-    let (back, off) = if rotary { (400., 150.) } else { (1_500., 400.) };
-    let spawn = here - fwd * back + right * off;
-    // Same altitude as the player, but never inside the hill behind them.
+    // Heads for where the player is now at the player's altitude, never
+    // inside the hill under them, until the escort task picks them up.
     let floor = if rotary { 60. } else { 150. };
-    let altitude = Land::singleton(lua)
-        .and_then(|l| l.get_height(LuaVec2(spawn)))
+    let land = Land::singleton(lua).ok();
+    let altitude = land
+        .as_ref()
+        .and_then(|l| l.get_height(LuaVec2(here)).ok())
         .map(|g| player_alt.max(g + floor))
         .unwrap_or(player_alt);
+    let field_elev = land
+        .as_ref()
+        .and_then(|l| l.get_height(LuaVec2(field.pos)).ok())
+        .unwrap_or(0.);
     let (engage, targets) = if rotary {
         (cfg.rotary_engage_dist_m, vec![Attribute::Helicopters, Attribute::GroundUnits])
     } else {
@@ -462,9 +465,11 @@ fn request_wingman(
             params: FollowParams { group: escorted, pos: station, last_waypoint_index: None },
         },
     ]);
+    // Waypoint 0 is the field: the spawn turns it into the takeoff, and the
+    // escort task on it starts the moment the wingman is up.
     let mission = vec![
-        air_point(spawn, altitude, speed, escort),
-        air_point(spawn + fwd * 30_000., altitude, speed, Task::ComboTask(vec![])),
+        air_point(field.pos, field_elev, speed, escort),
+        air_point(here, altitude, speed, Task::ComboTask(vec![])),
     ];
 
     let spctx = SpawnCtx::new(lua)?;
@@ -486,10 +491,9 @@ fn request_wingman(
             side,
             template.as_str(),
             origin,
-            spawn,
-            heading_of(fwd),
-            altitude,
-            speed,
+            field.pos,
+            heading_of(here - field.pos),
+            false,
             m,
         ) {
             Ok(gid) => {
@@ -530,8 +534,11 @@ fn request_wingman(
         },
     );
     Ok(format_compact!(
-        "{typ} wingman joining on your right wing. It stays for {} min, or until you land or \
-         release it (F10 > Wingman > Release Wingman).",
+        "Your {typ} wingman is starting up at {} ({:.0} km from you). It takes off and joins on \
+         your wing, and stays for {} min, or until you land or release it (F10 > Wingman > \
+         Release Wingman).",
+        field.name,
+        dist(field.pos, here) / 1000.,
         cfg.lifetime_secs / 60
     ))
 }
@@ -879,6 +886,12 @@ fn tick_packages(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Date
     {
         return;
     }
+    // The theatre HQ flies the air war when it is on -- the same packages,
+    // aimed by its plan and bought out of the same treasury -- so these
+    // stand down rather than double it.
+    if crate::hq::active(&ctx.db.ephemeral.cfg) {
+        return;
+    }
     ctx.airlife.last_package_check = Some(now);
     let total = ctx.db.instanced_players().count();
     if total == 0 && !cfg.run_when_empty {
@@ -1034,6 +1047,28 @@ fn airports(lua: MizLua) -> Result<Vec<Airport>> {
         });
     }
     Ok(out)
+}
+
+/// A free airliner stand at airdrome `id` for a departure to start on: an
+/// open-big spot (the only kind every airliner fits), nearest the runway
+/// first. `None` if there isn't one free.
+fn civil_departure_spot(lua: MizLua, id: dcso3::airbase::AirbaseId) -> Option<dcso3::airbase::ParkingSpot> {
+    use dcso3::airbase::term_type;
+    let ab = World::singleton(lua)
+        .ok()?
+        .get_airbases()
+        .ok()?
+        .into_iter()
+        .filter_map(|ab| ab.ok())
+        .find(|ab| ab.get_id().map(|i| i == id).unwrap_or(false))?;
+    let mut spots: Vec<_> = ab
+        .get_parking_spots(true)
+        .ok()?
+        .into_iter()
+        .filter(|s| s.usable_by(false) && s.term_type == term_type::OPEN_BIG)
+        .collect();
+    spots.sort_by(|a, b| a.dist_to_rw.total_cmp(&b.dist_to_rw));
+    spots.into_iter().next()
 }
 
 /// A random point on the edge of the box `lo`-`hi`, and which edge (0-3).
@@ -1381,6 +1416,8 @@ fn spawn_civil(
             ))),
         ])
     };
+    // The stand a departure starts on (see below).
+    let mut parking: Option<i64> = None;
     let (start, start_alt, points, exit, desc) = match kind {
         CivKind::Ship => bail!("ships are spawned by spawn_civil_ship"),
         CivKind::Overflight => {
@@ -1411,12 +1448,34 @@ fn spawn_civil(
             let dep = rear.choose(&mut rng).ok_or_else(|| anyhow!("no rear airport"))?;
             let exit = best_edge(dep.pos, 80_000.);
             let dir = (exit - dep.pos).normalize();
-            // Already off the runway and climbing out: a real parking start
-            // would take a neutral airliner through a coalition's airfield.
-            let start = dep.pos + dir * 5_000.;
-            let start_alt = dep.elevation + 800.;
+            // A departure leaves from the airport's ramp like any other
+            // aircraft, engines running. It used to appear 5 km out and
+            // already climbing. No free airliner stand, no departure.
+            let Some(spot) = civil_departure_spot(lua, dep.id) else {
+                debug!("air_life: no free stand at {} for a departure this time", dep.name);
+                return Ok(());
+            };
+            parking = Some(spot.term_index);
+            let start = Vector2::new(spot.pos.0.x, spot.pos.0.z);
+            let start_alt = spot.pos.0.y;
             let pts = vec![
-                air_point(start, start_alt, speed * 0.6, base_task()),
+                MissionPoint {
+                    typ: PointType::TakeOffParkingHot,
+                    airdrome_id: Some(dep.id),
+                    time_re_fu_ar: None,
+                    helipad: None,
+                    link_unit: None,
+                    action: Some(ActionTyp::Air(TurnMethod::FromParkingAreaHot)),
+                    pos: LuaVec2(start),
+                    alt: dep.elevation,
+                    alt_typ: Some(AltType::BARO),
+                    speed: 0.,
+                    speed_locked: Some(true),
+                    eta: Some(dcso3::Time(0.)),
+                    eta_locked: Some(true),
+                    name: None,
+                    task: Box::new(base_task()),
+                },
                 air_point(dep.pos + dir * 40_000., cruise, speed, Task::ComboTask(vec![])),
                 air_point(exit, cruise, speed, Task::ComboTask(vec![])),
             ];
@@ -1475,7 +1534,15 @@ fn spawn_civil(
     unit.raw_set("y", start.y)?;
     unit.raw_set("alt", start_alt)?;
     unit.raw_set("alt_type", "BARO")?;
-    unit.raw_set("speed", speed)?;
+    match parking {
+        // On its stand, stopped: DCS only honours the parking start if the
+        // unit is really there and `parking` names the spot.
+        Some(term_index) => {
+            unit.raw_set("speed", 0.)?;
+            unit.raw_set("parking", term_index)?;
+        }
+        None => unit.raw_set("speed", speed)?,
+    }
     unit.raw_set("heading", heading)?;
     unit.raw_set("skill", "Average")?;
     if let Some(livery) = ac.liveries.choose(&mut rng) {
@@ -1496,6 +1563,13 @@ fn spawn_civil(
     group.raw_set("name", gname.as_str())?;
     group.raw_set("task", "Transport")?;
     group.raw_set("uncontrolled", false)?;
+    if parking.is_some() {
+        // A parking start's group position has to be the unit's stand too,
+        // or DCS throws the ground start away and spawns it airborne.
+        group.raw_set("x", start.x)?;
+        group.raw_set("y", start.y)?;
+        group.raw_set("start_time", 0)?;
+    }
     group.raw_set("route", route)?;
     group.raw_set("units", units)?;
     let group = miz::Group::from_lua(Value::Table(group), l)?;

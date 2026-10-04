@@ -159,3 +159,12 @@ fly them.
 - [Objectives](./objectives.md) — what factories, hubs and command centres do
 - [AI Helo Missions](../advanced/helo-missions.md)
 - [Capturing Objectives](./capturing-objectives.md)
+
+## The treasury and the HQ
+
+On servers running the [Theatre HQ](../advanced/theatre-hq.md), each side's
+treasury also pays for everything the HQ does: its air packages, fires,
+convoys, helo runs and reinforcements. While the HQ runs, the passive drip of
+treasury points into damaged bases only takes
+{{cfg:smart_commander.hq.objective_funding_share|0.5}} of the income, so the HQ
+always has something left to act with.

@@ -1797,11 +1797,13 @@ impl Db {
         for (side, budget) in t.ephemeral.cfg.objective_start_points.clone() {
             if budget > 0 {
                 t.seed_objective_points(side, budget, false);
+                t.persisted.funds_seeded.push(side);
             }
         }
         if t.ephemeral.cfg.objective_start_points.is_empty() && sc_obj_start > 0 {
             for side in dcso3::coalition::Side::ALL {
                 t.seed_objective_points(side, sc_obj_start, false);
+                t.persisted.funds_seeded.push(side);
             }
         }
         t.init_warehouses(lua).context("initializing warehouses")?;

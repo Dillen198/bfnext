@@ -67,6 +67,12 @@ use rand::{seq::SliceRandom, thread_rng, Rng};
 const DRONE_ARRIVAL_M: f64 = 1_200.;
 /// Missile-defence sites this close to the target can intercept.
 const DEFENCE_RADIUS_M: f64 = 40_000.;
+/// Drones start on the ground at their launch site; this long for engine
+/// start and the takeoff run before they are on their way.
+const DRONE_LAUNCH_SECS: f64 = 120.;
+/// Widest gap between drones lined up at the launch site (each sits inside
+/// the site's zone whatever its size).
+const DRONE_LAUNCH_SPACING_M: f64 = 60.;
 
 #[derive(Debug)]
 struct Raid {
@@ -281,7 +287,7 @@ fn launch(
     // Drones.
     let land = Land::singleton(lua).ok();
     let mut eta_min = 0.;
-    if let (true, Some((origin, from)), Some(land), Ok(spctx)) = (
+    if let (true, Some((origin, from)), Some(_), Ok(spctx)) = (
         can_drone,
         drone_launch_site(ctx, side, target_pos, cfg.drone_range_m, &front),
         land.as_ref(),
@@ -290,13 +296,26 @@ fn launch(
         let dir = (target_pos - from).normalize();
         let lateral = Vector2::new(-dir.y, dir.x);
         let leg = dist(from, target_pos);
-        eta_min = leg / cfg.drone_speed_ms.max(1.) / 60.;
+        // Engine start and the run-up off the launch site come first.
+        eta_min = (leg / cfg.drone_speed_ms.max(1.) + DRONE_LAUNCH_SECS) / 60.;
+        // The drones go up from the launch site itself, side by side inside
+        // its zone -- not strung out across kilometres of open country.
+        let zone_r = ctx
+            .db
+            .persisted
+            .objectives
+            .get(&origin)
+            .map(|o| o.radius())
+            .unwrap_or(300.);
+        let step = DRONE_LAUNCH_SPACING_M
+            .min(zone_r * 1.2 / (cfg.drones_per_raid.max(1) as f64));
+        // A patch of the site clear of its garrison, as for a helicopter.
+        let from = ctx.db.launch_spot(lua, &origin, true, false).unwrap_or(from);
         let mut pool = templates.clone();
         for i in 0..cfg.drones_per_raid {
             pool.shuffle(&mut thread_rng());
-            let spread = (i as f64 - (cfg.drones_per_raid as f64 - 1.) / 2.) * 1_500.;
+            let spread = (i as f64 - (cfg.drones_per_raid as f64 - 1.) / 2.) * step;
             let start = from + lateral * spread;
-            let ground = land.get_height(LuaVec2(start)).unwrap_or(0.);
             let quiet = Task::ComboTask(vec![
                 Task::WrappedCommand(Command::SetUnlimitedFuel(true)),
                 Task::WrappedOption(AiOption::Air(AirOption::Roe(AirRoe::WeaponHold))),
@@ -308,10 +327,12 @@ fn launch(
                 alt_typ: Some(AltType::RADIO),
                 ..air_point(p, cfg.drone_alt_agl_m, cfg.drone_speed_ms, task)
             };
+            // Waypoint 0 is the launch spot; the spawn turns it into the
+            // takeoff and keeps the quiet-running orders on it.
             let mission = vec![
                 low(start, quiet),
                 // Converge on the aim point from a little spread out.
-                low(target_pos + lateral * (spread / 4.), Task::ComboTask(vec![])),
+                low(target_pos + lateral * spread, Task::ComboTask(vec![])),
             ];
             let mut spawned = None;
             for template in pool.iter() {
@@ -324,8 +345,10 @@ fn launch(
                     origin,
                     start,
                     heading_of(dir),
-                    ground + cfg.drone_alt_agl_m,
-                    cfg.drone_speed_ms,
+                    // One-way attack drones are launched off a rail or a
+                    // strip of road, not a runway: from open ground where
+                    // the site has no parking for them.
+                    true,
                     mission.clone(),
                 ) {
                     Ok(gid) => {
@@ -338,7 +361,7 @@ fn launch(
             if let Some(gid) = spawned {
                 raid.drones_launched += 1;
                 raid.drones_pending += 1;
-                let secs = leg / cfg.drone_speed_ms.max(1.) * 1.6 + 180.;
+                let secs = leg / cfg.drone_speed_ms.max(1.) * 1.6 + 180. + DRONE_LAUNCH_SECS;
                 ctx.modern_war.raids.drones.push(Drone {
                     gid,
                     raid: id,

@@ -239,6 +239,25 @@ pub enum AdminCommand {
     QueryTacmap {
         side: Side,
     },
+    /// One side's theatre HQ as that side sees it (`crate::hq::view`).
+    QueryHq {
+        side: Side,
+        /// Whose view it is, for `can_command`.
+        ucid: Option<Ucid>,
+    },
+    /// A directive from bfdb's language-model strategist.
+    HqDirective {
+        side: Side,
+        directive: bfprotocols::hq::Directive,
+    },
+    /// A command to a side's HQ from the dashboard: a support request, or a
+    /// human commander's orders. `ucid` is resolved and trusted by bfdb from
+    /// the player's login; `None` is bfdb acting for a server admin.
+    HqCommand {
+        side: Side,
+        ucid: Option<Ucid>,
+        cmd: bfprotocols::hq::HqCommand,
+    },
     /// The ground war as one side sees it (`crate::groundwar::picture`).
     QueryGroundWar {
         side: Side,
@@ -3118,6 +3137,7 @@ impl AdminCommand {
                 | Self::QuerySituation { .. }
                 | Self::QueryTacmap { .. }
                 | Self::QueryGroundWar { .. }
+                | Self::QueryHq { .. }
                 | Self::QueryGci { .. }
                 | Self::QueryCas { .. }
                 | Self::QueryAtc { .. }
@@ -3622,6 +3642,27 @@ fn run_admin_command(
                 match serde_json::to_string(&picture) {
                     Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize the ground war: {e:?}"),
+                }
+            }
+            AdminCommand::QueryHq { side, ucid } => {
+                let view = crate::hq::view(ctx, lua, side, ucid.as_ref());
+                match serde_json::to_string(&view) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the HQ view: {e:?}"),
+                }
+            }
+            AdminCommand::HqDirective { side, directive } => {
+                let reply = crate::hq::directive(ctx, side, directive);
+                match serde_json::to_string(&reply) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the HQ reply: {e:?}"),
+                }
+            }
+            AdminCommand::HqCommand { side, ucid, cmd } => {
+                let reply = crate::hq::command(lua, ctx, side, ucid, cmd, None);
+                match serde_json::to_string(&reply) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the HQ reply: {e:?}"),
                 }
             }
             AdminCommand::GroundCommand { ucid, cmd } => {

@@ -33,7 +33,15 @@ for more details.
 //!   near, when it meets an enemy formation, or when it closes on the
 //!   objective it is attacking -- as many as `max_live_formations` allow.
 //!   Two enemy formations that meet while the budget is spent halt and fight
-//!   it out on the map instead (`attrition`).
+//!   it out on the map instead.
+//!
+//! Fighting on the map is a model, not a coin toss (`super::combat`,
+//! `GroundCombatCfg`): firepower by vehicle type, speed of the slowest
+//! vehicle, supply that runs down and is made good near friendly bases,
+//! morale that breaks, columns that have to deploy before they can fight,
+//! positions that get dug in, and garrisons that fight back from cover. A
+//! side only sees enemy formations its own forces are close enough to see,
+//! and remembers where it saw them.
 //!
 //! An attack ends the way a player assault does: once the target is down to
 //! the point where it can be taken, the formation's infantry goes in as a
@@ -46,7 +54,13 @@ for more details.
 //! are rebuilt by the base's repair and reinforcement like any other
 //! garrison loss.
 
-use super::{group::DeployKind, objective::ObjGroupClass, persisted::Persisted, Db};
+use super::{
+    combat::{self, Condition, Deployment, Role},
+    group::DeployKind,
+    objective::ObjGroupClass,
+    persisted::Persisted,
+    Db,
+};
 use crate::{
     group, group_mut, objective, objective_mut,
     spawnctx::{Despawn, SpawnCtx, SpawnLoc},
@@ -54,7 +68,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use bfprotocols::{
-    cfg::GroundWarCfg,
+    cfg::{GroundCombatCfg, GroundWarCfg},
     db::{
         group::{GroupId, UnitId},
         objective::{ObjectiveId, ObjectiveKind},
@@ -118,6 +132,17 @@ fn dist(a: Vector2, b: Vector2) -> f64 {
 
 fn heading_of(v: Vector2) -> f64 {
     v.y.atan2(v.x)
+}
+
+/// Distance from `p` to the segment `a`-`b`.
+fn seg_dist(a: Vector2, b: Vector2, p: Vector2) -> f64 {
+    let ab = b - a;
+    let len2 = ab.norm_squared();
+    if len2 < 1. {
+        return dist(a, p);
+    }
+    let t = ((p - a).dot(&ab) / len2).clamp(0., 1.);
+    dist(a + ab * t, p)
 }
 
 fn ordinal(n: u32) -> CompactString {
@@ -203,6 +228,34 @@ pub struct Formation {
     pub locked_until: Option<DateTime<Utc>>,
     pub order_ts: DateTime<Utc>,
     pub created: DateTime<Utc>,
+    /// Fuel and ammunition carried, 0..1 (`GroundCombatCfg`).
+    #[serde(default = "full")]
+    pub supply: f64,
+    /// 0..1. Falls with losses and isolation; below `break_morale` the
+    /// formation breaks.
+    #[serde(default = "full")]
+    pub morale: f64,
+    #[serde(default)]
+    pub deployment: Deployment,
+    /// When it took up its current deployment: deploying turns into
+    /// deployed, and holding into dug in, after a while.
+    #[serde(default)]
+    pub deployment_ts: Option<DateTime<Utc>>,
+    /// Its morale has collapsed and it is falling back.
+    #[serde(default)]
+    pub broken: bool,
+    /// Vehicles it has lost, and enemy vehicles it has destroyed.
+    #[serde(default)]
+    pub losses: u32,
+    #[serde(default)]
+    pub kills: u32,
+    /// Damage taken that hasn't yet added up to a vehicle lost.
+    #[serde(default)]
+    pub damage: f64,
+}
+
+fn full() -> f64 {
+    1.
 }
 
 impl Formation {
@@ -251,7 +304,6 @@ pub struct FormationRt {
     route_dirty: FxHashSet<FormationId>,
     /// (anchor, since, re-routes so far)
     stall: FxHashMap<FormationId, (Vector2, DateTime<Utc>, u8)>,
-    attrition_ts: FxHashMap<FormationId, DateTime<Utc>>,
     assault_ts: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Formations already told they have no infantry for an assault.
     no_infantry_said: FxHashSet<FormationId>,
@@ -260,7 +312,57 @@ pub struct FormationRt {
     last_tick: Option<DateTime<Utc>>,
     /// Battles, smoke and burning wrecks (`super::battle`).
     pub(super) battle: super::battle::BattleRt,
+    /// Where each side last saw each enemy formation.
+    spotted: FxHashMap<(Side, FormationId), Sighting>,
+    /// When the last spotting pass ran: a sighting from it is in sight now.
+    spot_ts: Option<DateTime<Utc>>,
+    /// How far anyone can see right now, as a share of a clear day
+    /// (`set_visibility`). `None` = clear day.
+    visibility: Option<f64>,
+    /// Damage a garrison has taken that hasn't killed anything yet.
+    garrison_damage: FxHashMap<ObjectiveId, f64>,
+    last_combat: Option<DateTime<Utc>>,
+    /// When each formation was last in contact.
+    contact_ts: FxHashMap<FormationId, DateTime<Utc>>,
+    /// Formations a friendly base is keeping supplied, as of the last tick.
+    supplied: FxHashSet<FormationId>,
+    /// Formations already told they are cut off.
+    cut_off_said: FxHashSet<FormationId>,
+    /// Each side's recent ground-war events, oldest first.
+    events: FxHashMap<Side, VecDeque<Event>>,
+    /// Real fire missions sent in support, by (side, ~3 km cell), so the
+    /// batteries aren't re-tasked onto the same spot every round.
+    fire_ts: FxHashMap<(Side, i64, i64), DateTime<Utc>>,
+    /// When each side was last told its artillery is firing near a ~5 km
+    /// cell.
+    fire_said: FxHashMap<(Side, i64, i64), DateTime<Utc>>,
 }
+
+/// Where a side last saw an enemy formation.
+#[derive(Debug, Clone)]
+pub struct Sighting {
+    pub pos: Vector2,
+    pub heading: f64,
+    pub at: DateTime<Utc>,
+    pub moving: bool,
+    /// Close enough to make out its vehicles.
+    pub close: bool,
+    /// What it looked like then: its make-up and how many vehicles it had.
+    pub kind: &'static str,
+    pub alive: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct Event {
+    pub at: DateTime<Utc>,
+    pub kind: &'static str,
+    pub text: CompactString,
+    pub pos: Option<Vector2>,
+    pub formation: Option<FormationId>,
+}
+
+/// Events kept per side.
+const MAX_EVENTS: usize = 60;
 
 impl FormationRt {
     pub fn is_live(&self, f: &Formation) -> bool {
@@ -285,6 +387,51 @@ impl FormationRt {
             .into_iter()
             .filter(|(_, f)| self.is_live(f))
             .count()
+    }
+
+    /// `side`'s sightings of enemy formations: (which, where and when).
+    pub fn sightings(&self, side: Side) -> impl Iterator<Item = (FormationId, &Sighting)> {
+        self.spotted.iter().filter(move |((s, _), _)| *s == side).map(|((_, id), v)| (*id, v))
+    }
+
+    /// The light and the weather: share of the daytime spotting range
+    /// anyone has right now.
+    pub fn set_visibility(&mut self, v: f64) {
+        self.visibility = Some(v);
+    }
+
+    pub fn visibility(&self) -> f64 {
+        self.visibility.unwrap_or(1.)
+    }
+
+    /// Seen on the latest spotting pass, as opposed to remembered.
+    pub fn in_sight(&self, s: &Sighting) -> bool {
+        Some(s.at) == self.spot_ts
+    }
+
+    pub fn in_supply(&self, id: FormationId) -> bool {
+        self.supplied.contains(&id)
+    }
+
+    /// `side`'s recent events, newest first.
+    pub fn events(&self, side: Side) -> impl Iterator<Item = &Event> {
+        self.events.get(&side).into_iter().flat_map(|q| q.iter().rev())
+    }
+
+    pub(crate) fn event(
+        &mut self,
+        side: Side,
+        kind: &'static str,
+        text: impl Into<CompactString>,
+        pos: Option<Vector2>,
+        formation: Option<FormationId>,
+        now: DateTime<Utc>,
+    ) {
+        let q = self.events.entry(side).or_default();
+        q.push_back(Event { at: now, kind, text: text.into(), pos, formation });
+        while q.len() > MAX_EVENTS {
+            q.pop_front();
+        }
     }
 }
 
@@ -333,6 +480,18 @@ fn back_along(pos: Vector2, heading: f64, trail: &[Vector2], back: f64) -> (Vect
         cur = *prev;
     }
     (cur - dir_fwd * left, heading_of(dir_fwd))
+}
+
+/// Slot `i` of `n` in a formation deployed in line abreast at `center`
+/// facing `heading`: one rank for a company, two for anything bigger, ~70 m
+/// between vehicles and 120 m between ranks.
+fn line_slot(center: Vector2, heading: f64, i: usize, n: usize) -> Vector2 {
+    let per_rank = if n <= 8 { n.max(1) } else { (n + 1) / 2 };
+    let rank = (i / per_rank) as f64;
+    let file = (i % per_rank) as f64 - (per_rank as f64 - 1.) / 2.;
+    let fwd = Vector2::new(heading.cos(), heading.sin());
+    let right = Vector2::new(-heading.sin(), heading.cos());
+    center + right * (file * 70.) - fwd * (rank * 120.)
 }
 
 /// Slot `i` of a formation drawn up around `center`: rings of eight.
@@ -389,10 +548,19 @@ fn dcs_route<'lua>(
     from: Vector2,
     path: &[Vector2],
     off_road: bool,
+    deployed: bool,
     speed_mps: f64,
 ) -> Vec<MissionPoint<'lua>> {
-    let along = if off_road { VehicleFormation::OffRoad } else { VehicleFormation::OnRoad };
-    let speed = if off_road { speed_mps * 0.5 } else { speed_mps };
+    // Deployed for a fight, it advances in line abreast across country; on
+    // the march it keeps to the road.
+    let along = if deployed {
+        VehicleFormation::Rank
+    } else if off_road {
+        VehicleFormation::OffRoad
+    } else {
+        VehicleFormation::OnRoad
+    };
+    let speed = if off_road && !deployed { speed_mps * 0.5 } else { speed_mps };
     let mut route = vec![ground_point(land, from, VehicleFormation::OffRoad, speed, Task::ComboTask(vec![]))];
     if path.is_empty() {
         return route;
@@ -497,6 +665,154 @@ impl Db {
     pub fn formation_strength_pct(&self, f: &Formation) -> u32 {
         let (alive, total) = self.formation_strength(f);
         if total == 0 { 0 } else { alive * 100 / total }
+    }
+
+    /// What a unit is, from its DCS type's tags; a type the config doesn't
+    /// classify goes by its group's class.
+    pub fn unit_role(&self, typ: &bfprotocols::cfg::Vehicle, class: ObjGroupClass) -> Role {
+        match self.ephemeral.cfg.unit_classification.get(typ) {
+            Some(t) if !t.0.is_empty() => Role::of(t.0),
+            _ => match class {
+                ObjGroupClass::Armor => Role::Tank,
+                ObjGroupClass::Infantry => Role::Infantry,
+                ObjGroupClass::Aaa => Role::Aaa,
+                ObjGroupClass::Lr | ObjGroupClass::Mr | ObjGroupClass::Sr => Role::Sam,
+                _ => Role::Truck,
+            },
+        }
+    }
+
+    /// `f`'s live vehicles and their roles.
+    pub fn formation_units(&self, f: &Formation) -> SmallVec<[(UnitId, Role); 32]> {
+        let mut out = SmallVec::new();
+        for gid in &f.groups {
+            let Some(g) = self.persisted.groups.get(gid) else { continue };
+            for uid in &g.units {
+                let Some(u) = self.persisted.units.get(uid) else { continue };
+                if !u.dead {
+                    out.push((*uid, self.unit_role(&u.typ, g.class)));
+                }
+            }
+        }
+        out
+    }
+
+    pub fn formation_condition(&self, f: &Formation) -> Condition {
+        Condition { supply: f.supply, morale: f.morale, deployment: f.deployment, broken: f.broken }
+    }
+
+    /// (combat power now, raw firepower at full strength).
+    pub fn formation_power(&self, cfg: &GroundCombatCfg, f: &Formation) -> (f64, f64) {
+        let alive: SmallVec<[Role; 32]> = self.formation_units(f).into_iter().map(|(_, r)| r).collect();
+        let now = combat::raw_power(cfg, &alive) * self.formation_condition(f).factor(cfg);
+        let mut full = 0.;
+        for gid in &f.groups {
+            let Some(g) = self.persisted.groups.get(gid) else { continue };
+            for uid in &g.units {
+                if let Some(u) = self.persisted.units.get(uid) {
+                    full += self.unit_role(&u.typ, g.class).firepower(cfg);
+                }
+            }
+        }
+        (now, full)
+    }
+
+    /// "armour" | "mechanised" | "motorised" | "infantry", from what is left.
+    pub fn formation_kind(&self, f: &Formation) -> &'static str {
+        let units = self.formation_units(f);
+        let has = |r: Role| units.iter().any(|(_, x)| *x == r);
+        let tanks = has(Role::Tank);
+        let carriers = has(Role::Ifv) || has(Role::Apc);
+        let trucks = has(Role::Truck);
+        let inf = has(Role::Infantry);
+        match (tanks, carriers || inf) {
+            (true, true) => "mechanised",
+            (true, false) => "armour",
+            _ if carriers || trucks => "motorised",
+            _ => "infantry",
+        }
+    }
+
+    /// How fast `f` moves right now, km/h: its slowest vehicle on road or
+    /// across country, stopped while it deploys, slowed advancing in
+    /// contact and when it is out of fuel. A broken formation just runs.
+    pub fn formation_speed_kph(&self, cfg: &GroundWarCfg, f: &Formation) -> f64 {
+        let roles: SmallVec<[Role; 32]> = self.formation_units(f).into_iter().map(|(_, r)| r).collect();
+        let (road, off) = combat::speed_of(&roles, cfg.speed_kph);
+        let mut v = if f.off_road { off } else { road };
+        if !f.broken {
+            match f.deployment {
+                Deployment::Deploying => v = 0.,
+                Deployment::Deployed | Deployment::DugIn => v *= cfg.combat.contact_speed.clamp(0.05, 1.),
+                Deployment::Column => (),
+            }
+        }
+        if f.supply < cfg.combat.low_supply {
+            v *= 0.5;
+        }
+        v
+    }
+
+    /// How much of the usual supply `f` burns: its own trucks carry fuel and
+    /// ammunition forward, so a formation with plenty of them lasts longer.
+    fn supply_use_factor(&self, f: &Formation) -> f64 {
+        let units = self.formation_units(f);
+        if units.is_empty() {
+            return 1.;
+        }
+        let trucks = units.iter().filter(|(_, r)| *r == Role::Truck).count() as f64;
+        1. - 0.4 * (trucks * 2. / units.len() as f64).min(1.)
+    }
+
+    /// Take `loads` vehicles' worth of supply out of `oid`'s warehouse: with
+    /// the materiel commodity, `materiel_per_vehicle` units of it each;
+    /// otherwise a `base_drain_per_vehicle` share of every stocked item.
+    fn drain_base(&mut self, cfg: &GroundCombatCfg, oid: ObjectiveId, loads: f64) {
+        if loads <= 0. {
+            return;
+        }
+        let materiel = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .and_then(|w| w.materiel.as_ref())
+            .map_or(false, |m| m.enabled);
+        let production = self
+            .persisted
+            .objectives
+            .get(&oid)
+            .and_then(|o| self.ephemeral.production_by_side.get(&o.owner).cloned());
+        let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) else { return };
+        if materiel {
+            let key = String::from(bfprotocols::cfg::MATERIEL_ITEM);
+            if let Some(inv) = obj.warehouse.equipment.get_mut_cow(&key) {
+                *inv -= (loads * cfg.materiel_per_vehicle).ceil() as u32;
+            }
+        } else if let Some(production) = production {
+            let frac = ((loads * cfg.base_drain_per_vehicle) as f32).clamp(0., 0.5);
+            for name in production.equipment.keys() {
+                if let Some(inv) = obj.warehouse.equipment.get_mut_cow(name) {
+                    inv.reduce(frac);
+                }
+            }
+            for liq in production.liquids.keys() {
+                if let Some(inv) = obj.warehouse.liquids.get_mut_cow(liq) {
+                    inv.reduce(frac);
+                }
+            }
+        }
+        self.ephemeral.dirty();
+    }
+
+    /// " near <objective>" for the nearest objective within 20 km, else "".
+    fn near_text(&self, pos: Vector2) -> CompactString {
+        self.objectives()
+            .map(|(_, o)| (dist(o.pos(), pos), o))
+            .filter(|(d, _)| *d <= 20_000.)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, o)| format_compact!(" near {}", o.name))
+            .unwrap_or_default()
     }
 
     /// Whether `f` can take a base: it has an infantry group, or a vehicle
@@ -692,6 +1008,8 @@ impl Db {
             bail!("{oname} is still consolidating")
         }
         let spawned = obj.spawned;
+        // It sets out with what the base can give it.
+        let supply = (obj.supply() as f64 / 100.).clamp(0.3, 1.);
         let gids = self.formation_candidates(&cfg, &oid, side)?;
         if gids.is_empty() {
             bail!("{oname} has no armour or infantry it can spare")
@@ -759,6 +1077,14 @@ impl Db {
             locked_until: None,
             order_ts: now,
             created: now,
+            supply,
+            morale: 1.,
+            deployment: Deployment::Deployed,
+            deployment_ts: Some(now),
+            broken: false,
+            losses: 0,
+            kills: 0,
+            damage: 0.,
         };
         self.persisted.formations.insert_cow(id, f);
         if let Err(e) = self.update_objective_status(&oid, now) {
@@ -766,6 +1092,7 @@ impl Db {
         }
         self.ephemeral.dirty();
         info!("ground war: {side:?} raised {name} ({id}), {strength0} vehicles from {oname}");
+        rt.event(side, "raised", format_compact!("{name} formed up at {oname}, {strength0} vehicles"), Some(pos), Some(id), now);
         Ok(id)
     }
 
@@ -813,6 +1140,11 @@ impl Db {
         let (side, from, name) = (f.side, f.pos, f.name.clone());
         if by.is_none() && !f.ai_controlled(now) {
             bail!("{name} is under a player's command")
+        }
+        // A broken formation is past taking orders: all it will do is get
+        // back to a friendly base.
+        if f.broken && !matches!(order, Order::Withdraw(_)) {
+            bail!("{name} has broken and is falling back; it can only be ordered to withdraw")
         }
         let target = match order.target() {
             None => None,
@@ -874,6 +1206,10 @@ impl Db {
             (o, None) => format_compact!("{name}: {}", o.verb()),
         };
         info!("ground war: {side:?} {what} (by {by:?})");
+        if let Some(ucid) = by.as_ref() {
+            let who = self.persisted.players.get(ucid).map(|p| p.name.clone()).unwrap_or_default();
+            rt.event(side, "order", format_compact!("{who}: {what}"), Some(from), Some(id), now);
+        }
         Ok(what)
     }
 
@@ -891,11 +1227,12 @@ impl Db {
     }
 
     /// Lay every live-less formation's units out where the formation is: in
-    /// column along the road while it moves, in a ring when it stands.
+    /// column along the road on the march, in line abreast facing the enemy
+    /// when it has deployed, in all-round positions when it has dug in.
     fn place_units(&mut self, id: FormationId) -> Result<()> {
         let f = self.persisted.formations.get(&id).ok_or_else(|| anyhow!("no formation {id}"))?;
-        let (pos, heading, moving, trail) =
-            (f.pos, f.heading, f.posture == Posture::Moving, f.trail.clone());
+        let (pos, heading, trail, deployment) = (f.pos, f.heading, f.trail.clone(), f.deployment);
+        let moving = f.posture == Posture::Moving && deployment == Deployment::Column;
         let uids: SmallVec<[UnitId; 32]> = f
             .groups
             .iter()
@@ -903,11 +1240,14 @@ impl Db {
             .flat_map(|g| g.units.into_iter().copied())
             .filter(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
             .collect();
+        let n = uids.len();
         for (i, uid) in uids.iter().enumerate() {
             let (p, h) = if moving {
                 back_along(pos, heading, &trail, i as f64 * COLUMN_GAP_M)
-            } else {
+            } else if deployment == Deployment::DugIn {
                 (ring_slot(pos, i), heading)
+            } else {
+                (line_slot(pos, heading, i, n), heading)
             };
             let u = unit_mut!(self, uid)?;
             u.pos = p;
@@ -918,17 +1258,18 @@ impl Db {
         Ok(())
     }
 
-    /// Move the formations that are on the map only along their paths.
+    /// Move the formations that are on the map only along their paths, each
+    /// at its own speed, burning fuel as they go.
     fn advance_on_map(&mut self, rt: &FormationRt, cfg: &GroundWarCfg, dt: f64) {
-        let ids: SmallVec<[FormationId; 16]> = self
+        let ids: SmallVec<[(FormationId, f64, f64); 16]> = self
             .formations()
             .filter(|f| f.posture == Posture::Moving && !rt.is_live(f) && !rt.is_halted(f.id))
-            .map(|f| f.id)
+            .map(|f| (f.id, self.formation_speed_kph(cfg, f) / 3.6, self.supply_use_factor(f)))
             .collect();
-        for id in ids {
+        for (id, speed, use_factor) in ids {
             let f = self.persisted.formations.get_mut_cow(&id).unwrap();
-            let speed = cfg.speed_kph.max(1.) / 3.6 * if f.off_road { 0.5 } else { 1. };
             let mut budget = speed * dt;
+            let mut moved = 0.;
             while budget > 0. && !f.path.is_empty() {
                 let next = f.path[0];
                 let d = dist(f.pos, next);
@@ -937,14 +1278,17 @@ impl Db {
                 }
                 if d <= budget {
                     budget -= d;
+                    moved += d;
                     f.pos = next;
                     f.trail.push(next);
                     f.path.remove(0);
                 } else {
                     f.pos += (next - f.pos) / d * budget;
+                    moved += budget;
                     budget = 0.;
                 }
             }
+            f.supply = (f.supply - moved / 100_000. * cfg.combat.supply_per_100km * use_factor).max(0.);
             if f.trail.len() > 40 {
                 let excess = f.trail.len() - 40;
                 f.trail.drain(..excess);
@@ -997,9 +1341,16 @@ impl Db {
                 continue;
             }
             let c = centroid2d(pts.into_iter());
+            let per_100km = self.ephemeral.cfg.ground_war.as_ref().map_or(0., |g| g.combat.supply_per_100km);
             let f = self.persisted.formations.get_mut_cow(&id).unwrap();
-            if dist(c, f.pos) > 5. {
+            let moved = dist(c, f.pos);
+            if moved > 5. {
                 f.heading = heading_of(c - f.pos);
+            }
+            // A centroid jump of kilometres is a group joining or leaving,
+            // not driving.
+            if moved < 2_000. {
+                f.supply = (f.supply - moved / 100_000. * per_100km).max(0.);
             }
             f.pos = c;
             // Drop the route points it has passed.
@@ -1111,13 +1462,19 @@ impl Db {
 
     /// Formations that have reached the end of their route.
     fn arrivals(&mut self, rt: &mut FormationRt, cfg: &GroundWarCfg, now: DateTime<Utc>) {
+        // An attack has arrived only once it is inside the objective's zone:
+        // that is where its infantry has to get out.
+        let inside_target = |f: &Formation| match f.order {
+            Order::Attack(oid) => self.persisted.objectives.get(&oid).map_or(true, |o| o.zone.contains(f.pos)),
+            _ => true,
+        };
         let ids: SmallVec<[FormationId; 16]> = self
             .formations()
             .filter(|f| {
                 f.posture == Posture::Moving
                     && match f.destination() {
                         None => true,
-                        Some(d) => dist(f.pos, d) <= cfg.arrive_m,
+                        Some(d) => dist(f.pos, d) <= cfg.arrive_m && inside_target(f) || dist(f.pos, d) <= 150.,
                     }
             })
             .map(|f| f.id)
@@ -1138,6 +1495,10 @@ impl Db {
                 .target()
                 .and_then(|o| self.persisted.objectives.get(&o))
                 .map(|o| (o.name.clone(), o.owner));
+            if let Some((t, _)) = tname.as_ref() {
+                let at = self.persisted.formations.get(&id).map(|f| f.pos);
+                rt.event(side, "arrived", format_compact!("{name} has reached {t}"), at, Some(id), now);
+            }
             match (order, tname) {
                 (Order::Withdraw(oid), Some((_, owner))) if owner == side => {
                     if let Err(e) = self.dissolve_formation(rt, id, oid, now) {
@@ -1187,7 +1548,7 @@ impl Db {
             .collect();
         for id in ids {
             let f = self.persisted.formations.get(&id).unwrap();
-            let (side, name, pos, live) = (f.side, f.name.clone(), f.pos, rt.is_live(f));
+            let (side, name, pos) = (f.side, f.name.clone(), f.pos);
             let Order::Attack(oid) = f.order else {
                 let f = self.persisted.formations.get_mut_cow(&id).unwrap();
                 f.posture = Posture::Holding;
@@ -1222,13 +1583,19 @@ impl Db {
                 .assault_ts
                 .get(&oid)
                 .map_or(false, |t| now - *t < Duration::seconds(ASSAULT_COOLDOWN_SECS));
-            if !open || cooling || !live {
+            // A formation the server isn't simulating can go in too: the
+            // squad is a real DCS group either way, and the capture is the
+            // ordinary capture. Waiting for a live slot used to leave an
+            // attack outside a broken base for good.
+            if !open || cooling {
                 continue;
             }
             match self.launch_assault(rt, lua, idx, id, oid, now) {
                 Ok(true) => {
                     rt.assault_ts.insert(oid, now);
                     info!("ground war: {name} sends its infantry into {oname}");
+                    rt.event(side, "assault", format_compact!("{name}'s infantry is going in to take {oname}"), Some(pos), Some(id), now);
+                    rt.event(side.opposite(), "assault", format_compact!("Enemy infantry is assaulting {oname}"), Some(pos), None, now);
                     self.ephemeral.msgs().panel_to_side(
                         15,
                         false,
@@ -1268,7 +1635,7 @@ impl Db {
         now: DateTime<Utc>,
     ) -> Result<bool> {
         let f = self.persisted.formations.get(&id).unwrap();
-        let (side, fpos, home) = (f.side, f.pos, f.home);
+        let (side, home) = (f.side, f.home);
         // (group the squad comes from, where it gets out, template, the
         // group itself becomes the squad)
         let (gid, from, template, whole_group) = match self.infantry_group(f) {
@@ -1283,14 +1650,16 @@ impl Db {
         };
         let obj = objective!(self, oid)?;
         let (zpos, zr) = (obj.zone.pos(), obj.zone.radius());
-        // Where they get out: where they are, if that is inside the zone,
-        // else part way in from the formation's side.
+        // Where they get out: where they are. The formation only counts as
+        // arrived once it is inside the zone (`arrivals`), so this is almost
+        // always already inside; a vehicle at the tail of the line can be
+        // just outside, and its squad gets out at the edge nearest it.
         let at = if obj.zone.contains(from) {
             from
         } else {
-            let d = fpos - zpos;
+            let d = from - zpos;
             let n = d.norm();
-            if n > 1. { zpos + d / n * (zr * 0.4).min(n) } else { zpos }
+            if n > 1. { zpos + d / n * (zr * 0.9).min(n) } else { zpos }
         };
         let dir = {
             let d = zpos - at;
@@ -1430,7 +1799,10 @@ impl Db {
         rt.halted.remove(&id);
         rt.route_dirty.remove(&id);
         rt.stall.remove(&id);
-        rt.attrition_ts.remove(&id);
+        rt.contact_ts.remove(&id);
+        rt.supplied.remove(&id);
+        rt.cut_off_said.remove(&id);
+        rt.spotted.retain(|(_, f), _| *f != id);
         rt.no_infantry_said.remove(&id);
         rt.spawnq.retain(|(f, _)| *f != id);
         if let Some(pin) = rt.pins.remove(&id) {
@@ -1459,6 +1831,9 @@ impl Db {
                 continue;
             }
             info!("ground war: {side:?} {name} destroyed");
+            let at = self.persisted.formations.get(&id).map(|f| f.pos);
+            rt.event(side, "destroyed", format_compact!("{name} has been destroyed"), at, Some(id), now);
+            rt.event(side.opposite(), "kill", format_compact!("Enemy {name} destroyed"), at, None, now);
             if cfg.announce {
                 self.ephemeral.msgs().panel_to_side(
                     15,
@@ -1514,7 +1889,14 @@ impl Db {
             }
             wants.push((*id, want, *live));
         }
-        let grace = Duration::seconds(cfg.despawn_grace_secs as i64);
+        // A fight waiting for a live slot doesn't wait out the grace period of
+        // formations nobody needs any more.
+        let fight_waiting = wants.iter().any(|(_, w, live)| !*live && w.fighting());
+        let grace = if fight_waiting {
+            Duration::zero()
+        } else {
+            Duration::seconds(cfg.despawn_grace_secs as i64)
+        };
         // Despawn the live formations nobody needs any more.
         for (id, want, live) in &wants {
             if *live && !want.any() {
@@ -1615,6 +1997,8 @@ impl Db {
             Posture::Moving => (f.path.clone(), f.off_road),
             _ => (vec![], false),
         };
+        let deployed = matches!(f.deployment, Deployment::Deployed | Deployment::DugIn) && !f.broken;
+        let speed = self.formation_speed_kph(cfg, f).max(3.) / 3.6;
         let land = Land::singleton(lua)?;
         // The persisted positions carry the map's x/y; DCS wants the ground
         // height too.
@@ -1626,7 +2010,7 @@ impl Db {
             }
         }
         let from = self.group_center(&gid)?;
-        let route = dcs_route(&land, from, &path, off_road, cfg.speed_kph.max(1.) / 3.6);
+        let route = dcs_route(&land, from, &path, off_road, deployed, speed);
         let spctx = SpawnCtx::new(lua)?;
         let spawned = self
             .ephemeral
@@ -1657,12 +2041,14 @@ impl Db {
                 Posture::Moving => (f.path.clone(), f.off_road),
                 _ => (vec![], false),
             };
+            let deployed = matches!(f.deployment, Deployment::Deployed | Deployment::DugIn) && !f.broken;
+            let speed = self.formation_speed_kph(cfg, f).max(3.) / 3.6;
             for gid in f.groups.iter().filter(|g| rt.live.contains(g)) {
                 let Some(g) = self.persisted.groups.get(gid) else { continue };
                 let from = self.group_center(gid).unwrap_or(f.pos);
                 let res = Group::get_by_name(lua, &g.name).and_then(|group| {
                     set_march_ai(&group)?;
-                    let route = dcs_route(&land, from, &path, off_road, cfg.speed_kph.max(1.) / 3.6);
+                    let route = dcs_route(&land, from, &path, off_road, deployed, speed);
                     group
                         .get_controller()?
                         .set_task(Task::Mission { airborne: Some(false), route })
@@ -1674,50 +2060,462 @@ impl Db {
         }
     }
 
-    /// Two enemy formations in contact that DCS isn't simulating wear each
-    /// other down on the map.
-    fn attrition(&mut self, rt: &mut FormationRt, cfg: &GroundWarCfg, now: DateTime<Utc>) {
-        let every = Duration::seconds(cfg.attrition_secs.max(30) as i64);
-        let all: SmallVec<[(FormationId, Side, Vector2, u32, bool); 16]> = self
+    /// Who sees whom. A side sees an enemy formation:
+    ///
+    /// - from its own formations within `spot_m`, and from its bases within
+    ///   3/4 of that -- less far if the enemy is standing still, less again
+    ///   if it is dug in -- as long as the ground between them doesn't block
+    ///   the view (`line_of_sight`);
+    /// - from its aircraft flying low enough to see the ground
+    ///   (`air_spot_m` / `air_spot_agl_m`), and its drones;
+    /// - wherever its intel (recon, JTACs, special forces) has a fresh
+    ///   contact on it.
+    ///
+    /// All of it shrinks with the light and the weather (`FormationRt::
+    /// visibility`, set from the mission's time of day and visibility).
+    /// Everything seen is remembered, with what it looked like then, where
+    /// it was last seen for `remember_secs`.
+    fn spot(&mut self, rt: &mut FormationRt, cfg: &GroundCombatCfg, lua: MizLua, now: DateTime<Utc>) {
+        use super::intel::IntelUnitClass;
+        use bfprotocols::cfg::ActionKind;
+        let vis = rt.visibility.unwrap_or(1.).clamp(0.15, 1.);
+        let forms: SmallVec<[(FormationId, Side, Vector2, f64, bool, Deployment); 32]> = self
             .formations()
-            .map(|f| (f.id, f.side, f.pos, self.formation_strength(f).0, rt.is_live(f)))
+            .map(|f| (f.id, f.side, f.pos, f.heading, f.posture == Posture::Moving, f.deployment))
             .collect();
-        let mut losses: SmallVec<[(FormationId, u32); 8]> = smallvec::smallvec![];
-        for (id, side, pos, _, live) in &all {
-            if *live {
+        let bases: SmallVec<[(Side, Vector2); 128]> = self
+            .objectives()
+            .filter(|(_, o)| o.owner() != Side::Neutral)
+            .map(|(_, o)| (o.owner(), o.pos()))
+            .collect();
+        // Eyes in the air: players low enough to see the ground, and drones.
+        let land = Land::singleton(lua).ok();
+        let height = |p: Vector2| land.as_ref().and_then(|l| l.get_height(LuaVec2(p)).ok()).unwrap_or(0.);
+        let mut air: SmallVec<[(Side, Vector3); 32]> = SmallVec::new();
+        for (_, p, i) in self.instanced_players() {
+            if !i.in_air {
                 continue;
             }
-            let enemy: u32 = all
-                .iter()
-                .filter(|(_, s, p, _, l)| s != side && !*l && dist(*p, *pos) <= cfg.contact_m)
-                .map(|(_, _, _, a, _)| *a)
-                .sum();
-            if enemy == 0 {
-                rt.attrition_ts.remove(id);
-                continue;
+            let at = Vector2::new(i.position.p.x, i.position.p.z);
+            if i.position.p.y - height(at) <= cfg.air_spot_agl_m {
+                air.push((p.side, i.position.p.0));
             }
-            let since = *rt.attrition_ts.entry(*id).or_insert(now);
-            if now - since < every {
-                continue;
-            }
-            rt.attrition_ts.insert(*id, now);
-            let n = ((enemy as f64 * cfg.attrition_rate).ceil() as u32).max(1);
-            losses.push((*id, n));
         }
-        for (id, n) in losses {
-            let f = self.persisted.formations.get(&id).unwrap();
-            let name = f.name.clone();
-            // The rear of the column first.
-            let doomed: SmallVec<[UnitId; 8]> = f
-                .groups
+        for g in self.actions() {
+            let drone = matches!(
+                &g.origin,
+                DeployKind::Action { spec, .. } if matches!(spec.kind, ActionKind::Drone(_) | ActionKind::Recon(_))
+            );
+            if !drone {
+                continue;
+            }
+            if let Ok(c) = self.group_center(&g.id) {
+                let alt = g
+                    .units
+                    .into_iter()
+                    .filter_map(|u| self.persisted.units.get(u))
+                    .map(|u| u.position.p.y)
+                    .next()
+                    .unwrap_or(height(c) + 3_000.);
+                air.push((g.side, Vector3::new(c.x, alt, c.y)));
+            }
+        }
+        let fresh_intel = Duration::seconds(300);
+        let visible = |from: Vector3, to: Vector2| -> bool {
+            if !cfg.line_of_sight {
+                return true;
+            }
+            match land.as_ref() {
+                None => true,
+                Some(l) => {
+                    let to3 = LuaVec3(Vector3::new(to.x, height(to) + 2.5, to.y));
+                    l.is_visible(LuaVec3(from), to3).unwrap_or(true)
+                }
+            }
+        };
+        let close_m = cfg.engage_m * 1.5;
+        rt.spot_ts = Some(now);
+        let mut new_contacts: SmallVec<[(Side, FormationId, Vector2); 8]> = SmallVec::new();
+        for (id, side, pos, heading, moving, dep) in &forms {
+            let hide = match dep {
+                Deployment::DugIn => 0.6,
+                _ if !*moving => 0.8,
+                _ => 1.,
+            };
+            let observer = side.opposite();
+            let range = cfg.spot_m * hide * vis;
+            // Nearest observers first: one with a view is enough, and the
+            // line-of-sight test is a terrain query.
+            let mut ground: SmallVec<[(f64, Vector3); 8]> = forms
                 .iter()
-                .rev()
-                .filter_map(|g| self.persisted.groups.get(g))
-                .flat_map(|g| g.units.into_iter().copied())
-                .filter(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
-                .take(n as usize)
+                .filter(|o| o.1 == observer)
+                .map(|o| (dist(o.2, *pos), Vector3::new(o.2.x, height(o.2) + 4., o.2.y)))
+                .filter(|(d, _)| *d <= range)
+                .chain(
+                    bases
+                        .iter()
+                        .filter(|b| b.0 == observer)
+                        .map(|b| (dist(b.1, *pos), Vector3::new(b.1.x, height(b.1) + 15., b.1.y)))
+                        .filter(|(d, _)| *d <= range * 0.75),
+                )
                 .collect();
-            for uid in &doomed {
+            ground.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let by_ground = ground.iter().take(3).find(|(_, from)| visible(*from, *pos)).map(|(d, _)| *d);
+            let by_air = air
+                .iter()
+                .filter(|(s, _)| *s == observer)
+                .map(|(_, p)| (dist(Vector2::new(p.x, p.z), *pos), *p))
+                .filter(|(d, _)| *d <= cfg.air_spot_m * hide * vis)
+                .find(|(_, p)| visible(*p, *pos))
+                .map(|(d, _)| d);
+            let by_intel = self.ephemeral.intel_db.contacts_for(observer).any(|c| {
+                matches!(c.unit_class, IntelUnitClass::Armor | IntelUnitClass::Infantry | IntelUnitClass::Artillery)
+                    && now - c.detected_at <= fresh_intel
+                    && dist(c.pos, *pos) <= 1_500.
+            });
+            let seen_at = match (by_ground, by_air) {
+                (Some(g), Some(a)) => Some(g.min(a)),
+                (Some(g), None) => Some(g),
+                (None, Some(a)) => Some(a),
+                (None, None) if by_intel => Some(f64::INFINITY),
+                _ => None,
+            };
+            let Some(d) = seen_at else { continue };
+            let key = (observer, *id);
+            let fresh = rt
+                .spotted
+                .get(&key)
+                .map_or(true, |s| (now - s.at).num_seconds() > cfg.remember_secs as i64);
+            // What it looked like: the picture shows this, not what it is now.
+            let (kind, alive) = self
+                .formation(*id)
+                .map(|f| (self.formation_kind(f), self.formation_strength(f).0))
+                .unwrap_or(("formation", 0));
+            rt.spotted.insert(
+                key,
+                Sighting { pos: *pos, heading: *heading, at: now, moving: *moving, close: d <= close_m, kind, alive },
+            );
+            if fresh {
+                new_contacts.push((observer, *id, *pos));
+            }
+        }
+        let keep = Duration::seconds(cfg.remember_secs as i64);
+        let formations = &self.persisted.formations;
+        rt.spotted.retain(|(_, id), s| now - s.at <= keep && formations.get(id).is_some());
+        for (observer, id, pos) in new_contacts {
+            let what = rt.spotted.get(&(observer, id)).map(|s| s.kind).unwrap_or("formation");
+            let near = self.near_text(pos);
+            rt.event(observer, "contact", format_compact!("Enemy {what} spotted{near}"), Some(pos), None, now);
+        }
+    }
+
+    /// Column, deploying, deployed, dug in. A column that runs into an enemy
+    /// it can see stops and deploys into line facing it; a formation that
+    /// stands still deploys, and digs in after `dig_in_secs`; one that moves
+    /// off with nothing near it closes back up into column.
+    fn deploy_states(&mut self, rt: &mut FormationRt, cfg: &GroundCombatCfg, now: DateTime<Utc>) {
+        let ids: SmallVec<[FormationId; 16]> = self.formations().map(|f| f.id).collect();
+        let reach = cfg.engage_m * 1.5;
+        for id in ids {
+            let f = self.persisted.formations.get(&id).unwrap();
+            let (side, pos, name) = (f.side, f.pos, f.name.clone());
+            let threat = rt
+                .sightings(side)
+                .filter(|(_, s)| s.at == now && dist(s.pos, pos) <= reach)
+                .map(|(_, s)| s.pos)
+                .min_by(|a, b| dist(*a, pos).total_cmp(&dist(*b, pos)));
+            let target = match f.order {
+                Order::Attack(oid) => self
+                    .persisted
+                    .objectives
+                    .get(&oid)
+                    .map(|o| o.zone.pos())
+                    .filter(|p| dist(*p, pos) <= reach + 2_000.),
+                _ => None,
+            };
+            let contact = threat.or(target);
+            if contact.is_some() {
+                rt.contact_ts.insert(id, now);
+            }
+            let quiet_for = rt.contact_ts.get(&id).map_or(i64::MAX, |t| (now - *t).num_seconds());
+            let stationary = f.posture != Posture::Moving;
+            let held = (now - f.deployment_ts.unwrap_or(f.order_ts)).num_seconds();
+            let next = match (f.deployment, contact.is_some()) {
+                (Deployment::Column, true) if !f.broken => Deployment::Deploying,
+                (Deployment::Deploying, _) if held >= cfg.deploy_secs as i64 => Deployment::Deployed,
+                (Deployment::Column, false) if stationary => Deployment::Deployed,
+                (Deployment::Deployed, false) if stationary && held >= cfg.dig_in_secs as i64 => Deployment::DugIn,
+                (Deployment::Deployed | Deployment::DugIn, false) if !stationary && quiet_for >= 180 => {
+                    Deployment::Column
+                }
+                // Moving off: it leaves its prepared positions.
+                (Deployment::DugIn, _) if !stationary => Deployment::Deployed,
+                (d, _) => d,
+            };
+            if next == f.deployment {
+                continue;
+            }
+            let live = rt.is_live(f);
+            let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+            f.deployment = next;
+            f.deployment_ts = Some(now);
+            if let Some(c) = contact {
+                if dist(c, pos) > 1. {
+                    f.heading = heading_of(c - pos);
+                }
+            }
+            self.ephemeral.dirty();
+            if live {
+                rt.route_dirty.insert(id);
+            } else if let Err(e) = self.place_units(id) {
+                warn!("ground war: laying out formation {id}: {e:?}");
+            }
+            match next {
+                Deployment::Deploying => {
+                    let near = self.near_text(pos);
+                    rt.event(side, "battle", format_compact!("{name} has made contact{near} and is deploying"), Some(pos), Some(id), now);
+                }
+                Deployment::DugIn => {
+                    rt.event(side, "order", format_compact!("{name} has dug in"), Some(pos), Some(id), now);
+                }
+                _ => (),
+            }
+        }
+    }
+
+    /// One round of fighting on the map, every `combat_secs`, for every force
+    /// the server isn't simulating in DCS: formations, and the garrisons of
+    /// bases that aren't spawned. Each force in reach of an enemy it can see
+    /// deals damage in proportion to its power, split across what it is
+    /// fighting; damage kills vehicles once it adds up to their toughness
+    /// (`combat`). A force in DCS still shoots back on the map -- the force it
+    /// is shooting at isn't in DCS to be hit -- but takes its losses in DCS.
+    fn fight(&mut self, rt: &mut FormationRt, cfg: &GroundCombatCfg, lua: MizLua, now: DateTime<Utc>) {
+        let every = Duration::seconds(cfg.combat_secs.max(10) as i64);
+        let minutes = match rt.last_combat {
+            None => {
+                rt.last_combat = Some(now);
+                return;
+            }
+            Some(t) if now - t < every => return,
+            Some(t) => ((now - t).num_seconds() as f64 / 60.).min(5.),
+        };
+        rt.last_combat = Some(now);
+
+        #[derive(Clone, Copy, PartialEq)]
+        enum Who {
+            F(FormationId),
+            G(ObjectiveId),
+        }
+        struct Force {
+            who: Who,
+            side: Side,
+            pos: Vector2,
+            /// How far it reaches beyond `engage_m` (a garrison's zone).
+            extra: f64,
+            power: f64,
+            raw: f64,
+            cover: f64,
+            /// In DCS: takes no damage on the map.
+            live: bool,
+            units: SmallVec<[(UnitId, Role); 32]>,
+            name: CompactString,
+        }
+        let mut forces: Vec<Force> = vec![];
+        for f in self.formations() {
+            let units = self.formation_units(f);
+            if units.is_empty() {
+                continue;
+            }
+            let raw = combat::raw_power(cfg, units.iter().map(|(_, r)| r));
+            forces.push(Force {
+                who: Who::F(f.id),
+                side: f.side,
+                pos: f.pos,
+                extra: 0.,
+                power: raw * self.formation_condition(f).factor(cfg),
+                raw,
+                cover: f.deployment.cover(cfg),
+                live: rt.is_live(f),
+                units,
+                name: f.name.as_str().into(),
+            });
+        }
+        // Garrisons of enemy bases a formation is close to.
+        let near_bases: FxHashSet<ObjectiveId> = self
+            .objectives()
+            .filter(|(_, o)| o.owner() != Side::Neutral && !crate::groundwar::at_sea(o.kind()))
+            .filter(|(_, o)| {
+                forces.iter().any(|f| {
+                    f.side != o.owner() && dist(f.pos, o.zone.pos()) <= cfg.engage_m + o.zone.radius() * 0.5
+                })
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for oid in near_bases {
+            let Some(o) = self.persisted.objectives.get(&oid) else { continue };
+            let side = o.owner();
+            let mut units: SmallVec<[(UnitId, Role); 32]> = SmallVec::new();
+            if let Some(gids) = o.groups.get(&side) {
+                for gid in gids {
+                    let Some(g) = self.persisted.groups.get(gid) else { continue };
+                    if g.kind != Some(GroupCategory::Ground) || matches!(g.class, ObjGroupClass::Logi | ObjGroupClass::Services) {
+                        continue;
+                    }
+                    for uid in &g.units {
+                        if let Some(u) = self.persisted.units.get(uid) {
+                            if !u.dead {
+                                units.push((*uid, self.unit_role(&u.typ, g.class)));
+                            }
+                        }
+                    }
+                }
+            }
+            if units.is_empty() {
+                continue;
+            }
+            let raw = combat::raw_power(cfg, units.iter().map(|(_, r)| r));
+            let cond = Condition {
+                supply: o.supply() as f64 / 100.,
+                morale: 1.,
+                deployment: Deployment::DugIn,
+                broken: false,
+            };
+            forces.push(Force {
+                who: Who::G(oid),
+                side,
+                pos: o.zone.pos(),
+                extra: o.zone.radius() * 0.5,
+                power: raw * cond.factor(cfg),
+                raw,
+                cover: cfg.garrison_cover.max(1.),
+                live: o.spawned,
+                units,
+                name: format_compact!("{} garrison", o.name),
+            });
+        }
+        let sees = |rt: &FormationRt, side: Side, who: Who| match who {
+            Who::G(_) => true,
+            Who::F(id) => rt.spotted.get(&(side, id)).map_or(false, |s| s.at == now),
+        };
+        let n = forces.len();
+        let use_factor: Vec<f64> = forces
+            .iter()
+            .map(|f| match f.who {
+                Who::F(id) => self.formation(id).map_or(1., |f| self.supply_use_factor(f)),
+                Who::G(_) => 1.,
+            })
+            .collect();
+        let mut damage = vec![0f64; n];
+        // (target, attacker, damage)
+        let mut credit: Vec<(usize, usize, f64)> = vec![];
+        let mut fighting = vec![false; n];
+        for a in 0..n {
+            let targets: SmallVec<[usize; 8]> = (0..n)
+                .filter(|b| {
+                    let (x, y) = (&forces[a], &forces[*b]);
+                    x.side != y.side
+                        && !matches!((x.who, y.who), (Who::G(_), Who::G(_)))
+                        && dist(x.pos, y.pos) <= cfg.engage_m + x.extra + y.extra
+                        && sees(rt, x.side, y.who)
+                })
+                .collect();
+            if targets.is_empty() {
+                continue;
+            }
+            fighting[a] = true;
+            let tp: SmallVec<[(f64, f64); 8]> = targets.iter().map(|b| (forces[*b].power, forces[*b].cover)).collect();
+            let dealt = combat::damage_dealt(cfg, forces[a].power, minutes, &tp);
+            for (b, d) in targets.iter().zip(dealt) {
+                fighting[*b] = true;
+                if !forces[*b].live {
+                    damage[*b] += d;
+                    credit.push((*b, a, d));
+                }
+            }
+        }
+        // Artillery in range fires in support: any battery of a side's that
+        // can reach an enemy that side has in sight and is fighting. On the
+        // map its fire is more damage (indirect fire, so cover counts
+        // double); on an enemy in DCS, a real fire mission.
+        let mut fire_missions: SmallVec<[(Side, Vector2); 4]> = SmallVec::new();
+        let mut arty_events: SmallVec<[(Side, CompactString, Vector2); 4]> = SmallVec::new();
+        if cfg.artillery_support {
+            let range = self
+                .ephemeral
+                .cfg
+                .artillery
+                .as_ref()
+                .map_or(cfg.artillery_support_m, |a| a.default_max_range_m.max(1_000.));
+            // (side, where, power, base name) of every battery.
+            let mut batteries: SmallVec<[(Side, Vector2, f64, CompactString); 16]> = SmallVec::new();
+            for (_, o) in self.objectives() {
+                let side = o.owner();
+                if side == Side::Neutral {
+                    continue;
+                }
+                let Some(gids) = o.groups().get(&side) else { continue };
+                let mut power = 0.;
+                for gid in gids {
+                    let Some(g) = self.persisted.groups.get(gid) else { continue };
+                    for uid in &g.units {
+                        if let Some(u) = self.persisted.units.get(uid) {
+                            if !u.dead && self.unit_role(&u.typ, g.class) == Role::Artillery {
+                                power += Role::Artillery.firepower(cfg);
+                            }
+                        }
+                    }
+                }
+                if power > 0. {
+                    let supply = 0.3 + 0.7 * (o.supply() as f64 / 100.);
+                    batteries.push((side, o.pos(), power * supply, o.name().into()));
+                }
+            }
+            for b in 0..n {
+                if !fighting[b] {
+                    continue;
+                }
+                let enemy = forces[b].side.opposite();
+                if !sees(rt, enemy, forces[b].who) {
+                    continue;
+                }
+                let support: SmallVec<[&(Side, Vector2, f64, CompactString); 4]> = batteries
+                    .iter()
+                    .filter(|(s, p, ..)| *s == enemy && dist(*p, forces[b].pos) <= range && dist(*p, forces[b].pos) >= 3_000.)
+                    .take(3)
+                    .collect();
+                if support.is_empty() {
+                    continue;
+                }
+                if forces[b].live {
+                    fire_missions.push((enemy, forces[b].pos));
+                } else {
+                    let power: f64 = support.iter().map(|(_, _, p, _)| *p).sum();
+                    let d = cfg.lethality * power * minutes * 0.6 / (forces[b].cover * forces[b].cover).max(1.);
+                    damage[b] += d;
+                    credit.push((b, usize::MAX, d));
+                }
+                arty_events.push((enemy, support[0].3.clone(), forces[b].pos));
+            }
+        }
+        let mut kills = vec![0u32; n];
+        let mut arty_kills: FxHashMap<Side, u32> = FxHashMap::default();
+        for b in 0..n {
+            if damage[b] <= 0. {
+                continue;
+            }
+            let carried = match forces[b].who {
+                Who::F(id) => self.persisted.formations.get(&id).map_or(0., |f| f.damage),
+                Who::G(oid) => rt.garrison_damage.get(&oid).copied().unwrap_or(0.),
+            };
+            let units: SmallVec<[(Role, u64); 32]> =
+                forces[b].units.iter().map(|(u, r)| (*r, u.inner() as u64)).collect();
+            let cap = ((units.len() as f64 * 0.25).ceil() as usize).max(1);
+            let seed = now.timestamp() as u64 ^ (b as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            let (dead, left) = combat::casualties(&units, carried + damage[b], cap, seed);
+            let lost_raw: f64 = dead.iter().map(|i| units[*i].0.firepower(cfg)).sum();
+            for i in &dead {
+                let uid = forces[b].units[*i].0;
                 if let Ok(u) = unit_mut!(self, uid) {
                     u.dead = true;
                     u.pos = u.spawn_pos;
@@ -1725,9 +2523,244 @@ impl Db {
                     u.position = u.spawn_position;
                 }
             }
-            info!("ground war: {name} loses {} vehicle(s) in contact on the map", doomed.len());
+            let k = dead.len() as u32;
+            let (side, pos, name) = (forces[b].side, forces[b].pos, forces[b].name.clone());
+            match forces[b].who {
+                Who::F(id) => {
+                    if let Some(f) = self.persisted.formations.get_mut_cow(&id) {
+                        f.damage = left;
+                        f.losses += k;
+                        if forces[b].raw > 0. {
+                            f.morale = (f.morale - cfg.morale_per_loss * lost_raw / forces[b].raw).max(0.);
+                        }
+                    }
+                }
+                Who::G(oid) => {
+                    rt.garrison_damage.insert(oid, left);
+                    if k > 0 {
+                        if let Err(e) = self.update_objective_status(&oid, now) {
+                            warn!("ground war: status of {name} after losses: {e:?}");
+                        }
+                    }
+                }
+            }
+            if k == 0 {
+                continue;
+            }
             self.ephemeral.dirty();
+            // Credit the shooters in proportion to the damage they did.
+            let total: f64 = credit.iter().filter(|(t, ..)| *t == b).map(|(_, _, d)| d).sum();
+            let mut given = 0;
+            let mut best: Option<(usize, f64)> = None;
+            for (_, a, d) in credit.iter().filter(|(t, ..)| *t == b) {
+                let share = ((k as f64) * d / total.max(1e-9)).floor() as u32;
+                if *a == usize::MAX {
+                    *arty_kills.entry(forces[b].side.opposite()).or_default() += share;
+                } else {
+                    kills[*a] += share;
+                }
+                given += share;
+                if best.map_or(true, |(_, x)| *d > x) {
+                    best = Some((*a, *d));
+                }
+            }
+            if let Some((a, _)) = best {
+                let rest = k - given.min(k);
+                if a == usize::MAX {
+                    *arty_kills.entry(forces[b].side.opposite()).or_default() += rest;
+                } else {
+                    kills[a] += rest;
+                }
+            }
+            rt.battle.note_losses(pos, side, k);
+            let near = self.near_text(pos);
+            info!("ground war: {name} loses {k} vehicle(s) in fighting on the map{near}");
+            let fid = match forces[b].who {
+                Who::F(id) => Some(id),
+                Who::G(_) => None,
+            };
+            rt.event(side, "loss", format_compact!("{name} lost {k} vehicle(s){near}"), Some(pos), fid, now);
         }
+        for a in 0..n {
+            let (side, pos) = (forces[a].side, forces[a].pos);
+            if kills[a] > 0 {
+                let near = self.near_text(pos);
+                let k = kills[a];
+                let name = forces[a].name.clone();
+                rt.event(side, "kill", format_compact!("{name} destroyed {k} enemy vehicle(s){near}"), Some(pos), match forces[a].who {
+                    Who::F(id) => Some(id),
+                    Who::G(_) => None,
+                }, now);
+            }
+            if let Who::F(id) = forces[a].who {
+                if let Some(f) = self.persisted.formations.get_mut_cow(&id) {
+                    f.kills += kills[a];
+                    if fighting[a] {
+                        f.supply = (f.supply - cfg.supply_per_combat_min * minutes * use_factor[a]).max(0.);
+                    }
+                }
+            }
+        }
+        // Supporting fire: say so once in a while, and put real rounds on
+        // enemies DCS is simulating.
+        for (side, base, pos) in arty_events {
+            let key = (side, (pos.x / 5_000.).round() as i64, (pos.y / 5_000.).round() as i64);
+            let due = rt.fire_said.get(&key).map_or(true, |t| (now - *t).num_seconds() >= 600);
+            if due {
+                rt.fire_said.insert(key, now);
+                let near = self.near_text(pos);
+                rt.event(side, "battle", format_compact!("Artillery at {base} is firing in support{near}"), Some(pos), None, now);
+            }
+        }
+        for (side, k) in arty_kills {
+            if k > 0 {
+                rt.event(side, "kill", format_compact!("Our artillery destroyed {k} enemy vehicle(s)"), None, None, now);
+            }
+        }
+        if let Some(acfg) = self.ephemeral.cfg.artillery.clone() {
+            for (side, pos) in fire_missions {
+                let key = (side, (pos.x / 3_000.).round() as i64, (pos.y / 3_000.).round() as i64);
+                if rt.fire_ts.get(&key).map_or(false, |t| (now - *t).num_seconds() < 180) {
+                    continue;
+                }
+                rt.fire_ts.insert(key, now);
+                match self.artillery_strike(lua, side, None, super::actions::WithPos { cfg: acfg.clone(), pos }) {
+                    Ok(_) => info!("ground war: {side:?} artillery fire mission in support at {pos:?}"),
+                    Err(e) => log::debug!("ground war: {side:?} supporting fire at {pos:?}: {e:?}"),
+                }
+            }
+        }
+        rt.fire_ts.retain(|_, t| (now - *t).num_seconds() < 600);
+        rt.fire_said.retain(|_, t| (now - *t).num_seconds() < 1_800);
+        // A garrison no longer under fire stops carrying damage over.
+        let hot: FxHashSet<ObjectiveId> = forces
+            .iter()
+            .filter_map(|f| match f.who {
+                Who::G(oid) => Some(oid),
+                _ => None,
+            })
+            .collect();
+        rt.garrison_damage.retain(|oid, _| hot.contains(oid));
+    }
+
+    /// Supply and morale. Out of contact and within `supply_range_m` of a
+    /// friendly base that has supply, a formation refuels, rearms and
+    /// recovers its nerve; cut off from one, its morale slowly drains. A
+    /// formation whose morale breaks falls back to the nearest friendly base
+    /// whatever its orders, and rallies if it recovers on the way.
+    fn sustain(&mut self, rt: &mut FormationRt, cfg: &GroundCombatCfg, lua: MizLua, dt: f64, now: DateTime<Utc>) {
+        let bases: SmallVec<[(ObjectiveId, Side, Vector2, bool); 128]> = self
+            .objectives()
+            .filter(|(_, o)| o.owner() != Side::Neutral && !crate::groundwar::at_sea(o.kind()))
+            .map(|(id, o)| (*id, o.owner(), o.pos(), o.supply() >= cfg.supply_base_pct))
+            .collect();
+        let mins = dt / 60.;
+        let ids: SmallVec<[FormationId; 16]> = self.formations().map(|f| f.id).collect();
+        let forms: SmallVec<[(Side, Vector2); 32]> = self.formations().map(|f| (f.side, f.pos)).collect();
+        // (base, vehicle loads) to take out of each supplying base's stores.
+        let mut drains: FxHashMap<ObjectiveId, f64> = FxHashMap::default();
+        let mut broke: SmallVec<[(FormationId, Side, CompactString, Vector2, ObjectiveId); 4]> = SmallVec::new();
+        for id in ids {
+            let f = self.persisted.formations.get(&id).unwrap();
+            let (side, pos, name, home) = (f.side, f.pos, f.name.clone(), f.home);
+            // Supplied by the nearest friendly base in range that has stores,
+            // along a line the enemy isn't sitting on: an enemy base astride
+            // the road, or an enemy formation close to it, cuts it.
+            let line_open = |from: Vector2| {
+                !super::logistics::route_interdicted(&self.persisted, side, from, pos, cfg.supply_line_cut_m)
+                    && !forms
+                        .iter()
+                        .any(|(s, p)| *s != side && seg_dist(from, pos, *p) <= cfg.supply_line_cut_m)
+            };
+            let supplier = bases
+                .iter()
+                .filter(|(_, s, p, ok)| *s == side && *ok && dist(*p, pos) <= cfg.supply_range_m)
+                .filter(|(_, _, p, _)| line_open(*p))
+                .min_by(|a, b| dist(a.2, pos).total_cmp(&dist(b.2, pos)))
+                .map(|(oid, ..)| *oid);
+            let supplied = supplier.is_some();
+            // Cut off with a friendly base in range is encircled; with none in
+            // range it has simply outrun its supply.
+            let encircled = !supplied
+                && bases
+                    .iter()
+                    .any(|(_, s, p, ok)| *s == side && *ok && dist(*p, pos) <= cfg.supply_range_m);
+            let vehicles = self.persisted.formations.get(&id).map_or(0, |f| self.formation_units(f).len()) as f64;
+            let fighting = rt
+                .contact_ts
+                .get(&id)
+                .map_or(false, |t| (now - *t).num_seconds() < (cfg.combat_secs.max(10) * 2) as i64);
+            if supplied {
+                rt.supplied.insert(id);
+                if rt.cut_off_said.remove(&id) {
+                    rt.event(side, "supply", format_compact!("{name} is back in supply"), Some(pos), Some(id), now);
+                }
+            } else {
+                rt.supplied.remove(&id);
+                if rt.cut_off_said.insert(id) {
+                    let why = if encircled { "is encircled: its supply line is cut" } else { "is beyond reach of supply" };
+                    rt.event(side, "supply", format_compact!("{name} {why}"), Some(pos), Some(id), now);
+                }
+            }
+            let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+            if let (Some(base), false) = (supplier, fighting) {
+                let gain = (cfg.resupply_per_min * mins).min(1. - f.supply).max(0.);
+                f.supply += gain;
+                f.morale = (f.morale + cfg.morale_recovery_per_min * mins).min(1.);
+                *drains.entry(base).or_default() += gain * vehicles;
+            } else if !supplied {
+                // Encircled troops lose heart faster than ones that have just
+                // outrun their trucks.
+                let rate = if encircled { 0.006 } else { 0.002 };
+                f.morale = (f.morale - rate * mins).max(0.);
+            }
+            if !f.broken && f.morale < cfg.break_morale {
+                f.broken = true;
+                f.commander = None;
+                f.locked_until = None;
+                // Home if it is still ours, else the nearest friendly base.
+                let dest = bases
+                    .iter()
+                    .find(|(oid, s, ..)| *oid == home && *s == side)
+                    .or_else(|| {
+                        bases
+                            .iter()
+                            .filter(|(_, s, ..)| *s == side)
+                            .min_by(|a, b| dist(a.2, pos).total_cmp(&dist(b.2, pos)))
+                    })
+                    .map(|(oid, ..)| *oid);
+                if let Some(dest) = dest {
+                    broke.push((id, side, name.as_str().into(), pos, dest));
+                }
+            } else if f.broken && f.morale >= 0.5 {
+                f.broken = false;
+                rt.event(side, "order", format_compact!("{name} has rallied"), Some(pos), Some(id), now);
+            }
+        }
+        if !drains.is_empty() {
+            for (oid, loads) in drains {
+                self.drain_base(cfg, oid, loads);
+            }
+            if let Err(e) = self.update_supply_status() {
+                warn!("ground war: supply status after resupply: {e:?}");
+            }
+        }
+        for (id, side, name, pos, dest) in broke {
+            let dname = self.persisted.objectives.get(&dest).map(|o| o.name.clone()).unwrap_or_default();
+            info!("ground war: {side:?} {name} has broken, falling back to {dname}");
+            if let Err(e) = self.order_formation(rt, lua, id, Order::Withdraw(dest), None, now) {
+                warn!("ground war: {name} falling back: {e:?}");
+            }
+            rt.event(side, "broken", format_compact!("{name} has broken and is falling back to {dname}"), Some(pos), Some(id), now);
+            rt.event(side.opposite(), "broken", format_compact!("An enemy formation is breaking{}", self.near_text(pos)), Some(pos), None, now);
+            self.ephemeral.msgs().panel_to_side(
+                15,
+                false,
+                side,
+                format_compact!("{name} has broken under fire and is falling back to {dname}."),
+            );
+        }
+        self.ephemeral.dirty();
     }
 
     /// Coalition-only F10 pins (and an arrow toward the objective it is
@@ -1796,7 +2829,8 @@ impl Db {
     }
 
     /// One pass of the ground war's mechanics (not the AI): movement,
-    /// arrivals, assaults, who is in DCS, attrition, map pins.
+    /// arrivals, assaults, who is in DCS, spotting, deployment, fighting,
+    /// supply and morale, map pins.
     pub fn tick_formations(
         &mut self,
         rt: &mut FormationRt,
@@ -1825,7 +2859,10 @@ impl Db {
             warn!("ground war: {e:?}");
         }
         self.issue_routes(rt, &cfg, lua);
-        self.attrition(rt, &cfg, now);
+        self.spot(rt, &cfg.combat, lua, now);
+        self.deploy_states(rt, &cfg.combat, now);
+        self.fight(rt, &cfg.combat, lua, now);
+        self.sustain(rt, &cfg.combat, lua, dt, now);
         if cfg.map_pins {
             self.draw_pins(rt, now);
         }
@@ -1857,6 +2894,28 @@ mod tests {
         // Past the end of the trail it carries straight on back.
         let (p, _) = back_along(head, 0., &trail, 250.);
         assert!((p - Vector2::new(0., -150.)).norm() < 1e-6);
+    }
+
+    #[test]
+    fn a_formation_beside_the_road_cuts_it_and_one_far_off_does_not() {
+        let base = Vector2::new(0., 0.);
+        let front = Vector2::new(20_000., 0.);
+        assert!(seg_dist(base, front, Vector2::new(10_000., 2_000.)) <= 3_000.);
+        assert!(seg_dist(base, front, Vector2::new(10_000., 9_000.)) > 3_000.);
+        // Past the end of the line it is the distance to the end.
+        assert!((seg_dist(base, front, Vector2::new(25_000., 0.)) - 5_000.).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_deployed_line_faces_its_heading() {
+        // Facing north (+x): the line runs east-west, centred on the spot.
+        let pts: Vec<Vector2> = (0..4).map(|i| line_slot(Vector2::new(0., 0.), 0., i, 4)).collect();
+        assert!(pts.iter().all(|p| p.x.abs() < 1e-6));
+        let sum: f64 = pts.iter().map(|p| p.y).sum();
+        assert!(sum.abs() < 1e-6);
+        // A big company forms two ranks, the second behind the first.
+        let back = line_slot(Vector2::new(0., 0.), 0., 9, 12);
+        assert!(back.x < -100.);
     }
 
     #[test]

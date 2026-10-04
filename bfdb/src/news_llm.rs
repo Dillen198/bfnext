@@ -148,7 +148,7 @@ fn http_error(res: reqwest::blocking::Response) -> anyhow::Error {
         let backoff = note_rate_limited(wait);
         return anyhow::Error::new(RateLimited { backoff, body });
     }
-    anyhow!("news writer: {status} {body}")
+    anyhow!("language model: {status} {body}")
 }
 
 /// Where to send the day's brief, and as whom.
@@ -394,18 +394,17 @@ struct AnthropicReply {
     content: Vec<AnthropicBlock>,
 }
 
-/// Write the dispatch. Blocking on purpose — the caller already runs inside
-/// `block_in_place`, and this happens a handful of times a day.
-pub fn write_dispatch(
+/// One call to the configured model: `system` and `user` in, the reply text
+/// and the provider's finish reason out. Blocking, like everything here. A
+/// 429 pushes back the process-wide gate (`acquire`), since every caller --
+/// the diary and the HQ strategist -- shares the one endpoint and quota.
+pub fn chat(
     cfg: &WriterCfg,
-    digest: &NewsDigest,
-    history: &[NewsDigest],
-) -> Result<Written> {
-    let prompt = user_prompt(digest, history);
-    // Generous on purpose. This runs on a timer in the background and nothing
-    // waits on it, while a local model on a CPU-only box can take minutes to
-    // produce a few hundred tokens -- a tight timeout here would fail exactly
-    // the setup that is most attractive for this job.
+    system: &str,
+    user: &str,
+    max_tokens: u32,
+    temperature: f64,
+) -> Result<(String, Option<String>)> {
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(300))
         .build()?;
@@ -413,9 +412,9 @@ pub fn write_dispatch(
     let raw = if cfg.is_anthropic() {
         let body = serde_json::json!({
             "model": cfg.model,
-            "max_tokens": 1200,
-            "system": SYSTEM,
-            "messages": [{ "role": "user", "content": prompt }],
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": [{ "role": "user", "content": user }],
         });
         let mut req = client
             .post(&cfg.url)
@@ -433,14 +432,14 @@ pub fn write_dispatch(
     } else {
         let mut body = serde_json::json!({
             "model": cfg.model,
-            "temperature": 0.9,
+            "temperature": temperature,
             // Room for a reasoning model's thinking as well as the dispatch:
             // at 1200, gpt-oss spent the budget reasoning about long briefs
             // and returned no JSON at all (finish_reason "length").
-            "max_tokens": 2400,
+            "max_tokens": max_tokens * 2,
             "messages": [
-                { "role": "system", "content": SYSTEM },
-                { "role": "user", "content": prompt },
+                { "role": "system", "content": system },
+                { "role": "user", "content": user },
             ],
         });
         // gpt-oss (Groq, OpenRouter, Ollama) reasons before it answers; three
@@ -465,8 +464,23 @@ pub fn write_dispatch(
             .ok_or_else(|| anyhow!("no choices in reply"))?;
         (choice.message.content.unwrap_or_default(), choice.finish_reason)
     };
-    let (raw, finish) = raw;
     note_success();
+    Ok(raw)
+}
+
+/// Write the dispatch. Blocking on purpose — the caller already runs inside
+/// `block_in_place`, and this happens a handful of times a day.
+pub fn write_dispatch(
+    cfg: &WriterCfg,
+    digest: &NewsDigest,
+    history: &[NewsDigest],
+) -> Result<Written> {
+    let prompt = user_prompt(digest, history);
+    // Generous on purpose. This runs on a timer in the background and nothing
+    // waits on it, while a local model on a CPU-only box can take minutes to
+    // produce a few hundred tokens -- a tight timeout here would fail exactly
+    // the setup that is most attractive for this job.
+    let (raw, finish) = chat(cfg, SYSTEM, &prompt, 1200, 0.9)?;
 
     let mut w = extract_json(&raw).map_err(|e| {
         anyhow!(

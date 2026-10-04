@@ -5,6 +5,11 @@ spawns, and how to use it. **Which of these your server actually offers is
 config** — this is the catalogue, not the menu. The menu is the authority for
 what you can call and what it costs.
 
+Nothing an action creates appears out of thin air. Aircraft start on the ramp at
+the nearest friendly airfield with room (heavies need a large open stand) and
+take off; ground units drive out from a friendly base. If no field can launch
+it, the action is refused and costs nothing.
+
 ## What this server offers
 
 Generated from the campaign config of **the server selected in the top bar** — switch
@@ -101,6 +106,21 @@ Sends one of your existing ground groups or squads to a mark. Cheap, and
 penalised if the group dies on the way. This is how you walk capture troops the
 last few hundred metres into a zone when the
 [Capture Advisor](../f10-menu/objectives.md) says they are short of the edge.
+
+### Reinforce
+Sends a convoy of tank transporters to one of your objectives that has lost
+ground units, to replace them. The menu lists only the bases with something
+destroyed, and how many groups each has lost.
+
+- It sets off from **your nearest objective** that isn't under attack and can
+  spare the materiel, and drives the roads there. It is slow, and the
+  enemy can see and hit it like any other ground target.
+- When it arrives, destroyed garrison groups are rebuilt, armour first. Each
+  transporter lost on the way means less arrives. Lose them all and nothing
+  arrives.
+- One convoy per objective at a time. A convoy still on the road when the
+  server restarts carries on from where it was. One stuck on terrain is
+  recalled and refunded.
 
 ### Artillery
 Player-callable indirect fire from your side's guns. On the live mission this

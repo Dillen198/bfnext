@@ -68,6 +68,30 @@ See [Points System](../gameplay/points-and-lives.md) for full details.
 ### Q: I captured an enemy carrier — why can't I fly its jets?
 **A**: A captured carrier comes across at 50% health. Aircraft types your coalition doesn't normally produce ("foreign" airframes it had aboard) stay grounded until the carrier's repairs finish — deliver repair crates to it, use the naval base's Repair/Respawn Carrier actions where the server configures them, or leave it linked to a friendly, stocked naval base and let it auto-repair. See [Carrier Operations](../gameplay/carrier-ops.md). Your own coalition's aircraft work right away.
 
+### Q: Where do the AI units come from? Do they just appear?
+**A**: No. Every AI flight starts on the ground at a friendly airfield and
+takes off, and every AI ground unit drives out from a friendly base: bought
+actions, the Theatre HQ's operations, CAP scrambles, ambush parties, CSAR search
+parties, reinforcements and ground formations alike. Destroy the base, or the
+road, and you stop what comes out of it.
+
+### Q: My AWACS / tanker / bomber was refused. Why?
+**A**: No friendly airfield in range had room to launch it. Heavy aircraft need
+a large open stand, so a field with only fighter spots is passed over. You were
+not charged; try again when a field is free, or capture one closer to the
+front.
+
+### Q: Why does my ground formation keep falling back?
+**A**: Either its morale broke (heavy losses, or cut off from supply), or it ran
+low on fuel and ammunition and the AI pulled it back to resupply. Keep the road
+to a friendly base with supply open behind it. See
+[Ground War](../advanced/ground-war.md).
+
+### Q: Who decides what the AI does?
+**A**: On servers running it, each side's [Theatre HQ](../advanced/theatre-hq.md):
+posture, main effort, air packages, fires, logistics. Ask it for support from
+**F10 → Info → HQ** or `-request`.
+
 ## F10 Menus
 
 ### Q: I don't see the Actions menu!

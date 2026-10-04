@@ -1,668 +1,677 @@
-// GROUND COMMAND: the coalition's ground war on one map, and the controls to
-// run it. Everything on it comes from /api/groundwar, which the engine builds
-// for the viewer's own side only -- our formations in full, the enemy only
-// where we are in contact, and the battles both sides are in. Orders go to
-// /api/groundwar/command and are checked again by the engine against the
-// side the viewer's own pilot is on.
-import circle from '@turf/circle'
-import type { Feature, FeatureCollection } from 'geojson'
-import ms from 'milsymbol'
-import { useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import Map, { Layer, Marker, Popup, Source, type MapRef } from 'react-map-gl/maplibre'
+// GROUND COMMAND: the coalition's ground war as an RTS table. The picture is
+// built by the engine for the viewer's own registered coalition only -- our
+// formations in full (every vehicle where it really is), the enemy only where
+// we have seen it, the battles, and our pilots live in DCS -- and streamed on
+// /ws/groundwar (polling /api/groundwar when the socket can't be had). Orders
+// go to /api/groundwar/command and are checked again by the engine against
+// the side the viewer's own pilot is on. Fog of war is the server's job; this
+// page draws exactly what the picture contains.
+//
+// The pieces live in ./groundwar/: the feed hook, the per-frame engine
+// (vehicles, players, battle effects), the map layers and markers, the HUD
+// and the mouse controller.
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import Map, { type MapRef, type ViewStateChangeEvent } from 'react-map-gl/maplibre'
+import type { MapLibreEvent, Map as MlMap } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import { Aircraft, ChevronsLeft, Defend, Info, Pin, Plus, Shield, Strike, X } from '@icons'
 
-import {
-  api,
-  type Frontlines,
-  type GroundBattle,
-  type GroundCommand,
-  type GroundFormation,
-  type GroundObjective,
-  type GroundPicture,
-  type LatLon,
-} from '../api'
+import { api, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon } from '../api'
 import { useAuth } from '../context/AuthContext'
+import { useInstance } from '../context/InstanceContext'
 import { useTheme } from '../context/ThemeContext'
-import { mapStyleFor } from '../lib/mapStyle'
-import { groundwarMock, groundwarMockCommand } from './groundwarMock'
+import { BattlefieldEngine, type Verb, VERB_COLOR } from './groundwar/engine'
+import { km } from './groundwar/geo'
+import { CommandBar, Drawer, EventFeed, HelpOverlay, TopHud, Toasts, type CmdButton, type Toast } from './groundwar/hud'
+import { attachInput, type InputHandle } from './groundwar/input'
+import { BattlefieldLayers } from './groundwar/layers'
+import { styleFor, type MapLook } from './groundwar/mapStyles'
+import { BattleLabel, DestMarker, EnemyMarker, FormationMarker, ObjectiveMarker } from './groundwar/markers'
+import { installVehicleImages } from './groundwar/sprites'
+import { NEAR_ZOOM, reducedMotion, type Side } from './groundwar/theme'
+import { useGroundFeed } from './groundwar/useGroundFeed'
+import { createGroundwarMock } from './groundwarMock'
+import './groundwar/groundwar.css'
 
-const SIDE_COLOR = { Blue: '#4a8fd4', Red: '#cc4444', Neutral: '#8a8f80' } as const
-const BATTLE = '#ff8c1a'
+type Mode = 'none' | 'attack' | 'defend' | 'raise'
 
-/** km between two points, flat-earth -- fine for "which is nearer". */
-function km(a: LatLon, b: LatLon): number {
-  const kx = 111.32 * Math.cos((a[0] * Math.PI) / 180)
-  const dx = (a[1] - b[1]) * kx
-  const dy = (a[0] - b[0]) * 110.57
-  return Math.sqrt(dx * dx + dy * dy)
+const NO_FRONTS: Frontlines = { mid: [], blue: [], red: [] }
+let toastSeq = 0
+
+function loadPref<T>(key: string, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key)
+    return v == null ? fallback : (JSON.parse(v) as T)
+  } catch {
+    return fallback
+  }
 }
-
-const symCache: Record<string, string> = {}
-/** A NATO company symbol (2525C letter SIDC) as an image URL. */
-function unitSymbol(kind: 'armour' | 'mechanised' | 'infantry', hostile: boolean, size = 26): string {
-  const key = `${kind}:${hostile}:${size}`
-  if (symCache[key]) return symCache[key]
-  const fn = kind === 'armour' ? 'UCA---' : kind === 'mechanised' ? 'UCIZ--' : 'UCI---'
-  const sidc = `S${hostile ? 'H' : 'F'}GP${fn}-E---`
-  const svg = new ms.Symbol(sidc, { size, fill: true, frame: true }).asSVG()
-  symCache[key] = `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
-  return symCache[key]
-}
-
-function formationKind(f: GroundFormation): 'armour' | 'mechanised' | 'infantry' {
-  const n = f.name.toLowerCase()
-  if (n.includes('mech')) return 'mechanised'
-  if (n.includes('armd') || n.includes('armour') || n.includes('armor')) return 'armour'
-  return f.has_infantry ? 'infantry' : 'armour'
-}
-
-function orderText(f: GroundFormation): string {
-  switch (f.order) {
-    case 'hold': return 'Holding position'
-    case 'attack': return `Attacking ${f.target_name ?? '?'}`
-    case 'defend': return `Defending ${f.target_name ?? '?'}`
-    case 'withdraw': return `Withdrawing to ${f.target_name ?? '?'}`
+function savePref(key: string, v: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(v))
+  } catch {
+    /* private window: preferences just don't stick */
   }
 }
 
-function since(unix: number): string {
-  const m = Math.max(0, Math.round((Date.now() / 1000 - unix) / 60))
-  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`
-}
-
-const panel: CSSProperties = {
-  background: 'var(--bg-card)',
-  border: '1px solid var(--border-light)',
-  borderRadius: 3,
-  padding: '8px 10px',
-}
-const label: CSSProperties = {
-  fontFamily: 'var(--font-mono)',
-  fontSize: '0.62rem',
-  letterSpacing: '0.14em',
-  color: 'var(--text-dim)',
-}
-function btn(color: string, disabled = false): CSSProperties {
-  return {
-    background: 'transparent',
-    border: `1px solid ${color}`,
-    color,
-    fontFamily: 'var(--font-mono)',
-    fontSize: '0.66rem',
-    letterSpacing: '0.08em',
-    padding: '4px 8px',
-    borderRadius: 2,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    opacity: disabled ? 0.4 : 1,
+/** What clicking this base would do with the current selection and mode. */
+function resolveOrder(
+  pic: GroundPicture | null, mode: Mode, hasSel: boolean, objId: number | null,
+): { verb: Verb; text: string } | null {
+  if (!pic) return null
+  const o = objId != null ? pic.objectives.find((x) => x.id === objId) : undefined
+  const side = pic.side
+  if (!o) {
+    if (mode === 'attack') return { verb: 'invalid', text: 'ATTACK · CLICK AN ENEMY BASE' }
+    if (mode === 'defend') return { verb: 'invalid', text: 'DEFEND · CLICK ONE OF OUR BASES' }
+    if (mode === 'raise') return { verb: 'invalid', text: 'RAISE · CLICK ONE OF OUR BASES' }
+    return null
   }
-}
-
-function Badge({ color, children }: { color: string; children: string }) {
-  return (
-    <span style={{
-      fontFamily: 'var(--font-mono)', fontSize: '0.56rem', letterSpacing: '0.1em',
-      padding: '1px 5px', borderRadius: 2, border: `1px solid ${color}`, color,
-    }}>{children}</span>
-  )
-}
-
-function StrengthBar({ alive, total }: { alive: number; total: number }) {
-  const pct = total > 0 ? Math.round((alive / total) * 100) : 0
-  const c = pct >= 70 ? 'var(--accent-bright)' : pct >= 40 ? 'var(--yellow)' : 'var(--red)'
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <div style={{ flex: 1, height: 4, background: 'rgba(0,0,0,0.45)', borderRadius: 1, overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: c }} />
-      </div>
-      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.62rem', color: c }}>{alive}/{total}</span>
-    </div>
-  )
+  const name = o.name.toUpperCase()
+  const ours = o.owner === side
+  if (mode === 'raise') {
+    return ours && (o.can_raise ?? 0) > 0
+      ? { verb: 'raise', text: `RAISE AT ${name}` }
+      : { verb: 'invalid', text: ours ? `${name} CAN'T SPARE TROOPS` : `NOT OURS · CAN'T RAISE AT ${name}` }
+  }
+  if (!hasSel) return null
+  if (mode === 'attack') return ours ? { verb: 'invalid', text: `${name} IS OURS · PRESS D TO DEFEND` } : { verb: 'attack', text: `ATTACK ${name}` }
+  if (mode === 'defend') return ours ? { verb: 'defend', text: `DEFEND ${name}` } : { verb: 'invalid', text: `${name} ISN'T OURS · PRESS A TO ATTACK` }
+  return ours ? { verb: 'defend', text: `MOVE · DEFEND ${name}` } : { verb: 'attack', text: `ATTACK ${name}` }
 }
 
 export default function GroundWarPage(): ReactElement {
   const { user } = useAuth()
   const { theme } = useTheme()
-  const mapStyle = useMemo(() => mapStyleFor(theme), [theme])
-  const qc = useQueryClient()
-  const mapRef = useRef<MapRef>(null)
+  const { selected: instance } = useInstance()
   // An admin with no side of their own picks which one to look at.
   const adminPick = !!user?.is_admin && !user?.side
-  const [viewSide, setViewSide] = useState<'Blue' | 'Red'>('Blue')
+  const [viewSide, setViewSide] = useState<Side>('Blue')
   const sideParam = adminPick ? viewSide : undefined
-  // Dev builds only: `?mock` renders from a fixture and never calls the API.
-  // Keep the guard literal so a production build drops the fixture.
-  const mock = import.meta.env.DEV && new URLSearchParams(location.search).has('mock')
+  // Dev builds only: `?mock` (or `?mock=view`, `?mock=god`) runs a simulated
+  // picture and never calls the API. Keep the guard literal so a production
+  // build drops the fixture.
+  const mockParam = import.meta.env.DEV ? new URLSearchParams(location.search).get('mock') : null
+  const mock = useMemo(() => (import.meta.env.DEV && mockParam != null ? createGroundwarMock(mockParam) : null), [mockParam])
 
-  const { data: pic, error, isLoading } = useQuery<GroundPicture>({
-    queryKey: ['groundwar', sideParam],
-    queryFn: () => (mock ? Promise.resolve(groundwarMock) : api.groundwar.picture(sideParam)),
-    // Every 5 s while it answers; once a minute, and no retries, while it
-    // doesn't -- a server whose bflib.dll predates the ground war never will,
-    // and hammering it only ties up bfdb.
-    retry: false,
-    refetchInterval: (q) => (q.state.error ? 60_000 : 5_000),
-  })
-  const { data: fronts = { mid: [], blue: [], red: [] } } = useQuery<Frontlines>({
+  const feed = useGroundFeed(sideParam, instance, mock)
+  const pic = feed.pic
+  const { data: fronts = NO_FRONTS } = useQuery<Frontlines>({
     queryKey: ['frontline'],
-    queryFn: () => api.frontline(),
+    queryFn: () => (mock ? Promise.resolve(NO_FRONTS) : api.frontline()),
     refetchInterval: 60_000,
   })
+  const side: Side = pic?.side ?? 'Blue'
 
-  const [selected, setSelected] = useState<number | null>(null)
-  const [picked, setPicked] = useState<GroundObjective | null>(null)
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null)
+  // View preferences, per browser.
+  const [look, setLookState] = useState<MapLook>(() => loadPref('gw.look', 'sat'))
+  const [fog, setFogState] = useState<boolean>(() => loadPref('gw.fog', false))
+  const [territory, setTerritoryState] = useState<boolean>(() => loadPref('gw.territory', true))
+  const setLook = (l: MapLook) => { setLookState(l); savePref('gw.look', l) }
+  const setFog = (b: boolean) => { setFogState(b); savePref('gw.fog', b) }
+  const setTerritory = (b: boolean) => { setTerritoryState(b); savePref('gw.territory', b) }
+  const mapStyle = useMemo(() => styleFor(look, theme), [look, theme])
 
-  const command = useMutation({
-    mutationFn: (cmd: GroundCommand) =>
-      mock ? Promise.resolve(groundwarMockCommand(cmd)) : api.groundwar.command(cmd),
-    onSuccess: (r) => {
-      setResult({ ok: r.ok, text: r.message })
-      if (r.ok && r.formation != null) setSelected(r.formation)
-      qc.invalidateQueries({ queryKey: ['groundwar'] })
-    },
-    onError: (e: Error) => setResult({ ok: false, text: e.message }),
-  })
-  const send = (cmd: GroundCommand) => {
-    setPicked(null)
-    command.mutate(cmd)
+  const [follow, setFollow] = useState(false)
+  const [help, setHelp] = useState(false)
+  const [near, setNear] = useState(false)
+  const [sel, setSel] = useState<number[]>([])
+  const [selObjId, setSelObjId] = useState<number | null>(null)
+  const [selEnemyId, setSelEnemyId] = useState<number | null>(null)
+  const [mode, setMode] = useState<Mode>('none')
+  const [groups, setGroups] = useState<Record<number, number[]>>(() => loadPref('gw.groups', {}))
+  const [toasts, setToasts] = useState<Toast[]>([])
+  const [cursor, setCursor] = useState<{ text: string; color: string } | null>(null)
+
+  const mapRef = useRef<MapRef>(null)
+  const boxRef = useRef<HTMLDivElement>(null)
+  const cursorRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<InputHandle | null>(null)
+  const unhookImages = useRef<(() => void) | null>(null)
+  const lastDigit = useRef<{ n: number; t: number } | null>(null)
+  const [engine] = useState(() => new BattlefieldEngine())
+
+  // What is selected, limited to what still exists.
+  const selIds = useMemo(() => sel.filter((id) => pic?.formations.some((f) => f.id === id)), [sel, pic])
+  const selSet = useMemo(() => new Set(selIds), [selIds])
+  const selForms = useMemo(() => (pic?.formations ?? []).filter((f) => selSet.has(f.id)), [pic, selSet])
+  const selObj = pic?.objectives.find((o) => o.id === selObjId) ?? null
+  const selEnemy = pic?.enemy.find((e) => e.id === selEnemyId) ?? null
+  const groupOf = useMemo(() => {
+    const m: Record<number, number> = {}
+    for (const [k, ids] of Object.entries(groups)) for (const id of ids) m[id] = Number(k)
+    return m
+  }, [groups])
+  const selfPlayer = pic?.players.find((p) => p.is_self) ?? null
+
+  // ── Engine wiring ──────────────────────────────────────────────────────
+  useEffect(() => {
+    engine.setReducedMotion(reducedMotion())
+    engine.setFollowBroken(() => setFollow(false))
+    return () => {
+      inputRef.current?.detach()
+      unhookImages.current?.()
+      engine.destroy()
+    }
+  }, [engine])
+  useEffect(() => {
+    if (pic) engine.setPicture(pic, feed.gap)
+  }, [engine, pic, feed.gap])
+  useEffect(() => engine.setSelection(selSet), [engine, selSet])
+  useEffect(() => engine.setOptions({ fog, territory, follow }), [engine, fog, territory, follow])
+
+  // ── Toasts and orders ──────────────────────────────────────────────────
+  const toast = useCallback((text: string, ok: boolean) => {
+    const id = ++toastSeq
+    setToasts((t) => [...t.slice(-4), { id, ok, text }])
+    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), ok ? 5000 : 7000)
+  }, [])
+
+  const lockReason = !pic || pic.can_command
+    ? null
+    : pic.god_mode ? 'ADMIN VIEW · ORDERS NEED A PILOT ON A SIDE' : 'VIEW ONLY'
+
+  const viewOnly = () =>
+    toast(pic?.god_mode
+      ? 'Admin view: you can watch either side, but orders need a pilot registered on one.'
+      : 'View only: link your Discord (-linkme in DCS chat) and take a slot this campaign to give orders.', false)
+  const issue = async (cmds: GroundCommand[]) => {
+    if (!pic || !cmds.length) return
+    if (!pic.can_command) return viewOnly()
+    const replies = await Promise.all(cmds.map((c) =>
+      (mock ? Promise.resolve(mock.command(c)) : api.groundwar.command(c))
+        .then((r) => ({ ok: r.ok, text: r.message }))
+        .catch((e: Error) => ({ ok: false, text: e.message })),
+    ))
+    for (const r of replies) toast(r.text, r.ok)
+    feed.refresh()
   }
 
-  const side = pic?.side ?? 'Blue'
-  const ours = SIDE_COLOR[side]
-  const canCommand = !!pic?.can_command && !command.isPending
-  const sel = pic?.formations.find((f) => f.id === selected) ?? null
+  const ownObjs = (p: GroundPicture) => p.objectives.filter((o) => o.owner === p.side)
 
-  const frontGeo: FeatureCollection = useMemo(() => ({
-    type: 'FeatureCollection',
-    features: (['blue', 'red', 'mid'] as const).flatMap((k) =>
-      fronts[k].filter((l) => l.length > 1).map((l): Feature => ({
-        type: 'Feature',
-        properties: { k },
-        geometry: { type: 'LineString', coordinates: l.map(([lat, lon]) => [lon, lat]) },
-      })),
-    ),
-  }), [fronts])
+  const orderTo = (verb: 'attack' | 'defend', objId: number) => {
+    if (!selIds.length) return
+    void issue(selIds.map((id) => ({ kind: verb, formation: id, objective: objId })))
+    setMode('none')
+  }
+  const hold = () => void issue(selIds.map((id) => ({ kind: 'hold', formation: id })))
+  const release = () => void issue(selForms.filter((f) => f.commander).map((f) => ({ kind: 'release', formation: f.id })))
+  const withdraw = () => {
+    if (!pic) return
+    const own = ownObjs(pic)
+    const cmds: GroundCommand[] = []
+    for (const f of selForms) {
+      const home = own.find((o) => o.id === f.home)
+      const to = home ?? [...own].sort((a, b) => km(f.pos, a.pos) - km(f.pos, b.pos))[0]
+      if (to) cmds.push({ kind: 'withdraw', formation: f.id, objective: to.id })
+      else toast(`${f.name}: no base of ours left to fall back on.`, false)
+    }
+    void issue(cmds)
+  }
+  const raiseAt = (o: GroundObjective) => {
+    setMode('none')
+    void issue([{ kind: 'raise', objective: o.id }])
+  }
+  const raiseTarget = (hoverObj: number | null): GroundObjective | null => {
+    if (!pic) return null
+    const ok = (o: GroundObjective | null | undefined) => !!o && o.owner === pic.side && (o.can_raise ?? 0) > 0
+    const hov = pic.objectives.find((o) => o.id === hoverObj)
+    if (ok(hov)) return hov ?? null
+    if (ok(selObj)) return selObj
+    return null
+  }
 
-  const pathGeo: FeatureCollection = useMemo(() => ({
-    type: 'FeatureCollection',
-    features: (pic?.formations ?? []).filter((f) => f.path.length > 1).map((f): Feature => ({
-      type: 'Feature',
-      properties: { sel: f.id === selected ? 1 : 0, attack: f.order === 'attack' ? 1 : 0 },
-      geometry: { type: 'LineString', coordinates: f.path.map(([lat, lon]) => [lon, lat]) },
-    })),
-  }), [pic, selected])
+  // ── Camera ─────────────────────────────────────────────────────────────
+  const getMap = (): MlMap | null => mapRef.current?.getMap() ?? null
+  const flyTo = (p: LatLon, zoom?: number) => {
+    const map = getMap()
+    if (!map) return
+    map.flyTo({ center: [p[1], p[0]], zoom: zoom ?? Math.max(map.getZoom(), 11), duration: reducedMotion() ? 0 : 750 })
+  }
+  const centre = (ids: number[]) => {
+    const map = getMap()
+    const fs = (pic?.formations ?? []).filter((f) => ids.includes(f.id))
+    if (!map || !fs.length) return
+    if (fs.length === 1) return flyTo(fs[0].pos)
+    const lats = fs.map((f) => f.pos[0])
+    const lons = fs.map((f) => f.pos[1])
+    const el = map.getContainer()
+    // Keep the group clear of the HUD panels: log left, drawer right, bar below.
+    const w = el.clientWidth
+    const h = el.clientHeight
+    const padding = w > 900
+      ? { top: Math.min(100, h / 6), bottom: Math.min(250, h / 3), left: Math.min(340, w / 4), right: Math.min(320, w / 4) }
+      : { top: 60, bottom: Math.min(290, h / 2.5), left: 30, right: 30 }
+    map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], {
+      padding, maxZoom: 12, duration: reducedMotion() ? 0 : 750,
+    })
+  }
 
-  const battleGeo: FeatureCollection = useMemo(() => ({
-    type: 'FeatureCollection',
-    features: (pic?.battles ?? []).map((b) =>
-      circle([b.pos[1], b.pos[0]], b.radius_m / 1000, { units: 'kilometers', steps: 48, properties: { live: b.live ? 1 : 0 } }),
-    ),
-  }), [pic])
+  // ── Selection ──────────────────────────────────────────────────────────
+  const selectOnly = (ids: number[]) => {
+    setSel(ids)
+    setSelObjId(null)
+    setSelEnemyId(null)
+  }
+  const pickFormation = (e: MouseEvent, id: number) => {
+    if (inputRef.current?.wasDrag()) return
+    e.stopPropagation()
+    // While an order is armed, a click anywhere aims it at the base under the cursor.
+    if (mode !== 'none') return applyMode(hoverObj.current)
+    setSelObjId(null)
+    setSelEnemyId(null)
+    if (e.shiftKey) setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
+    else setSel([id])
+  }
+  const pickKind = (e: MouseEvent, id: number) => {
+    const map = getMap()
+    const f = pic?.formations.find((x) => x.id === id)
+    if (!map || !f || !pic) return
+    e.stopPropagation()
+    const b = map.getBounds()
+    selectOnly(pic.formations.filter((x) => x.kind === f.kind && b.contains([x.pos[1], x.pos[0]])).map((x) => x.id))
+  }
+  const pickObjective = (e: MouseEvent, id: number) => {
+    if (inputRef.current?.wasDrag()) return
+    e.stopPropagation()
+    const o = pic?.objectives.find((x) => x.id === id)
+    if (!o || !pic) return
+    if (mode !== 'none') return applyMode(id)
+    setSelObjId(id)
+    setSel([])
+    setSelEnemyId(null)
+  }
+  const pickEnemy = (e: MouseEvent, id: number) => {
+    if (inputRef.current?.wasDrag()) return
+    e.stopPropagation()
+    if (mode !== 'none') return applyMode(hoverObj.current)
+    setSelEnemyId(id)
+    setSel([])
+    setSelObjId(null)
+  }
+  const applyMode = (objId: number | null) => {
+    const r = resolveOrder(pic, mode, selIds.length > 0, objId)
+    if (!r || objId == null) {
+      if (mode !== 'none') toast(r?.text ? `${r.text.split(' · ')[0]}: click a base, or Esc to cancel.` : 'Click a base, or Esc to cancel.', false)
+      return
+    }
+    if (r.verb === 'invalid') return toast(r.text.replace(' · ', ': ').toLowerCase().replace(/^./, (c) => c.toUpperCase()), false)
+    const o = pic?.objectives.find((x) => x.id === objId)
+    if (r.verb === 'raise' && o) return raiseAt(o)
+    if (r.verb === 'attack' || r.verb === 'defend') orderTo(r.verb, objId)
+  }
+  const clearAll = () => {
+    setSel([])
+    setSelObjId(null)
+    setSelEnemyId(null)
+  }
 
+  const needSel = selIds.length ? null : 'Select formations first (click, Shift+drag or 1-9)'
+  const enterMode = (m: Mode) => {
+    if (pic && !pic.can_command) return viewOnly()
+    if (m !== 'raise' && needSel) return toast(needSel, false)
+    setMode((cur) => (cur === m ? 'none' : m))
+  }
+  const raiseKey = (hoverObj: number | null) => {
+    const o = raiseTarget(hoverObj)
+    if (o) return raiseAt(o)
+    if (!pic || !ownObjs(pic).some((x) => (x.can_raise ?? 0) > 0)) return toast('No base of ours can spare troops right now (under threat, or garrison too thin).', false)
+    setMode('raise')
+  }
+  const toggleFollow = () => {
+    if (!selfPlayer) return toast("Follow needs you in a slot on the server: your aircraft isn't live in DCS right now.", false)
+    setFollow((f) => !f)
+  }
+  const cycle = (dir: 1 | -1) => {
+    const fs = [...(pic?.formations ?? [])].sort((a, b) => a.id - b.id)
+    if (!fs.length) return
+    const cur = selIds.length === 1 ? fs.findIndex((f) => f.id === selIds[0]) : -1
+    const next = fs[(cur + dir + fs.length) % fs.length]
+    selectOnly([next.id])
+    flyTo(next.pos)
+  }
+
+  // ── Live state for the listeners ───────────────────────────────────────
+  const hoverObj = useRef<number | null>(null)
+  const live = useRef({
+    pic, mode, selIds, help, follow, groups, pickFormation, pickKind, pickObjective, pickEnemy,
+    applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
+    selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
+  })
+  useEffect(() => {
+    live.current = {
+      pic, mode, selIds, help, follow, groups, pickFormation, pickKind, pickObjective, pickEnemy,
+      applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
+      selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
+    }
+  })
+
+  // Stable handlers, so a new picture doesn't re-render every marker.
+  const onPickFormation = useCallback((e: MouseEvent, id: number) => live.current.pickFormation(e, id), [])
+  const onPickKind = useCallback((e: MouseEvent, id: number) => live.current.pickKind(e, id), [])
+  const onPickObjective = useCallback((e: MouseEvent, id: number) => live.current.pickObjective(e, id), [])
+  const onPickEnemy = useCallback((e: MouseEvent, id: number) => live.current.pickEnemy(e, id), [])
+
+  const lastCursor = useRef('')
+  const showHover = useCallback((x: number, y: number, obj: number | null) => {
+    hoverObj.current = obj
+    const r = live.current.resolve(obj)
+    engine.setHover(r ? { x, y, obj: obj, verb: r.verb } : null)
+    const el = cursorRef.current
+    if (el) el.style.transform = `translate(${x + 18}px, ${y + 16}px)`
+    const key = r ? `${r.text}|${r.verb}` : ''
+    if (key !== lastCursor.current) {
+      lastCursor.current = key
+      setCursor(r ? { text: r.text, color: VERB_COLOR[r.verb] } : null)
+    }
+  }, [engine])
+
+  // The cursor label and order preview follow mode/selection changes even
+  // when the mouse is still.
+  useEffect(() => {
+    const el = cursorRef.current
+    if (!el) return
+    const m = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(el.style.transform)
+    if (m) showHover(Number(m[1]) - 18, Number(m[2]) - 16, hoverObj.current)
+  }, [mode, selIds, showHover])
+
+  // Wire up as soon as the style is in, not on 'load': that waits for every
+  // first tile, and a slow imagery server would leave the map dead until then.
+  const wiredTo = useRef<MlMap | null>(null)
+  const onLoad = (e: MapLibreEvent) => {
+    const map = e.target as MlMap
+    if (wiredTo.current === map) return
+    wiredTo.current = map
+    unhookImages.current?.()
+    unhookImages.current = installVehicleImages(map)
+    engine.attach(map)
+    inputRef.current?.detach()
+    if (!boxRef.current) return
+    inputRef.current = attachInput(map, boxRef.current, {
+      pic: () => live.current.pic,
+      hover: showHover,
+      leave: () => {
+        hoverObj.current = null
+        engine.setHover(null)
+        lastCursor.current = ''
+        setCursor(null)
+      },
+      click: (obj) => {
+        const L = live.current
+        if (L.mode !== 'none') L.applyMode(obj)
+        else L.clearAll()
+      },
+      context: (obj) => {
+        const L = live.current
+        if (L.mode !== 'none' && L.mode !== 'raise' && obj != null) return L.applyMode(obj)
+        if (L.mode !== 'none') return setMode('none')
+        if (!L.selIds.length) return
+        if (obj == null) return L.toast('Orders go to bases: right-click near one.', false)
+        const r = L.resolve(obj)
+        if (r && (r.verb === 'attack' || r.verb === 'defend')) L.orderTo(r.verb, obj)
+      },
+      box: (ids, add) => {
+        const L = live.current
+        L.selectOnly(add ? [...new Set([...L.selIds, ...ids])] : ids)
+      },
+    })
+  }
+  const onZoom = (e: ViewStateChangeEvent) => setNear(e.viewState.zoom >= NEAR_ZOOM)
+
+  // ── Hotkeys ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
+      if (e.metaKey) return
+      const L = live.current
+      if (e.key === '?' || (e.code === 'Slash' && e.shiftKey)) {
+        e.preventDefault()
+        setHelp((h) => !h)
+        return
+      }
+      if (e.key === 'Escape') {
+        if (L.help) setHelp(false)
+        else if (L.mode !== 'none') setMode('none')
+        else if (L.follow) setFollow(false)
+        else L.clearAll()
+        return
+      }
+      if (L.help || !L.pic) return
+      const digit = /^Digit([1-9])$/.exec(e.code)
+      if (digit) {
+        const n = Number(digit[1])
+        if (e.ctrlKey || e.altKey) {
+          e.preventDefault()
+          if (!L.selIds.length) return L.toast('Select formations first, then Ctrl+' + n + ' to make them a group.', false)
+          const next = { ...L.groups }
+          for (const k of Object.keys(next)) next[Number(k)] = next[Number(k)].filter((id) => !L.selIds.includes(id))
+          next[n] = [...L.selIds]
+          setGroups(next)
+          savePref('gw.groups', next)
+          L.toast(`Group ${n}: ${L.selIds.length} formation${L.selIds.length === 1 ? '' : 's'}.`, true)
+          return
+        }
+        const ids = (L.groups[n] ?? []).filter((id) => L.pic?.formations.some((f) => f.id === id))
+        if (!ids.length) return L.toast(`Group ${n} is empty. Select formations and press Ctrl+${n} (or Alt+${n}).`, false)
+        const prev = lastDigit.current
+        lastDigit.current = { n, t: performance.now() }
+        L.selectOnly(ids)
+        if (prev && prev.n === n && performance.now() - prev.t < 450) L.centre(ids)
+        return
+      }
+      if (e.ctrlKey || e.altKey) return
+      const isButton = t?.tagName === 'BUTTON'
+      switch (e.key.toLowerCase()) {
+        case 'a': L.enterMode('attack'); break
+        case 'd': L.enterMode('defend'); break
+        case 'h': if (L.selIds.length) L.hold(); else L.toast('Select formations to hold.', false); break
+        case 'w': if (L.selIds.length) L.withdraw(); else L.toast('Select formations to withdraw.', false); break
+        case 'x': if (L.selIds.length) L.release(); else L.toast('Select formations to hand back to the AI.', false); break
+        case 'r': L.raiseKey(hoverObj.current); break
+        case 'f': L.toggleFollow(); break
+        case ' ':
+          if (isButton) return
+          e.preventDefault()
+          L.centre(L.selIds)
+          break
+        case 'tab':
+          e.preventDefault()
+          L.cycle(e.shiftKey ? -1 : 1)
+          break
+        default:
+          return
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  // ── First view ─────────────────────────────────────────────────────────
+  const hasPic = !!pic
   const initialView = useMemo(() => {
-    const objs = pic?.objectives ?? []
-    if (!objs.length) return null
-    const lat = objs.reduce((a, o) => a + o.pos[0], 0) / objs.length
-    const lon = objs.reduce((a, o) => a + o.pos[1], 0) / objs.length
-    return { latitude: lat, longitude: lon, zoom: 7 }
+    const pts = [...(pic?.objectives ?? []).map((o) => o.pos), ...(pic?.formations ?? []).map((f) => f.pos)]
+    if (!pts.length) return { latitude: 42, longitude: 43.5, zoom: 7 }
+    const lats = pts.map((p) => p[0])
+    const lons = pts.map((p) => p[1])
+    return {
+      bounds: [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]] as [[number, number], [number, number]],
+      // Clear of the combat log on the left and the command bar along the bottom.
+      fitBoundsOptions: {
+        padding: window.innerWidth > 900 ? { top: 80, bottom: 230, left: 330, right: 70 } : { top: 70, bottom: 280, left: 30, right: 30 },
+      },
+    }
     // Only the first picture sets the view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [!!pic])
+  }, [hasPic])
 
-  const flyTo = (p: LatLon, zoom = 10) =>
-    mapRef.current?.flyTo({ center: [p[1], p[0]], zoom, duration: 800 })
-
-  if (isLoading) {
-    return <div style={{ padding: 24, ...label }}>LOADING THE GROUND PICTURE…</div>
-  }
-  if (error || !pic) {
-    return (
-      <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', letterSpacing: '0.12em', color: 'var(--text)' }}>
-          GROUND COMMAND UNAVAILABLE
-        </div>
-        {(error as Error | null)?.message ?? 'No picture from the game server.'}
-      </div>
-    )
-  }
-  if (!pic.enabled) {
-    return (
-      <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', letterSpacing: '0.12em', color: 'var(--text)' }}>
-          NO GROUND WAR ON THIS SERVER
-        </div>
-        The dynamic ground war is switched off in this server's campaign config.
-      </div>
-    )
+  // ── Not ready ──────────────────────────────────────────────────────────
+  if (!pic || !pic.enabled) {
+    return <Standby pic={pic} reason={feed.reason} error={feed.error} link={feed.link} />
   }
 
-  const enemyObjs = (from: LatLon) =>
-    pic.objectives
-      .filter((o) => o.owner !== side)
-      .map((o) => ({ o, d: km(from, o.pos) }))
-      .sort((a, b) => a.d - b.d)
-      .slice(0, 12)
-  const ownObjs = (from: LatLon) =>
-    pic.objectives
-      .filter((o) => o.owner === side)
-      .map((o) => ({ o, d: km(from, o.pos) }))
-      .sort((a, b) => a.d - b.d)
-      .slice(0, 12)
-  const raisable = pic.objectives
-    .filter((o) => o.owner === side && (o.can_raise ?? 0) > 0)
-    .sort((a, b) => a.name.localeCompare(b.name))
-  const homeOwned = (f: GroundFormation) =>
-    pic.objectives.find((o) => o.id === f.home && o.owner === side) ?? null
+  // ── Command card ───────────────────────────────────────────────────────
+  const noCmd = pic.can_command ? null : pic.god_mode ? 'Admin view: orders need a pilot on a side' : 'View only: link Discord and fly this campaign to command'
+  const selReason = noCmd ?? needSel
+  const anyRaisable = ownObjs(pic).some((o) => (o.can_raise ?? 0) > 0)
+  const buttons: CmdButton[] = [
+    { key: 'A', label: 'ATTACK', icon: Strike, tone: 'attack', active: mode === 'attack', disabled: selReason, run: () => enterMode('attack') },
+    { key: 'D', label: 'DEFEND', icon: Defend, active: mode === 'defend', disabled: selReason, run: () => enterMode('defend') },
+    { key: 'H', label: 'HOLD', icon: Shield, disabled: selReason, run: hold },
+    { key: 'W', label: 'WITHDRAW', icon: ChevronsLeft, tone: 'withdraw', disabled: selReason, run: withdraw },
+    {
+      key: 'X', label: 'RELEASE', icon: X,
+      disabled: selReason ?? (selForms.some((f) => f.commander) ? null : 'Already under AI command'),
+      run: release,
+    },
+    {
+      key: 'R', label: 'RAISE', icon: Plus, active: mode === 'raise',
+      disabled: noCmd ?? (anyRaisable ? null : 'No base can spare troops right now'),
+      run: () => raiseKey(null),
+    },
+    { key: '␣', label: 'CENTRE', icon: Pin, disabled: selIds.length ? null : 'Nothing selected', run: () => centre(selIds) },
+    { key: 'F', label: follow ? 'FOLLOWING' : 'FOLLOW ME', icon: Aircraft, active: follow, disabled: selfPlayer ? null : 'Your aircraft is not live in DCS', run: toggleFollow },
+    { key: '?', label: 'CONTROLS', icon: Info, disabled: null, run: () => setHelp(true) },
+  ]
+
+  const single = selForms.length === 1 ? selForms[0] : null
+  const onEvent = (e: GroundEvent) => {
+    if (e.pos) flyTo(e.pos, Math.max(getMap()?.getZoom() ?? 0, 11.5))
+    if (e.formation != null && pic.formations.some((f) => f.id === e.formation)) selectOnly([e.formation])
+  }
+  const onBattle = (b: GroundBattle) => (mode !== 'none' ? applyMode(hoverObj.current) : flyTo(b.pos, 12.5))
 
   return (
-    <div style={{ display: 'flex', height: '100%', minHeight: 0 }}>
-      <div style={{ flex: 1, position: 'relative', minWidth: 0 }}>
-        {initialView && (
-          <Map
-            ref={mapRef}
-            key={theme}
-            mapStyle={mapStyle}
-            initialViewState={initialView}
-            style={{ width: '100%', height: '100%' }}
-            dragRotate={false}
-            attributionControl={false}
-            onClick={() => setPicked(null)}
-          >
-            <Source id="gw-front" type="geojson" data={frontGeo}>
-              <Layer
-                id="gw-front"
-                type="line"
-                paint={{
-                  'line-width': ['match', ['get', 'k'], 'mid', 2, 1.2],
-                  'line-color': ['match', ['get', 'k'], 'blue', SIDE_COLOR.Blue, 'red', SIDE_COLOR.Red, '#d8d8c8'],
-                  'line-opacity': 0.6,
-                  'line-dasharray': [3, 2],
-                }}
-              />
-            </Source>
-            <Source id="gw-battles" type="geojson" data={battleGeo}>
-              <Layer id="gw-battle-fill" type="fill" paint={{ 'fill-color': BATTLE, 'fill-opacity': ['match', ['get', 'live'], 1, 0.22, 0.1] }} />
-              <Layer id="gw-battle-line" type="line" paint={{ 'line-color': BATTLE, 'line-width': 1.5, 'line-dasharray': [2, 2] }} />
-            </Source>
-            <Source id="gw-paths" type="geojson" data={pathGeo}>
-              <Layer
-                id="gw-paths"
-                type="line"
-                paint={{
-                  'line-color': ours,
-                  'line-width': ['match', ['get', 'sel'], 1, 3, 1.5],
-                  'line-opacity': ['match', ['get', 'sel'], 1, 0.95, 0.55],
-                  'line-dasharray': [2, 1.5],
-                }}
-              />
-            </Source>
-
-            {pic.objectives.map((o) => (
-              <Marker
-                key={`o${o.id}`}
-                latitude={o.pos[0]}
-                longitude={o.pos[1]}
-                anchor="center"
-                onClick={(e) => {
-                  e.originalEvent.stopPropagation()
-                  setPicked(o)
-                }}
-              >
-                <div title={o.name} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
-                  <div style={{
-                    width: 11, height: 11, transform: 'rotate(45deg)',
-                    background: SIDE_COLOR[o.owner], border: '1px solid #000',
-                    boxShadow: o.being_captured ? `0 0 0 3px ${BATTLE}` : undefined,
-                  }} />
-                  <div style={{
-                    marginTop: 3, fontFamily: 'var(--font-mono)', fontSize: 9, whiteSpace: 'nowrap',
-                    color: '#e8eadf', textShadow: '0 0 3px #000, 0 0 2px #000',
-                  }}>{o.name}</div>
-                </div>
-              </Marker>
-            ))}
-
-            {pic.battles.map((b) => (
-              <Marker key={`b${b.id}`} latitude={b.pos[0]} longitude={b.pos[1]} anchor="bottom">
-                <div style={{
-                  fontFamily: 'var(--font-mono)', fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
-                  color: '#000', background: BATTLE, padding: '1px 5px', borderRadius: 2, whiteSpace: 'nowrap',
-                  animation: b.live ? 'gwPulse 1.4s ease-in-out infinite' : undefined,
-                }}>
-                  ⚔ BATTLE{b.near ? ` · ${b.near}` : ''}
-                </div>
-              </Marker>
-            ))}
-
-            {pic.enemy.map((e, i) => (
-              <Marker key={`e${i}`} latitude={e.pos[0]} longitude={e.pos[1]} anchor="center">
-                <img
-                  src={unitSymbol(e.kind, true, 22)}
-                  title={`Enemy ${e.kind}, about ${e.approx_vehicles} vehicles`}
-                  style={{ opacity: 0.85 }}
-                />
-              </Marker>
-            ))}
-
-            {pic.formations.map((f) => (
-              <Marker
-                key={`f${f.id}`}
-                latitude={f.pos[0]}
-                longitude={f.pos[1]}
-                anchor="center"
-                onClick={(e) => {
-                  e.originalEvent.stopPropagation()
-                  setSelected(f.id)
-                }}
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer' }}>
-                  <img
-                    src={unitSymbol(formationKind(f), false, f.id === selected ? 32 : 26)}
-                    style={{ filter: f.id === selected ? `drop-shadow(0 0 4px ${ours})` : undefined }}
-                  />
-                  <div style={{
-                    fontFamily: 'var(--font-mono)', fontSize: 9, whiteSpace: 'nowrap', color: '#fff',
-                    textShadow: '0 0 3px #000, 0 0 2px #000',
-                  }}>{f.name.split(' (')[0]} · {f.alive}/{f.total}</div>
-                </div>
-              </Marker>
-            ))}
-
-            {picked && (
-              <Popup
-                latitude={picked.pos[0]}
-                longitude={picked.pos[1]}
-                anchor="top"
-                closeOnClick={false}
-                onClose={() => setPicked(null)}
-                maxWidth="260px"
-              >
-                <ObjectivePopup
-                  o={picked}
-                  side={side}
-                  sel={sel}
-                  canCommand={canCommand}
-                  onSend={send}
-                />
-              </Popup>
-            )}
-          </Map>
-        )}
-        <style>{`@keyframes gwPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.45 } }
-          .maplibregl-popup-content { background: var(--bg-elevated-solid); color: var(--text); border: 1px solid var(--border-light); padding: 8px 10px; }
-          .maplibregl-popup-tip { display: none; }
-          .maplibregl-popup-close-button { color: var(--text-dim); }`}</style>
-      </div>
-
-      <aside style={{
-        width: 360, flexShrink: 0, overflowY: 'auto', padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
-        background: 'var(--bg-chrome)', borderLeft: '1px solid var(--border)',
-      }}>
-        <div style={{ ...panel, borderColor: ours }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.35rem', letterSpacing: '0.12em' }}>
-              GROUND COMMAND
-            </div>
-            <span style={{ marginLeft: 'auto', color: ours, fontFamily: 'var(--font-mono)', fontSize: '0.7rem', letterSpacing: '0.12em' }}>
-              {side.toUpperCase()}
-            </span>
-          </div>
-          <div style={{ ...label, marginTop: 2 }}>
-            {pic.formations.length}/{pic.max_formations} FORMATIONS · {pic.battles.length} BATTLE{pic.battles.length === 1 ? '' : 'S'} · {pic.live}/{pic.max_live} IN DCS
-          </div>
-          {adminPick && (
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-              {(['Blue', 'Red'] as const).map((s) => (
-                <button key={s} style={btn(SIDE_COLOR[s], false)} onClick={() => { setViewSide(s); setSelected(null) }}>
-                  {viewSide === s ? '● ' : ''}VIEW {s.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          )}
-          {!pic.can_command && (
-            <div style={{ marginTop: 6, fontSize: '0.72rem', color: 'var(--yellow)' }}>
-              {pic.god_mode
-                ? 'Admin view: you can watch either side, but orders need a pilot registered on a side.'
-                : 'View only: link your Discord (-linkme in DCS chat) and take a slot this campaign to give orders.'}
-            </div>
-          )}
-        </div>
-
-        {result && (
-          <div
-            onClick={() => setResult(null)}
-            style={{ ...panel, cursor: 'pointer', borderColor: result.ok ? 'var(--accent)' : 'var(--red)', fontSize: '0.74rem' }}
-          >
-            {result.ok ? '✓ ' : '✕ '}{result.text}
-          </div>
-        )}
-
-        {pic.battles.length > 0 && (
-          <div style={panel}>
-            <div style={label}>BATTLES</div>
-            {pic.battles.map((b: GroundBattle) => (
-              <div
-                key={b.id}
-                onClick={() => flyTo(b.pos, 11)}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', cursor: 'pointer', fontSize: '0.76rem' }}
-              >
-                <span style={{ color: BATTLE }}>⚔</span>
-                <span>{b.near ? `Near ${b.near}` : 'Ground battle'}</span>
-                <span style={{ marginLeft: 'auto', ...label }}>
-                  {b.live ? 'LIVE · ' : ''}{since(b.since)}{b.ours.length ? ` · ${b.ours.length} OURS` : ''}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div style={panel}>
-          <div style={label}>FORMATIONS</div>
-          {pic.formations.length === 0 && (
-            <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', padding: '4px 0' }}>
-              None in the field. Raise one from a base below.
-            </div>
-          )}
-          {pic.formations.map((f) => (
-            <div
-              key={f.id}
-              onClick={() => { setSelected(f.id); flyTo(f.pos, 9) }}
-              style={{
-                padding: '6px 6px', margin: '4px -6px 0', borderRadius: 2, cursor: 'pointer',
-                background: f.id === selected ? 'var(--bg-hover)' : undefined,
-                borderLeft: `2px solid ${f.id === selected ? ours : 'transparent'}`,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <img src={unitSymbol(formationKind(f), false, 16)} />
-                <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>{f.name}</span>
-              </div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '2px 0 3px' }}>
-                {orderText(f)}
-                {f.posture === 'moving' && ` · ${f.km_to_go.toFixed(0)} km`}
-                {f.eta_mins != null && f.posture === 'moving' && ` · ETA ${f.eta_mins} min`}
-              </div>
-              <StrengthBar alive={f.alive} total={f.total} />
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                {f.posture === 'assaulting' && <Badge color={BATTLE}>ASSAULTING</Badge>}
-                {f.engaged && <Badge color={BATTLE}>IN CONTACT</Badge>}
-                {f.halted && <Badge color="var(--yellow)">HALTED</Badge>}
-                {f.live && <Badge color="var(--accent-bright)">IN DCS</Badge>}
-                {!f.has_infantry && <Badge color="var(--text-dim)">CAN'T CAPTURE</Badge>}
-                <Badge color={f.commander ? ours : 'var(--text-dim)'}>
-                  {f.commander ? `${f.commander}${f.locked_mins != null ? ` · ${f.locked_mins}m` : ''}` : 'AI'}
-                </Badge>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {sel && (
-          <FormationOrders
-            key={sel.id}
-            f={sel}
-            ours={ours}
-            canCommand={canCommand}
-            enemy={enemyObjs(sel.pos)}
-            own={ownObjs(sel.pos)}
-            home={homeOwned(sel)}
-            onSend={send}
+    <div className={`gw-root gw-mode-${mode}${near ? ' gw-near' : ''}`} style={{ ['--own' as string]: side === 'Blue' ? '#4a8fd4' : '#cc4444' }}>
+      <Map
+        ref={mapRef}
+        mapStyle={mapStyle}
+        initialViewState={initialView}
+        style={{ position: 'absolute', inset: 0 }}
+        dragRotate={false}
+        pitchWithRotate={false}
+        touchPitch={false}
+        boxZoom={false}
+        doubleClickZoom={false}
+        maxPitch={0}
+        attributionControl={false}
+        onLoad={onLoad}
+        onStyleData={onLoad}
+        onZoom={onZoom}
+      >
+        <BattlefieldLayers formations={pic.formations} fronts={fronts} selected={selSet} side={side} territory={territory} />
+        {pic.objectives.map((o) => (
+          <ObjectiveMarker key={`o${o.id}`} o={o} side={side} selected={o.id === selObjId} onPick={onPickObjective} />
+        ))}
+        {pic.formations.map((f) => (
+          <DestMarker key={`d${f.id}`} f={f} side={side} selected={selSet.has(f.id)} />
+        ))}
+        {pic.enemy.map((e) => (
+          <EnemyMarker key={`e${e.id}`} e={e} side={side} near={near} onPick={onPickEnemy} />
+        ))}
+        {pic.formations.map((f) => (
+          <FormationMarker
+            key={`f${f.id}`}
+            f={f}
+            side={side}
+            selected={selSet.has(f.id)}
+            near={near}
+            group={groupOf[f.id] ?? null}
+            onPick={onPickFormation}
+            onDouble={onPickKind}
           />
+        ))}
+        {pic.battles.map((b) => <BattleLabel key={`b${b.id}`} b={b} onPick={onBattle} />)}
+      </Map>
+
+      <div className="gw-vignette" />
+      <div ref={boxRef} className="gw-box" />
+      <div ref={cursorRef} className="gw-cursor" style={{ color: cursor?.color, opacity: cursor ? 1 : 0 }}>
+        {cursor?.text}
+      </div>
+
+      <TopHud
+        pic={pic}
+        link={feed.link}
+        frameAt={feed.at}
+        look={look}
+        setLook={setLook}
+        fog={fog}
+        setFog={setFog}
+        territory={territory}
+        setTerritory={setTerritory}
+        onHelp={() => setHelp(true)}
+        adminPick={adminPick}
+        viewSide={viewSide}
+        setViewSide={(s) => { setViewSide(s); clearAll() }}
+      />
+      <div className="gw-topstack">
+        {(!pic.can_command || feed.reason === 'unavailable') && (
+          <div className={`gw-banner${feed.reason === 'unavailable' ? ' bad' : ''}`}>
+            {feed.reason === 'unavailable'
+              ? 'The game server stopped answering. This is the last picture it sent.'
+              : pic.god_mode
+                ? `Admin view of ${side}: you can watch either side, but orders need a pilot registered on one.`
+                : 'View only: link your Discord (-linkme in DCS chat) and take a slot this campaign to give orders.'}
+          </div>
         )}
+        {mode !== 'none' && (
+          <div className="gw-modebar">
+            {mode === 'attack' ? 'ATTACK' : mode === 'defend' ? 'DEFEND' : 'RAISE'} · CLICK A BASE · ESC TO CANCEL
+          </div>
+        )}
+        {follow && <div className="gw-modebar follow">FOLLOWING {selfPlayer?.name.toUpperCase() ?? 'YOU'} · DRAG OR F TO STOP</div>}
+      </div>
 
-        <div style={panel}>
-          <div style={label}>RAISE A FORMATION</div>
-          {raisable.length === 0 && (
-            <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', padding: '4px 0' }}>
-              No base can spare troops right now (under threat, or garrison too thin).
-            </div>
-          )}
-          {raisable.map((o) => (
-            <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '3px 0', fontSize: '0.76rem' }}>
-              <span style={{ cursor: 'pointer' }} onClick={() => flyTo(o.pos, 10)}>{o.name}</span>
-              <span style={{ ...label }}>{o.can_raise} GROUPS</span>
-              <button
-                style={{ ...btn(ours, !canCommand), marginLeft: 'auto' }}
-                disabled={!canCommand}
-                onClick={() => send({ kind: 'raise', objective: o.id })}
-              >
-                RAISE
-              </button>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ ...label, lineHeight: 1.6, padding: '0 2px 8px' }}>
-          Click a formation, then a base on the map to send it there. Your order
-          keeps the AI off it for {Math.round(pic.player_lock_secs / 60)} min.
-          Enemy formations only show where our forces are in contact.
-        </div>
-      </aside>
+      <EventFeed events={pic.events} time={pic.time} onPick={onEvent} />
+      {single && (
+        <Drawer f={single} side={side} pic={pic} lockMins={Math.round(pic.player_lock_secs / 60)} onClose={clearAll} />
+      )}
+      <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
+      <CommandBar
+        pic={pic}
+        side={side}
+        selected={selForms}
+        selObj={selObj}
+        selEnemy={selEnemy}
+        groups={groups}
+        buttons={buttons}
+        locked={lockReason}
+        onSelect={(id) => { selectOnly([id]); const f = pic.formations.find((x) => x.id === id); if (f) flyTo(f.pos) }}
+        onFocusObj={(o) => flyTo(o.pos)}
+      />
+      {help && <HelpOverlay onClose={() => setHelp(false)} canCommand={pic.can_command} />}
     </div>
   )
 }
 
-function FormationOrders({
-  f, ours, canCommand, enemy, own, home, onSend,
-}: {
-  f: GroundFormation
-  ours: string
-  canCommand: boolean
-  enemy: { o: GroundObjective; d: number }[]
-  own: { o: GroundObjective; d: number }[]
-  home: GroundObjective | null
-  onSend: (c: GroundCommand) => void
-}) {
-  const [attack, setAttack] = useState<string>('')
-  const [defend, setDefend] = useState<string>('')
-  const fallback = home ?? own[0]?.o ?? null
-  const select: CSSProperties = {
-    flex: 1, minWidth: 0, background: 'var(--bg-input)', color: 'var(--text)',
-    border: '1px solid var(--border-light)', fontSize: '0.72rem', padding: '3px 4px',
+function Standby({ pic, reason, error, link }: { pic: GroundPicture | null; reason: string | null; error: string | null; link: string }): ReactElement {
+  let title = 'ESTABLISHING LINK'
+  let body = 'Waiting for the first ground picture from the game server.'
+  if (pic && !pic.enabled || reason === 'disabled') {
+    title = 'NO GROUND WAR ON THIS SERVER'
+    body = "The dynamic ground war is switched off in this server's campaign config."
+  } else if (reason === 'login') {
+    title = 'SIGN IN TO COMMAND'
+    body = "The ground picture is locked to your coalition. Sign in with Discord to see your side's war."
+  } else if (reason === 'nocoalition') {
+    title = 'NO COALITION'
+    body = "The ground picture is locked to your coalition, and the server can't tell which side you're on. Link your Discord (-linkme in DCS chat) and take a slot this campaign, then reload."
+  } else if (reason === 'unavailable') {
+    title = 'GAME SERVER NOT ANSWERING'
+    body = 'bfdb is up, but the engine is not answering for the ground picture. It may be restarting; this page reconnects by itself.'
+  } else if (error && link === 'offline') {
+    title = 'GROUND COMMAND UNAVAILABLE'
+    body = error
   }
   return (
-    <div style={{ ...panel, borderColor: ours }}>
-      <div style={label}>ORDERS · {f.name.toUpperCase()}</div>
-      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-        <select style={select} value={attack} onChange={(e) => setAttack(e.target.value)} disabled={!canCommand}>
-          <option value="">Attack…</option>
-          {enemy.map(({ o, d }) => (
-            <option key={o.id} value={o.id}>{o.name} ({o.owner}, {d.toFixed(0)} km)</option>
-          ))}
-        </select>
-        <button
-          style={btn('var(--red)', !canCommand || !attack)}
-          disabled={!canCommand || !attack}
-          onClick={() => onSend({ kind: 'attack', formation: f.id, objective: Number(attack) })}
-        >ATTACK</button>
+    <div className="gw-root gw-standby">
+      <div>
+        <div className="gw-standby-pulse" />
+        <h1>{title}</h1>
+        <p>{body}</p>
       </div>
-      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-        <select style={select} value={defend} onChange={(e) => setDefend(e.target.value)} disabled={!canCommand}>
-          <option value="">Defend / move to…</option>
-          {own.map(({ o, d }) => (
-            <option key={o.id} value={o.id}>{o.name} ({d.toFixed(0)} km)</option>
-          ))}
-        </select>
-        <button
-          style={btn(ours, !canCommand || !defend)}
-          disabled={!canCommand || !defend}
-          onClick={() => onSend({ kind: 'defend', formation: f.id, objective: Number(defend) })}
-        >DEFEND</button>
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-        <button style={btn('var(--text)', !canCommand)} disabled={!canCommand}
-          onClick={() => onSend({ kind: 'hold', formation: f.id })}>HOLD</button>
-        {fallback && (
-          <button style={btn('var(--yellow)', !canCommand)} disabled={!canCommand}
-            onClick={() => onSend({ kind: 'withdraw', formation: f.id, objective: fallback.id })}>
-            WITHDRAW TO {fallback.name.toUpperCase()}
-          </button>
-        )}
-        {f.commander && (
-          <button style={btn('var(--text-dim)', !canCommand)} disabled={!canCommand}
-            onClick={() => onSend({ kind: 'release', formation: f.id })}>HAND BACK TO AI</button>
-        )}
-      </div>
-      {!f.has_infantry && (
-        <div style={{ marginTop: 6, fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-          No infantry or troop carriers left: it can break a base but not take it.
-        </div>
-      )}
-    </div>
-  )
-}
-
-function ObjectivePopup({
-  o, side, sel, canCommand, onSend,
-}: {
-  o: GroundObjective
-  side: 'Blue' | 'Red'
-  sel: GroundFormation | null
-  canCommand: boolean
-  onSend: (c: GroundCommand) => void
-}) {
-  const own = o.owner === side
-  return (
-    <div style={{ fontSize: '0.74rem', minWidth: 180 }}>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', letterSpacing: '0.08em' }}>{o.name}</div>
-      <div style={{ color: 'var(--text-dim)', fontSize: '0.66rem', marginBottom: 6 }}>
-        {o.kind.toUpperCase()} · <span style={{ color: SIDE_COLOR[o.owner] }}>{o.owner.toUpperCase()}</span>
-        {own && o.health != null && ` · ${o.health}% HEALTH`}
-        {o.being_captured && ' · BEING CAPTURED'}
-        {own && o.threatened && ' · THREATENED'}
-      </div>
-      {sel ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-          <div style={{ color: 'var(--text-muted)', fontSize: '0.66rem' }}>{sel.name}:</div>
-          {!own && (
-            <button style={btn('var(--red)', !canCommand)} disabled={!canCommand}
-              onClick={() => onSend({ kind: 'attack', formation: sel.id, objective: o.id })}>
-              ATTACK {o.name.toUpperCase()}
-            </button>
-          )}
-          {own && (
-            <>
-              <button style={btn(SIDE_COLOR[side], !canCommand)} disabled={!canCommand}
-                onClick={() => onSend({ kind: 'defend', formation: sel.id, objective: o.id })}>
-                DEFEND / MOVE HERE
-              </button>
-              <button style={btn('var(--yellow)', !canCommand)} disabled={!canCommand}
-                onClick={() => onSend({ kind: 'withdraw', formation: sel.id, objective: o.id })}>
-                WITHDRAW HERE & REFIT
-              </button>
-            </>
-          )}
-        </div>
-      ) : (
-        <div style={{ color: 'var(--text-muted)', fontSize: '0.66rem' }}>Select a formation to give it orders.</div>
-      )}
-      {own && (o.can_raise ?? 0) > 0 && (
-        <button style={{ ...btn(SIDE_COLOR[side], !canCommand), marginTop: 6, width: '100%' }} disabled={!canCommand}
-          onClick={() => onSend({ kind: 'raise', objective: o.id })}>
-          RAISE A FORMATION HERE ({o.can_raise} GROUPS)
-        </button>
-      )}
     </div>
   )
 }

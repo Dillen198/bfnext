@@ -42,7 +42,7 @@ use dcso3::{
     controller::{ActionTyp, AltType, MissionPoint, PointType, Task, VehicleFormation},
     env::miz::MizIndex,
     group::Group,
-    land::Land,
+    land::{Land, SurfaceType},
     net::{SlotId, Ucid},
     object::DcsObject,
     radians_to_degrees,
@@ -55,6 +55,15 @@ use log::{debug, error, info};
 use serde_derive::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 use std::{cmp::max, fmt, sync::Arc};
+
+/// CSAR search parties drive out of the enemy objective nearest the downed
+/// pilot, and only when it is this close (straight line)...
+const CSAR_SEARCH_MAX_M: f64 = 30_000.;
+/// ...and the drive there, road or not, is no longer than this. Further
+/// out, nobody is near enough to come looking.
+const CSAR_SEARCH_MAX_ROUTE_M: f64 = 45_000.;
+/// Search party driving speed.
+const CSAR_SEARCH_SPEED_MPS: f64 = 12.;
 
 #[derive(Debug, Clone, Copy)]
 pub struct NearbyCrate<'a> {
@@ -1336,9 +1345,14 @@ impl Db {
                     reasons.push("objective logistics are completely repaired".into());
                 } else {
                     self.repair_one_logi_step(st.side, Utc::now(), oid)?;
-                    let gid = base_repairs.keys().next()
+                    let gid = *base_repairs.keys().next()
                         .ok_or_else(|| anyhow!("no base repair crates found"))?;
-                    self.delete_group(gid)?;
+                    // Who loaded it, and where: the pay is for the haul.
+                    let (hauler, from) = match self.persisted.groups.get(&gid).map(|g| &g.origin) {
+                        Some(DeployKind::Crate { origin, player, .. }) => (Some(*player), Some(*origin)),
+                        _ => (None, None),
+                    };
+                    self.delete_group(&gid)?;
                     self.ephemeral.stat(Stat::Repair {
                         id: oid,
                         by: st.ucid,
@@ -1350,7 +1364,7 @@ impl Db {
                         .as_ref()
                         .map(|p| p.logistics_repair)
                     {
-                        self.adjust_points(&st.ucid, amount as i32, "for logistics repair");
+                        self.pay_delivery(amount, hauler, st.ucid, from, oid, "logistics repair");
                     }
                     let obj = objective!(self, oid)?;
                     return Ok(Unpakistan::RepairedBase(obj.name.clone(), obj.logi()));
@@ -1369,7 +1383,7 @@ impl Db {
                     .ok_or_else(|| anyhow!("no supply transfer crates found"))?;
                 if let DeployKind::Crate {
                     origin: from,
-                    player: _,
+                    player: hauler,
                     spec: _,
                 } = self.persisted.groups[&gid].origin
                 {
@@ -1388,7 +1402,7 @@ impl Db {
                         .as_ref()
                         .map(|p| p.logistics_transfer)
                     {
-                        self.adjust_points(&st.ucid, amount as i32, "for supply transfer");
+                        self.pay_delivery(amount, Some(hauler), st.ucid, Some(from), to, "supply transfer");
                     }
                     return Ok(Unpakistan::TransferedSupplies(
                         objective!(self, from)?.name.clone(),
@@ -2432,30 +2446,57 @@ impl Db {
                     Some((*oid, dx * dx + dy * dy))
                 })
                 .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-                .map(|(oid, _)| oid);
-            if let Some(origin) = origin_oid {
-                // Spawn each search party at an offset from the pilot so they approach from different angles
-                for i in 0..search_count {
-                    let angle = (i as f64) * std::f64::consts::TAU / (search_count as f64);
-                    let offset_dist = 500.0 + (i as f64) * 100.0;
-                    let search_pos = Vector2::new(
-                        pos.x + angle.sin() * offset_dist,
-                        pos.y + angle.cos() * offset_dist,
+                .map(|(oid, d2)| (oid, d2.sqrt()));
+            // The parties drive out of that objective to the pilot -- by road
+            // where there is one, the last stretch off road -- instead of
+            // appearing in a ring around him. A pilot too far from any enemy
+            // base, or one in the water, gets no search party at all.
+            let plan = match origin_oid {
+                Some((origin, d)) if d <= CSAR_SEARCH_MAX_M => {
+                    let ashore = Land::singleton(lua)
+                        .and_then(|l| l.get_surface_type(LuaVec2(pos)))
+                        .map(|s| matches!(s, SurfaceType::Land | SurfaceType::Road | SurfaceType::Runway))
+                        .unwrap_or(false);
+                    let from = objective!(self, origin)?.pos();
+                    ashore
+                        .then(|| self.plan_drive(lua, from, pos, true))
+                        .flatten()
+                        .filter(|p| p.route_m <= CSAR_SEARCH_MAX_ROUTE_M)
+                        .map(|p| (origin, p))
+                }
+                Some((_, d)) => {
+                    info!(
+                        "csar: nearest {enemy_side:?} objective is {:.0} km from the pilot, no search party",
+                        d / 1000.
                     );
-                    let spawn = SpawnLoc::AtPos {
-                        pos: search_pos,
-                        offset_direction: Vector2::new(1., 0.),
-                        group_heading: 0.,
-                    };
-                    if let Err(e) = self.add_and_queue_group(
+                    None
+                }
+                None => None,
+            };
+            if let Some((origin, plan)) = plan {
+                info!(
+                    "csar: {search_count} {enemy_side:?} search part{} driving {:.1} km{} to the downed pilot",
+                    if search_count == 1 { "y" } else { "ies" },
+                    plan.route_m / 1000.,
+                    if plan.by_road { " by road" } else { " across country" }
+                );
+                for i in 0..search_count {
+                    // Each closes on a slightly different spot around the
+                    // pilot, so they converge from more than one side.
+                    let angle = (i as f64) * std::f64::consts::TAU / (search_count as f64);
+                    let mut leg = plan.clone();
+                    if let Some(last) = leg.points.last_mut() {
+                        last.0 = pos + Vector2::new(angle.sin(), angle.cos()) * 150.;
+                    }
+                    if let Err(e) = self.queue_drive_from_objective(
                         &spctx,
                         idx,
                         enemy_side,
-                        spawn,
+                        origin,
                         &*search_template,
-                        DeployKind::Objective { origin },
+                        &leg,
+                        CSAR_SEARCH_SPEED_MPS,
                         BitFlags::empty(),
-                        None,
                     ) {
                         error!("csar: failed to spawn search party {i}: {e:?}");
                     }
@@ -2732,7 +2773,7 @@ impl Db {
                 // to a friendly helo slot a points farm.
                 if rescue_reward > 0 {
                     if let Some(ucid) = ucid_rescuer.as_ref().filter(|u| **u != pilot.ucid) {
-                        self.adjust_points(
+                        self.earn_points(
                             ucid,
                             rescue_reward as i32,
                             &format_compact!("CSAR rescue of {}", pilot.name),

@@ -44,7 +44,9 @@ use tokio::sync::mpsc::UnboundedSender;
 pub mod actions;
 pub mod balance;
 pub mod battle;
+pub mod combat;
 pub mod cargo;
+pub mod economy;
 pub mod emergency_repair;
 pub mod ephemeral;
 pub mod events;
@@ -62,6 +64,7 @@ pub mod objective;
 pub mod persisted;
 pub mod player;
 pub mod recon;
+pub mod reinforce;
 pub mod tasks;
 
 pub type Map<K, V> = immutable_chunkmap::map::Map<K, V, 256>;
@@ -229,38 +232,46 @@ pub struct RadarDonor {
     pub frequency_band: bfprotocols::cfg::RadarBand,
 }
 
+/// How an objective kind weighs in the side's `objective_start_points`,
+/// see `Db::seed_objective_points` and `Db::objective_fund_ceilings`.
+fn fund_weight(kind: &bfprotocols::db::objective::ObjectiveKind) -> i32 {
+    use bfprotocols::db::objective::ObjectiveKind;
+    match kind {
+        ObjectiveKind::Airbase => 5,
+        ObjectiveKind::NavalBase => 4,
+        ObjectiveKind::Factory { .. } => 4,
+        ObjectiveKind::Logistics => 3,
+        ObjectiveKind::CommandCenter => 3,
+        ObjectiveKind::Fob => 2,
+        ObjectiveKind::CarrierGroup { .. } => 2,
+        ObjectiveKind::Farp { .. } => 1,
+        ObjectiveKind::SpecialSamSite { .. } => 1,
+    }
+}
+
 impl Db {
     /// Distribute `budget` points across owned objectives on `side`, weighted by
     /// objective kind. Only seeds objectives whose current points == 0 (when
     /// `only_zero` is true) so existing earned points are preserved on load.
+    /// Each base's share is sized against ALL the side's bases, so seeding a
+    /// few empty ones gives them their normal share, not the whole budget.
     fn seed_objective_points(&mut self, side: Side, budget: i32, only_zero: bool) {
-        use bfprotocols::db::objective::ObjectiveKind;
-        fn weight(kind: &ObjectiveKind) -> i32 {
-            match kind {
-                ObjectiveKind::Airbase => 5,
-                ObjectiveKind::NavalBase => 4,
-                ObjectiveKind::Factory { .. } => 4,
-                ObjectiveKind::Logistics => 3,
-                ObjectiveKind::CommandCenter => 3,
-                ObjectiveKind::Fob => 2,
-                ObjectiveKind::CarrierGroup { .. } => 2,
-                ObjectiveKind::Farp { .. } => 1,
-                ObjectiveKind::SpecialSamSite { .. } => 1,
-            }
-        }
-        let candidates: Vec<_> = self
+        let weight = fund_weight;
+        let owned: Vec<_> = self
             .persisted
             .objectives
             .into_iter()
-            .filter(|(_, obj)| {
-                obj.owner() == side && (!only_zero || obj.points == 0)
-            })
-            .map(|(id, obj)| (*id, weight(obj.kind())))
+            .filter(|(_, obj)| obj.owner() == side)
+            .map(|(id, obj)| (*id, weight(obj.kind()), obj.points))
             .collect();
-        let total_weight: i32 = candidates.iter().map(|(_, w)| w).sum();
+        let total_weight: i32 = owned.iter().map(|(_, w, _)| w).sum();
         if total_weight == 0 {
             return;
         }
+        let candidates = owned
+            .into_iter()
+            .filter(|(_, _, pts)| !only_zero || *pts == 0)
+            .map(|(id, w, _)| (id, w));
         for (oid, w) in candidates {
             let share = (budget as i64 * w as i64 / total_weight as i64) as i32;
             if share > 0 {
@@ -269,6 +280,38 @@ impl Db {
                 }
             }
         }
+    }
+
+    /// The most the commander's funding drip tops each objective's fund up
+    /// to: its share of its side's `objective_start_points`, weighted exactly
+    /// as the start is seeded, among the objectives the side holds now.
+    /// Objectives of a side with no start budget are absent.
+    ///
+    /// The drip had no ceiling. A base that stayed damaged was the neediest
+    /// ask on every pass, forever: on vs2 (Sept 29) Sochi-Adler sat on an
+    /// 11,487,562 point fund -- free flights for its whole side -- while
+    /// Gudauta, at its seeded share, held about 5,000.
+    pub(crate) fn objective_fund_ceilings(&self) -> fxhash::FxHashMap<ObjectiveId, i64> {
+        let mut out = fxhash::FxHashMap::default();
+        for (side, budget) in self.ephemeral.cfg.objective_start_points.iter() {
+            if *budget <= 0 {
+                continue;
+            }
+            let owned = || {
+                self.persisted
+                    .objectives
+                    .into_iter()
+                    .filter(move |(_, o)| o.owner() == *side)
+            };
+            let total: i64 = owned().map(|(_, o)| fund_weight(o.kind()) as i64).sum();
+            if total == 0 {
+                continue;
+            }
+            for (oid, o) in owned() {
+                out.insert(*oid, *budget as i64 * fund_weight(o.kind()) as i64 / total);
+            }
+        }
+        out
     }
 
     /// decode one save file. both layers are checked here, the zstd frame
@@ -378,9 +421,13 @@ impl Db {
             .into_iter()
             .map(|(oid, ts)| (*oid, *ts))
             .collect();
+        // A save from before `funds_seeded` existed gets its empty bases
+        // topped up once; after that only a new round seeds.
         for (side, budget) in db.ephemeral.cfg.objective_start_points.clone() {
-            if budget > 0 {
+            if budget > 0 && !db.persisted.funds_seeded.contains(&side) {
                 db.seed_objective_points(side, budget, true);
+                db.persisted.funds_seeded.push(side);
+                db.ephemeral.dirty();
             }
         }
         Ok(db)

@@ -15,10 +15,20 @@ for more details.
 */
 
 use anyhow::Result;
-use bfprotocols::{cfg::CampaignEventsCfg, db::group::GroupId};
+use bfprotocols::{
+    cfg::{CampaignEventsCfg, UnitTag},
+    db::group::GroupId,
+};
 use chrono::{DateTime, Utc};
 use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, trigger::MarkId, Vector2};
+use dcso3::{
+    coalition::Side,
+    env::miz::MizIndex,
+    land::{Land, RoadType},
+    trigger::MarkId,
+    LuaVec2, Vector2,
+};
+use crate::spawnctx::SpawnCtx;
 use std::sync::Arc;
 use fxhash::FxHashMap;
 use log::*;
@@ -76,9 +86,12 @@ pub enum CampaignEvent {
         id: EventId,
         /// Side that set the ambush (enemy of the convoy).
         ambush_side: Side,
-        /// Position near the convoy where the ambush spawns.
+        /// Where the ambush sets up: a point ahead on the convoy's way that
+        /// the force reaches first. (Name kept for saved events; the force
+        /// no longer spawns here.)
         spawn_pos: Vector2,
-        /// Friendly objective closest to the ambush (used for template lookup).
+        /// Friendly objective the ambush force drives out from (and whose
+        /// template it uses).
         source_objective: ObjectiveId,
         expires_at: DateTime<Utc>,
         /// False on the first tick — spawn happens exactly once.
@@ -192,7 +205,8 @@ pub enum EventEffect {
         shooter_gids: SmallVec<[bfprotocols::db::group::GroupId; 4]>,
         target_pos: Vector2,
     },
-    /// Spawn an ambush force for `ambush_side` near `spawn_pos`.
+    /// Send an ambush force for `ambush_side` out of `source_objective` by
+    /// road to the intercept `spawn_pos`.
     SpawnAmbush {
         event_id: EventId,
         ambush_side: Side,
@@ -233,6 +247,158 @@ pub enum EventEffect {
         event_id: EventId,
     },
 
+}
+
+/// Ambush forces drive at this, and plan their drive with it.
+const AMBUSH_SPEED_MPS: f64 = 12.;
+/// The furthest an ambush force drives to get in place (estimated as the
+/// straight line times `ROAD_FACTOR`). Past this the convoy is out of reach.
+const AMBUSH_MAX_DRIVE_M: f64 = 40_000.;
+/// The real road route may wind further than the estimate; past this it is
+/// called off.
+const AMBUSH_MAX_ROAD_M: f64 = 55_000.;
+/// Road distance against the straight line, for planning.
+const ROAD_FACTOR: f64 = 1.3;
+/// Time to get off the road and into position before the convoy arrives.
+const AMBUSH_SETUP_SECS: f64 = 120.;
+/// Not right on top of the convoy -- that is a meeting, not an ambush...
+const AMBUSH_MIN_LEAD_M: f64 = 2_000.;
+/// ...and not at its destination, which is the enemy's own base.
+const AMBUSH_DEST_CLEARANCE_M: f64 = 3_000.;
+/// How finely the convoy's way ahead is searched for an intercept.
+const AMBUSH_SAMPLE_M: f64 = 500.;
+
+/// A convoy's speed for planning; one that never recorded one drives at a
+/// typical truck convoy pace.
+fn convoy_speed(speed_mps: f64) -> f64 {
+    if speed_mps > 0.5 { speed_mps } else { 8. }
+}
+
+/// The first point on `path` (a convoy's way ahead, starting where it is
+/// now) that a force driving from `from` reaches and sets up at before the
+/// convoy gets there, and the estimated drive to it. `None` if there is no
+/// such point within driving range.
+pub(crate) fn intercept_on_path(path: &[Vector2], convoy_mps: f64, from: Vector2) -> Option<(Vector2, f64)> {
+    let total: f64 = path.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
+    let mut done = 0.;
+    for w in path.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let seg = (b - a).norm();
+        let mut t = 0.;
+        while seg > 1e-6 && t <= seg {
+            let s = done + t;
+            if s >= AMBUSH_MIN_LEAD_M && total - s >= AMBUSH_DEST_CLEARANCE_M {
+                let p = a + (b - a) * (t / seg);
+                let drive = (p - from).norm() * ROAD_FACTOR;
+                if drive <= AMBUSH_MAX_DRIVE_M
+                    && drive / AMBUSH_SPEED_MPS + AMBUSH_SETUP_SECS <= s / convoy_mps
+                {
+                    return Some((p, drive));
+                }
+            }
+            t += AMBUSH_SAMPLE_M;
+        }
+        done += seg;
+    }
+    None
+}
+
+/// Which of `ours` (id, position) gets a force ahead of the convoy on `path`
+/// with the shortest drive: (id, intercept, drive).
+fn best_ambush_source<T: Copy>(
+    path: &[Vector2],
+    convoy_mps: f64,
+    ours: &[(T, Vector2)],
+) -> Option<(T, Vector2, f64)> {
+    ours.iter()
+        .filter_map(|(id, pos)| intercept_on_path(path, convoy_mps, *pos).map(|(p, d)| (*id, p, d)))
+        .min_by(|a, b| a.2.total_cmp(&b.2))
+}
+
+impl Db {
+    /// Send the force for a convoy ambush out of objective `source` by road
+    /// to a point ahead of convoy group `convoy_gid` that it reaches first.
+    /// The intercept is re-planned on the convoy's real road when it is
+    /// still on its way (`planned`, from when the event was set, is the
+    /// fallback). `Ok(None)` when no road gets the force there in time or
+    /// within range: the ambush is off, nothing spawns.
+    pub(crate) fn launch_ambush(
+        &mut self,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        side: Side,
+        source: ObjectiveId,
+        template: &str,
+        convoy_gid: GroupId,
+        planned: Vector2,
+    ) -> Result<Option<(GroupId, Vector2)>> {
+        let lua = spctx.lua();
+        let from = self
+            .persisted
+            .objectives
+            .get(&source)
+            .map(|o| o.pos())
+            .ok_or_else(|| anyhow::anyhow!("no such objective {source:?}"))?;
+        let convoy = self
+            .ephemeral
+            .active_convoys
+            .values()
+            .find(|c| c.group_id == convoy_gid)
+            .and_then(|c| {
+                let dest = self.persisted.objectives.get(&c.destination)?.pos();
+                Some((c.last_pos, dest, convoy_speed(c.speed_mps)))
+            });
+        let mut at = planned;
+        if let Some((pos, dest, speed)) = convoy {
+            let road: Option<Vec<Vector2>> = Land::singleton(lua)
+                .ok()
+                .and_then(|l| l.find_path_on_roads(RoadType::Road, LuaVec2(pos), LuaVec2(dest)).ok())
+                .map(|seq| seq.into_iter().filter_map(|p| p.ok()).map(|p| p.0).collect());
+            if let Some(road) = road.filter(|r| r.len() >= 2) {
+                let mut path = Vec::with_capacity(road.len() + 1);
+                path.push(pos);
+                path.extend(road);
+                match intercept_on_path(&path, speed, from) {
+                    Some((p, _)) => at = p,
+                    None => {
+                        info!(
+                            "SpawnAmbush: {side:?} can no longer get ahead of convoy {convoy_gid:?} \
+                             on its road"
+                        );
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+        let Some(plan) = self.plan_drive(lua, from, at, false) else {
+            info!("SpawnAmbush: no road from {source:?} to the intercept, ambush called off");
+            return Ok(None);
+        };
+        if plan.route_m > AMBUSH_MAX_ROAD_M {
+            info!(
+                "SpawnAmbush: the road from {source:?} to the intercept is {:.0} km, too far, \
+                 ambush called off",
+                plan.route_m / 1000.
+            );
+            return Ok(None);
+        }
+        let gid = self.queue_drive_from_objective(
+            spctx,
+            idx,
+            side,
+            source,
+            template,
+            &plan,
+            AMBUSH_SPEED_MPS,
+            // Event-owned: a restart drops it.
+            UnitTag::EventSpawn.into(),
+        )?;
+        info!(
+            "SpawnAmbush: {gid:?} driving {:.1} km by road from {source:?} to its intercept",
+            plan.route_m / 1000.
+        );
+        Ok(Some((gid, at)))
+    }
 }
 
 /// Convert a 2D bearing (from → to) into an 8-point compass label.
@@ -662,47 +828,49 @@ impl EventScheduler {
             Side::Blue => Side::Red,
             Side::Neutral => return false,
         };
+        // The ambush force drives out of one of our own objectives to a point
+        // on the convoy's way that it can reach first. Only convoys some
+        // objective of ours can get ahead of within driving range qualify;
+        // the road check itself needs Lua and happens at spawn time
+        // (`Db::launch_ambush`).
+        let ours: SmallVec<[(ObjectiveId, Vector2); 32]> = all_owned
+            .iter()
+            .filter(|(_, s, ..)| *s == ambush_side)
+            .map(|(oid, _, pos, _, _)| (*oid, *pos))
+            .collect();
+        let mut options: SmallVec<[(usize, ObjectiveId, Vector2, f64); 8]> = SmallVec::new();
         let convoys: Vec<_> = db
             .ephemeral
             .active_convoys
             .values()
             .filter(|c| c.side == target_side)
             .collect();
-        if convoys.is_empty() { return false; }
-
-        let convoy = &convoys[rng.r#gen_range(0..convoys.len())];
-
-        // Find a friendly objective on the ambush side to pull the template from
-        let source_objective = all_owned.iter()
-            .filter(|(_, s, ..)| *s == ambush_side)
-            .map(|(oid, _, pos, _, _)| {
-                let d = na::distance(&(*pos).into(), &convoy.last_pos.into());
-                (d, *oid)
-            })
-            .min_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|(_, oid)| oid);
-
-        let source_objective = match source_objective {
-            Some(o) => o,
-            None => return false,
-        };
-
-        // Spawn point: near the convoy's last known position with small random offset
-        let offset = dcso3::Vector2::new(
-            rng.r#gen_range(-500.0..500.0f64),
-            rng.r#gen_range(-500.0..500.0f64),
-        );
-        let spawn_pos = convoy.last_pos + offset;
+        for (i, convoy) in convoys.iter().enumerate() {
+            let Some(dest) = db.persisted.objectives.get(&convoy.destination).map(|o| o.pos())
+            else {
+                continue;
+            };
+            let path = [convoy.last_pos, dest];
+            if let Some((oid, at, drive_m)) = best_ambush_source(&path, convoy_speed(convoy.speed_mps), &ours) {
+                options.push((i, oid, at, drive_m));
+            }
+        }
+        if options.is_empty() { return false; }
+        let (i, source_objective, spawn_pos, drive_m) = options[rng.r#gen_range(0..options.len())];
+        let convoy = convoys[i];
 
         let convoy_group_id = convoy.group_id;
         let convoy_pos = convoy.last_pos;
         let id = EventId::new();
+        // The clock starts when the force is in place, not when it leaves.
+        let drive_secs = (drive_m / AMBUSH_SPEED_MPS) as i64;
         let event = CampaignEvent::ConvoyAmbush {
             id,
             ambush_side,
             spawn_pos,
             source_objective,
-            expires_at: now + chrono::Duration::seconds(cfg.ambush_duration_secs as i64),
+            expires_at: now
+                + chrono::Duration::seconds(drive_secs + cfg.ambush_duration_secs as i64),
             spawned: false,
             convoy_group_id,
             convoy_pos,
@@ -710,7 +878,14 @@ impl EventScheduler {
 
 
         self.total_events_spawned += 1;
-        info!("Spawned convoy ambush by {:?} near convoy {:?}", ambush_side, convoy.id);
+        info!(
+            "Spawned convoy ambush by {:?} on convoy {:?}: force from {:?}, {:.1} km drive to the \
+             intercept",
+            ambush_side,
+            convoy.id,
+            source_objective,
+            drive_m / 1000.
+        );
         self.active_events.push(event);
         true
     }
@@ -801,5 +976,41 @@ impl EventScheduler {
     // Helpers
     // -------------------------------------------------------------------------
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A convoy 60 km from home, east along y = 0 at 8 m/s.
+    fn road() -> [Vector2; 2] {
+        [Vector2::new(0., 0.), Vector2::new(60_000., 0.)]
+    }
+
+    #[test]
+    fn ambush_sets_up_ahead_of_the_convoy() {
+        let from = Vector2::new(20_000., 10_000.);
+        let (at, drive) = intercept_on_path(&road(), 8., from).expect("reachable");
+        // On the road, ahead of the convoy, and reached first.
+        assert!(at.y.abs() < 1e-6 && at.x >= AMBUSH_MIN_LEAD_M);
+        assert!(drive / AMBUSH_SPEED_MPS + AMBUSH_SETUP_SECS <= at.x / 8.);
+        // Not past the closest stretch of road: it takes the first point it can make.
+        assert!(at.x <= 20_000.);
+    }
+
+    #[test]
+    fn no_ambush_out_of_range_or_behind() {
+        // 50 km off the road: too far to drive.
+        assert!(intercept_on_path(&road(), 8., Vector2::new(30_000., 50_000.)).is_none());
+        // Behind the convoy and slower than it can't catch up anywhere.
+        assert!(intercept_on_path(&road(), 30., Vector2::new(-30_000., 0.)).is_none());
+    }
+
+    #[test]
+    fn nearest_source_wins() {
+        let ours = [(1, Vector2::new(40_000., 30_000.)), (2, Vector2::new(30_000., 5_000.))];
+        let (id, _, _) = best_ambush_source(&road(), 8., &ours).expect("someone can reach it");
+        assert_eq!(id, 2);
+    }
 }
 

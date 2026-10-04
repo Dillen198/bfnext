@@ -33,11 +33,70 @@ A few things worth reading off that table:
   that actually starves an enemy sector — see
   [Materiel & the War Economy](./war-economy.md).
 
+### What a kill is worth
+
+An air kill is a flat {{cfg:points.air_kill|25}}. A ground kill is priced by
+what you destroyed, as a multiple of the ground kill rate: infantry and
+unarmed trucks ×0.5, logistics vehicles ×0.75, APCs and AAA ×1, armour,
+artillery and SAM launchers ×1.5, ships, early-warning and search radars ×2,
+SAM tracking radars ×2.5 (and the long-range SAM bonus on top of that).
+
+A shared kill is split by **hits**. The hit that actually killed it counts
+double. The shares add up to the kill's value, so nobody gets a full kill for
+tagging a target someone else destroyed.
+
+Kills made by **your deployed AI** (SAMs, troops, action groups) pay
+{{cfg:economy.owned_ai_kill_fraction|0.5}}× while you're in a slot and
+{{cfg:economy.owned_ai_unattended_fraction|0.25}}× while you aren't.
+
+### Logistics pays the pilot who flew it
+
+Repair and supply-transfer pay goes to the pilot who **loaded** the crate, not
+whoever pressed unpack. If someone else unpacks it, they get
+{{cfg:economy.unpacker_share|0.25}} of the pay and the hauler gets the rest.
+
+The pay grows with the haul. The base rate is for a delivery made where the
+crate was loaded, and it rises to double for a haul of
+{{cfg:economy.delivery_ref_km|40}} km or more. Delivering to a **front-line**
+base adds another +50%: one that's under threat, or within
+{{cfg:economy.front_line_km|25}} km of an enemy base. The points message shows
+the distance and whether it counted as front line.
+
+### Underdog pay
+
+A side that is behind gets paid more for the same work: kills, logistics,
+captures, CSAR, convoy kills and holding pay. "Behind" means holding less than
+half the contested map, or being outnumbered in the air once at least
+{{cfg:economy.underdog_min_players|4}} pilots are up. The raise goes up to
++{{cfg:economy.underdog_max_bonus|0.5}} (×1.5). The AI commander's treasury
+income gets the same raise. When it applies, the points message says so, e.g.
+`[x1.30 underdog]`.
+
+### High balances earn at a lower rate
+
+Once your balance passes {{cfg:economy.wealth_cap_ratio|4}}× your side's
+typical balance (the median of its active pilots), anything you earn above that
+line is paid at {{cfg:economy.wealth_taper|0.5}}×. Nothing is taken away; a big
+lead just grows more slowly. The message tags it `[high-balance rate]`.
+
+### Joining late
+
+A new pilot starts with the larger of the join grant and
+{{cfg:economy.late_joiner_fraction|0.5}}× their side's typical balance, so
+joining on day three doesn't mean starting from nothing. The part above the
+normal join grant can be spent but **not transferred**.
+
+### Holding pay
+
+Every few minutes each pilot **in a slot** gets holding pay, scaled by how much
+of the map their side holds. A side that holds anything at all gets at least 1
+point. Spectators and AFK players get nothing.
+
 ### Team kills
 
-Friendly fire is penalised, with a short grace window
-({{cfg:points.tk_window|5}} seconds) so a shared kill isn't misattributed. Shoot
-your own side and you lose points.
+Shoot your own side and you lose the kill's full value in points. Repeat
+offences cost more: earlier team kills are remembered, and their weight halves
+every {{cfg:points.tk_window|5}} hours.
 
 ## Spending points
 
@@ -118,7 +177,12 @@ Use it to:
 - Hand points to a new player who has just burned their starting balance.
 - Fund the objective that is about to be attacked.
 
-You cannot transfer to the other coalition.
+You cannot transfer to the other coalition, and a late joiner's head start
+can't be transferred (see above).
+
+A base's balance belongs to whoever holds the base. When it is captured, the
+new owner keeps {{cfg:economy.capture_fund_keep|0.25}} of it (capped at what
+their own bases of that kind hold). The rest is lost with the base.
 
 ## Lives
 

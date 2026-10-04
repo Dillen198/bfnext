@@ -309,12 +309,67 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Da
             ai::think(lua, ctx, &cfg, ai_cfg, now);
         }
     }
+    let vis = visibility(lua, ctx, &cfg);
+    ctx.groundwar.rt.set_visibility(vis);
     ctx.db.tick_formations(&mut ctx.groundwar.rt, lua, &ctx.idx, perf, now);
     frontline(ctx, &cfg, now);
+}
+
+/// How far anyone can see right now, as a share of a clear day: the light
+/// (from the mission's time of day; `night_spot` of it in the dark, ramping
+/// through dawn and dusk) times the weather's visibility.
+fn visibility(lua: MizLua, ctx: &Context, cfg: &GroundWarCfg) -> f64 {
+    let night = cfg.combat.night_spot.clamp(0.05, 1.);
+    let light = match dcso3::timer::Timer::singleton(lua).and_then(|t| t.get_abs_time()) {
+        Ok(t) => night + (1. - night) * daylight((t.0 % 86_400.) / 3_600.),
+        Err(_) => 1.,
+    };
+    let weather = ctx
+        .bot_weather
+        .as_ref()
+        .map(|w| w.visibility_m)
+        .filter(|v| *v > 0.)
+        .map_or(1., |v| (v / cfg.combat.spot_m.max(1.)).min(1.));
+    (light * weather).clamp(0.15, 1.)
+}
+
+/// How light it is over the theatre now, 0..1 (1 if the mission clock
+/// can't be read).
+pub(crate) fn daylight_now(lua: MizLua) -> f64 {
+    dcso3::timer::Timer::singleton(lua)
+        .and_then(|t| t.get_abs_time())
+        .map(|t| daylight((t.0 % 86_400.) / 3_600.))
+        .unwrap_or(1.)
+}
+
+/// 0 at night, 1 by day, ramping over dawn (05:00-07:00) and dusk
+/// (18:30-20:30) local mission time.
+fn daylight(hour: f64) -> f64 {
+    match hour {
+        h if h < 5. => 0.,
+        h if h < 7. => (h - 5.) / 2.,
+        h if h < 18.5 => 1.,
+        h if h < 20.5 => 1. - (h - 18.5) / 2.,
+        _ => 0.,
+    }
 }
 
 /// Shared by the AI and the menus: an objective nobody can drive to.
 pub(crate) fn at_sea(kind: &bfprotocols::db::objective::ObjectiveKind) -> bool {
     matches!(kind, bfprotocols::db::objective::ObjectiveKind::CarrierGroup { .. })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::daylight;
+
+    #[test]
+    fn daylight_ramps_through_dawn_and_dusk() {
+        assert_eq!(daylight(2.), 0.);
+        assert_eq!(daylight(6.), 0.5);
+        assert_eq!(daylight(12.), 1.);
+        assert_eq!(daylight(19.5), 0.5);
+        assert_eq!(daylight(23.), 0.);
+    }
 }
 

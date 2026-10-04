@@ -1663,7 +1663,7 @@ fn distance_to_segment(p: Vector2, a: Vector2, b: Vector2) -> f64 {
 /// between a supply network that can be cut and one where a depot behind
 /// enemy lines keeps trucking fuel through it because it happens to be the
 /// nearest one by ruler.
-fn route_interdicted(
+pub(super) fn route_interdicted(
     persisted: &super::persisted::Persisted,
     side: Side,
     from: Vector2,
@@ -3396,9 +3396,92 @@ impl Db {
         }
     }
 
+    /// The theatre HQ's resupply (`crate::hq`): the relief run
+    /// `auto_dispatch_relief` sends on its own, but to `dest` now -- from the
+    /// hub that serves it, by road, or by air where the road is cut. Ok is
+    /// the transport's id and what kind of transport it is.
+    pub(crate) fn hq_dispatch_supply(
+        &mut self,
+        lua: MizLua,
+        side: Side,
+        dest: ObjectiveId,
+        ts: DateTime<Utc>,
+    ) -> Result<(CompactString, &'static str)> {
+        let whcfg = self
+            .ephemeral
+            .cfg
+            .warehouse
+            .as_ref()
+            .ok_or_else(|| anyhow!("the warehouse system is off"))?;
+        let convoy_max = whcfg
+            .convoy
+            .as_ref()
+            .filter(|c| c.enabled)
+            .map(|c| c.max_concurrent_convoys as usize)
+            .ok_or_else(|| anyhow!("convoys are off"))?;
+        let air_max = whcfg
+            .air_logistics
+            .as_ref()
+            .filter(|a| a.enabled)
+            .map(|a| a.max_concurrent_routes as usize);
+        let (front_line_routing, route_margin) = (whcfg.front_line_routing, whcfg.route_block_margin_m);
+        let dest_obj = objective!(self, &dest)?;
+        if dest_obj.owner != side {
+            bail!("{} is not ours", dest_obj.name);
+        }
+        let dest_name = dest_obj.name.clone();
+        let dest_pos = dest_obj.zone.pos();
+        let hub = self
+            .persisted
+            .logistics_hubs
+            .into_iter()
+            .filter(|lid| {
+                self.persisted
+                    .objectives
+                    .get(*lid)
+                    .map_or(false, |l| l.owner == side && l.warehouse.destination.contains(&dest))
+            })
+            .copied()
+            .next()
+            .ok_or_else(|| anyhow!("no logistics hub of ours serves {dest_name}"))?;
+        let hub_pos = objective!(self, &hub)?.zone.pos();
+        let road_cut = front_line_routing
+            && route_interdicted(&self.persisted, side, hub_pos, dest_pos, route_margin);
+        let convoys_out = self.ephemeral.active_convoys.values().filter(|c| c.side == side).count();
+        let air_out = self.ephemeral.active_air_routes.values().filter(|r| r.side == side).count();
+        let kind = if !road_cut && convoys_out < convoy_max {
+            TransportKind::Convoy
+        } else if road_cut && air_max.is_some_and(|m| air_out < m) {
+            TransportKind::Air
+        } else {
+            bail!(
+                "no transport free for {dest_name} (road cut {road_cut}, convoys {convoys_out}/{convoy_max},                  cargo flights {air_out}/{air_max:?})"
+            )
+        };
+        let load = self.build_transfers(hub, dest, 1.0);
+        if load.is_empty() {
+            bail!("nothing to send to {dest_name}: the hub is empty or {dest_name} is full");
+        }
+        let spawned = match kind {
+            TransportKind::Air => {
+                self.spawn_air_logistics_route(lua, hub, dest, ConvoyCargoType::Mixed, load.clone(), ts)
+            }
+            _ => self.spawn_supply_convoy(lua, hub, dest, ConvoyCargoType::Mixed, load.clone(), ts),
+        }?;
+        let id = spawned.ok_or_else(|| anyhow!("the transport would not spawn"))?;
+        if !self.load_transport(kind, &id, hub, dest, &load, ts) {
+            bail!("the hub had nothing left to load");
+        }
+        self.ephemeral.last_dispatch_to.insert(dest, ts);
+        let how = if kind == TransportKind::Air { "cargo flight" } else { "supply convoy" };
+        info!("HQ DISPATCH: {how} {id} -> {dest_name} ({} item(s))", load.len());
+        Ok((id, how))
+    }
+
     /// Settle a transport that has ended, however it ended, and take its
     /// group out of the campaign.
     fn finish_transport(&mut self, id: &str, side: Side, gid: GroupId, end: TransportEnd) {
+        self.ephemeral.note_transport_outcome(id, end == TransportEnd::Delivered);
         match end {
             TransportEnd::Delivered => self.deliver_cargo(id, side),
             TransportEnd::Lost => self.lose_cargo(id),
@@ -4867,7 +4950,7 @@ impl Db {
     /// garrison is despawned while it is quiet and comes back the moment it is
     /// contested, so its absence right now proves nothing. Rings outward from
     /// the centre, eight bearings each; the centre itself if nothing is near.
-    fn clear_helo_spot(&self, center: Vector2) -> Vector2 {
+    pub(super) fn clear_helo_spot(&self, center: Vector2) -> Vector2 {
         const HELO_CLEARANCE_M: f64 = 45.;
         const SEARCH_M: f64 = 450.;
         let near: SmallVec<[Vector2; 64]> = self
@@ -5169,7 +5252,7 @@ impl Db {
         &mut self,
         lua: MizLua,
         side: Side,
-        ucid: dcso3::net::Ucid,
+        ucid: Option<dcso3::net::Ucid>,
         destination: ObjectiveId,
         now: DateTime<Utc>,
     ) -> Result<HeloMissionId> {
@@ -5214,9 +5297,11 @@ impl Db {
                 )
             })?
             .clone();
-        let total_cost = troop_cfg.cost as i32 + cfg.troop_mission_cost;
-        let available = self.player(&ucid).map(|p| p.points).unwrap_or(0);
-        if available < total_cost {
+        // No player: the theatre HQ, which pays from the treasury itself.
+        let total_cost = if ucid.is_some() { troop_cfg.cost as i32 + cfg.troop_mission_cost } else { 0 };
+        let ucid_ = ucid.unwrap_or_default();
+        let available = self.player(&ucid_).map(|p| p.points).unwrap_or(0);
+        if ucid.is_some() && available < total_cost {
             bail!(
                 "not enough points for a helo troop insertion ({total_cost} needed, {available} \
                  available)"
@@ -5226,12 +5311,14 @@ impl Db {
             lua,
             origin,
             destination,
-            ucid.clone(),
+            ucid_,
             total_cost,
             HeloMissionKind::TroopInsertion,
             now,
         )?;
-        self.adjust_points(&ucid, -total_cost, "AI helo troop insertion");
+        if ucid.is_some() {
+            self.adjust_points(&ucid_, -total_cost, "AI helo troop insertion");
+        }
         Ok(mission_id)
     }
 
@@ -5242,7 +5329,7 @@ impl Db {
         &mut self,
         lua: MizLua,
         side: Side,
-        ucid: dcso3::net::Ucid,
+        ucid: Option<dcso3::net::Ucid>,
         destination: ObjectiveId,
         now: DateTime<Utc>,
     ) -> Result<HeloMissionId> {
@@ -5278,8 +5365,10 @@ impl Db {
                 dest_obj.name
             );
         }
-        let available = self.player(&ucid).map(|p| p.points).unwrap_or(0);
-        if available < cfg.supply_mission_cost {
+        let cost = if ucid.is_some() { cfg.supply_mission_cost } else { 0 };
+        let ucid_ = ucid.unwrap_or_default();
+        let available = self.player(&ucid_).map(|p| p.points).unwrap_or(0);
+        if ucid.is_some() && available < cost {
             bail!(
                 "not enough points for a helo supply run ({} needed, {available} available)",
                 cfg.supply_mission_cost
@@ -5289,8 +5378,8 @@ impl Db {
             lua,
             origin,
             destination,
-            ucid.clone(),
-            cfg.supply_mission_cost,
+            ucid_,
+            cost,
             HeloMissionKind::ResourceDelivery { transfers: transfers.clone() },
             now,
         )?;
@@ -5300,7 +5389,9 @@ impl Db {
         if !self.load_transport(TransportKind::Helo, &mission_id, origin, destination, &transfers, now) {
             bail!("the launch field had nothing left to load");
         }
-        self.adjust_points(&ucid, -cfg.supply_mission_cost, "AI helo resource delivery");
+        if ucid.is_some() {
+            self.adjust_points(&ucid_, -cost, "AI helo resource delivery");
+        }
         Ok(mission_id)
     }
 
@@ -5524,7 +5615,9 @@ impl Db {
         }
 
         for id in completed {
-            self.ephemeral.active_helo_missions.remove(&id);
+            if let Some(m) = self.ephemeral.active_helo_missions.remove(&id) {
+                self.ephemeral.note_transport_outcome(&id, m.state == HeloMissionState::Delivered);
+            }
         }
         for (ucid, msg) in delivered_msgs {
             self.ephemeral.panel_to_player(&self.persisted, 15, &ucid, msg);

@@ -30,7 +30,7 @@ use anyhow::{Context, Result, anyhow};
 use bfprotocols::{
     cfg::{
         Deployable, DeployableObjective, UnitTag, Vehicle, VictoryCondition, MATERIEL_ITEM,
-        fmt_mult,
+        fmt_mult, split_by_weight,
     },
     db::{
         group::{GroupId, UnitId},
@@ -2193,6 +2193,7 @@ impl Db {
             obj.clear_capture_hold();
             obj.name.clone()
         };
+        self.settle_captured_fund(oid);
         info!(
             "[CAPTURE] {name} neutralised: garrison health reached 0, ownership dropped to Neutral \
              (spawns locked, self-repair off, must be retaken with troops)"
@@ -2720,6 +2721,7 @@ impl Db {
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     to_mark.push(*gid);
                 }
+                self.settle_captured_fund(oid);
                 // Everything from here on runs with the owner already
                 // flipped, so none of it may `?` out of the pass: a bail-out
                 // left the base taken but with the rest undone -- no
@@ -2924,11 +2926,11 @@ impl Db {
                     side: new_owner,
                     by: ucids.clone(),
                 });
-                if let Some(points) = self.ephemeral.cfg.points.as_ref() {
+                if let Some(capture) = self.ephemeral.cfg.points.as_ref().map(|p| p.capture) {
                     if !ucids.is_empty() {
-                        let ppp = (points.capture as f32 / ucids.len() as f32).ceil() as i32;
-                        for ucid in &ucids {
-                            self.adjust_points(ucid, ppp, &format!("for capturing {name}"));
+                        let shares = split_by_weight(capture as i32, &vec![1.; ucids.len()]);
+                        for (ucid, ppp) in ucids.iter().zip(shares) {
+                            self.earn_points(ucid, ppp, &format!("for capturing {name}"));
                         }
                     }
                 }
@@ -3162,6 +3164,7 @@ impl Db {
             obj.last_change_ts = now;
             obj.clear_capture_hold();
         }
+        self.settle_captured_fund(oid);
         self.ephemeral.capture_progress.remove(&oid);
 
         if !is_sam {
@@ -3368,6 +3371,7 @@ impl Db {
                     obj.last_change_ts = now;
                     gids
                 };
+                self.settle_captured_fund(oid);
                 // Nothing in there is alive any more -- drop the wrecks rather
                 // than leaving a dead squad sitting in the zone for the rest
                 // of the campaign. (Most are already gone: a troop group is
@@ -3791,6 +3795,8 @@ impl Db {
             }
         }
 
+        self.settle_captured_fund(oid);
+
         // --- Spawn new owner's ship groups (BCARRIER → Blue, RCARRIER → Red) ---
         let new_groups = objective!(self, oid)?.groups.get(&new_owner).cloned();
         if let Some(new_groups) = new_groups {
@@ -3827,11 +3833,56 @@ impl Db {
         Ok(old_owner)
     }
 
+    /// Where a carrier task force for `owner` puts to sea: open water off
+    /// carrier objective `cg`'s parent naval base if `owner` holds it, else
+    /// off `owner`'s naval base nearest `near`, with room for the whole
+    /// formation (`offsets`, each ship's position about the formation
+    /// centre). `None` if `owner` holds no naval base with open water near it.
+    pub(super) fn carrier_departure_point(
+        &self,
+        lua: MizLua,
+        cg: &ObjectiveId,
+        owner: Side,
+        near: Vector2,
+        offsets: &[Vector2],
+    ) -> Option<(Vector2, String)> {
+        let land = Land::singleton(lua).ok()?;
+        let parent = match &self.persisted.objectives.get(cg)?.kind {
+            ObjectiveKind::CarrierGroup { parent_naval_base, .. } => *parent_naval_base,
+            _ => None,
+        };
+        let mut bases: SmallVec<[(bool, f64, Vector2, String); 8]> = self
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(_, o)| o.owner == owner && o.kind.is_naval_base())
+            .map(|(id, o)| {
+                let p = o.zone.pos();
+                (Some(*id) != parent, (p - near).norm(), p, o.name.clone())
+            })
+            .collect();
+        // The parent base first, then the rest nearest the station.
+        bases.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        let water = |p: Vector2| {
+            matches!(
+                land.get_surface_type(LuaVec2(p)),
+                Ok(dcso3::land::SurfaceType::Water)
+            )
+        };
+        bases
+            .into_iter()
+            .take(3)
+            .find_map(|(_, _, p, name)| sea_spot(p, offsets, &water).map(|s| (s, name)))
+    }
+
     /// Ensure carrier objective `oid` has a ship group set for `owner`,
     /// spawning a fresh task force from that side's own carrier template
     /// (RCARRIER / BCARRIER, found from their existing carrier group) if it
-    /// doesn't. Positioned at the objective's last known ship centroid (any
-    /// side, live or dead units), falling back to the objective zone centre.
+    /// doesn't. The new task force puts to sea off `owner`'s naval base (see
+    /// `carrier_departure_point`) and sails out to the objective's station,
+    /// its last known ship centroid (any side, live or dead units, falling
+    /// back to the objective zone centre). Only if `owner` has no naval base
+    /// with open water does it appear on station, as it always used to.
     /// Returns true if a task force was spawned. No-op (with a warning) if
     /// that side has no carrier template in the mission.
     pub(super) fn ensure_carrier_task_force(
@@ -3891,15 +3942,48 @@ impl Db {
             return Ok(false);
         };
         let spctx = SpawnCtx::new(lua)?;
+        // Each ship's place in the template's formation, so the departure
+        // point can be checked for room for all of them.
+        let offsets: SmallVec<[Vector2; 8]> = spctx
+            .get_template_ref(idx, GroupKind::Any, owner, template.as_str())
+            .and_then(|t| {
+                let ps: SmallVec<[Vector2; 8]> = t
+                    .group
+                    .units()?
+                    .into_iter()
+                    .filter_map(|u| u.ok().and_then(|u| u.pos().ok()))
+                    .collect();
+                let c = centroid2d(ps.iter().copied());
+                Ok(ps.iter().map(|p| p - c).collect())
+            })
+            .unwrap_or_default();
+        let departure = self.carrier_departure_point(lua, &oid, owner, pos, &offsets);
+        let start = match &departure {
+            Some((p, base)) => {
+                info!(
+                    "[CARRIER_CAPTURE] {} task force for {:?} puts to sea off {} and sails to \
+                     station ({:.0} km)",
+                    obj_name,
+                    owner,
+                    base,
+                    (pos - p).norm() / 1000.
+                );
+                *p
+            }
+            None => {
+                warn!(
+                    "[CARRIER_CAPTURE] {:?} holds no naval base with open water to send the {} \
+                     task force from -- it appears on station",
+                    owner, obj_name
+                );
+                pos
+            }
+        };
         let gid = self.add_and_queue_group(
             &spctx,
             idx,
             owner,
-            SpawnLoc::AtPos {
-                pos,
-                offset_direction: Vector2::default(),
-                group_heading: 0.,
-            },
+            SpawnLoc::AtPosExact { pos: start, group_heading: 0. },
             template.as_str(),
             DeployKind::Objective { origin: oid },
             BitFlags::empty(),
@@ -3908,8 +3992,14 @@ impl Db {
         self.persisted.objectives_by_group.insert_cow(gid, oid);
         let obj = objective_mut!(self, oid)?;
         obj.groups.get_or_default_cow(owner).insert_cow(gid);
-        if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &mut obj.kind {
+        if let ObjectiveKind::CarrierGroup { carrier_template, waypoint, .. } = &mut obj.kind {
             *carrier_template = template.clone();
+            // The carrier spawn sails a task force to its objective's
+            // waypoint, so that is how it gets from the base to station. A
+            // waypoint someone already ordered stands.
+            if departure.is_some() && waypoint.is_none() {
+                *waypoint = Some(pos);
+            }
         }
         // Any old deck-airbase mapping is stale; a mission reload re-registers
         // the new deck (mid-game deck slotting still needs a reload).
@@ -4114,11 +4204,11 @@ impl Db {
             }
 
             // Award capture points
-            if let Some(points) = self.ephemeral.cfg.points.as_ref() {
+            if let Some(capture) = self.ephemeral.cfg.points.as_ref().map(|p| p.capture) {
                 if !ucids.is_empty() {
-                    let ppp = (points.capture as f32 / ucids.len() as f32).ceil() as i32;
-                    for ucid in &ucids {
-                        self.adjust_points(ucid, ppp, &format!("for capturing {obj_name}"));
+                    let shares = split_by_weight(capture as i32, &vec![1.; ucids.len()]);
+                    for (ucid, ppp) in ucids.iter().zip(shares) {
+                        self.earn_points(ucid, ppp, &format!("for capturing {obj_name}"));
                     }
                 }
             }
@@ -4205,9 +4295,46 @@ impl Db {
     }
 }
 
+/// The nearest point to `center` (a naval base) with open water under it and
+/// under every ship of a formation laid out by `offsets` around it, with a
+/// fifth again of margin so the escorts aren't parked on the beach. Searched
+/// in rings out to 30 km.
+pub(super) fn sea_spot(
+    center: Vector2,
+    offsets: &[Vector2],
+    is_water: impl Fn(Vector2) -> bool,
+) -> Option<Vector2> {
+    const STEP_M: f64 = 1_500.;
+    const MAX_R_M: f64 = 30_000.;
+    const BEARINGS: usize = 16;
+    let mut r = STEP_M;
+    while r <= MAX_R_M {
+        for i in 0..BEARINGS {
+            let a = i as f64 * std::f64::consts::TAU / BEARINGS as f64;
+            let p = center + Vector2::new(a.cos(), a.sin()) * r;
+            if is_water(p) && offsets.iter().all(|o| is_water(p + o * 1.2)) {
+                return Some(p);
+            }
+        }
+        r += STEP_M;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn carriers_put_to_sea_clear_of_the_coast() {
+        // Coastline along x = 2000: land west of it, sea east.
+        let water = |p: Vector2| p.x > 2_000.;
+        let formation = [Vector2::new(-1_000., 0.), Vector2::new(1_000., 0.)];
+        let p = sea_spot(Vector2::new(0., 0.), &formation, water).expect("open sea nearby");
+        assert!(p.x - 1_200. > 2_000., "escort would be ashore at {p:?}");
+        // Nothing but land: no departure point.
+        assert!(sea_spot(Vector2::new(0., 0.), &formation, |_| false).is_none());
+    }
 
     #[test]
     fn countdown_announces_first_check_and_crossings_only() {

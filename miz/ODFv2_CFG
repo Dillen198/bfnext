@@ -1009,6 +1009,22 @@
         "limit": null,
         "geo_limit": "Unlimited"
       },
+      "Reinforcements": {
+        "kind": {
+          "Reinforce": {
+            "template": "RHETCONVOY",
+            "groups": 3,
+            "max_source_m": 80000,
+            "speed_kph": 40,
+            "materiel_per_group": 250,
+            "arrive_m": 1000
+          }
+        },
+        "cost": 75,
+        "penalty": 25,
+        "limit": 2,
+        "geo_limit": "Unlimited"
+      },
       "Carrier Waypoint": {
         "kind": "CarrierWaypoint",
         "cost": 0,
@@ -1316,6 +1332,22 @@
         "cost": 10,
         "penalty": 25,
         "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "Reinforcements": {
+        "kind": {
+          "Reinforce": {
+            "template": "BHETCONVOY",
+            "groups": 3,
+            "max_source_m": 80000,
+            "speed_kph": 40,
+            "materiel_per_group": 250,
+            "arrive_m": 1000
+          }
+        },
+        "cost": 75,
+        "penalty": 25,
+        "limit": 2,
         "geo_limit": "Unlimited"
       },
       "Carrier Waypoint": {
@@ -3715,14 +3747,38 @@
     ]
   },
   "unit_classification": {
-    "TZ-22_KrAZ": ["Logistics", "Unarmed"],
-    "TZ-22_TANK": ["Logistics", "Unarmed"],
-    "ATZ-60_TANK": ["Logistics", "Unarmed"],
-    "CHAP_HX81_Tractor": ["Logistics", "Unarmed"],
-    "CHAP_SLT50_Tractor": ["Logistics", "Unarmed"],
-    "CHAP_SLT50_Trailer": ["Logistics", "Unarmed"],
-    "S-75_Zil": ["Logistics", "Unarmed"],
-    "S_75_Zil_Trailer": ["Logistics", "Unarmed"],
+    "TZ-22_KrAZ": [
+      "Logistics", 
+      "Unarmed"
+    ],
+    "TZ-22_TANK": [
+      "Logistics", 
+      "Unarmed"
+    ],
+    "ATZ-60_TANK": [
+      "Logistics", 
+      "Unarmed"
+    ],
+    "CHAP_HX81_Tractor": [
+      "Logistics", 
+      "Unarmed"
+    ],
+    "CHAP_SLT50_Tractor": [
+      "Logistics", 
+      "Unarmed"
+    ],
+    "CHAP_SLT50_Trailer": [
+      "Logistics", 
+      "Unarmed"
+    ],
+    "S-75_Zil": [
+      "Logistics", 
+      "Unarmed"
+    ],
+    "S_75_Zil_Trailer": [
+      "Logistics", 
+      "Unarmed"
+    ],
     "CHAP_HX77": [
       "Logistics",
       "Unarmed",
@@ -5234,6 +5290,42 @@
       "Launcher",
       "Driveable"
     ],
+    "SS_1B_Scud_A": [
+      "Armor",
+      "LR",
+      "Launcher",
+      "Driveable"
+    ],
+    "SS-21_Scarab_TEL": [
+      "Armor",
+      "LR",
+      "Launcher",
+      "Driveable"
+    ],
+    "9K720_Iskander_TEL": [
+      "Armor",
+      "LR",
+      "Launcher",
+      "Driveable"
+    ],
+    "4K51_Rubezh": [
+      "Armor",
+      "LR",
+      "Launcher",
+      "Driveable"
+    ],
+    "Bastion_LN": [
+      "Armor",
+      "LR",
+      "Launcher",
+      "Driveable"
+    ],
+    "P-15_Termit_S": [
+      "Armor",
+      "LR",
+      "Launcher",
+      "Driveable"
+    ],
     "GPS_Spoofer_Blue": [
       "Unarmed"
     ],
@@ -6483,6 +6575,74 @@
     "objective_fund_period_secs": 120,
     "action_reserve": 300,
     "holding_bonus_per_objective": 5,
+    "hq": {
+      "air": {
+        "Blue": {
+          "cap": [
+            {
+              "label": "F-15C",
+              "plane": {
+                "kind": "FixedWing",
+                "duration": 3600,
+                "template": "BFIGHTERS",
+                "altitude": 8000,
+                "altitude_typ": "BARO",
+                "speed": 260
+              }
+            }
+          ],
+          "strike": [
+            {
+              "label": "Attack helicopters",
+              "max_air_defence": 0,
+              "targets": [
+                "armor"
+              ],
+              "plane": {
+                "kind": "Helicopter",
+                "duration": 2700,
+                "template": "BATTACKHELI",
+                "altitude": 150,
+                "altitude_typ": "RADIO",
+                "speed": 60
+              }
+            }
+          ]
+        },
+        "Red": {
+          "cap": [
+            {
+              "label": "J-11A",
+              "plane": {
+                "kind": "FixedWing",
+                "duration": 3600,
+                "template": "RFIGHTERS",
+                "altitude": 8000,
+                "altitude_typ": "BARO",
+                "speed": 260
+              }
+            }
+          ],
+          "strike": [
+            {
+              "label": "Ka-50",
+              "max_air_defence": 0,
+              "targets": [
+                "armor"
+              ],
+              "plane": {
+                "kind": "Helicopter",
+                "duration": 2700,
+                "template": "RATTACKHELI",
+                "altitude": 150,
+                "altitude_typ": "RADIO",
+                "speed": 60
+              }
+            }
+          ]
+        }
+      }
+    },
     "mission_rewards": {
       "strike": 200,
       "fighter_sweep": 150,

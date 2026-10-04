@@ -30,6 +30,7 @@ const IntelTestPage    = lazy(() => import('./pages/IntelTestPage'))
 const ScopePage        = lazy(() => import('./scope/ScopePage'))
 const SnapshotPage     = lazy(() => import('./pages/SnapshotPage'))
 const GroundWarPage    = lazy(() => import('./pages/GroundWarPage'))
+const HqPage           = lazy(() => import('./pages/HqPage'))
 
 /** Shown while a route chunk is in flight. Deliberately quiet -- on a fast
  *  connection the chunk arrives before this is perceptible, and a spinner
@@ -113,6 +114,7 @@ export default function App() {
                 <Route path="kills" element={<KillFeed />} />
               <Route path="intel" element={<RequireCoalition what="recon intel"><IntelPage /></RequireCoalition>} />
               <Route path="ground" element={<RequireCoalition what="ground command"><GroundWarPage /></RequireCoalition>} />
+              <Route path="hq" element={<RequireCoalition what="the theatre HQ"><HqPage /></RequireCoalition>} />
               <Route path="admin" element={<AdminPage />} />
               <Route path="admin/config" element={<ConfigEditorPage />} />
               <Route path="admin/ops" element={<OpsPage />} />

@@ -30,6 +30,9 @@ slots — see the capacity table below.
 4. Enemy ground units within **{{cfg:csar.enemy_capture_radius|50}} m** capture
    them immediately — so a pilot down on top of an enemy position is usually
    unrecoverable.
+5. If the pilot is down within reach of an enemy base, the enemy sends a
+   **search party** out from it, by road where there is one. It is a race: get
+   there first, or stop the party on the way.
 
 ### Two things that save you a sortie
 

@@ -1,7 +1,12 @@
 use super::{Db, MapM, objective::Objective};
 use crate::{
     admin,
-    db::{cargo::Oldest, group::DeployKind, tasks::TaskId},
+    db::{
+        cargo::Oldest,
+        ephemeral::LaunchRequest,
+        group::{DeployKind, LaunchField, is_launch_kind},
+        tasks::TaskId,
+    },
     group, group_mut,
     jtac::{aim_and_fire_route, group_facing, JtId, Jtacs},
     objective,
@@ -13,10 +18,11 @@ use bfprotocols::{
     cfg::{
         Action, ActionGeoLimit, ActionKind, AiPlaneCfg, AiPlaneKind, ArtilleryCfg, AwacsCfg, BomberCfg,
         DeployableCfg, DeployableKind, DroneCfg, LimitEnforceTyp, MoveCfg, NavalCruiseMissileCfg,
-        NukeCfg, ReconCfg, RemoveTaskCfg, TaskCfg, TaskTarget, UnitTag, MATERIEL_ITEM,
+        NukeCfg, ReconCfg, ReinforceCfg, RemoveTaskCfg, TaskCfg, TaskTarget, UnitTag,
+        MATERIEL_ITEM,
     },
     db::{
-        group::GroupId,
+        group::{GroupId, UnitId},
         objective::{ObjectiveId, ObjectiveKind},
     },
     perf::PerfInner,
@@ -187,6 +193,8 @@ pub enum ActionArgs {
     AddTask(AddTaskArgs),
     /// Take a task back off the coalition tasking board.
     RemoveTask(WithTask<RemoveTaskCfg>),
+    /// Send a reinforcement convoy to a friendly objective.
+    Reinforce(WithObj<ReinforceCfg>),
 }
 
 impl ActionArgs {
@@ -388,6 +396,7 @@ impl ActionArgs {
                 cfg: c,
                 task: s.trim().parse()?,
             })),
+            ActionKind::Reinforce(c) => Ok(Self::Reinforce(obj(db, c, s)?)),
         }
     }
 
@@ -426,6 +435,7 @@ impl ActionArgs {
                 TaskAt::Obj(_) => None,
             },
             Self::RemoveTask(_) => None,
+            Self::Reinforce(_) => None,
         }
     }
 }
@@ -541,7 +551,8 @@ fn action_spawns_group(kind: &ActionKind) -> bool {
         | ActionKind::Recon(_)
         | ActionKind::Paratrooper(_)
         | ActionKind::LogisticsRepair(_)
-        | ActionKind::LogisticsTransfer(_) => true,
+        | ActionKind::LogisticsTransfer(_)
+        | ActionKind::Reinforce(_) => true,
         ActionKind::Deployable(d) => d.plane.is_some(),
         ActionKind::CruiseMissileWaypoint
         | ActionKind::Nuke(_)
@@ -861,6 +872,9 @@ impl Db {
             ActionArgs::LogisticsTransfer(args) => self
                 .ai_logistics_transfer(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
                 .context("calling ai log transfer")?,
+            ActionArgs::Reinforce(args) => self
+                .reinforce(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .context("calling reinforcements")?,
             ActionArgs::Nuke(args) => self.nuke(spctx, args).context("calling nuke")?,
             ActionArgs::Paratrooper(args) => self
                 .paratroops(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
@@ -943,6 +957,54 @@ impl Db {
     }
 
     pub(super) fn respawn_action(
+        &mut self,
+        perf: &mut PerfInner,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        gid: GroupId,
+    ) -> Result<()> {
+        // Action aircraft start on the ground now, so a restart can catch one
+        // still on its field -- taxiing, or holding short. Respawned where it
+        // was, "in the air" at ground level, it would hit the ground at speed.
+        // Within this distance of its own field (still friendly) it starts
+        // up and takes off again instead; anything further out is airborne
+        // and comes back in the air as before.
+        const RELAUNCH_RADIUS_M: f64 = 4_000.;
+        let relaunch = (|| {
+            let group = self.persisted.groups.get(&gid)?;
+            let DeployKind::Action { loc: SpawnLoc::InAir { .. }, origin: Some(oid), .. } =
+                &group.origin
+            else {
+                return None;
+            };
+            let field = self.persisted.objectives.get(oid)?;
+            let here = self.group_center(&gid).ok()?;
+            if field.owner != group.side || (field.zone.pos() - here).norm() > RELAUNCH_RADIUS_M {
+                return None;
+            }
+            let rotary = group.tags.contains(UnitTag::Helicopter);
+            let heavy = group
+                .units
+                .into_iter()
+                .filter_map(|u| self.persisted.units.get(u))
+                .any(|u| Self::needs_big_spot(u.typ.as_str()));
+            self.launch_spot(spctx.lua(), oid, rotary, heavy)?;
+            Some(*oid)
+        })();
+        if let Some(field) = relaunch {
+            info!("[LAUNCH] {gid:?} was still at its field at the restart, it takes off again");
+            self.ephemeral
+                .launch_requests
+                .insert(gid, LaunchRequest { field, cold: false, open_ground: false });
+        }
+        let res = self.respawn_action_inner(perf, spctx, idx, gid);
+        // Consumed by the spawn if there was one; an expired or dropped
+        // action never spawns, so don't leave it behind.
+        self.ephemeral.launch_requests.remove(&gid);
+        res
+    }
+
+    fn respawn_action_inner(
         &mut self,
         perf: &mut PerfInner,
         spctx: &SpawnCtx,
@@ -1098,6 +1160,17 @@ impl Db {
                 }
             }
         }
+        // A reinforcement convoy still on the road picks the trip back up
+        // from where it was. If that fails it is refunded like the rest.
+        if matches!(
+            &group!(self, gid)?.origin,
+            DeployKind::Action { spec: Action { kind: ActionKind::Reinforce(_), .. }, destination: Some(_), .. }
+        ) {
+            match self.respawn_reinforcements(perf, spctx, idx, gid) {
+                Err(e) => warn!("could not put reinforcement convoy {gid:?} back on the road: {e:?}"),
+                _ => return Ok(()),
+            }
+        }
         // Everything else is dropped rather than respawned -- a bomber, a
         // paradrop or deployable delivery, or a logistics run can't pick its
         // flight back up mid-route. Those used to vanish with the player's
@@ -1120,6 +1193,7 @@ impl Db {
                     | ActionKind::Deployable(_)
                     | ActionKind::LogisticsRepair(_)
                     | ActionKind::LogisticsTransfer(_)
+                    | ActionKind::Reinforce(_)
             ) =>
             {
                 // Saves from before paid_by only know the flat action cost.
@@ -2010,14 +2084,66 @@ impl Db {
     /// Respawn the task force's ships that are actually gone. The shared
     /// `resurrect_carrier_groups` queues a respawn for every group, which
     /// for a repair re-spawned ships that were still afloat.
-    fn respawn_dead_carrier_groups(&mut self, oid: ObjectiveId) -> Result<()> {
+    ///
+    /// With `from_base` (a respawn of a sunk task force) the replacement
+    /// ships don't rise where the old ones went down: they put to sea off
+    /// the naval base that paid for them and sail back out to that station.
+    /// A repair (`None`) refloats a living task force's lost escorts in
+    /// formation where they were.
+    fn respawn_dead_carrier_groups(
+        &mut self,
+        oid: ObjectiveId,
+        from_base: Option<MizLua>,
+    ) -> Result<()> {
         let obj = objective!(self, &oid)?;
+        let owner = obj.owner;
         let gids: SmallVec<[GroupId; 4]> = obj
             .groups
             .get(&obj.owner)
             .into_iter()
             .flat_map(|s| s.into_iter().copied())
             .collect();
+        if let Some(lua) = from_base {
+            let dead: SmallVec<[(UnitId, Vector2); 16]> = gids
+                .iter()
+                .filter_map(|gid| self.persisted.groups.get(gid))
+                .flat_map(|g| g.units.into_iter())
+                .filter_map(|uid| self.persisted.units.get(uid).map(|u| (*uid, u)))
+                .filter(|(_, u)| u.dead)
+                .map(|(uid, u)| (uid, u.pos))
+                .collect();
+            if !dead.is_empty() {
+                let station = centroid2d(dead.iter().map(|(_, p)| *p));
+                let offsets: SmallVec<[Vector2; 16]> =
+                    dead.iter().map(|(_, p)| *p - station).collect();
+                match self.carrier_departure_point(lua, &oid, owner, station, &offsets) {
+                    Some((start, base)) => {
+                        let delta = start - station;
+                        for (uid, _) in &dead {
+                            let unit = unit_mut!(self, *uid)?;
+                            unit.pos += delta;
+                            unit.position.p.x += delta.x;
+                            unit.position.p.z += delta.y;
+                        }
+                        if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid)
+                            && let ObjectiveKind::CarrierGroup { waypoint, .. } = &mut obj.kind
+                            && waypoint.is_none()
+                        {
+                            *waypoint = Some(station);
+                        }
+                        info!(
+                            "[CARRIER_RESPAWN] {oid:?} replacement task force puts to sea off {base}, \
+                             {:.0} km from its station",
+                            delta.norm() / 1000.
+                        );
+                    }
+                    None => warn!(
+                        "[CARRIER_RESPAWN] {owner:?} has no naval base with open water to send \
+                         {oid:?}'s replacement ships from -- they reappear on station"
+                    ),
+                }
+            }
+        }
         for gid in gids {
             let uids: SmallVec<[_; 16]> = group!(self, gid)?.units.into_iter().copied().collect();
             let mut any_dead = false;
@@ -2083,7 +2209,7 @@ impl Db {
                 cg_mut.health = 100;
             }
             // Actually bring the lost ships back, not just the health number.
-            self.respawn_dead_carrier_groups(args.oid)?;
+            self.respawn_dead_carrier_groups(args.oid, None)?;
         } else {
             bail!("Not enough supplies at Naval Base to repair carrier (need {}, have {})", repair_cost, available);
         }
@@ -2092,7 +2218,7 @@ impl Db {
 
     fn carrier_respawn(
         &mut self,
-        _lua: MizLua,
+        lua: MizLua,
         _spctx: &SpawnCtx,
         _idx: &MizIndex,
         side: Side,
@@ -2130,7 +2256,7 @@ impl Db {
             }
             // Respawn the actual ships -- previously this action only reset
             // the health number and the task force stayed sunk.
-            self.respawn_dead_carrier_groups(args.oid)?;
+            self.respawn_dead_carrier_groups(args.oid, Some(lua))?;
         } else {
             bail!("Not enough supplies at Naval Base to respawn carrier (need {}, have {})", respawn_cost, available);
         }
@@ -2437,7 +2563,7 @@ impl Db {
                 },
                 Some(args.pos),
                 BitFlags::empty(),
-                |db, gid, _pos| db.ai_point_to_point_mission(gid, || Task::ComboTask(vec![])),
+                |db, gid, pos| db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![])),
             )?,
         ))
     }
@@ -2464,9 +2590,16 @@ impl Db {
         action: Action,
         args: WithFromTo<AiPlaneCfg>,
     ) -> Result<Option<GroupId>> {
+        if args.from == args.to {
+            bail!("a transfer needs two different objectives")
+        }
         let from = objective!(self, args.from)?.zone.pos();
         let to = objective!(self, args.to)?.zone.pos();
-        Ok(Some(self.add_and_spawn_ai_air(
+        // The cargo comes out of `from`, so that is where the flight takes
+        // off. It used to launch from the nearest field more than 10 km from
+        // `from` -- which can never be `from` itself -- and the transfer was
+        // then taken from wherever that was.
+        Ok(Some(self.add_and_spawn_ai_air_from(
             perf,
             spctx,
             idx,
@@ -2481,7 +2614,8 @@ impl Db {
             },
             Some(to),
             BitFlags::empty(),
-            |db, gid, _pos| db.ai_point_to_point_mission(gid, || Task::ComboTask(vec![])),
+            Some(args.from),
+            |db, gid, pos| db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![])),
         )?))
     }
 
@@ -2512,7 +2646,7 @@ impl Db {
             },
             Some(pos),
             BitFlags::empty(),
-            |db, gid, _pos| db.ai_point_to_point_mission(gid, || Task::ComboTask(vec![])),
+            |db, gid, pos| db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![])),
         )?))
     }
 
@@ -2544,7 +2678,7 @@ impl Db {
                 },
                 Some(args.pos),
                 BitFlags::empty(),
-                |db, gid, _pos| db.ai_point_to_point_mission(gid, || Task::ComboTask(vec![])),
+                |db, gid, pos| db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![])),
             )?)),
             None => {
                 self.deployable_to_point(
@@ -2560,9 +2694,13 @@ impl Db {
         }
     }
 
+    /// Out to the destination and back home. `launch` is the spot on the
+    /// field the flight starts at: waypoint 0 sits there so `spawn_group`
+    /// can turn it into the takeoff without losing the leg to the target.
     fn ai_point_to_point_mission<'lua>(
         &mut self,
         gid: GroupId,
+        launch: Vector2,
         task: impl Fn() -> Task<'lua> + 'static,
     ) -> Result<Vec<MissionPoint<'lua>>> {
         let group = group!(self, gid)?;
@@ -2615,7 +2753,7 @@ impl Db {
                 }
             };
         }
-        Ok(vec![wpt!("tgt", tgt), wpt!("rtb", src)])
+        Ok(vec![wpt!("takeoff", launch), wpt!("tgt", tgt), wpt!("rtb", src)])
     }
 
     fn ai_rtb_mission<'lua>(
@@ -2661,6 +2799,7 @@ impl Db {
                 ammo: _,
                 jtac: _,
                 paid_by: _,
+                carried: _,
             } => match &spec.kind {
                 ActionKind::Tanker(ai_plane_cfg) => (
                     ai_plane_cfg.altitude,
@@ -2786,7 +2925,7 @@ impl Db {
             },
             Some(tgt),
             BitFlags::empty(),
-            |db, gid, _pos| db.ai_point_to_point_mission(gid, || Task::ComboTask(vec![])),
+            |db, gid, pos| db.ai_point_to_point_mission(gid, pos, || Task::ComboTask(vec![])),
         )?))
     }
 
@@ -2805,24 +2944,112 @@ impl Db {
         tags: BitFlags<UnitTag>,
         gen_mission: impl FnOnce(&mut Db, GroupId, Vector2) -> Result<Vec<MissionPoint<'lua>>> + 'static,
     ) -> Result<GroupId> {
-        let (_, _, obj) = Self::objective_near_point(&self.persisted.objectives, args.pos, |o| {
-            o.owner == side
-                && !o.captureable()
-                && match args.cfg.kind {
-                    AiPlaneKind::Helicopter => true,
-                    AiPlaneKind::FixedWing => {
-                        o.is_airbase()
-                            || self
-                                .ephemeral
-                                .cfg
-                                .extra_fixed_wing_objectives
-                                .contains(&o.name)
-                    }
+        self.add_and_spawn_ai_air_from(
+            perf,
+            spctx,
+            idx,
+            side,
+            ucid,
+            name,
+            action,
+            heading,
+            args,
+            destination,
+            tags,
+            None,
+            gen_mission,
+        )
+    }
+
+    /// Put an action's aircraft on the ground at a friendly field, engines
+    /// running, and have it take off and fly the mission `gen_mission` builds.
+    /// `gen_mission` gets the spot on the field the flight starts at, and its
+    /// waypoint 0 must be there: `spawn_group` turns that waypoint into the
+    /// takeoff and keeps its task (the init task of a loiter mission).
+    ///
+    /// The field is `depart` if given -- it has to be friendly and able to
+    /// launch the airframe (fixed wing: an airfield with free parking; a
+    /// helicopter: any objective but a carrier deck). Otherwise it is
+    /// the nearest friendly field more than 10 km from the target that can
+    /// launch it: fixed wing need free parking at a live DCS airbase, and a
+    /// field without it is passed over for the next one out. With nowhere to
+    /// take off from the action is refused -- it is never air-started -- and
+    /// `start_action` charges nothing for a refused action.
+    fn add_and_spawn_ai_air_from<'lua>(
+        &mut self,
+        perf: &mut PerfInner,
+        spctx: &SpawnCtx<'lua>,
+        idx: &MizIndex,
+        side: Side,
+        ucid: &Option<Ucid>,
+        name: String,
+        action: Action,
+        heading: f64,
+        args: &WithPos<AiPlaneCfg>,
+        destination: Option<Vector2>,
+        tags: BitFlags<UnitTag>,
+        depart: Option<ObjectiveId>,
+        gen_mission: impl FnOnce(&mut Db, GroupId, Vector2) -> Result<Vec<MissionPoint<'lua>>> + 'static,
+    ) -> Result<GroupId> {
+        let rotary = matches!(args.cfg.kind, AiPlaneKind::Helicopter);
+        // Bombers, tankers, AWACS and transports need a large stand to start
+        // from; a field with only fighter spots is passed over for them.
+        let heavy = !rotary
+            && matches!(
+                action.kind,
+                ActionKind::Awacs(_)
+                    | ActionKind::Tanker(_)
+                    | ActionKind::Bomber(_)
+                    | ActionKind::CruiseMissileSpawn(_)
+                    | ActionKind::LogisticsTransfer(_)
+                    | ActionKind::LogisticsRepair(_)
+                    | ActionKind::Paratrooper(_)
+                    | ActionKind::Deployable(_)
+            );
+        let field = match depart {
+            Some(oid) => {
+                let obj = objective!(self, oid)?;
+                let extra = self.ephemeral.cfg.extra_fixed_wing_objectives.contains(&obj.name);
+                if obj.owner != side {
+                    bail!("{} is not in friendly hands", obj.name)
                 }
-                && na::distance_squared(&args.pos.into(), &o.zone.pos().into()) > 100_000_000.
-        })
-        .ok_or_else(|| anyhow!("no objectives available for the ai mission"))?;
-        let pos = obj.zone.pos();
+                // The cargo is sitting at this objective, so a helicopter
+                // lifts it from wherever that is (open ground if it has no
+                // pad); only a moving carrier deck is out. A fixed-wing
+                // flight still needs a field it can park and take off at.
+                let usable = if rotary {
+                    !obj.kind.is_carrier_group()
+                } else {
+                    is_launch_kind(&obj.kind, rotary, extra)
+                };
+                if !usable {
+                    bail!(
+                        "{} is not a field {} can fly from",
+                        obj.name,
+                        if rotary { "a helicopter" } else { "a fixed-wing flight" }
+                    )
+                }
+                let name = String::from(obj.name.as_str());
+                let pos = self.launch_spot(spctx.lua(), &oid, rotary, heavy).ok_or_else(|| {
+                    anyhow!("{name} has no free parking to launch this flight from")
+                })?;
+                LaunchField { oid, name, pos }
+            }
+            None => self
+                .pick_launch_field(spctx.lua(), side, args.pos, rotary, heavy, 10_000.)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "no friendly {} more than 10 km from the target has room to launch \
+                         this flight",
+                        if rotary { "airbase, FARP or FOB" } else { "airfield" }
+                    )
+                })?,
+        };
+        let home = objective!(self, field.oid)?.zone.pos();
+        let pos = field.pos;
+        // Only bookkeeping now: the loiter missions keep their current orbit
+        // point in it and a restart respawns the flight where it is, in the
+        // air. Where the units actually start is the field, below.
         let sloc = SpawnLoc::InAir {
             pos,
             heading,
@@ -2837,27 +3064,48 @@ impl Db {
             spec: action,
             time: Utc::now(),
             destination,
-            rtb: Some(pos),
-            origin: Some(obj.id),
+            // The field itself, not the spot on it: a logistics transfer
+            // takes its cargo from the objective nearest this point.
+            rtb: Some(home),
+            origin: Some(field.oid),
             ammo: 0,
             jtac: None,
             // Filled in by start_action once the spawn has succeeded.
             paid_by: None,
+            carried: 0,
+        };
+        // A helicopter may lift off from open ground right where its units
+        // are put, so they go on the ground at the spot. A fixed-wing flight
+        // is moved onto its parking spots by the spawn whatever is recorded
+        // here, so keep the air placement: it skips the land/water check a
+        // spread-out formation could fail at a coastal field.
+        let placement = if rotary {
+            SpawnLoc::AtPosExact { pos, group_heading: heading }
+        } else {
+            sloc
         };
         let gid = self
             .add_group(
                 spctx,
                 idx,
                 side,
-                sloc,
+                placement,
                 &args.cfg.template,
                 origin,
                 tags | UnitTag::Driveable,
             )
             .context("creating group")?;
+        info!(
+            "[LAUNCH] {gid:?} ({}) starting up at {}",
+            args.cfg.template, field.name
+        );
         let spawned = gen_mission(self, gid, pos)
             .context("generating mission for new unit")
             .and_then(|mission| {
+                self.ephemeral.launch_requests.insert(
+                    gid,
+                    LaunchRequest { field: field.oid, cold: false, open_ground: false },
+                );
                 self.ephemeral
                     .spawn_group(
                         perf,
@@ -2874,6 +3122,7 @@ impl Db {
         // leftover would sit in `actions` as a phantom -- counted against the
         // action's limit and "respawned" on the next restart.
         if let Err(e) = spawned {
+            self.ephemeral.launch_requests.remove(&gid);
             if let Err(de) = self.delete_group(&gid) {
                 error!("could not remove unspawned action group {gid:?}: {de:?}");
             }
@@ -3115,6 +3364,7 @@ impl Db {
                     | ActionKind::Artillery(_)
                     | ActionKind::AddTask(_)
                     | ActionKind::RemoveTask(_)
+                    | ActionKind::Reinforce(_)
                     | ActionKind::NavalCruiseMissileStrike(_) => bail!("not a race tracker"),
                 }
             }
@@ -3551,6 +3801,8 @@ impl Db {
         // (payer, points, group name) for flights that made it home after an
         // RTB order. Applied after the pass, through adjust_points.
         let mut to_refund: SmallVec<[(Ucid, i32, String); 2]> = smallvec![];
+        // Reinforcement convoys, settled after the pass (see reinforce.rs).
+        let mut reinforcements: SmallVec<[GroupId; 2]> = smallvec![];
         // Nothing in this pass may `?` out: it runs over every action group on
         // the server, and one bad group used to abort it for all of them --
         // after `destination.take()` had already consumed a delivery, so that
@@ -3716,6 +3968,7 @@ impl Db {
                             }
                         }
                     }
+                    ActionKind::Reinforce(_) => reinforcements.push(*gid),
                     ActionKind::Move(_)
                     | ActionKind::AwacsWaypoint
                     | ActionKind::FighersWaypoint
@@ -3793,6 +4046,7 @@ impl Db {
             }
             self.adjust_points(&ucid, amount, &format!("rtb refund for {name}"));
         }
+        self.advance_reinforcements(&reinforcements, now);
         for (cfg, target, side) in to_bomb {
             if let Err(e) = self.bomb_targets(lua, side, jtacs, &cfg, target) {
                 error!("bomb targets failed {e:?}")
@@ -3846,7 +4100,7 @@ impl Db {
     /// Player-requested indirect fire support. Finds nearby friendly Armor/Mr/Lr
     /// groups within `cfg.max_range_m` and issues `Task::FireAtPoint` toward
     /// `args.pos`. Up to `cfg.max_groups` groups fire simultaneously.
-    fn artillery_strike(
+    pub(crate) fn artillery_strike(
         &mut self,
         lua: MizLua,
         side: Side,

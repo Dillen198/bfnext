@@ -17,6 +17,7 @@ F10 → Info
 ├── Support & Radios       live AWACS / tankers / JTACs and their frequencies
 ├── Supply Convoys         friendly convoys in transit, and how far out they are
 ├── Navaids Directory      every friendly TACAN / NDB / ICLS on the map
+├── HQ                     the Theatre HQ: commander's intent, operations, support requests
 ├── Time & Server          mission time, restart schedule
 ├── Weather                the weather brief for your position
 └── Help                   six in-cockpit help topics
@@ -89,6 +90,18 @@ engine per round** and follow ownership — capture a FARP and it re-lights on
 your side's channel pool.
 
 Full explanation in [Navaids & Approaches](../gameplay/navaids.md).
+
+## HQ
+
+On servers running the [Theatre HQ](../advanced/theatre-hq.md), the side's AI
+commander:
+
+- **Commander's Intent**: posture, main effort, the bases to hold and to
+  resupply first, and who set the plan.
+- **Operations**: what the HQ has under way and the support requests waiting.
+- **Request Support**: ask for CAS, CAP, SEAD, recon, fires, resupply, troops, a
+  tanker or AWACS at the nearest suitable objective. `-request` in chat does the
+  same with an objective you name.
 
 ## Time & Server
 

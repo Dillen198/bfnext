@@ -91,6 +91,11 @@ struct Form {
     home: ObjectiveId,
     /// Road left to drive, metres.
     to_go: f64,
+    /// Fit to attack: not broken, with fuel, ammunition and nerve left.
+    ready: bool,
+    broken: bool,
+    supply: f64,
+    in_supply: bool,
 }
 
 impl Form {
@@ -131,6 +136,10 @@ fn forms(ctx: &Context, side: Side, now: DateTime<Utc>) -> Vec<Form> {
             infantry: ctx.db.formation_can_assault(f),
             home: f.home,
             to_go: f.path_len_m(),
+            ready: !f.broken && f.supply >= 0.4 && f.morale >= 0.5,
+            broken: f.broken,
+            supply: f.supply,
+            in_supply: ctx.groundwar.rt.in_supply(f.id),
         })
         .collect()
 }
@@ -267,6 +276,18 @@ pub(super) fn think(lua: MizLua, ctx: &mut Context, cfg: &GroundWarCfg, ai: &Gro
             ),
             _ => (true, None),
         };
+        // The theatre HQ, when it steers the ground war, sets the axis (its
+        // main effort) and whether to attack at all (not while defensive).
+        let steer = crate::hq::cfg(ctx)
+            .filter(|(_, h)| h.steer_ground_war && h.sides.contains(&side))
+            .and_then(|_| ctx.hq.ground_steer(side));
+        let (offensive, axis) = match steer {
+            Some((posture, effort)) => (
+                posture != bfprotocols::hq::Posture::Defensive,
+                effort.or(axis),
+            ),
+            None => (offensive, axis),
+        };
         let offensive = offensive && !empty;
         think_side(lua, ctx, cfg, ai, side, offensive, axis, now);
     }
@@ -317,14 +338,42 @@ fn think_side(
         }
     }
 
-    // 1. Pull back the battered.
+    // 1. Pull back the battered. (A broken formation is already falling
+    //    back on its own.)
     for f in forms(ctx, side, now) {
-        if f.ai && f.pct < cfg.withdraw_strength_pct as u32 && !matches!(f.order, Order::Withdraw(_)) {
+        if f.ai && !f.broken && f.pct < cfg.withdraw_strength_pct as u32 && !matches!(f.order, Order::Withdraw(_)) {
             let home_ok = owned.iter().any(|o| o.id == f.home);
             let dest = if home_ok { Some(f.home) } else { nearest_owned(f.pos) };
             if let Some(dest) = dest {
                 order(lua, ctx, f.id, Order::Withdraw(dest), now);
             }
+        }
+    }
+
+    // 1b. Send the ones running dry back within reach of a friendly base
+    //     that has supply, before they run out in the middle of nowhere.
+    let supply_bases: Vec<(ObjectiveId, Vector2)> = ctx
+        .db
+        .objectives()
+        .filter(|(_, o)| o.owner() == side && !at_sea(o.kind()) && o.supply() >= cfg.combat.supply_base_pct)
+        .map(|(id, o)| (*id, o.pos()))
+        .collect();
+    for f in forms(ctx, side, now) {
+        if !f.ai || f.broken || f.in_supply || f.supply >= 0.35 || matches!(f.order, Order::Withdraw(_)) {
+            continue;
+        }
+        let Some((dest, dpos)) = supply_bases
+            .iter()
+            .min_by(|a, b| dist(a.1, f.pos).total_cmp(&dist(b.1, f.pos)))
+            .copied()
+        else {
+            continue;
+        };
+        if matches!(f.order, Order::Defend(d) if d == dest) {
+            continue;
+        }
+        if order_checked(lua, ctx, f.id, Order::Defend(dest), f.pos, Some(dpos), now) {
+            info!("ground war AI: formation {} is low on supply ({:.0}%), falling back to resupply", f.id, f.supply * 100.);
         }
     }
 
@@ -349,12 +398,20 @@ fn think_side(
         }
         let pick = fs
             .iter()
-            .filter(|f| f.ai && f.idle() && f.pct >= cfg.withdraw_strength_pct as u32)
+            .filter(|f| f.ai && f.idle() && !f.broken && f.pct >= cfg.withdraw_strength_pct as u32)
             .filter(|f| dist(f.pos, o.pos) <= RESPONSE_M)
             .min_by(|a, b| dist(a.pos, o.pos).total_cmp(&dist(b.pos, o.pos)));
         if let Some(f) = pick {
             if order_checked(lua, ctx, f.id, Order::Defend(o.id), f.pos, Some(o.pos), now) {
                 responses += 1;
+                ctx.groundwar.rt.event(
+                    side,
+                    "order",
+                    format_compact!("GROUND COMMAND: counter-attacking at {}", o.name),
+                    Some(o.pos),
+                    Some(f.id),
+                    now,
+                );
                 if cfg.announce {
                     ctx.db.ephemeral.msgs().panel_to_side(
                         15,
@@ -425,7 +482,7 @@ fn think_side(
         }
         let mut idle: Vec<&Form> = fs
             .iter()
-            .filter(|f| f.ai && f.idle() && f.pct >= ATTACK_MIN_PCT)
+            .filter(|f| f.ai && f.idle() && f.ready && f.pct >= ATTACK_MIN_PCT)
             .filter(|f| !matches!(f.order, Order::Attack(_)))
             .collect();
         // Those that can take a base first, then those nearest the enemy.
@@ -453,6 +510,18 @@ fn think_side(
                 }
             }
         }
+        for (target, n) in sent.iter() {
+            let t = objs.iter().find(|o| o.id == *target);
+            let (tname, tpos) = t.map(|o| (o.name.clone(), o.pos)).unwrap_or_default();
+            ctx.groundwar.rt.event(
+                side,
+                "order",
+                format_compact!("GROUND COMMAND: {n} formation(s) advancing on {tname}"),
+                Some(tpos),
+                None,
+                now,
+            );
+        }
         if cfg.announce {
             for (target, n) in sent {
                 let tname = objs.iter().find(|o| o.id == target).map(|o| o.name.clone()).unwrap_or_default();
@@ -469,7 +538,7 @@ fn think_side(
     // 5. Screen: idle formations still sitting at home move up to the
     //    friendly base nearest the enemy around them.
     for f in forms(ctx, side, now) {
-        if !(f.ai && f.idle() && f.order == Order::Hold) {
+        if !(f.ai && f.idle() && !f.broken && f.order == Order::Hold) {
             continue;
         }
         let screen = owned

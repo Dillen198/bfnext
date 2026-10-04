@@ -4,6 +4,20 @@
 AWACS, tankers, bombers, drones, artillery, AI helo logistics — and where the
 coalition's tasking board lives.
 
+## Where your AI comes from
+
+Everything you buy here comes from a friendly base, the way it would for real:
+
+- **Aircraft** (AWACS, tankers, bombers, drones, fighters, transports) start up
+  on the ramp at the nearest friendly airfield that has room, taxi and take
+  off. Allow a few minutes before they are on station. Heavies (bombers,
+  tankers, AWACS, transports) need a **large open stand**; a field with only
+  fighter spots is passed over for the next one out.
+- If no friendly field has room, the action is **refused and you are not
+  charged**.
+- **Ground units** (reinforcement convoys, AI helo troops going in by road)
+  drive out from a friendly base.
+
 ## Opening it
 
 At the F10 root you will see **`Actions>>`** — a *command*, not a folder. Select
@@ -47,6 +61,7 @@ What is actually available is per-server and per-coalition. On the live mission:
 | **DRONE Waypoint** | 5 | Moves the drone. |
 | **Naval Strike** | 50 | Cruise missiles from your nearest carrier in range, at an enemy objective you pick. |
 | **Move (Units/Troops)** | 10 | Sends one of your deployed ground groups or squads to a mark. Carries a penalty if the group is lost. |
+| **Reinforcements** | 75 | Tank transporters drive from your nearest base to rebuild up to 3 destroyed groups at the objective you pick (listed with how many are down). Escort them: kill the transporters and nothing arrives. See [Action Types](../reference/action-types.md#reinforce). |
 | **Carrier Waypoint** | free | Sails a carrier group to a mark. See [Carrier Operations](../gameplay/carrier-ops.md). |
 | **Add Task** / **Remove Task** | free | The [tasking board](../gameplay/tasking-board.md). |
 

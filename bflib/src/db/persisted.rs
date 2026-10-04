@@ -95,6 +95,13 @@ pub struct Persisted {
     pub blue_treasury: i64,
     #[serde(default)]
     pub red_treasury: i64,
+    /// Sides whose base funds have been seeded from `objective_start_points`
+    /// this round. Load used to re-seed every base whose fund was exactly 0
+    /// on every restart -- and size the share against only those bases, so a
+    /// single drained base got the side's whole start budget each restart.
+    /// Seeding now happens once per side per round.
+    #[serde(default)]
+    pub funds_seeded: Vec<Side>,
     /// Auto-generated navaids per objective (see `crate::navaids`). One entry
     /// for a ground objective; one per aircraft-carrying ship for a carrier
     /// task force. Rebuilt deterministically whenever the objective set
@@ -157,6 +164,12 @@ pub struct Persisted {
     /// here. See `crate::db::formation`.
     #[serde(default)]
     pub formations: MapS<super::formation::FormationId, super::formation::Formation>,
+    /// The theatre HQ's standing orders and record (`crate::hq`): human
+    /// overrides, the strategist's directive and how each kind of operation
+    /// has gone, so a scheduled restart neither drops a human commander's
+    /// orders nor forgets what the HQ has learned.
+    #[serde(default)]
+    pub hq: crate::hq::HqSaved,
 }
 
 /// Backward compatibility: saves written before the per-ship rework stored

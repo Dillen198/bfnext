@@ -644,20 +644,36 @@ pub fn tick_events(
 }
 
 fn tick_treasury_income(db: &mut Db, cfg: &SmartCommanderCfg, ts: DateTime<Utc>) {
+    // The clock starts at the epoch, so the first tick after every restart
+    // used to pay a deposit straight away -- frequent restarts were income.
+    // Start it instead.
+    if db.ephemeral.last_treasury_income == DateTime::<Utc>::default() {
+        db.ephemeral.last_treasury_income = ts;
+        return;
+    }
     let elapsed = (ts - db.ephemeral.last_treasury_income).num_seconds();
     if elapsed < cfg.treasury_income_period_secs as i64 {
         return;
     }
     db.ephemeral.last_treasury_income = ts;
+    let underdog = db.ephemeral.cfg.economy.underdog_treasury;
     for side in [Side::Blue, Side::Red] {
-        let bal = db.persisted.adjust_treasury(side, cfg.treasury_income_amount);
+        // A side behind on ground or outnumbered gets more to fight back
+        // with (see `EconomyCfg::underdog_multiplier`).
+        let mult = if underdog { db.underdog_multiplier(side) } else { 1. };
+        let amount = (cfg.treasury_income_amount as f64 * mult).round() as i64;
+        let bal = db.persisted.adjust_treasury(side, amount);
         info!(
-            "[Commander] {:?} treasury income +{} → {}",
-            side, cfg.treasury_income_amount, bal
+            "[Commander] {:?} treasury income +{} (x{:.2}) → {}",
+            side, amount, mult, bal
         );
         db.ephemeral.dirty();
     }
 }
+
+/// With no `objective_start_points` to size a base's fund by, the drip tops
+/// a fund up to this many full grants (`objective_fund_max_per_tick`).
+const OBJECTIVE_FUND_CEILING_PASSES: i64 = 10;
 
 fn tick_objective_funding(db: &mut Db, cfg: &SmartCommanderCfg, ts: DateTime<Utc>) {
     let elapsed = (ts - db.ephemeral.last_objective_fund).num_seconds();
@@ -690,11 +706,25 @@ fn tick_objective_funding(db: &mut Db, cfg: &SmartCommanderCfg, ts: DateTime<Utc
         (cfg.treasury_income_amount * cfg.objective_fund_period_secs as i64)
             / cfg.treasury_income_period_secs as i64
     };
+    // With the theatre HQ running, the drip only gets its share of the
+    // income; the rest is the HQ's to spend on operations.
+    let income_per_window = match cfg.hq.as_ref().filter(|h| h.enabled) {
+        // No share at all: no drip (rather than the no-income fallback below,
+        // which would fund out of the whole treasury).
+        Some(h) if h.objective_funding_share <= 0. => return,
+        Some(h) => (income_per_window as f64 * h.objective_funding_share.min(1.)) as i64,
+        None => income_per_window,
+    };
 
     // Collect asks before mutating (avoids borrow conflict on db.persisted).
     // `need` is what drives both the size of the ask and the priority when the
     // budget cannot cover every ask.
     let mut asks: Vec<(Side, f64, i64, ObjectiveId, CompactString)> = vec![];
+    // Each fund is topped up to a ceiling, never past it -- see
+    // `Db::objective_fund_ceilings`. A campaign with no start budget caps at
+    // a fixed number of full passes instead.
+    let ceilings = db.objective_fund_ceilings();
+    let fallback_ceiling = cfg.objective_fund_max_per_tick.max(0) as i64 * OBJECTIVE_FUND_CEILING_PASSES;
     for (oid, obj) in &db.persisted.objectives {
         let side = obj.owner();
         if matches!(side, Side::Neutral) {
@@ -706,6 +736,8 @@ fn tick_objective_funding(db: &mut Db, cfg: &SmartCommanderCfg, ts: DateTime<Utc
         let want = ((cfg.objective_fund_max_per_tick as f64) * need)
             .round()
             .min(cfg.objective_fund_max_per_tick as f64) as i64;
+        let ceiling = ceilings.get(oid).copied().unwrap_or(fallback_ceiling);
+        let want = want.min(ceiling - obj.points as i64);
         if want > 0 {
             asks.push((side, need, want, *oid, CompactString::from(obj.name())));
         }
@@ -802,8 +834,12 @@ fn tick_holding_bonuses(
             .into_iter()
             .filter(|(_, o)| o.owner() == side)
             .count();
+        // Rounded, and at least 1 for a side that holds anything: flooring
+        // paid a side under 20% of the map (at the default 5) nothing at
+        // all, exactly when it most needed the income.
         let bonus = ((cfg.holding_bonus_per_objective as f64) * owned as f64 / total as f64)
-            .floor() as i32;
+            .round() as i32;
+        let bonus = if owned > 0 { bonus.max(1) } else { bonus };
         if bonus <= 0 {
             continue;
         }
@@ -812,7 +848,7 @@ fn tick_holding_bonuses(
             None => continue,
         };
         for ucid in ucids {
-            db.adjust_points_silent(ucid, bonus, "holding bonus");
+            db.earn_points_silent(ucid, bonus, "holding bonus");
         }
         info!(
             "[Commander] {:?} holding bonus +{} pts ({}/{} objectives)",

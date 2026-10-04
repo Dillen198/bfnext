@@ -139,6 +139,7 @@ fn do_pos_action(
         | ActionKind::CarrierWaypoint
         | ActionKind::CarrierRepair
         | ActionKind::CarrierRespawn
+        | ActionKind::Reinforce(_)
         | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
@@ -285,6 +286,7 @@ fn do_pos_group_action(
         | ActionKind::CarrierRespawn
         | ActionKind::Artillery(_)
         | ActionKind::Recon(_)
+        | ActionKind::Reinforce(_)
         | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
@@ -340,6 +342,10 @@ fn do_objective_action(
 ) -> Result<()> {
     let args = match &action.kind {
         ActionKind::LogisticsRepair(cfg) => ActionArgs::LogisticsRepair(WithObj {
+            cfg: cfg.clone(),
+            oid,
+        }),
+        ActionKind::Reinforce(cfg) => ActionArgs::Reinforce(WithObj {
             cfg: cfg.clone(),
             oid,
         }),
@@ -1015,6 +1021,31 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
         }
         Ok(())
     };
+    // Reinforce: the friendly objectives that have lost garrison groups a
+    // convoy could rebuild, with how many. `Actions>>` rebuilds this menu
+    // every time it is opened, so the counts are current.
+    let add_reinforce_objective = |root: GroupSubMenu, name: String| -> Result<()> {
+        let mut p = Pager::new(arg.snd, root);
+        for (oid, obj) in ctx.db.objectives() {
+            if obj.owner != player.side {
+                continue;
+            }
+            let down = ctx.db.reinforce_candidates(oid).map_or(0, |c| c.len());
+            if down > 0 {
+                p.command(
+                    &mc,
+                    String::from(format_compact!("{} ({down} down)", obj.name)),
+                    run_objective_action,
+                    ArgTriple {
+                        fst: arg.fst,
+                        snd: name.clone(),
+                        trd: *oid,
+                    },
+                )?;
+            }
+        }
+        Ok(())
+    };
     let add_enemy_objective = |root: GroupSubMenu, name: String| -> Result<()> {
         let mut p = Pager::new(arg.snd, root);
         for (oid, obj) in ctx.db.objectives() {
@@ -1221,6 +1252,10 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             ActionKind::LogisticsRepair(_) => {
                 let root = p.submenu(&mc, title)?;
                 add_objective(root.clone(), name.clone())?
+            }
+            ActionKind::Reinforce(_) => {
+                let root = p.submenu(&mc, title)?;
+                add_reinforce_objective(root.clone(), name.clone())?
             }
             ActionKind::NavalCruiseMissileStrike(_) => {
                 let root = p.submenu(&mc, title)?;

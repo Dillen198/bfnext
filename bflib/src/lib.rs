@@ -27,6 +27,7 @@ mod db;
 mod ewr;
 mod frontline;
 mod groundwar;
+mod hq;
 mod intel_marks;
 mod jtac;
 mod landcache;
@@ -417,6 +418,10 @@ struct Context {
     /// Ground formations' session state and the player command queue
     /// (`Cfg::ground_war`). The formations themselves are in the save.
     groundwar: groundwar::GroundWar,
+    /// Each side's theatre HQ (`smart_commander.hq`): its plan, the
+    /// operations it is running and players' support requests. What has to
+    /// outlive a restart is in `Persisted::hq`.
+    hq: hq::Hq,
     last_junk_removal: DateTime<Utc>,
     last_weather_publish: DateTime<Utc>,
     /// When each held player last got the takeoff-hold countdown panel.
@@ -737,6 +742,12 @@ fn try_occupy_slot(
         SlotAuth::Yes(typ) => {
             ctx.db.ephemeral.cancel_force_to_spectators(&ifo.ucid);
             ctx.subscribed_jtac_menus.remove(&slot);
+            if matches!(
+                slot,
+                SlotId::ArtilleryCommander(..) | SlotId::ForwardObserver(..) | SlotId::Observer(..)
+            ) {
+                chatcmd::commander_guide(ctx, id);
+            }
             ctx.do_bg_task(Task::Stat(Stat::Slot { id: ifo.ucid, slot, typ }));
             Ok(true)
         }
@@ -2199,8 +2210,12 @@ fn award_periodic_points(ctx: &mut Context, ts: DateTime<Utc>) {
             let elapsed = (ts - ctx.last_periodic_points).num_seconds();
             if elapsed >= period as i64 {
                 ctx.last_periodic_points = ts;
+                // Only players in a slot: paying every connection paid AFK
+                // spectators to sit there.
                 for ifo in ctx.connected.info_by_player_id.values() {
-                    ctx.db.adjust_points(&ifo.ucid, award, "periodic award")
+                    if ctx.db.is_slotted(&ifo.ucid) {
+                        ctx.db.earn_points(&ifo.ucid, award, "periodic award");
+                    }
                 }
             }
         }
@@ -2219,8 +2234,11 @@ fn tick_smart_commander(_lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
     ctx.last_commander_tick = ts;
     let mut ucids_by_side: fxhash::FxHashMap<dcso3::coalition::Side, Vec<dcso3::net::Ucid>> =
         fxhash::FxHashMap::default();
+    // Holding pay goes to players in a slot, not every connection.
     for ifo in ctx.connected.info_by_player_id.values() {
-        if let Some(player) = ctx.db.persisted.players.get(&ifo.ucid) {
+        if let Some(player) = ctx.db.persisted.players.get(&ifo.ucid)
+            && player.current_slot.is_some()
+        {
             ucids_by_side
                 .entry(player.side)
                 .or_default()
@@ -2230,6 +2248,11 @@ fn tick_smart_commander(_lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
     commander::tick(&mut ctx.db, &cfg, ts, &ucids_by_side);
 
     // Strategic events â€” only when campaign_events is also configured.
+    // The theatre HQ runs these itself (as part of everything else it runs),
+    // so the old one-action-per-check picker stands down while it is on.
+    if hq::active(&ctx.db.ephemeral.cfg) {
+        return;
+    }
     if let Some(events_cfg) = ctx.db.ephemeral.cfg.campaign_events.clone() {
         if events_cfg.enabled {
             let player_count = ctx.connected.len();
@@ -2340,7 +2363,6 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
     use dcso3::land::Land;
     use dcso3::LuaVec2;
     use dcso3::trigger::{CircleSpec, LineType, SideFilter};
-    use enumflags2::BitFlags;
 
     let spctx = match SpawnCtx::new(lua) {
         Ok(s) => s,
@@ -2538,7 +2560,9 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                 }
             }
 
-            // E: Spawn ambush force near convoy position and issue attack order.
+            // E: Send the ambush force out of its objective by road to an
+            // intercept ahead of the convoy. It used to appear next to the
+            // convoy out of nowhere.
             EventEffect::SpawnAmbush { event_id, ambush_side, spawn_pos, source_objective, convoy_group_id, convoy_pos } => {
                 let template = find_ground_template(&ctx.db, source_objective, ambush_side);
                 let template = match template {
@@ -2548,41 +2572,44 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                         continue;
                     }
                 };
-                match ctx.db.add_and_queue_group(
+                // Where the force sets up; the warning mark goes there.
+                let mut intercept = spawn_pos;
+                let launched = match ctx.db.launch_ambush(
                     &spctx,
                     &ctx.idx,
                     ambush_side,
-                    SpawnLoc::AtPos {
-                        pos: spawn_pos,
-                        offset_direction: dcso3::Vector2::new(1., 0.),
-                        group_heading: 0.,
-                    },
+                    source_objective,
                     &template,
-                    DeployKind::Objective { origin: source_objective },
-                    // Marks the group as event-owned so a restart drops it.
-                    BitFlags::from(bfprotocols::cfg::UnitTag::EventSpawn),
-                    None,
+                    convoy_group_id,
+                    spawn_pos,
                 ) {
-                    Ok(gid) => {
-                        info!("SpawnAmbush: spawned {:?} for {:?}", gid, ambush_side);
+                    Ok(Some((gid, at))) => {
+                        info!("SpawnAmbush: {:?} force {:?} on its way to {:?}", ambush_side, gid, at);
                         ctx.event_scheduler.ambush_groups.insert(event_id, gid);
-
-                        // Issue AttackGroup toward the convoy. The ambush group is not in DCS
-                        // yet (spawn queue lag), so queue a move toward the convoy's last position
-                        // as a fallback â€” the pending_moves system will retry until it appears.
-                        // Try to get the convoy group name directly; if it works, AttackGroup
-                        // is more accurate as it tracks the moving convoy.
-                        let convoy_group_name = ctx.db.persisted.groups.get(&convoy_group_id)
-                            .map(|g| g.name.clone());
-                        if let Some(ref _name) = convoy_group_name {
-                            // Queue a move to the convoy's last known position; the ambush
-                            // group will intercept when it arrives and engage via its ROE.
-                            ctx.event_scheduler.pending_moves.insert(gid, vec![convoy_pos]);
-                        } else {
-                            ctx.event_scheduler.pending_moves.insert(gid, vec![convoy_pos]);
+                        intercept = at;
+                        true
+                    }
+                    Ok(None) => false,
+                    Err(e) => {
+                        error!("SpawnAmbush: {e:?}");
+                        false
+                    }
+                };
+                if !launched {
+                    // No road gets a force there in time: the ambush is off.
+                    // The treasury was charged when the event was set (see
+                    // spawn_convoy_ambush) and isn't refunded here.
+                    warn!(
+                        "SpawnAmbush: {:?} ambush {:?} called off, no force could reach the convoy (last seen {:?})",
+                        ambush_side, event_id, convoy_pos
+                    );
+                    ctx.event_scheduler.active_events.retain(|ev| ev.id() != event_id);
+                    if let Some(marks) = ctx.event_scheduler.event_marks.remove(&event_id) {
+                        for mid in marks {
+                            ctx.db.ephemeral.msgs().delete_mark(mid);
                         }
                     }
-                    Err(e) => error!("SpawnAmbush: {e:?}"),
+                    continue;
                 }
                 // F10 warning mark
                 let mid = dcso3::trigger::MarkId::new();
@@ -2590,7 +2617,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                     SideFilter::All,
                     mid,
                     CircleSpec {
-                        center: dcso3::LuaVec3(dcso3::Vector3::new(spawn_pos.x, 0., spawn_pos.y)),
+                        center: dcso3::LuaVec3(dcso3::Vector3::new(intercept.x, 0., intercept.y)),
                         radius: 1500.,
                         color: side_color(ambush_side),
                         fill_color: Color::new(0., 0., 0., 0.),
@@ -4380,6 +4407,9 @@ fn run_slow_timed_events(
     });
     step(lua, ctx, "report kills", |ctx| {
         let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
+        if let Ok(t) = Timer::singleton(lua).and_then(|t| t.get_abs_time()) {
+            ctx.db.ephemeral.mission_hour = Some(((t.0 % 86_400.) / 3_600.) as u8);
+        }
         for dead in ctx.shots_out.bring_out_your_dead(ts) {
             info!("kill {:?}", dead);
             if let Some(points) = cfg.points.as_ref() {
@@ -4403,7 +4433,7 @@ fn run_slow_timed_events(
                     if let (Some(ucid), Some(points)) = (killer_ucid, cfg.points.as_ref()) {
                         let award = points.convoy_interdiction_points as i32;
                         if award > 0 {
-                            ctx.db.adjust_points(&ucid, award, "convoy interdiction");
+                            ctx.db.earn_points(&ucid, award, "convoy interdiction");
                         }
                     }
                 }
@@ -4631,6 +4661,11 @@ fn run_slow_timed_events(
     record_perf(&mut perf.update_jtac_contacts, ts);
     step(lua, ctx, "periodic points", |ctx| award_periodic_points(ctx, start_ts));
     step(lua, ctx, "commander", |ctx| tick_smart_commander(lua, ctx, start_ts));
+    // The theatre HQ plans and dispatches the war's missions and logistics
+    // (`smart_commander.hq`). Before the campaign events below so the
+    // effects it queues are applied this tick, and before the ground war so
+    // the ground AI follows this pass's main effort.
+    step(lua, ctx, "hq", |ctx| hq::tick(lua, ctx, perf, start_ts));
     record_perf(&mut perf.slow_timed, start_ts);
 
     // Tick campaign events â€” active event processing (expiry, effects, escalation).
@@ -4878,6 +4913,8 @@ fn run_timed_events(
         Some(Ok(AdminResult::Continue)) | None => (),
         Some(Ok(AdminResult::Shutdown)) => return Ok(AdminResult::Shutdown),
     }
+    // `-hq` / `-request` from chat, which arrive in the hooks state.
+    step(lua, ctx, "hq chat", |ctx| hq::run_chat(lua, ctx));
     step(lua, ctx, "action commands", |ctx| {
         if let Err(e) = run_action_commands(ctx, perf, lua) {
             error!("failed to run action commands {e:?}")

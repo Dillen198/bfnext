@@ -31,6 +31,16 @@ Quick reference for all Fowl Engine chat commands.
 |---------|-------------|---------|
 | `-jtac status` | Get JTAC status | `-jtac status` |
 
+### Theatre HQ
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `-hq` | Your side's commander's intent: posture, main effort, bases to hold and resupply | `-hq` |
+| `-hq ops` | What the HQ has under way, and the support requests waiting | `-hq ops` |
+| `-request <kind> [objective]` | Ask HQ for cas, cap, sead, recon, fires, supply or troops (nearest objective if none named) | `-request cas Gori` |
+| `-request cancel <id>` | Withdraw your request | `-request cancel 7` |
+| `-hq posture\|effort\|defend\|supply\|avoid\|pause\|resume\|cancel\|clear` | Take command of the HQ (commanders and admins only), see [Theatre HQ](../advanced/theatre-hq.md) | `-hq effort Gori` |
+
 ### GCI Voice
 
 | Command | Description | Example |

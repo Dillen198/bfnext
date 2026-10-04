@@ -2480,6 +2480,7 @@ impl Default for Cfg {
             ground_war: None,
             emergency_repair: None,
             population_scaling: None,
+            economy: EconomyCfg::default(),
             ground_vehicle_cargo: FxHashMap::default(),
             smart_commander: Some(SmartCommanderCfg {
                 tick_period_secs: 60,
@@ -2496,6 +2497,7 @@ impl Default for Cfg {
                 cap_min_friendly_pilots: 1,
                 cap_cooldown_secs: 300,
                 action_reserve: 300,
+                hq: Some(crate::cfg::HqCfg::default()),
             }),
             navaids: crate::cfg::NavaidsCfg::default(),
             harm_codes: fxhash::FxHashMap::default(),

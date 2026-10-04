@@ -3,6 +3,7 @@ pub mod cfg;
 pub mod db;
 pub mod frontline;
 pub mod groundwar;
+pub mod hq;
 pub mod perf;
 pub mod range;
 pub mod shots;

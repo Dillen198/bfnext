@@ -122,6 +122,235 @@ pub struct GroundWarCfg {
     /// `{"Blue": "Mech Coy"}`. Absent = "Armd Coy" / "Mech Coy" / "Inf Coy".
     #[serde(default)]
     pub unit_names: FxHashMap<Side, String>,
+    /// How the fighting on the map works: firepower by vehicle type, supply,
+    /// morale, deployment, spotting. See `GroundCombatCfg`.
+    #[serde(default)]
+    pub combat: GroundCombatCfg,
+}
+
+/// The ground war's combat model, for formations the server is not
+/// simulating in DCS (and for what a formation carries and sees either way).
+///
+/// - **Firepower** depends on what a formation is made of: a tank is worth
+///   several trucks, and infantry are hard to kill but hit little at range.
+/// - **Speed** is the slowest vehicle's, on road or across country.
+/// - **Supply** (fuel and ammunition) runs down on the march and in a fight,
+///   and is made good only near a friendly base that has supply itself. Out
+///   of supply a formation fights at a fraction of its power and crawls.
+/// - **Morale** falls with losses and isolation. A formation whose morale
+///   breaks falls back to the nearest friendly base, whatever its orders.
+/// - **Deployment**: a column that runs into the enemy has to stop and
+///   deploy into line before it can fight properly, and a formation that
+///   has held a position for a while digs in.
+/// - **Spotting**: enemy formations are only seen within `spot_m` of our
+///   formations and bases (less if they are dug in), and are remembered where
+///   they were last seen.
+/// - **Garrisons fight**: an attack on a base fights its garrison, dug in,
+///   and the garrison's losses are the base's.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GroundCombatCfg {
+    /// Two forces this close exchange fire. Default 3000 m.
+    #[serde(default = "default_engage_m")]
+    pub engage_m: f64,
+    /// Enemy formations are seen this far from ours (and 3/4 of it from our
+    /// bases). Default 7000 m.
+    #[serde(default = "default_spot_m")]
+    pub spot_m: f64,
+    /// An enemy formation out of sight is remembered where it was last seen
+    /// for this long. Default 900.
+    #[serde(default = "default_remember_secs")]
+    pub remember_secs: u32,
+    /// Seconds between rounds of fighting on the map. Default 60.
+    #[serde(default = "default_combat_secs")]
+    pub combat_secs: u32,
+    /// Damage dealt per point of firepower per minute. Higher is bloodier
+    /// and quicker. Default 0.006: two equal tank companies fight for about
+    /// half an hour before one breaks.
+    #[serde(default = "default_lethality")]
+    pub lethality: f64,
+    /// A garrison fights from prepared positions: damage it takes is divided
+    /// by this. Default 1.6.
+    #[serde(default = "default_garrison_cover")]
+    pub garrison_cover: f64,
+    /// Same for a dug-in formation. Default 1.4.
+    #[serde(default = "default_dug_in_cover")]
+    pub dug_in_cover: f64,
+    /// A column caught on the march fights at this share of its power until
+    /// it has deployed. Default 0.6.
+    #[serde(default = "default_column_power")]
+    pub column_power: f64,
+    /// Seconds a column takes to deploy into line on contact. Default 90.
+    #[serde(default = "default_deploy_secs")]
+    pub deploy_secs: u32,
+    /// Seconds holding a position before a formation is dug in. Default 600.
+    #[serde(default = "default_dig_in_secs")]
+    pub dig_in_secs: u32,
+    /// A deployed formation advancing in contact moves at this share of its
+    /// march speed. Default 0.35.
+    #[serde(default = "default_contact_speed")]
+    pub contact_speed: f64,
+    /// A formation within this of a friendly base with supply of its own is
+    /// in supply. Default 25000 m.
+    #[serde(default = "default_supply_range")]
+    pub supply_range_m: f64,
+    /// The base has to have at least this much supply (percent) to keep a
+    /// formation supplied. Default 25.
+    #[serde(default = "default_supply_base_pct")]
+    pub supply_base_pct: u8,
+    /// Share of its supply a formation uses per 100 km driven. Default 0.25.
+    #[serde(default = "default_supply_per_100km")]
+    pub supply_per_100km: f64,
+    /// Share of its supply used per minute of fighting. Default 0.03.
+    #[serde(default = "default_supply_per_combat_min")]
+    pub supply_per_combat_min: f64,
+    /// Share of its supply made good per minute while in supply and not
+    /// fighting. Default 0.05.
+    #[serde(default = "default_resupply_per_min")]
+    pub resupply_per_min: f64,
+    /// Below this supply (0..1) a formation is out of fuel and ammunition:
+    /// half speed. Default 0.15.
+    #[serde(default = "default_low_supply")]
+    pub low_supply: f64,
+    /// Morale lost per share of its firepower lost. Default 1.5 (half its
+    /// power gone = 0.75 morale lost).
+    #[serde(default = "default_morale_per_loss")]
+    pub morale_per_loss: f64,
+    /// Morale (0..1) below which a formation breaks and falls back. Default
+    /// 0.25.
+    #[serde(default = "default_break_morale")]
+    pub break_morale: f64,
+    /// Morale regained per minute out of contact and in supply. Default 0.01.
+    #[serde(default = "default_morale_recovery")]
+    pub morale_recovery_per_min: f64,
+    /// Firepower per vehicle, by role. Unlisted roles take the built-in
+    /// values (tank 10, ifv 6, apc 3, artillery 5, aaa 2, sam 1, infantry
+    /// 1, truck 0.2).
+    #[serde(default)]
+    pub firepower: FxHashMap<String, f64>,
+    /// Resupply comes out of the base's warehouse: share of the base's
+    /// stock one vehicle's full load costs. Default 0.0015 (a 15-vehicle
+    /// company refilling from empty takes about 2% of a base's stores).
+    /// With the materiel commodity on, `materiel_per_vehicle` units instead.
+    #[serde(default = "default_base_drain")]
+    pub base_drain_per_vehicle: f64,
+    #[serde(default = "default_materiel_per_vehicle")]
+    pub materiel_per_vehicle: f64,
+    /// An enemy formation this close to the road between a formation and
+    /// its supplying base cuts that supply line (as does an enemy base on
+    /// it). Default 3000 m.
+    #[serde(default = "default_line_cut")]
+    pub supply_line_cut_m: f64,
+    /// Friendly artillery within range fires in support of formations in
+    /// contact: on the map as part of the fighting, and as real fire
+    /// missions on enemies the server is simulating in DCS. Default true.
+    #[serde(default = "default_true")]
+    pub artillery_support: bool,
+    /// Range of supporting artillery when the campaign's `artillery` block
+    /// doesn't say. Default 25000 m.
+    #[serde(default = "default_arty_support_m")]
+    pub artillery_support_m: f64,
+    /// Share of the daytime spotting range left at night (thermal sights
+    /// and flares help, but not much). Default 0.45.
+    #[serde(default = "default_night_spot")]
+    pub night_spot: f64,
+    /// Our aircraft in the air below `air_spot_agl_m` see enemy ground
+    /// formations within this much. Default 10000 m.
+    #[serde(default = "default_air_spot")]
+    pub air_spot_m: f64,
+    #[serde(default = "default_air_spot_agl")]
+    pub air_spot_agl_m: f64,
+    /// Check line of sight over the terrain between observer and target.
+    /// Default true.
+    #[serde(default = "default_true")]
+    pub line_of_sight: bool,
+}
+
+impl Default for GroundCombatCfg {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("GroundCombatCfg defaults")
+    }
+}
+
+fn default_engage_m() -> f64 {
+    3_000.
+}
+fn default_spot_m() -> f64 {
+    7_000.
+}
+fn default_remember_secs() -> u32 {
+    900
+}
+fn default_combat_secs() -> u32 {
+    60
+}
+fn default_lethality() -> f64 {
+    0.006
+}
+fn default_garrison_cover() -> f64 {
+    1.6
+}
+fn default_dug_in_cover() -> f64 {
+    1.4
+}
+fn default_column_power() -> f64 {
+    0.6
+}
+fn default_deploy_secs() -> u32 {
+    90
+}
+fn default_dig_in_secs() -> u32 {
+    600
+}
+fn default_contact_speed() -> f64 {
+    0.35
+}
+fn default_supply_range() -> f64 {
+    25_000.
+}
+fn default_supply_base_pct() -> u8 {
+    25
+}
+fn default_supply_per_100km() -> f64 {
+    0.25
+}
+fn default_supply_per_combat_min() -> f64 {
+    0.03
+}
+fn default_resupply_per_min() -> f64 {
+    0.05
+}
+fn default_low_supply() -> f64 {
+    0.15
+}
+fn default_morale_per_loss() -> f64 {
+    1.5
+}
+fn default_break_morale() -> f64 {
+    0.25
+}
+fn default_morale_recovery() -> f64 {
+    0.01
+}
+fn default_base_drain() -> f64 {
+    0.0015
+}
+fn default_materiel_per_vehicle() -> f64 {
+    2.
+}
+fn default_line_cut() -> f64 {
+    3_000.
+}
+fn default_arty_support_m() -> f64 {
+    25_000.
+}
+fn default_night_spot() -> f64 {
+    0.45
+}
+fn default_air_spot() -> f64 {
+    10_000.
+}
+fn default_air_spot_agl() -> f64 {
+    3_000.
 }
 
 /// The AI ground commander.
@@ -247,5 +476,7 @@ mod tests {
         assert_eq!(a.sides, vec![Side::Blue, Side::Red]);
         assert!(a.follow_tempo);
         assert!(a.pause_when_empty);
+        assert_eq!(c.combat.engage_m, 3_000.);
+        assert!(c.combat.break_morale > 0. && c.combat.break_morale < 1.);
     }
 }

@@ -36,11 +36,15 @@ use std::{
 };
 
 mod balance;
+mod economy;
 mod example;
 mod ground_war;
-pub use ground_war::{GroundAiCfg, GroundWarCfg};
+pub use ground_war::{GroundAiCfg, GroundCombatCfg, GroundWarCfg};
+mod hq;
+pub use hq::{EscortPolicy, HqAirCfg, HqAirTemplate, HqCfg, HqCostsCfg, HqPackagesCfg, HqGapFillCfg, HqLimitsCfg, HqRequestsCfg, HqStrategistCfg};
 
 pub use balance::{fmt_mult, EmergencyRepairCfg, PopulationScalingCfg};
+pub use economy::{split_by_weight, EconomyCfg};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default, schemars::JsonSchema)]
 pub struct Vehicle(pub String);
@@ -1533,7 +1537,7 @@ pub struct ConvoyConfig {
     pub trailer_pairs: FxHashMap<String, String>,
 }
 
-fn default_trailer_pairs() -> FxHashMap<String, String> {
+pub fn default_trailer_pairs() -> FxHashMap<String, String> {
     [
         ("TZ-22_KrAZ", "TZ-22_TANK"),
         ("ATZ-60_Maz", "ATZ-60_TANK"),
@@ -1767,7 +1771,7 @@ pub struct PointsCfg {
     /// not cover all weapons, and the default is zero.
     #[serde(default)]
     pub weapon_cost: FxHashMap<String, u32>,
-    /// How many points do connected players automatically gain per
+    /// How many points do players in a slot (not spectators) automatically gain per
     /// time interval. This is a pair of the number of points with the
     /// interval in seconds. The number of points CAN be negative, the
     /// interval must be positive. The default is (0, 0)
@@ -1782,7 +1786,8 @@ pub struct PointsCfg {
     pub convoy_interdiction_points: u32,
     /// Kill streak bonus thresholds. Each entry is (minimum_streak, bonus_multiplier).
     /// e.g. [(3, 1.5), (5, 2.0)] means after 3 kills in a single sortie the base points
-    /// are multiplied by 1.5, and after 5 kills by 2.0. Streak resets on death.
+    /// are multiplied by 1.5, and after 5 kills by 2.0. The streak counts
+    /// kills since the pilot's last takeoff.
     /// Default: empty (no bonus).
     #[serde(default)]
     pub kill_streak_bonuses: Vec<(u8, f64)>,
@@ -2017,6 +2022,54 @@ pub struct MoveCfg {
     pub deployable: u32,
 }
 
+/// A player-called reinforcement convoy. It sets off from the friendly
+/// objective nearest the one being reinforced, drives the road network there,
+/// and on arrival puts that objective's destroyed garrison groups back
+/// together, armour first. Each transporter lost on the way is a group that
+/// doesn't arrive.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReinforceCfg {
+    /// Convoy group template in the .miz: tank transporters (HX81 or SLT-50
+    /// tractors with `CHAP_SLT50_Trailer`), any tractor-trailer pair from
+    /// `warehouse.convoy.trailer_pairs`, or plain trucks. Tractors are hitched
+    /// to their trailers when it sets off.
+    pub template: String,
+    /// Destroyed garrison groups rebuilt when the whole convoy arrives. Fewer
+    /// if transporters were lost on the way -- in proportion to what survived.
+    #[serde(default = "default_reinforce_groups")]
+    pub groups: u32,
+    /// The convoy starts at the nearest friendly objective within this many
+    /// metres (straight line) of the one being reinforced.
+    #[serde(default = "default_reinforce_max_source_m")]
+    pub max_source_m: u32,
+    /// Road speed in km/h. Transporters are slow.
+    #[serde(default = "default_reinforce_speed_kph")]
+    pub speed_kph: f64,
+    /// Materiel taken from the source objective's stores for every group the
+    /// convoy carries (0 = free). A source that can't spare it isn't used.
+    #[serde(default)]
+    pub materiel_per_group: u32,
+    /// How close to the objective the convoy has to get to have arrived.
+    #[serde(default = "default_reinforce_arrive_m")]
+    pub arrive_m: u32,
+}
+
+fn default_reinforce_groups() -> u32 {
+    2
+}
+
+fn default_reinforce_max_source_m() -> u32 {
+    80_000
+}
+
+fn default_reinforce_speed_kph() -> f64 {
+    40.
+}
+
+fn default_reinforce_arrive_m() -> u32 {
+    1_000
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NavalCruiseMissileCfg {
     /// number of missiles to fire per strike
@@ -2124,6 +2177,10 @@ pub enum ActionKind {
     AddTask(TaskCfg),
     /// Take a task back off the coalition tasking board.
     RemoveTask(RemoveTaskCfg),
+    /// Send a heavy-transport convoy (tank transporters) by road from the
+    /// nearest friendly objective to rebuild a damaged friendly objective's
+    /// garrison. Kill the convoy and the reinforcements never arrive.
+    Reinforce(ReinforceCfg),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -3851,6 +3908,11 @@ pub struct Cfg {
     /// off.
     #[serde(default)]
     pub population_scaling: Option<PopulationScalingCfg>,
+    /// Who gets paid and how much: underdog pay, wealth taper, late-joiner
+    /// start, kill values by target, hauler-paid logistics. On with moderate
+    /// defaults when absent; `"economy": {"enabled": false}` turns it off.
+    #[serde(default)]
+    pub economy: EconomyCfg,
     /// Seconds a player must sit in a freshly-taken slot before they're allowed
     /// to get airborne. They get a once-a-second "time remaining" message; take
     /// off early and they're sent straight back to spectators. 0 disables it.
@@ -5132,7 +5194,11 @@ pub struct SmartCommanderCfg {
     /// Seconds between objective funding passes. Default: 120.
     #[serde(default = "default_obj_fund_period")]
     pub objective_fund_period_secs: u32,
-    /// Points per owned objective awarded to each connected player per tick. Default: 5.
+    /// Territory pay: each commander tick every player of a side who is in a
+    /// slot (not spectating) gets this many points times the side's share of
+    /// all objectives, rounded to the nearest point, so holding the whole map
+    /// pays the full amount and holding a sliver pays at least 1. Scaled by
+    /// the economy's underdog multiplier and wealth taper. Default: 5.
     #[serde(default = "default_holding_bonus")]
     pub holding_bonus_per_objective: i32,
     /// Points seeded into each owned objective on a fresh map init. Default: 500.
@@ -5166,6 +5232,12 @@ pub struct SmartCommanderCfg {
     /// action" every tick). Default: 300 (covers the priciest default action).
     #[serde(default = "default_commander_action_reserve")]
     pub action_reserve: i64,
+    /// The theatre HQ: an AI commander per coalition that plans and
+    /// dispatches missions and logistics out of this treasury (see
+    /// `cfg::hq`). Absent = the treasury only funds objectives and the four
+    /// campaign-event actions.
+    #[serde(default)]
+    pub hq: Option<HqCfg>,
 }
 
 fn default_commander_action_reserve() -> i64 {
@@ -5260,6 +5332,40 @@ mod load_tests {
         unknown_keys(&raw, &known, &mut std::string::String::new(), &mut out);
         out.sort();
         assert_eq!(out, vec!["list[0].extra", "nested.bogus", "typo"]);
+    }
+
+    /// `BF_CHECK_CFG=path1;path2 cargo test -p bfprotocols check_named_cfgs`
+    /// loads real campaign configs as the engine would and lists every key
+    /// under `smart_commander.hq` and `ground_war` the engine would ignore.
+    /// Does nothing without the variable.
+    #[test]
+    fn check_named_cfgs() {
+        let Ok(paths) = std::env::var("BF_CHECK_CFG") else { return };
+        for path in paths.split(';').filter(|p| !p.is_empty()) {
+            let text = std::fs::read_to_string(path).unwrap();
+            let text = text.trim_start_matches('\u{feff}');
+            let raw: serde_json::Value = serde_json::from_str(text).unwrap();
+            let cfg: Cfg = serde_json::from_str(text).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let hq = cfg.smart_commander.as_ref().and_then(|s| s.hq.as_ref()).expect("no smart_commander.hq");
+            let known = serde_json::to_value(&cfg).unwrap();
+            let mut out = vec![];
+            for key in ["smart_commander", "ground_war"] {
+                let mut p = std::string::String::from(key);
+                unknown_keys(&raw[key], &known[key], &mut p, &mut out);
+            }
+            let out: Vec<_> = out
+                .into_iter()
+                .filter(|k| k.starts_with("smart_commander.hq") || k.starts_with("ground_war"))
+                .collect();
+            eprintln!(
+                "{path}: loads; hq sides {:?}, cost_scale {}, air rosters (cap, strike, sead) {:?}; ignored keys {:?}",
+                hq.sides,
+                hq.cost_scale,
+                hq.air.iter().map(|(s, a)| (*s, a.cap.len(), a.strike.len(), a.sead.len())).collect::<Vec<_>>(),
+                out
+            );
+            assert!(out.is_empty(), "{path}: keys the engine ignores: {out:?}");
+        }
     }
 
     #[test]

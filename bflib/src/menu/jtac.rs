@@ -17,6 +17,7 @@ for more details.
 use super::{ArgPent, ArgQuad, ArgTriple, ArgTuple, Pager};
 use crate::{
     Context,
+    msgq::MsgTyp,
     db::{
         Db,
         actions::{ActionArgs, ActionCmd, WithJtac},
@@ -88,6 +89,32 @@ fn jtac_audience(
     groups
 }
 
+/// Whether `ucid` is sitting in an aircraft slot, i.e. has a group a panel
+/// can be sent to.
+fn has_group(ctx: &Context, ucid: &Ucid) -> bool {
+    ctx.db.player(ucid).is_some_and(|p| {
+        !p.jtac_or_spectators
+            && p.current_slot
+                .as_ref()
+                .is_some_and(|(s, _)| ctx.db.ephemeral.get_slot_info(s).is_some())
+    })
+}
+
+/// Tell one player something. A pilot gets a panel on their group. A
+/// Combined Arms commander has no group, and `panel_to_player` silently
+/// dropped every JTAC answer to them -- so a commander driving a JTAC from
+/// chat never heard back. They get it in chat, a line at a time.
+pub(crate) fn tell(ctx: &mut Context, duration: i64, ucid: &Ucid, msg: impl Into<String>) {
+    let msg: String = msg.into();
+    if has_group(ctx, ucid) {
+        ctx.db.ephemeral.panel_to_player(&ctx.db.persisted, duration, ucid, msg)
+    } else if let Some(id) = ctx.connected.id_by_ucid.get(ucid).copied() {
+        for line in msg.lines().filter(|l| !l.trim().is_empty()) {
+            ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), line)
+        }
+    }
+}
+
 /// Panel `msg` to a JTAC's audience, see `jtac_audience`.
 fn notify(
     ctx: &mut Context,
@@ -101,6 +128,12 @@ fn notify(
     for gid in jtac_audience(ctx, &jtid, side, oid, requester) {
         ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg.clone())
     }
+    // the audience is groups, which a commander doesn't have
+    if let Some(ucid) = requester
+        && !has_group(ctx, ucid)
+    {
+        tell(ctx, 10, ucid, msg)
+    }
 }
 
 /// Panel `msg` to the audience of the JTAC `jtid`, whoever that is now.
@@ -111,10 +144,7 @@ fn notify_jtac(ctx: &mut Context, jtid: JtId, requester: &Ucid, msg: impl Into<S
             notify(ctx, jtid, side, oid, Some(requester), msg)
         }
         // gone in the meantime -- the requester still gets the answer
-        Err(_) => ctx
-            .db
-            .ephemeral
-            .panel_to_player(&ctx.db.persisted, 10, requester, msg),
+        Err(_) => tell(ctx, 10, requester, msg),
     }
 }
 
@@ -126,17 +156,15 @@ pub(crate) fn flush_jtac_notices(ctx: &mut Context) {
     }
 }
 
-fn jtac_nine_line(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
+pub(crate) fn jtac_nine_line(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = ctx
         .jtac
         .get(&arg.snd)
         .with_context(|| format_compact!("get jtac {}", arg.snd))?;
     match jtac.nine_line(&ctx.db, lua) {
-        Ok(msg) => ctx.db.ephemeral.panel_to_player(&ctx.db.persisted, 15, &arg.fst, msg),
-        Err(e) => ctx.db.ephemeral.panel_to_player(
-            &ctx.db.persisted,
-            10,
+        Ok(msg) => tell(ctx, 15, &arg.fst, msg),
+        Err(e) => tell(ctx, 10,
             &arg.fst,
             format_compact!("9-line unavailable: {e}"),
         ),
@@ -188,7 +216,9 @@ Radio: {radio} (comms menu for coordinates)"));
     // If a specific player requested status and there's a target, drop a group-visible mark
     if let Some(ucid) = &arg.fst {
         // Extract mark info before any mutable borrow
-        let mark_info = jtac.target().as_ref().and_then(|target| {
+        // Not for a commander: their `current_slot` can still name the
+        // aircraft they left, and the pin would land on that group.
+        let mark_info = jtac.target().as_ref().filter(|_| has_group(ctx, ucid)).and_then(|target| {
             let player = ctx.db.persisted.players.get(ucid)?;
             let miz_gid = player
                 .current_slot
@@ -207,7 +237,7 @@ Radio: {radio} (comms menu for coordinates)"));
                 ctx.db.ephemeral.msgs().delete_mark(old);
             }
         }
-        ctx.db.ephemeral.panel_to_player(&ctx.db.persisted, 10, ucid, msg);
+        tell(ctx, 10, ucid, msg);
     } else {
         ctx.db.ephemeral.msgs().panel_to_side(10, false, side, msg);
     }
@@ -218,9 +248,7 @@ Radio: {radio} (comms menu for coordinates)"));
 /// `jtac_status`, so clicking the "nothing here" line dropped a status pin.
 fn jtac_no_fire_support(_: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
-    ctx.db.ephemeral.panel_to_player(
-        &ctx.db.persisted,
-        10,
+    tell(ctx, 10,
         &arg.fst,
         format_compact!(
             "JTAC {}: no friendly artillery or ALCM shooters are in range of it. The menu refreshes when some are.",
@@ -271,6 +299,10 @@ pub fn jtac_toggle_auto_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<
     jtac.toggle_auto_shift(&mut ctx.db, lua)
         .with_context(|| format_compact!("toggle auto shift {}", arg.snd))?;
     let msg = jtac_msg_auto_shift(&ctx.db, arg.snd, jtac, &arg.fst);
+    let msg = match jtac.no_target_reason(&ctx.db) {
+        Some(why) => String::from(format_compact!("{msg}\n{why}")),
+        None => msg,
+    };
     notify_jtac(ctx, arg.snd, &arg.fst, msg);
     Ok(())
 }
@@ -298,9 +330,7 @@ pub fn jtac_smoke_target(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let (near, name) = change_info(jtac, &ctx.db, &arg.fst);
     match jtac.smoke_target(lua).context("smoking jtac target") {
         // a cooldown or no target is the requester's business alone
-        Err(e) => ctx.db.ephemeral.panel_to_player(
-            &ctx.db.persisted,
-            10,
+        Err(e) => tell(ctx, 10,
             &arg.fst,
             format_compact!("COULD NOT SMOKE TARGET\njtac {}\n{e:#}", arg.snd),
         ),
@@ -341,6 +371,16 @@ pub fn jtac_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.shift(&mut ctx.db, lua).context("shifting jtac target")?;
+    // Nothing in laser range to shift to. This used to announce "JTAC
+    // SHIFTED NOW TARGETING no target, auto shift is now disabled" to
+    // everyone following the JTAC -- while nothing had changed at all.
+    if jtac.target().is_none() {
+        let why = jtac
+            .no_target_reason(&ctx.db)
+            .unwrap_or_else(|| format_compact!("no target: it sees no enemies"));
+        tell(ctx, 10, &arg.fst, format_compact!("JTAC {}: nothing to shift to\n{why}", arg.snd));
+        return Ok(());
+    }
     let msg = jtac_msg_shift(&ctx.db, arg.snd, jtac, &arg.fst);
     notify_jtac(ctx, arg.snd, &arg.fst, msg);
     Ok(())
@@ -372,7 +412,7 @@ pub fn jtac_designate_building(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result
             } else {
                 format_compact!("JTAC {}: all {total} logistics buildings at {name} are destroyed", arg.snd)
             };
-            ctx.db.ephemeral.panel_to_player(&ctx.db.persisted, 10, &arg.fst, msg);
+            tell(ctx, 10, &arg.fst, msg);
         }
     }
     Ok(())
@@ -439,9 +479,7 @@ fn jtac_focus_my_mark(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
         Some(pos) => jtac_set_focus(lua, &arg.fst, arg.snd, Some(pos)),
         None => {
             // the requester's mistake -- this went to the whole coalition
-            ctx.db.ephemeral.panel_to_player(
-                &ctx.db.persisted,
-                10,
+            tell(ctx, 10,
                 &arg.fst,
                 "Place an F10 map mark near the targets first, then use Focus on My Mark",
             );
@@ -474,9 +512,7 @@ pub fn jtac_artillery_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, u8, Ucid>) 
         }
         Err(e) => {
             let msg = format!("jtac {} could not start artillery mission {:?}", arg.fst, e);
-            ctx.db
-                .ephemeral
-                .panel_to_player(&ctx.db.persisted, 10, &arg.fth, msg);
+            tell(ctx, 10, &arg.fth, msg);
         }
     }
     Ok(())
@@ -502,9 +538,7 @@ pub fn jtac_artillery_fire_all(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -
         }
         Err(e) => {
             let msg = format!("jtac {} could not start artillery fire all mission {:?}", arg.fst, e);
-            ctx.db
-                .ephemeral
-                .panel_to_player(&ctx.db.persisted, 10, &arg.trd, msg);
+            tell(ctx, 10, &arg.trd, msg);
         }
     }
     Ok(())
@@ -569,9 +603,7 @@ fn group_fire(
         }
         Err(e) => {
             let msg = format!("group fire failed: {e:?}");
-            ctx.db
-                .ephemeral
-                .panel_to_player(&ctx.db.persisted, 10, &ucid, msg);
+            tell(ctx, 10, &ucid, msg);
         }
     }
     Ok(())
@@ -584,15 +616,11 @@ pub fn jtac_get_artillery_ammo(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -
         .get_artillery_ammo(&ctx.db, lua, &arg.snd)
     {
         Ok(ammo_report) => {
-            ctx.db
-                .ephemeral
-                .panel_to_player(&ctx.db.persisted, 10, &arg.trd, ammo_report);
+            tell(ctx, 10, &arg.trd, ammo_report);
         }
         Err(e) => {
             let msg = format!("Could not get artillery ammunition report: {:?}", e);
-            ctx.db
-                .ephemeral
-                .panel_to_player(&ctx.db.persisted, 10, &arg.trd, msg);
+            tell(ctx, 10, &arg.trd, msg);
         }
     }
     Ok(())
@@ -617,9 +645,7 @@ pub fn jtac_artillery_combo_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u
         }
         Err(e) => {
             let msg = format_compact!("Artillery Combo Mission failed: {e}");
-            ctx.db
-                .ephemeral
-                .panel_to_player(&ctx.db.persisted, 10, &arg.fth, msg);
+            tell(ctx, 10, &arg.fth, msg);
         }
     }
     Ok(())
@@ -645,9 +671,7 @@ pub fn jtac_alcm_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u8>, Ucid>) 
         }
         Err(e) => {
             let msg = format!("jtac {} could not start ALCM mission {:?}", arg.fst, e);
-            ctx.db
-                .ephemeral
-                .panel_to_player(&ctx.db.persisted, 10, &arg.fth, msg);
+            tell(ctx, 10, &arg.fth, msg);
         }
     }
     Ok(())
@@ -670,15 +694,13 @@ fn jtac_relay_target(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -> Result<(
         }
         Err(e) => {
             let msg = format!("jtac {} could not relay target {:?}", arg.fst, e);
-            ctx.db
-                .ephemeral
-                .panel_to_player(&ctx.db.persisted, 10, &arg.trd, msg);
+            tell(ctx, 10, &arg.trd, msg);
         }
     }
     Ok(())
 }
 
-fn jtac_clear_filter(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
+pub(crate) fn jtac_clear_filter(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.clear_filter(&mut ctx.db, lua)
@@ -694,7 +716,7 @@ fn jtac_clear_filter(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     Ok(())
 }
 
-fn jtac_filter(lua: MizLua, arg: ArgTriple<JtId, u64, Ucid>) -> Result<()> {
+pub(crate) fn jtac_filter(lua: MizLua, arg: ArgTriple<JtId, u64, Ucid>) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
     let filter =
         BitFlags::<UnitTag>::from_bits(arg.snd).map_err(|_| anyhow!("invalid filter bits"))?;
@@ -717,9 +739,7 @@ pub fn jtac_set_code(lua: MizLua, arg: ArgTriple<JtId, u16, Ucid>) -> Result<()>
     let ctx = unsafe { Context::get_mut() };
     if let Err(e) = ctx.jtac.set_code_part(&mut ctx.db, lua, &arg.fst, arg.snd) {
         // a bad code is the requester's to fix, and should say why
-        ctx.db.ephemeral.panel_to_player(
-            &ctx.db.persisted,
-            10,
+        tell(ctx, 10,
             &arg.trd,
             format_compact!("JTAC {}: code not changed, {e:#}", arg.fst),
         );
@@ -1049,9 +1069,7 @@ pub fn call_bomber(lua: MizLua, arg: ArgTriple<JtId, Ucid, String>) -> Result<()
                 .msgs()
                 .panel_to_side(10, false, jtac.side(), msg)
         }
-        Err(e) => ctx.db.ephemeral.panel_to_player(
-            &ctx.db.persisted,
-            10,
+        Err(e) => tell(ctx, 10,
             &arg.snd,
             format_compact!("bomber mission could not start {e:?}"),
         ),
@@ -1429,9 +1447,7 @@ fn add_jtacs_by_location(
                 n += 1;
             }
         }
-        ctx.db.ephemeral.panel_to_player(
-            &ctx.db.persisted,
-            15,
+        tell(ctx, 15,
             &arg.fst,
             format_compact!(
                 "{n} JTAC near {name} loaded.\nRe-open F10 and go to JTAC > {name} to work them."

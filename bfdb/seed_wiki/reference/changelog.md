@@ -1,5 +1,35 @@
 # Changelog — v2.0
 
+## October 4, 2026
+
+**Theatre HQ** (where enabled) — see [Theatre HQ](../advanced/theatre-hq.md)
+- Each side has an AI commander that sets a posture and main effort and runs the
+  war's missions and logistics from the treasury: air packages, artillery and
+  missiles, convoys and helo supply, troop insertions, reinforcements, AWACS and
+  tankers.
+- Strike packages: bombers always fly with a fighter escort, and SEAD goes in
+  first where air defence is known. The HQ picks the right aircraft for each
+  target from the server's roster.
+- It steps back as more of you fly. Ask it for support with **F10 → Info → HQ**
+  or `-request`; `-hq` shows its intent. The dashboard has a **THEATRE HQ** page.
+
+**Ground war** — see [Ground War](../advanced/ground-war.md)
+- Fighting is a proper model now: firepower by vehicle type, supply drawn from
+  bases along supply lines that can be cut, morale that breaks, columns that
+  have to deploy, positions that get dug in, garrisons that fight back,
+  artillery in support.
+- You only see enemy formations your forces can see: line of sight, night and
+  weather all count, and they are remembered where last seen.
+- **GROUND COMMAND** on the dashboard is now a live battlefield for your side,
+  with every vehicle, battles, your pilots (you are marked YOU) and game-style
+  controls.
+
+**No more magic spawns**
+- Every AI aircraft starts on the ground at a friendly airfield and takes off;
+  heavies need a large stand. An action no field can launch is refused, free.
+- Ambush parties, CSAR search parties, reinforcements and captured carrier task
+  forces all set out from a base.
+
 ## September 28, 2026
 
 **Bases and captures**

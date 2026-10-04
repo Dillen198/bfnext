@@ -839,12 +839,12 @@ fn dispatch_helo(
     let (what, res) = if kind == HELO_TROOPS {
         (
             "Helo troop insertion",
-            ctx.db.call_helo_troop_insertion(lua, side, ucid, oid, now),
+            ctx.db.call_helo_troop_insertion(lua, side, Some(ucid), oid, now),
         )
     } else {
         (
             "Helo resupply run",
-            ctx.db.call_helo_resource_delivery(lua, side, ucid, oid, now),
+            ctx.db.call_helo_resource_delivery(lua, side, Some(ucid), oid, now),
         )
     };
     match res {

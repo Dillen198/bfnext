@@ -179,9 +179,26 @@ want the detail.
  {"icon":"cap-threat","side":"Red","name":"Large circle at a base",
   "text":"A CAP threat: enemy fighters are airborne from there. Treat the circle as the area they are covering."},
  {"icon":"ambush","name":"Small circle on a road",
-  "text":"An ambush has spawned on that stretch of road. Convoys routed through it are going to lose vehicles."},
+  "text":"An ambush party has driven out from an enemy base and set up on that stretch of road, ahead of a convoy. Convoys routed through it are going to lose vehicles."},
  {"icon":"missile","name":"Circle on open ground",
   "text":"A missile strike is inbound to that point. It is a warning with a clock on it, not a target marker."}
+]
+```
+
+---
+
+## The ground war
+
+Ground formations add three things to the map, and one to the world. The
+dashboard's GROUND COMMAND page has its own, richer set: see
+[Ground War](../advanced/ground-war.md#reading-the-battlefield).
+
+```mapsymbols
+[
+ {"icon": "f10-pin", "name": "Formation pin (your side only)", "text": "One per formation in the field, in your side's colour: its name on the first line, then its orders and roughly how strong it is, in quarters (\"attack Gori | ~75% strength\"). Click it for the text. The enemy never sees your pins.", "side": "Blue"},
+ {"icon": "f10-attack-arrow", "name": "Arrow from a pin", "text": "The formation is attacking a base, and this is the way it is heading. Drawn only when the base is more than 3 km off; formations moving or defending get no arrow.", "side": "Blue"},
+ {"icon": "f10-battle", "name": "Dashed orange ring, \"GROUND BATTLE near …\"", "text": "Formations are fighting here, or a formation is fighting a base's garrison. Everyone sees it, both sides: a battle is not a secret. It moves with the fight and goes when the fighting stops. This is where CAS and attack helicopters are wanted."},
+ {"icon": "world-smoke", "name": "Smoke and fire on the ground (in the 3D world)", "text": "Not on the map: in the world. A battle sends up a column of smoke you can see from the air long before you can see the vehicles, and every vehicle killed in it burns for a while. Follow the smoke."}
 ]
 ```
 

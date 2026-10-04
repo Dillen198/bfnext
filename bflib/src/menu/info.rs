@@ -519,6 +519,63 @@ controller.
 Artillery: if your side has active batteries, \"Request Fires\" appears
 automatically in your Actions menu -- no separate setup needed.";
 
+// ── HQ ───────────────────────────────────────────────────────────────────────
+
+fn hq_intent(_lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let text = crate::hq::intent_text(ctx, arg.snd);
+    ctx.db.ephemeral.msgs().panel_to_group(45, false, arg.fst, text);
+    Ok(())
+}
+
+fn hq_ops(_lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let text = crate::hq::ops_text(ctx, arg.snd);
+    ctx.db.ephemeral.msgs().panel_to_group(45, false, arg.fst, text);
+    Ok(())
+}
+
+/// Ask the HQ for support at the objective nearest the player. `trd` is the
+/// index into `RequestKind::ALL`.
+fn hq_request(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let Some(kind) = bfprotocols::hq::RequestKind::ALL.get(arg.trd as usize).copied() else {
+        return Ok(());
+    };
+    let (_, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
+    let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() else {
+        return Ok(());
+    };
+    let from = player_world_pos(ctx, &slot);
+    let reply = crate::hq::player_request(lua, ctx, ucid, kind, None, from);
+    ctx.db.ephemeral.msgs().panel_to_group(20, false, arg.fst, reply.message);
+    Ok(())
+}
+
+fn add_hq_menu(mc: &MissionCommands, p: &mut Pager, miz_gid: GroupId, side: Side) -> Result<()> {
+    let root = p.submenu(mc, "HQ".into())?;
+    let mut hp = Pager::new(miz_gid, root);
+    hp.command(mc, "Commander's Intent".into(), hq_intent, ArgTriple { fst: miz_gid, snd: side, trd: 0u8 })?;
+    hp.command(mc, "Operations".into(), hq_ops, ArgTriple { fst: miz_gid, snd: side, trd: 0u8 })?;
+    let req_root = hp.submenu(mc, "Request Support (nearest objective)".into())?;
+    let mut rp = Pager::new(miz_gid, req_root);
+    for (i, kind) in bfprotocols::hq::RequestKind::ALL.iter().enumerate() {
+        let label = match kind {
+            bfprotocols::hq::RequestKind::Cas => "CAS on the nearest enemy objective",
+            bfprotocols::hq::RequestKind::Cap => "CAP over the nearest friendly objective",
+            bfprotocols::hq::RequestKind::Sead => "SEAD near the nearest enemy objective",
+            bfprotocols::hq::RequestKind::Recon => "Recon of the nearest enemy objective",
+            bfprotocols::hq::RequestKind::Fires => "Fires on the nearest enemy objective",
+            bfprotocols::hq::RequestKind::Supply => "Resupply the nearest friendly objective",
+            bfprotocols::hq::RequestKind::Troops => "Troops to the nearest enemy objective",
+            bfprotocols::hq::RequestKind::Tanker => "Tanker near the nearest friendly objective",
+            bfprotocols::hq::RequestKind::Awacs => "AWACS near the nearest friendly objective",
+        };
+        rp.command(mc, label.into(), hq_request, ArgTriple { fst: miz_gid, snd: side, trd: i as u8 })?;
+    }
+    Ok(())
+}
+
 fn help_topic(text: &'static str) -> impl Fn(MizLua, GroupId) -> Result<()> {
     move |_lua, gid| {
         let ctx = unsafe { Context::get_mut() };
@@ -567,6 +624,9 @@ pub(super) fn init_info_menu_for_slot(ctx: &mut Context, lua: MizLua, slot: &Slo
             cb,
             ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
         )?;
+    }
+    if crate::hq::cfg(ctx).map_or(false, |(_, h)| h.sides.contains(&side)) {
+        add_hq_menu(&mc, &mut p, miz_gid, side)?;
     }
     p.command(&mc, "Time & Server".into(), time_and_server, miz_gid)?;
     p.command(

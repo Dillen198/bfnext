@@ -20,6 +20,15 @@ Every Actions deployment works the same way:
 Marker rules that bite people: name must be **your** mark, **≤ 24 chars**, and
 **unique** — duplicate names don't show in the menu.
 
+## Or ask the HQ
+
+On servers running the [Theatre HQ](../advanced/theatre-hq.md) you don't have to
+buy everything yourself. **F10 → Info → HQ → Request Support**, or `-request cas
+Gori` in chat, asks your side's AI commander for CAS, CAP, SEAD, recon, fires,
+resupply, troops, a tanker or AWACS. It costs you nothing: the HQ pays from the
+side's treasury if it judges the request worth it, and tells you when it is
+tasked and when it is over. Bombers it sends always come with an escort.
+
 ## What to call, and when
 
 ### AWACS — 50 pts (RTB refunds ~25%)

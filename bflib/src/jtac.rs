@@ -571,27 +571,107 @@ impl Jtac {
         ))
     }
 
+    /// The side's configured drone-waypoint action and the exact chat line
+    /// that moves this JTAC to a mark, for an air JTAC that is a group (a
+    /// slot JTAC is a player, who flies themselves closer).
+    pub fn move_hint(&self, db: &Db) -> Option<CompactString> {
+        let JtId::Group(gid) = self.gid else { return None };
+        if !self.air {
+            return None;
+        }
+        let name = db.ephemeral.cfg.actions.get(&self.side)?.iter().find_map(|(n, a)| {
+            matches!(a.kind, bfprotocols::cfg::ActionKind::DroneWaypoint).then(|| n.clone())
+        })?;
+        Some(format_compact!("-action {name} {gid} <mark text>"))
+    }
+
+    /// Why a JTAC with enemies in view is lasing nothing, or `None` when it
+    /// has a target or sees nothing at all. The status used to say a bare
+    /// "no target" under a list of SAMs it could see, and players took the
+    /// laser for broken -- it was the lase range (Discord, Sept 29).
+    pub fn no_target_reason(&self, db: &Db) -> Option<CompactString> {
+        use std::fmt::Write;
+        if self.target.is_some() || self.contacts.is_empty() || self.lasable > 0 {
+            return None;
+        }
+        let limit_km = self.lase_limit_m() / 1000.;
+        let mut msg = match self.focus_area_contacts() {
+            (0, _) if self.focus.is_some() => format_compact!(
+                "no target: {} contact(s) in view, but none within {:.0} km of the focus mark (Clear Focus to work the whole area)",
+                self.contacts.len(),
+                JTAC_FOCUS_RADIUS_M / 1000.
+            ),
+            (n, Some(d)) if self.focus.is_some() => format_compact!(
+                "no target: {n} contact(s) at the focus mark, the nearest {:.1} km from the JTAC -- it lases out to {limit_km:.1} km",
+                d / 1000.
+            ),
+            _ => {
+                let jpos = self.location.pos;
+                let nearest = self
+                    .contacts
+                    .values()
+                    .map(|ct| (Vector2::new(ct.pos.x, ct.pos.z) - jpos, &ct.typ))
+                    .min_by(|a, b| a.0.norm_squared().total_cmp(&b.0.norm_squared()));
+                match nearest {
+                    None => return None,
+                    Some((d, typ)) => format_compact!(
+                        "no target: {} contact(s) in view, none in laser range. Nearest is {typ} {:03}°M {:.1} km from the JTAC -- it lases out to {limit_km:.1} km",
+                        self.contacts.len(),
+                        mag_deg(dcso3::azumith2d(d), self.magvar_deg),
+                        d.norm() / 1000.
+                    ),
+                }
+            }
+        };
+        match self.move_hint(db) {
+            Some(hint) => {
+                let _ = write!(msg, "\nmove it closer: {hint}");
+            }
+            None if matches!(self.gid, JtId::Slot(_)) => msg.push_str("\nfly closer to lase"),
+            None => (),
+        }
+        Some(msg)
+    }
+
     pub fn status(&self, db: &Db, loc_by_code: &LocByCode) -> Result<CompactString> {
         use std::fmt::Write;
-        fn get_typ(db: &Db, id: &EnId) -> Result<Vehicle> {
-            Ok(match id {
-                EnId::Unit(uid) => db.unit(uid)?.typ.clone(),
+        // A player contact who just left their aircraft has no type any more;
+        // that used to fail the whole status.
+        fn get_typ(db: &Db, id: &EnId) -> Vehicle {
+            match id {
+                EnId::Unit(uid) => db.unit(uid).map(|u| u.typ.clone()).ok(),
                 EnId::Player(ucid) => db
                     .player(ucid)
                     .and_then(|p| p.current_slot.as_ref())
                     .and_then(|(_, i)| i.as_ref())
-                    .map(|i| i.typ.clone())
-                    .ok_or_else(|| anyhow!("player {ucid} isn't instanced"))?,
-            })
+                    .map(|i| i.typ.clone()),
+            }
+            .unwrap_or_else(|| Vehicle::from("unknown"))
+        }
+        fn list(msg: &mut CompactString, counts: IndexMap<Vehicle, usize, FxBuildHasher>) {
+            // The separator used to be decided against the number of
+            // contacts rather than the number of types, so the list always
+            // ended in a stray comma.
+            for (i, (typ, count)) in counts.into_iter().enumerate() {
+                if i > 0 {
+                    msg.push_str(", ");
+                }
+                if count > 1 {
+                    let _ = write!(msg, "{typ} x{count}");
+                } else {
+                    let _ = write!(msg, "{typ}");
+                }
+            }
         }
         let mut msg = CompactString::new("");
         write!(msg, "JTAC {} [{}] status\n", self.display_name(), self.code)?;
         match &self.target {
-            None => {
-                write!(msg, "no target\n")?;
-            }
+            None => match self.no_target_reason(db) {
+                Some(why) => write!(msg, "{why}\n")?,
+                None => write!(msg, "no target\n")?,
+            },
             Some(target) => {
-                let unit_typ = get_typ(db, &target.id)?;
+                let unit_typ = get_typ(db, &target.id);
                 let conflicts = loc_by_code
                     .get(&self.side)
                     .and_then(|by_side| by_side.get(&self.location.oid))
@@ -615,7 +695,15 @@ impl Jtac {
                         }
                     })
                     .unwrap_or(String::from(""));
-                write!(msg, "lasing {unit_typ} code {}{}\n", self.code, conflicts)?;
+                let pos = Vector2::new(target.pos.x, target.pos.z) - self.location.pos;
+                write!(
+                    msg,
+                    "lasing {unit_typ} code {}{} -- {:03}°M {:.1} km from the JTAC\n",
+                    self.code,
+                    conflicts,
+                    mag_deg(dcso3::azumith2d(pos), self.magvar_deg),
+                    pos.norm() / 1000.
+                )?;
             }
         };
         if let Some(bt) = &self.building_target {
@@ -623,41 +711,43 @@ impl Jtac {
         }
         write!(
             msg,
-            "position {:03}°M {:.1}km from {}\n\n",
+            "position {:03}°M {:.1}km from {}, lases out to {:.1} km\n\n",
             mag_deg(self.location.bearing, self.magvar_deg),
             self.location.distance / 1000.,
-            db.objective(&self.location.oid)?.name
+            db.objective(&self.location.oid)?.name,
+            self.lase_limit_m() / 1000.
         )?;
         if self.contacts.is_empty() {
             write!(msg, "No enemies in sight")?;
         } else {
-            let mut counts: IndexMap<Vehicle, usize, FxBuildHasher> = IndexMap::default();
-            for id in self.contacts.keys() {
-                let typ = get_typ(db, id)?;
-                *counts.entry(typ).or_insert(0) += 1;
+            // `sort_contacts` keeps the lasable ones first. "Visual On" used
+            // to list everything together, so a pilot saw SAMs "in sight" and
+            // couldn't tell they were twice the laser's range away.
+            let mut near: IndexMap<Vehicle, usize, FxBuildHasher> = IndexMap::default();
+            let mut far: IndexMap<Vehicle, usize, FxBuildHasher> = IndexMap::default();
+            for (i, id) in self.contacts.keys().enumerate() {
+                let bucket = if i < self.lasable { &mut near } else { &mut far };
+                *bucket.entry(get_typ(db, id)).or_insert(0) += 1;
             }
-            write!(msg, "Visual On: ")?;
-            for (i, (typ, count)) in counts.into_iter().enumerate() {
-                if i == self.contacts.len() - 1 {
-                    if count > 1 {
-                        write!(msg, "{}x{}", typ, count)?;
-                    } else {
-                        write!(msg, "{}", typ)?;
-                    }
-                } else {
-                    if count > 1 {
-                        write!(msg, "{}x{}, ", typ, count)?;
-                    } else {
-                        write!(msg, "{}, ", typ)?;
-                    }
+            if !near.is_empty() {
+                write!(msg, "In laser range: ")?;
+                list(&mut msg, near);
+            }
+            if !far.is_empty() {
+                if self.lasable > 0 {
+                    msg.push('\n');
                 }
+                let why = if self.focus.is_some() { "out of range / outside focus" } else { "out of laser range" };
+                write!(msg, "Seen, {why}: ")?;
+                list(&mut msg, far);
             }
         }
         write!(
             msg,
-            "\n\nautoshift: {}, ir_pointer: {}",
-            self.autoshift.is_none(),
-            self.ir_pointer
+            "\n\nmode: {}, IR pointer: {}{}",
+            if self.autoshift.is_none() { "auto" } else { "manual (Shift cycles targets)" },
+            if self.ir_pointer { "on" } else { "off" },
+            if self.focus.is_some() { ", focused on a mark" } else { "" }
         )?;
         write!(msg, "\nfilter: [")?;
         let len = self.filter.len();
@@ -1059,25 +1149,19 @@ impl Jtac {
         if n == 0 {
             return Ok(false);
         }
-        let i = match (self.autoshift, &self.target) {
-            (None, None) => 0,
-            (None, Some(target)) => match self.contacts.get_index_of(&target.id) {
-                None => 0,
-                Some(i) => {
-                    if i + 1 < n {
-                        i + 1
-                    } else {
-                        0
-                    }
-                }
-            },
-            (Some(i), _) => {
-                if i + 1 < n {
-                    i + 1
-                } else {
-                    0
-                }
-            }
+        // Step on from where the current target sits NOW. The contacts are
+        // re-sorted every update, so the index remembered in `autoshift` from
+        // the last shift pointed at whatever had moved into that place since,
+        // and Shift skipped or repeated targets.
+        let cur = self
+            .target
+            .as_ref()
+            .and_then(|t| self.contacts.get_index_of(&t.id))
+            .or(self.autoshift);
+        let i = match cur {
+            None => 0,
+            Some(i) if i + 1 < n => i + 1,
+            Some(_) => 0,
         };
         self.autoshift = Some(i);
         self.set_target(db, lua, i).context("setting target")
@@ -1682,9 +1766,12 @@ impl Jtac {
                     Some(i) => self.autoshift = Some(i),
                 },
             },
+            // Back to auto: let the auto rules pick. This used to lase
+            // contact 0 outright -- an error with nothing in view, and with
+            // everything out of range, a spot on a SAM 40 km away.
             Some(_) => {
                 self.autoshift = None;
-                self.set_target(db, lua, 0)?;
+                self.sort_contacts(db, lua)?;
             }
         }
         self.persist_state(db);
@@ -2654,7 +2741,11 @@ impl Jtacs {
                 to_remove.push(id);
                 continue;
             }
+            // Dropped like the airborne-unit case above. A bare `continue`
+            // kept the contact -- at the spot the jet took off from -- and a
+            // JTAC lasing it kept the spot there for the rest of the sortie.
             if inst.in_air && !tags.contains(UnitTag::Helicopter) {
+                to_remove.push(id);
                 continue;
             }
             let dist = na::distance_squared(&pos.into(), &inst.position.p.0.into());

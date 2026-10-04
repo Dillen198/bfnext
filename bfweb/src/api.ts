@@ -155,11 +155,148 @@ export interface Objective {
 /** The frontline as three independent sets of [lat, lon] polylines: the
  *  white centre (no man's land), the blue-dominance edge and the
  *  red-dominance edge. Same geometry the engine draws on the F10 map. */
-// ── Ground war (from /api/groundwar) ───────────────────────────────────
+// ── Theatre HQ (from /api/hq) ───────────────────────────────────────────
+// Mirrors `bfprotocols::hq`. The engine builds the view for the viewer's own
+// coalition from what that coalition can see, exactly as the HQ (and the
+// strategist) plan from it.
+export type HqPosture = 'offensive' | 'balanced' | 'defensive'
+export type HqLine = 'air' | 'fires' | 'logistics' | 'troops' | 'ground'
+export type HqOpKind =
+  | 'cap' | 'strike' | 'sead' | 'recon' | 'artillery' | 'missile_strike' | 'ambush'
+  | 'convoy' | 'helo_supply' | 'helo_troops' | 'reinforce'
+  | 'bomber' | 'awacs' | 'tanker' | 'naval_strike' | 'air_repair'
+export type HqRequestKind =
+  | 'cas' | 'cap' | 'sead' | 'recon' | 'fires' | 'supply' | 'troops' | 'tanker' | 'awacs'
+
+export interface HqDirective {
+  posture?: HqPosture | null
+  main_effort?: number | null
+  defend?: number[]
+  supply_priority?: number[]
+  avoid?: number[]
+  weights?: Partial<Record<HqLine, number>>
+  intent?: string | null
+  rationale?: string | null
+  ttl_secs?: number | null
+}
+export interface HqObjRef { id: number; name: string; pos: LatLon }
+export interface HqOp {
+  id: number
+  kind: HqOpKind
+  line: HqLine
+  target: number | null
+  target_name: string
+  pos: LatLon
+  started: string
+  cost: number
+  status: 'active' | 'succeeded' | 'failed' | 'cancelled'
+  detail: string
+  request: number | null
+  /** Flights flying with it: "escort" | "sead". */
+  support: string[]
+}
+export interface HqRequest {
+  id: number
+  kind: HqRequestKind
+  by: string
+  target: number
+  target_name: string
+  created: string
+  status: 'open' | 'answered' | 'declined' | 'expired'
+  answer: string
+}
+export interface HqObjective {
+  id: number
+  name: string
+  kind: string
+  owner: 'own' | 'enemy' | 'neutral'
+  pos: LatLon
+  health: number
+  logi: number
+  supply: number
+  fuel: number
+  threatened: boolean
+  being_captured: boolean
+  capturable: boolean
+  front_km: number
+  inbound: boolean
+}
+export interface HqContact { pos: LatLon; class: string; count: number; near: string; near_km: number; age_mins: number }
+export interface HqView {
+  side: 'Blue' | 'Red'
+  enabled: boolean
+  paused: boolean
+  posture: HqPosture | null
+  source: 'rules' | 'strategist' | 'human' | ''
+  main_effort: HqObjRef | null
+  defend: HqObjRef[]
+  supply_priority: HqObjRef[]
+  avoid: HqObjRef[]
+  weights: Partial<Record<HqLine, number>>
+  intent: string
+  reasons: string[]
+  directive: { directive: HqDirective; received: string; expires: string } | null
+  override: {
+    by: string; set: string; expires: string; directive: HqDirective
+    disabled_ops: HqOpKind[]; paused: boolean
+  } | null
+  treasury: number
+  reserve: number
+  gap_factor: number
+  available: Partial<Record<HqOpKind, number>>
+  ops: HqOp[]
+  requests: HqRequest[]
+  record: { kind: HqOpKind; launched: number; succeeded: number; failed: number }[]
+  log: { at: string; text: string }[]
+  picture: {
+    territory_pct: number
+    own_objectives: number
+    enemy_objectives: number
+    objectives: HqObjective[]
+    humans: number
+    humans_fixed_wing_airborne: number
+    humans_helo_airborne: number
+    enemy_air_detected: number
+    enemy_ground: HqContact[]
+    enemy_sams: HqContact[]
+    formations: number
+    formations_idle: number
+    enemy_formations_in_contact: number
+    ai_air_up: number
+    logistics_out: number
+    troops_out: number
+  }
+  next_think_secs: number
+  /** Added by bfdb. */
+  can_command: boolean
+  can_request: boolean
+  god_mode: boolean
+}
+export type HqCommand =
+  | { kind: 'override'; directive: HqDirective; disabled_ops?: HqOpKind[]; paused?: boolean }
+  | { kind: 'clear_override' }
+  | { kind: 'cancel_op'; op: number }
+  | { kind: 'request'; request: HqRequestKind; objective?: number }
+  | { kind: 'cancel_request'; request_id: number }
+export interface HqReply { ok: boolean; message: string }
+
+// ── Ground war (from /api/groundwar, /ws/groundwar) ─────────────────────
 // Mirrors `bfprotocols::groundwar`. Built by the engine for the viewer's own
-// coalition only: its formations in full, enemy formations only where its
-// forces are in contact with them, and the battles being fought.
+// coalition only: its formations in full (every vehicle where it really is),
+// enemy formations only where our forces have spotted them -- or where they
+// were last seen -- the battles being fought, and our human players, live.
 export type LatLon = [number, number]
+
+export type GroundRole =
+  | 'tank' | 'ifv' | 'apc' | 'recon' | 'aaa' | 'sam' | 'artillery' | 'infantry' | 'truck'
+export type GroundKind = 'armour' | 'mechanised' | 'motorised' | 'infantry'
+
+export interface GroundUnit {
+  pos: LatLon
+  heading: number
+  role: GroundRole
+  typ: string
+}
 
 export interface GroundFormation {
   id: number
@@ -183,13 +320,33 @@ export interface GroundFormation {
   path: LatLon[]
   km_to_go: number
   eta_mins: number | null
+  kind: GroundKind
+  units: GroundUnit[]
+  make_up: Partial<Record<GroundRole, number>>
+  power: number
+  power_full: number
+  supply_pct: number
+  in_supply: boolean
+  morale_pct: number
+  broken: boolean
+  deployment: 'column' | 'deploying' | 'deployed' | 'dug_in'
+  speed_kph: number
+  trail: LatLon[]
+  losses: number
+  kills: number
 }
 
 export interface GroundEnemyContact {
+  id: number
   pos: LatLon
-  kind: 'armour' | 'mechanised' | 'infantry'
+  kind: GroundKind
   approx_vehicles: number
   heading: number
+  /** 0 = in sight now; otherwise `pos` is where it was that long ago. */
+  last_seen_secs: number
+  moving: boolean
+  /** Its vehicles, only while in sight and close. */
+  units: GroundUnit[]
 }
 
 export interface GroundBattle {
@@ -200,6 +357,11 @@ export interface GroundBattle {
   since: number
   live: boolean
   ours: number[]
+  intensity: number
+  our_losses: number
+  enemy_losses: number
+  kind: 'meeting' | 'assault'
+  objective: number | null
 }
 
 export interface GroundObjective {
@@ -212,6 +374,31 @@ export interface GroundObjective {
   threatened: boolean | null
   can_raise: number | null
   being_captured: boolean
+  supply: number | null
+  garrison: number | null
+}
+
+export interface LivePlayer {
+  name: string
+  typ: string
+  category: 'plane' | 'helicopter' | 'ground' | 'ship'
+  pos: LatLon
+  alt_m: number
+  heading: number
+  speed_kts: number
+  in_air: boolean
+  /** The viewer's own unit. */
+  is_self: boolean
+}
+
+export interface GroundEvent {
+  at: number
+  kind:
+    | 'contact' | 'battle' | 'loss' | 'kill' | 'assault' | 'capture'
+    | 'broken' | 'supply' | 'arrived' | 'raised' | 'order' | 'destroyed'
+  text: string
+  pos: LatLon | null
+  formation: number | null
 }
 
 export interface GroundPicture {
@@ -225,10 +412,23 @@ export interface GroundPicture {
   enemy: GroundEnemyContact[]
   battles: GroundBattle[]
   objectives: GroundObjective[]
+  players: LivePlayer[]
+  events: GroundEvent[]
+  /** Server time the picture was built, unix seconds. */
+  time: number
+  spot_m: number
+  engage_m: number
   /** Added by bfdb: this viewer may give orders. */
   can_command: boolean
   /** Added by bfdb: an admin looking in at a side with ?side=. */
   god_mode: boolean
+}
+
+/** One frame of /ws/groundwar. */
+export interface GroundFrame {
+  picture?: GroundPicture
+  /** Why there is no picture: "login" | "nocoalition" | "unavailable" | "disabled" */
+  reason?: string
 }
 
 export type GroundCommand =
@@ -699,6 +899,21 @@ export function connectTacmap(
     try { onFrame(JSON.parse(e.data as string) as TacFrame) } catch { /* ignore */ }
   }
   return () => ws.close()
+}
+
+/** Keep the coalition-locked ground-war stream open (/ws/groundwar), with
+ *  reconnect and backoff. bfdb pushes a `GroundFrame` about every 2 s, built
+ *  for the session's own side; `side` is honoured only for an admin with no
+ *  side of their own. Returns a cleanup function. */
+export function connectGroundwar(
+  onFrame: (f: GroundFrame) => void,
+  onStatus: (s: 'open' | 'closed' | 'error') => void,
+  side?: 'Blue' | 'Red',
+): () => void {
+  const path = side ? `/ws/groundwar?side=${side.toLowerCase()}` : '/ws/groundwar'
+  return reconnectingSocket(path, (d) => {
+    try { onFrame(JSON.parse(d) as GroundFrame) } catch { /* ignore */ }
+  }, onStatus)
 }
 
 export interface LogLine {
@@ -1636,6 +1851,11 @@ export const api = {
     get<SituationReport>(side ? `/situation?side=${side}` : '/situation'),
   // Coalition-locked like `situation`; orders are checked again by the engine
   // against the side the caller's own pilot is on.
+  hq: {
+    view: (side?: 'Blue' | 'Red') => get<HqView>(side ? `/hq?side=${side}` : '/hq'),
+    command: (cmd: HqCommand, side?: 'Blue' | 'Red') =>
+      post<HqReply>(side ? `/hq/command?side=${side}` : '/hq/command', cmd),
+  },
   groundwar: {
     picture: (side?: 'Blue' | 'Red') =>
       get<GroundPicture>(side ? `/groundwar?side=${side}` : '/groundwar'),

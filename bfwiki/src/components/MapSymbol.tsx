@@ -11,6 +11,8 @@
  * all read alike.
  */
 
+import GroundGlyph from './groundGlyphs'
+
 export const SIDE = {
   Blue: '#40a6ff',
   Red: '#b84dff',
@@ -175,7 +177,7 @@ function Glyph({ icon, side = 'Blue' }: { icon: string; side?: Side }) {
       return <svg {...common} aria-hidden><polygon points="17,8 31,8 40,17 40,31 31,40 17,40 8,31 8,17" fill={DIM} fillOpacity="0.25" stroke={DIM} strokeWidth="2.5" /></svg>
 
     default:
-      return <svg {...common} aria-hidden><circle cx="24" cy="24" r="4" fill={DIM} /></svg>
+      return <GroundGlyph icon={icon} side={side} />
   }
 }
 

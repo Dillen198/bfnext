@@ -231,30 +231,43 @@ Delete deployed troops/groups.
 
 ### JTAC Commands
 
-#### `-jtac <id> <command>`
-Control JTAC units via chat.
+#### `-jtac list` / `-jtac <id> <command>`
+Control JTAC units via chat. `-jtac list` shows every JTAC on your side with
+its id (the number in brackets), where it is, its laser code and what it is
+lasing. `-jtac help` prints the commands in-game.
 
 **Available Commands**:
 ```
--jtac <id> status      - Show JTAC status
--jtac <id> shift       - Shift to next target
--jtac <id> autoshift   - Toggle auto-shift
--jtac <id> pointer     - Toggle IR pointer
--jtac <id> smoke       - Smoke target
--jtac <id> code <code> - Set laser code
--jtac <id> arty <aid> <n> - Artillery fire mission
--jtac <id> bomber [mission] - Bomber mission
+-jtac list                   - Your side's JTACs and their ids
+-jtac <id> status            - Targets, laser range, what it can see
+-jtac <id> shift             - Lase the next target in range (auto off)
+-jtac <id> autoshift         - Toggle auto (lase the top-priority target)
+-jtac <id> smoke             - Smoke the current target
+-jtac <id> focus [<mark>|clear] - Lase near your latest / the named map mark
+-jtac <id> move <mark>       - Fly a drone JTAC to a map mark (drone waypoint action, costs points)
+-jtac <id> building          - Lase the next logistics building at its objective
+-jtac <id> 9line             - 9-line for the current target
+-jtac <id> filter <type>|clear - Only lase that type, e.g. filter SAM
+-jtac <id> code <code>       - Set laser code (1111-1788)
+-jtac <id> pointer           - Toggle IR pointer
+-jtac <id> arty <gun|all> <n> - Artillery fire mission
+-jtac <id> bomber [mission]  - Bomber mission
 ```
 
 **Example**:
 ```
+-jtac list
 -jtac 12345 status
+-jtac 12345 move M1
 -jtac 12345 arty 54321 5
 ```
 
 See [JTAC System](../f10-menu/jtac.md) for detailed usage.
 
-**Note**: Most players use F10 menu for JTAC instead of chat commands.
+**Note**: Most pilots use the F10 menu for JTACs. A **Combined Arms
+commander** with no vehicle selected has no F10 menu at all (DCS only gives
+menus to groups), so for them chat is the way in: `-jtac ...` for JTACs and
+`-action ...` for AWACS, drones, AI helos and every other action.
 
 ---
 

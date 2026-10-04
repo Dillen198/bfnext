@@ -31,7 +31,7 @@ When you request JTAC support, it passes a 9-line CAS brief on the tactical freq
 ## JTAC Types
 
 ### Drone JTAC (Large - MQ-9 Reaper)
-- **Range**: **18 km** (18,000m)
+- **Range**: **18 km** (18,000m); lases out to 18.5 km
 - **Line-of-sight**: Not required (can see through terrain)
 - **Cost**: 100 points to deploy
 - **Duration**: 12 hours
@@ -91,17 +91,33 @@ F10 → JTAC → [JTAC ID] → Status
 
 Example:
 ```
-JTAC 12345 status
-lasing T-72B code 1688 marker M123
-position bearing 045 for 5.2km from Batumi
+JTAC Reaper (12345) [1688] status
+lasing T-72B code 1688 -- 312°M 6.4 km from the JTAC
+position 045°M 5.2km from Batumi, lases out to 18.5 km
 
-Visual On: T-72Bx3, BMP-3x2, SA-13
+In laser range: T-72B x3, BMP-3 x2
+Seen, out of laser range: SA-13
 
-autoshift: true, ir_pointer: false
+mode: auto, IR pointer: off
 filter: [Tank, APC]
 available artillery: [54321]
 available ALCM: [65432(4)]
 ```
+
+### Seeing vs. Lasing
+
+A JTAC **sees** out to its detection range (a Reaper spots far beyond
+18 km) but **lases** only out to **18.5 km (10 nm)**. Contacts past that are
+reported under "Seen, out of laser range" and never lased. When everything it
+sees is too far, the status says so instead of a bare "no target":
+
+```
+no target: 3 contact(s) in view, none in laser range. Nearest is Tor 087°M 23.4 km from the JTAC -- it lases out to 18.5 km
+move it closer: -action DRONE Waypoint 12345 <mark text>
+```
+
+Move the drone (Actions → DRONE Waypoint, or `-jtac <id> move <mark text>`)
+and it starts lasing on its own as soon as a target is inside 18.5 km.
 
 ## Target Management
 
@@ -121,11 +137,14 @@ Automatically cycles through targets.
 
 ### Target Priority
 
-JTACs prioritize by:
-1. Unit type (configurable)
-2. Threat level
-3. Distance
-4. Last movement
+JTACs pick targets by:
+1. In laser range (and inside the focus area, if one is set)
+2. Unit type priority (configurable -- SAMs first on the live servers)
+3. Distance (from the focus mark if set, else from the JTAC)
+
+In auto mode a JTAC stays on its current target while it is still as
+important as the best one, rather than hopping between two tanks that are
+the same distance away.
 
 ### Target Filters
 
@@ -275,7 +294,10 @@ every JTAC type -- ground, drone, and player -- and needs no extra setup.
 
 ### "No target"
 - JTAC hasn't detected enemies
-- Enemies out of range
+- Everything it sees is past its 18.5 km laser range -- the status names the
+  nearest contact and its distance; move the drone closer
+- A filter or a focus mark excludes everything it sees (Clear the filter /
+  Clear Focus)
 - Line-of-sight blocked
 - Wait for detection
 

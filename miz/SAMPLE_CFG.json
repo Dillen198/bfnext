@@ -82,6 +82,27 @@
     "repair_speed_mult_when_undefended": 1.0
   },
 
+  "economy": {
+    "enabled": true,
+    "underdog_max_bonus": 0.5,
+    "underdog_territory_weight": 1.0,
+    "underdog_population_weight": 1.0,
+    "underdog_min_players": 4,
+    "underdog_treasury": true,
+    "wealth_cap_ratio": 4.0,
+    "wealth_taper": 0.5,
+    "late_joiner_fraction": 0.5,
+    "owned_ai_kill_fraction": 0.5,
+    "owned_ai_unattended_fraction": 0.25,
+    "killing_blow_weight": 1.0,
+    "delivery_ref_km": 40.0,
+    "delivery_max_bonus": 1.0,
+    "front_line_km": 25.0,
+    "front_line_bonus": 0.5,
+    "unpacker_share": 0.25,
+    "capture_fund_keep": 0.25
+  },
+
   "warehouse": {
     "hub_max": 25,
     "airbase_max": 5,
@@ -256,11 +277,82 @@
   },
 
   "smart_commander": {
-    "treasury_per_tick": 10,
-    "tick_secs": 60,
-    "objective_funding_fraction": 0.5,
-    "holding_bonus_per_obj": 5,
-    "mission_reward_multiplier": 1.0
+    "tick_period_secs": 60,
+    "treasury_start": 2000,
+    "treasury_income_amount": 500,
+    "treasury_income_period_secs": 300,
+    "objective_fund_max_per_tick": 200,
+    "objective_fund_period_secs": 120,
+    "action_reserve": 300,
+    "holding_bonus_per_objective": 5,
+    "hq": {
+      "_note": "air: per side, a roster of aircraft per job (cap / strike / sead); for each package the HQ sends the entry that fits the target best (min_threat / max_threat = enemy aircraft on radar within 80 km; max_air_defence = known SAMs within 15 km; night; max_range_m; targets armor|base|sam; weight among equals). The side's own Fighters/Attackers/SEAD actions join the roster too. The theatre HQ: each side's AI commander plans and dispatches air packages, fires, convoys, helo supply/troops and reinforcements out of this treasury, steers the ground war and posts tasks. Every key below is optional (these are the defaults except where noted). Set cost_scale instead of every cost on a campaign whose treasury runs into the hundreds of thousands. override_rule names who may take command from the dashboard / -hq (admins always may), e.g. {\"Whitelist\": {\"allowed\": {\"<ucid>\": \"name\"}}}.",
+      "enabled": true,
+      "sides": ["Blue", "Red"],
+      "think_secs": 120,
+      "emergency_think_secs": 30,
+      "max_new_ops_per_think": 2,
+      "max_spend_fraction": 0.4,
+      "cost_scale": 1.0,
+      "objective_funding_share": 0.5,
+      "costs": { "cap": 250, "strike": 300, "sead": 300, "recon": 120, "artillery": 150, "missile_strike": 225, "ambush": 100, "convoy": 80, "helo_supply": 120, "helo_troops": 180, "reinforce": 250, "bomber": 350, "awacs": 200, "tanker": 150, "naval_strike": 250, "air_repair": 150 },
+      "limits": { "air": 3, "recon": 1, "logistics": 3, "troops": 2, "reinforce": 1, "bomber": 1, "awacs": 1, "tanker": 1, "fires_cooldown_secs": 600 },
+      "packages": { "escort_bombers": "always", "escort_strikes": "threatened", "escort_flights": 1, "sead_with_strikes": true, "escort_engage_m": 60000 },
+      "gap_fill": { "full_until_players": 2, "fade_out_players": 16, "min_factor": 0.25, "per_human_cut": 0.35 },
+      "air": {
+        "Blue": {
+          "cap": [
+            { "label": "F-16C pair", "weight": 2, "max_threat": 2,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "BF16CAP", "altitude": 7000, "altitude_typ": "BARO", "speed": 250 } },
+            { "label": "F-15C four-ship", "min_threat": 3,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "BFIGHTERS", "altitude": 9000, "altitude_typ": "BARO", "speed": 260 } }
+          ],
+          "strike": [
+            { "label": "AH-64D pair", "max_air_defence": 0, "max_threat": 0, "targets": ["armor"], "max_range_m": 100000,
+              "plane": { "kind": "Helicopter", "duration": 2700, "template": "BATTACKHELI", "altitude": 150, "altitude_typ": "RADIO", "speed": 60 } },
+            { "label": "A-10C pair", "night": false, "max_air_defence": 1, "targets": ["armor"],
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "BCAS", "altitude": 4000, "altitude_typ": "BARO", "speed": 180 } },
+            { "label": "F/A-18C strike", "targets": ["base"],
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "BSTRIKE", "altitude": 6000, "altitude_typ": "BARO", "speed": 240 } }
+          ],
+          "sead": [
+            { "plane": { "kind": "FixedWing", "duration": 3600, "template": "BSEAD", "altitude": 6000, "altitude_typ": "BARO", "speed": 240 } }
+          ]
+        },
+        "Red": {
+          "cap": [
+            { "label": "MiG-29 pair", "weight": 2, "max_threat": 2,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "RMIG29CAP", "altitude": 7000, "altitude_typ": "BARO", "speed": 250 } },
+            { "label": "Su-27 four-ship", "min_threat": 3,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "RFIGHTERS", "altitude": 9000, "altitude_typ": "BARO", "speed": 260 } }
+          ],
+          "strike": [
+            { "label": "Mi-24P pair", "max_air_defence": 0, "max_threat": 0, "targets": ["armor"], "max_range_m": 100000,
+              "plane": { "kind": "Helicopter", "duration": 2700, "template": "RATTACKHELI", "altitude": 150, "altitude_typ": "RADIO", "speed": 60 } },
+            { "label": "Su-25T pair", "night": false, "max_air_defence": 1, "targets": ["armor"],
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "RCAS", "altitude": 4000, "altitude_typ": "BARO", "speed": 180 } }
+          ],
+          "sead": [
+            { "plane": { "kind": "FixedWing", "duration": 3600, "template": "RSEAD", "altitude": 6000, "altitude_typ": "BARO", "speed": 240 } }
+          ]
+        }
+      },
+      "package_lifetime_secs": 2700,
+      "actions_blue": [],
+      "actions_red": [],
+      "max_air_range_m": 180000,
+      "max_ground_range_m": 60000,
+      "resupply_below_pct": 60,
+      "post_tasks": true,
+      "max_tasks": 3,
+      "announce": true,
+      "steer_ground_war": true,
+      "run_when_empty": false,
+      "requests": { "enabled": true, "cooldown_secs": 300, "ttl_secs": 1200, "max_open_per_side": 6, "bonus": 1.6 },
+      "strategist": { "enabled": true, "max_directive_secs": 2400, "max_weight": 2.5 },
+      "override_rule": "NeverAllowed",
+      "override_max_secs": 7200
+    }
   },
 
   "objective_start_points": {

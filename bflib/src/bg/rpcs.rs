@@ -67,6 +67,9 @@ pub struct Rpcs {
     _query_situation: Proc,
     _query_tacmap: Proc,
     _query_ground_war: Proc,
+    _query_hq: Proc,
+    _hq_directive: Proc,
+    _hq_command: Proc,
     _ground_command: Proc,
     _query_unitdb: Proc,
     _query_gci: Proc,
@@ -799,6 +802,96 @@ impl Rpcs {
             side: Chars = Value::Null; "The side (blue, red, neutral)"
         )?;
         let _q = Arc::clone(&q);
+        let query_hq = define_rpc!(
+            publisher,
+            base.append("query-hq"),
+            "Query one side's theatre HQ as that side sees it: plan, operations, requests, record and its fog-of-war picture (returns JSON HqView)",
+            |mut c: RpcCall, side: Chars, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let ucid = Ucid::from_str(ucid.trim()).ok();
+                _q.push((AdminCommand::QueryHq { side, ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)",
+            ucid: Chars = Value::from(""); "The viewing player's ucid, for can_command (optional)"
+        )?;
+        let _q = Arc::clone(&q);
+        let hq_directive = define_rpc!(
+            publisher,
+            base.append("hq-directive"),
+            "Hand one side's HQ a strategist directive (JSON Directive); returns a JSON HqReply",
+            |mut c: RpcCall, side: Chars, directive: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let directive = match serde_json::from_str::<bfprotocols::hq::Directive>(&directive) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad directive: {e}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::HqDirective { side, directive }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)",
+            directive: Chars = Value::Null; "JSON Directive: posture, main_effort, defend, supply_priority, avoid, weights, intent, rationale, ttl_secs"
+        )?;
+        let _q = Arc::clone(&q);
+        let hq_command = define_rpc!(
+            publisher,
+            base.append("hq-command"),
+            "Command one side's HQ (JSON HqCommand: request, cancel_request, override, clear_override, cancel_op) as a player, or as an admin with an empty ucid; returns a JSON HqReply",
+            |mut c: RpcCall, side: Chars, ucid: Chars, cmd: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let ucid = if ucid.trim().is_empty() {
+                    None
+                } else {
+                    match Ucid::from_str(&ucid) {
+                        Ok(ucid) => Some(ucid),
+                        Err(e) => {
+                            c.reply.send(Value::Error(format!("{e:?}").into()));
+                            return None
+                        }
+                    }
+                };
+                let cmd = match serde_json::from_str::<bfprotocols::hq::HqCommand>(&cmd) {
+                    Ok(cmd) => cmd,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad HQ command: {e}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::HqCommand { side, ucid, cmd }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)",
+            ucid: Chars = Value::Null; "The calling player's ucid, empty for a server admin",
+            cmd: Chars = Value::Null; "JSON HqCommand"
+        )?;
+        let _q = Arc::clone(&q);
         let query_ground_war = define_rpc!(
             publisher,
             base.append("query-ground-war"),
@@ -1357,6 +1450,9 @@ impl Rpcs {
             _query_situation: query_situation,
             _query_tacmap: query_tacmap,
             _query_ground_war: query_ground_war,
+            _query_hq: query_hq,
+            _hq_directive: hq_directive,
+            _hq_command: hq_command,
             _ground_command: ground_command,
             _query_unitdb: query_unitdb,
             _query_gci: query_gci,

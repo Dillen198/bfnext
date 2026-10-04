@@ -11,7 +11,7 @@ use crate::{
 };
 use anyhow::{Context as ErrContext, Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{Action, ActionKind},
+    cfg::{Action, ActionKind, UnitTag},
     db::group::GroupId,
     perf::PerfInner,
     stats::Stat,
@@ -24,6 +24,7 @@ use dcso3::{
     net::{Net, PlayerId, Ucid},
     world::World,
 };
+use enumflags2::{BitFlag, BitFlags};
 use fxhash::FxBuildHasher;
 use indexmap::IndexMap;
 use log::{error, info};
@@ -741,6 +742,11 @@ fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHash
                 "-action {name} <task id> | Remove a task from the coalition board. cost {}",
                 action.cost
             )),
+            ActionKind::Reinforce(r) => Some(format_compact!(
+                "-action {name} <objective> | Send a reinforcement convoy from the nearest friendly objective, rebuilds up to {} destroyed groups. cost {}",
+                r.groups,
+                action.cost
+            )),
         };
         if let Some(msg) = msg {
             ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg)
@@ -848,44 +854,79 @@ fn bind_command(ctx: &mut Context, id: PlayerId, s: &str) {
     }
 }
 
+/// `-jtac help`. Players asked "what are the chat commands for drone jtac to
+/// move to new waypoint, request shift, smoke, lasing buildings, fire?" --
+/// the old help was nine bare command names, several of those things had no
+/// chat command at all, and nothing said where the <id> comes from.
+const JTAC_HELP: &[&str] = &[
+    " -jtac list: every JTAC on your side -- id, where, laser code, what it is lasing",
+    " -jtac <id> status: targets, laser range, what it can see",
+    " -jtac <id> shift: lase the next target in laser range (switches auto off)",
+    " -jtac <id> autoshift: toggle auto (always lase the top-priority target)",
+    " -jtac <id> smoke: smoke the current target",
+    " -jtac <id> focus [<mark text>|clear]: lase near your latest (or the named) map mark",
+    " -jtac <id> move <mark text>: fly a drone JTAC to a map mark (the drone waypoint action, costs points)",
+    " -jtac <id> building: lase the next logistics building at its objective",
+    " -jtac <id> 9line: the 9-line for the current target",
+    " -jtac <id> filter <type>|clear: only lase that type, e.g. filter SAM (repeat to add types)",
+    " -jtac <id> code <code>: a full code 1111-1788, e.g. code 1688",
+    " -jtac <id> pointer: toggle the IR pointer",
+    " -jtac <id> arty <gun id|all> <rounds>: artillery on the current target",
+    " -jtac <id> bomber [mission]: call a bomber mission on the current target",
+    " A drone JTAC sees far but only lases out to 18.5 km (10 nm) -- status says when that is why it isn't lasing",
+];
+
+fn jtac_list(ctx: &mut Context, id: PlayerId) {
+    let Some(side) = ctx
+        .connected
+        .get(&id)
+        .and_then(|ifo| ctx.db.player(&ifo.ucid))
+        .map(|p| p.side)
+    else {
+        ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), "take a slot first");
+        return;
+    };
+    let mut lines: SmallVec<[CompactString; 16]> = smallvec![];
+    for jt in ctx.jtac.jtacs().filter(|jt| jt.side() == side) {
+        let near = ctx
+            .db
+            .objective(&jt.location().oid)
+            .map(|o| o.name.clone())
+            .unwrap_or_else(|_| String::from("unknown"));
+        let doing = match jt.target() {
+            Some(t) => format_compact!("lasing {}", t.typ),
+            None if jt.no_target_reason(&ctx.db).is_some() => {
+                format_compact!("sees enemies, none in laser range")
+            }
+            None => format_compact!("no target"),
+        };
+        lines.push(format_compact!(
+            " {} near {near}, code {}: {doing}",
+            jt.display_name(),
+            jt.code()
+        ));
+    }
+    let msgs = ctx.db.ephemeral.msgs();
+    if lines.is_empty() {
+        msgs.send(MsgTyp::Chat(Some(id)), "your side has no JTACs up");
+        return;
+    }
+    msgs.send(
+        MsgTyp::Chat(Some(id)),
+        "JTACs (the number in brackets is the id for -jtac <id> ...):",
+    );
+    for l in lines {
+        msgs.send(MsgTyp::Chat(Some(id)), l)
+    }
+}
+
 fn jtac_command(ctx: &mut Context, id: PlayerId, s: &str) {
     if s.trim().eq_ignore_ascii_case("help") {
-        ctx.db
-            .ephemeral
-            .msgs()
-            .send(MsgTyp::Chat(Some(id)), " -jtac <id> autoshift");
-        ctx.db
-            .ephemeral
-            .msgs()
-            .send(MsgTyp::Chat(Some(id)), " -jtac <id> pointer");
-        ctx.db
-            .ephemeral
-            .msgs()
-            .send(MsgTyp::Chat(Some(id)), " -jtac <id> shift");
-        ctx.db
-            .ephemeral
-            .msgs()
-            .send(MsgTyp::Chat(Some(id)), " -jtac <id> status");
-        ctx.db
-            .ephemeral
-            .msgs()
-            .send(MsgTyp::Chat(Some(id)), " -jtac <id> smoke");
-        ctx.db.ephemeral.msgs().send(
-            MsgTyp::Chat(Some(id)),
-            " -jtac <id> focus [<mark text>|clear]: lase near your latest (or the named) map mark",
-        );
-        ctx.db.ephemeral.msgs().send(
-            MsgTyp::Chat(Some(id)),
-            " -jtac <id> code <code>: a full code 1111-1788, e.g. code 1688",
-        );
-        ctx.db
-            .ephemeral
-            .msgs()
-            .send(MsgTyp::Chat(Some(id)), " -jtac <id> arty <id|all> <n>");
-        ctx.db
-            .ephemeral
-            .msgs()
-            .send(MsgTyp::Chat(Some(id)), " -jtac <id> bomber [mission]");
+        for line in JTAC_HELP {
+            ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), *line)
+        }
+    } else if s.trim().eq_ignore_ascii_case("list") {
+        jtac_list(ctx, id)
     } else if let Some((jtid, cmd)) = s.trim().split_once(" ") {
         if let Ok(jtid) = jtid.parse::<JtId>() {
             ctx.jtac_commands.push((id, jtid, cmd.trim().into()));
@@ -898,7 +939,7 @@ fn jtac_command(ctx: &mut Context, id: PlayerId, s: &str) {
     } else {
         ctx.db.ephemeral.msgs().send(
             MsgTyp::Chat(Some(id)),
-            "expected -jtac <id> <cmd>, see -jtac <help>",
+            "expected -jtac <id> <cmd> -- -jtac list shows the ids, -jtac help the commands",
         );
     }
 }
@@ -956,16 +997,62 @@ fn run_jtac_command(
         };
         menu::jtac::jtac_shift(lua, arg)?;
     } else if let Some(_) = cmd.strip_prefix("status") {
-        let panel_to_side = ctx
-            .db
-            .player(&ucid)
-            .map(|p| p.jtac_or_spectators)
-            .unwrap_or(true);
+        // Always answered to the one who asked. A Combined Arms commander
+        // (no aircraft) used to get it as a panel to their whole side.
         let arg = ArgTuple {
-            fst: (!panel_to_side).then_some(ucid),
+            fst: Some(ucid),
             snd: jtid,
         };
         menu::jtac::jtac_status(lua, arg)?
+    } else if let Some(_) = cmd.strip_prefix("building") {
+        menu::jtac::jtac_designate_building(lua, ArgTuple { fst: ucid, snd: jtid })?
+    } else if cmd.starts_with("9line") || cmd.starts_with("9-line") || cmd.starts_with("nineline") {
+        menu::jtac::jtac_nine_line(lua, ArgTuple { fst: ucid, snd: jtid })?
+    } else if let Some(f) = cmd.strip_prefix("filter") {
+        let f = f.trim();
+        if f.eq_ignore_ascii_case("clear") {
+            menu::jtac::jtac_clear_filter(lua, ArgTuple { fst: ucid, snd: jtid })?
+        } else {
+            let tag = UnitTag::all()
+                .iter()
+                .find(|t| format_compact!("{t:?}").eq_ignore_ascii_case(f));
+            match tag {
+                Some(tag) => menu::jtac::jtac_filter(
+                    lua,
+                    ArgTriple {
+                        fst: jtid,
+                        snd: BitFlags::from(tag).bits(),
+                        trd: ucid,
+                    },
+                )?,
+                None => {
+                    let all: Vec<CompactString> =
+                        UnitTag::all().iter().map(|t| format_compact!("{t:?}")).collect();
+                    error!("unknown type {f}, one of: clear, {}", all.join(", "))
+                }
+            }
+        }
+    } else if let Some(key) = cmd.strip_prefix("move") {
+        // The drone waypoint action with the JTAC filled in, queued exactly
+        // as if the player had typed `-action <name> <group> <mark>` -- so
+        // it is charged and checked the same way.
+        let key = key.trim();
+        if key.is_empty() {
+            error!("move needs a map mark: -jtac {jtid} move <mark text>")
+        }
+        if jtac.move_hint(&ctx.db).is_none() {
+            error!("JTAC {jtid} can't be moved from here: only drone JTACs can, and your side needs a drone waypoint action")
+        }
+        let name = ctx.db.ephemeral.cfg.actions.get(&side).and_then(|acts| {
+            acts.iter()
+                .find_map(|(n, a)| matches!(a.kind, ActionKind::DroneWaypoint).then(|| n.clone()))
+        });
+        match (name, jtid) {
+            (Some(name), JtId::Group(gid)) => ctx
+                .action_commands
+                .push((id, String::from(format_compact!("{name} {gid} {key}")))),
+            _ => error!("your side has no drone waypoint action"),
+        }
     } else if let Some(_) = cmd.strip_prefix("smoke") {
         let arg = ArgTuple {
             fst: ucid,
@@ -1092,6 +1179,23 @@ pub(super) fn run_jtac_commands(ctx: &mut Context, lua: MizLua) -> Result<()> {
     Ok(())
 }
 
+/// Sent when a player takes a Combined Arms slot. DCS gives a commander
+/// with no vehicle selected no group, so no group F10 menu can reach them
+/// -- players took that as "the tactical commander can't call AWACS, drones,
+/// JTACs or AI helos" (Discord, Sept 30). Every one of those is already a
+/// chat command; say so.
+pub(crate) fn commander_guide(ctx: &mut Context, id: PlayerId) {
+    for line in [
+        "Combined Arms: with no vehicle selected DCS has no F10 menu for you, so command from chat:",
+        " -action help: AWACS, drones, JTACs, AI helos, tankers and the rest of your side's actions, with costs",
+        "   most take the text of an F10 map mark you placed, e.g. -action JTAC Drone M1",
+        " -jtac list, then -jtac <id> status | shift | smoke | move <mark> | focus <mark> -- -jtac help for all",
+        " -brief: the situation, -balance: your points, -help: everything else",
+    ] {
+        ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), line)
+    }
+}
+
 fn help_command(ctx: &mut Context, id: PlayerId) {
     let admin = match ctx.connected.get(&id) {
         None => false,
@@ -1109,8 +1213,9 @@ fn help_command(ctx: &mut Context, id: PlayerId) {
         " -delete <groupid>: delete a group you deployed for a partial refund",
         " -action <name> <args>: perform an action, -action help for a list of actions",
         " -bind <uuid>: link your account to the web dashboard (uuid from its login page)",
-        " -jtac <jtid> <cmd>",
+        " -jtac list | -jtac <id> <cmd>: work a JTAC from chat, -jtac help for the commands",
         " -gci [on|off|metric|imperial|auto]: control your live GCI voice calls",
+        " -hq [ops|help]: your side's commander's intent and operations, -request <kind>: ask HQ for support",
         " -help: show this help message",
     ] {
         ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), cmd)
@@ -1184,6 +1289,15 @@ pub(super) fn process(
         Ok("".into())
     } else if let Some(s) = msg.strip_prefix("-jtac ") {
         jtac_command(ctx, id, s);
+        Ok("".into())
+    } else if msg.eq_ignore_ascii_case("-hq") {
+        crate::hq::chat(ctx, id, "", false);
+        Ok("".into())
+    } else if let Some(s) = msg.strip_prefix("-hq ") {
+        crate::hq::chat(ctx, id, s, false);
+        Ok("".into())
+    } else if let Some(s) = msg.strip_prefix("-request ") {
+        crate::hq::chat(ctx, id, s, true);
         Ok("".into())
     } else if msg.starts_with("-help") {
         help_command(ctx, id);

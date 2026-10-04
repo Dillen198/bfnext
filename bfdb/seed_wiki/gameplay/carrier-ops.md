@@ -86,6 +86,13 @@ at a minute), so **stacking crates is how you get a deck back in a hurry**.
 See [Cargo Operations](../f10-menu/cargo.md) and
 [C-130 Hercules & Airdrop](../advanced/c130-airdrop.md).
 
+### A new task force sails out
+
+When a carrier group changes hands, or a sunk one is respawned, the new task
+force puts to sea from its naval base (the owner's nearest one, if its own has
+fallen) and sails back to its station. It is not on station until it gets
+there.
+
 ### Repair / Respawn Carrier actions
 
 Some servers configure explicit `Repair Carrier` and `Respawn Carrier` actions
