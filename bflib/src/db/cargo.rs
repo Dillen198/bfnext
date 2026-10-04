@@ -15,7 +15,6 @@ for more details.
 */
 
 use super::{Db, ephemeral::DeployableIndex, group::{SpawnedGroup, SpawnedUnit}, objective::Objective};
-use anyhow::Context as _;
 use crate::{
     db::group::DeployKind,
     group, maybe, objective, objective_mut,
@@ -4766,8 +4765,18 @@ impl Db {
                     };
                     let source_warehouse = objective!(self, crate_data.origin)?.warehouse.clone();
 
-                    let (obj_mut, wh) = self.sync_warehouse_to_objective(lua, oid)
-                        .context("syncing warehouse for fuel transfer")?;
+                    let (obj_mut, wh) = match self.sync_warehouse_to_objective(lua, oid) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // Retrying every tick changes nothing (Oct 3: 4000
+                            // errors from four crates); back off like any other
+                            // crate that can't be used where it is.
+                            log::warn!("[C130_CARGO] fuel crate '{crate_name}': destination depot unavailable: {e:?}");
+                            let name = objective!(self, oid).map(|o| o.name.to_string()).unwrap_or_default();
+                            let why = format!("{name} can't take deliveries right now (its depot is out of action)");
+                            return Ok(self.c130_crate_blocked(crate_name, crate_data, why));
+                        }
+                    };
 
                     let mut added_items = Vec::new();
                     let mut taken: SmallVec<[(dcso3::warehouse::LiquidType, u32); 4]> = smallvec![];
@@ -4879,8 +4888,18 @@ impl Db {
                     };
                     let source_warehouse = objective!(self, crate_data.origin)?.warehouse.clone();
 
-                    let (obj_mut, wh) = self.sync_warehouse_to_objective(lua, oid)
-                        .context("syncing warehouse for weapons transfer")?;
+                    let (obj_mut, wh) = match self.sync_warehouse_to_objective(lua, oid) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            // Retrying every tick changes nothing (Oct 3: 4000
+                            // errors from four crates); back off like any other
+                            // crate that can't be used where it is.
+                            log::warn!("[C130_CARGO] weapons crate '{crate_name}': destination depot unavailable: {e:?}");
+                            let name = objective!(self, oid).map(|o| o.name.to_string()).unwrap_or_default();
+                            let why = format!("{name} can't take deliveries right now (its depot is out of action)");
+                            return Ok(self.c130_crate_blocked(crate_name, crate_data, why));
+                        }
+                    };
 
                     let mut added_items = Vec::new();
                     let mut taken: Vec<(String, u32)> = Vec::new();

@@ -2099,7 +2099,9 @@ fn select_cloud_preset(cover_pct: f64, precip_mm: f64) -> (Option<&'static str>,
 /// aloft still come from the open-meteo model since METAR has no upper air.
 struct CheckWxSurface {
     temp_c: f64,
-    pressure_hpa: f64,
+    /// None when the station reports no pressure at all -- the template's
+    /// QNH is kept rather than failing the whole live-weather pass.
+    pressure_hpa: Option<f64>,
     wind_speed_ms: f64,
     wind_from_dir: f64,
     cloud_cover_pct: f64,
@@ -2133,11 +2135,13 @@ fn fetch_checkwx_surface(api_key: &str, station: &str) -> Result<CheckWxSurface>
         .pointer("/temperature/celsius")
         .and_then(|v| v.as_f64())
         .context("METAR missing temperature.celsius")?;
-    let pressure_hpa = d
-        .pointer("/barometer/hpa")
-        .and_then(|v| v.as_f64())
-        .or_else(|| d.pointer("/barometer/mb").and_then(|v| v.as_f64()))
-        .context("METAR missing barometer.hpa")?;
+    // Some stations (OSDI, Sept 29) come back with no hPa reading; take the
+    // same pressure in whichever unit checkwx did report.
+    let baro = |key: &str| d.pointer(&format!("/barometer/{key}")).and_then(|v| v.as_f64());
+    let pressure_hpa = baro("hpa")
+        .or_else(|| baro("mb"))
+        .or_else(|| baro("kpa").map(|k| k * 10.0))
+        .or_else(|| baro("hg").map(|h| h * 33.8639));
     let (wind_speed_ms, wind_from_dir) = match d.get("wind") {
         Some(w) if !w.is_null() => {
             let spd = w
@@ -2238,9 +2242,9 @@ fn apply_live_weather(
     let metar = fetch_checkwx_surface(checkwx_key, metar_station)
         .with_context(|| format!("fetching METAR for {metar_station}"))?;
     info!(
-        "CheckWX {metar_station}: temp={:.0}C qnh={:.0}hPa wind={:.1}m/s@{:.0} cloud={:.0}% precip={:.1}mm",
+        "CheckWX {metar_station}: temp={:.0}C qnh={} wind={:.1}m/s@{:.0} cloud={:.0}% precip={:.1}mm",
         metar.temp_c,
-        metar.pressure_hpa,
+        metar.pressure_hpa.map(|p| format!("{p:.0}hPa")).unwrap_or_else(|| "not reported".into()),
         metar.wind_speed_ms,
         metar.wind_from_dir,
         metar.cloud_cover_pct,
@@ -2302,7 +2306,7 @@ fn apply_live_weather(
     // DCS's wind direction is the direction the wind blows TOWARD, the
     // opposite of the real-world meteorological "from" convention
     let to_dir = |from_dir: f64| (from_dir + 180.0) % 360.0;
-    let qnh_mmhg = (pressure_hpa * 0.750062).round() as i64;
+    let qnh_mmhg = pressure_hpa.map(|p| (p * 0.750062).round() as i64);
 
     let weather: Table = mission.raw_get("weather").context("getting weather table")?;
     let season: Table = weather
@@ -2311,7 +2315,10 @@ fn apply_live_weather(
     season
         .raw_set("temperature", temp_c.round() as i64)
         .context("setting weather.season.temperature")?;
-    weather.raw_set("qnh", qnh_mmhg).context("setting weather.qnh")?;
+    match qnh_mmhg {
+        Some(q) => weather.raw_set("qnh", q).context("setting weather.qnh")?,
+        None => warn!("METAR for {metar_station} has no pressure, keeping the template's QNH"),
+    }
     // Derive a modest gust component from the (clamped) surface wind rather
     // than leaving whatever the template authored -- a high authored
     // groundTurbulence makes flights feel far windier than the reported speed.
@@ -2362,9 +2369,10 @@ fn apply_live_weather(
     clouds.raw_set("iprecptns", iprecptns).context("setting clouds.iprecptns")?;
 
     info!(
-        "applied live weather at ({lat}, {lon}) to mission: {}C, {qnh_mmhg}mmHg, ground wind {wind_speed_ground}m/s @ {}deg, \
+        "applied live weather at ({lat}, {lon}) to mission: {}C, {}mmHg, ground wind {wind_speed_ground}m/s @ {}deg, \
          cloud cover {cloud_cover_pct}% (preset {}, base {cloud_base_m}m), precipitation {precipitation_mm}mm",
         temp_c.round() as i64,
+        qnh_mmhg.map(|q| q.to_string()).unwrap_or_else(|| "template".into()),
         to_dir(wind_from_dir_ground).round() as i64,
         preset.unwrap_or("none"),
     );

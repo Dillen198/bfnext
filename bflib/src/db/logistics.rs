@@ -6949,21 +6949,56 @@ impl Db {
         Ok(())
     }
 
+    /// The DCS airbase behind an objective's logistics, re-resolving a stale
+    /// handle. `airbase_by_oid` holds the handle captured when the objective
+    /// was registered, and it dies with the object it names -- a FARP pad
+    /// static destroyed and put back, a carrier that went down -- after which
+    /// every warehouse sync on that objective failed forever ("16912897 is an
+    /// invalid airbase", Oct 3: four C-130 fuel crates retried it every tick,
+    /// 4000 errors in three hours). Look the airbase up again by name -- the
+    /// FARP's pad, else the objective's own name -- and keep the new handle.
+    /// An objective that never had an airbase still has none.
+    fn live_airbase<'lua>(&mut self, lua: MizLua<'lua>, oid: ObjectiveId) -> Result<Airbase<'lua>> {
+        let obj = objective!(self, oid)?;
+        let stored = self
+            .ephemeral
+            .airbase_by_oid
+            .get(&oid)
+            .cloned()
+            .ok_or_else(|| anyhow!("no logistics for objective {}", obj.name))?;
+        if let Ok(ab) = Airbase::get_instance(lua, &stored) {
+            if ab.is_exist().unwrap_or(false) {
+                return Ok(ab);
+            }
+        }
+        let name = match &obj.kind {
+            ObjectiveKind::Farp { pad_template, .. } => pad_template.clone(),
+            _ => obj.name.clone(),
+        };
+        let obj_name = obj.name.clone();
+        let ab = Airbase::get_by_name(lua, name.clone())
+            .ok()
+            .filter(|ab| ab.is_exist().unwrap_or(false))
+            .ok_or_else(|| {
+                anyhow!("the airbase behind {obj_name} ({name}) no longer exists in DCS")
+            })?;
+        let id = ab.object_id().context("getting airbase object id")?;
+        info!("{obj_name}: its airbase handle went stale, re-resolved {name}");
+        self.ephemeral.airbase_by_oid.insert(oid, id);
+        Ok(ab)
+    }
+
     pub fn sync_warehouse_to_objective<'lua>(
         &mut self,
         lua: MizLua<'lua>,
         oid: ObjectiveId,
     ) -> Result<(&mut Objective, warehouse::Warehouse<'lua>)> {
-        let obj = objective_mut!(self, oid)?;
-        let airbase = self
-            .ephemeral
-            .airbase_by_oid
-            .get(&oid)
-            .ok_or_else(|| anyhow!("no logistics for objective {}", obj.name))?;
-        let warehouse = Airbase::get_instance(lua, &airbase)
+        let warehouse = self
+            .live_airbase(lua, oid)
             .context("getting airbase")?
             .get_warehouse()
             .context("getting warehouse")?;
+        let obj = objective_mut!(self, oid)?;
         reconcile_warehouse(obj, &warehouse, false).context("syncing warehouse to objective")?;
         Ok((obj, warehouse))
     }
@@ -6973,16 +7008,12 @@ impl Db {
         lua: MizLua<'lua>,
         oid: ObjectiveId,
     ) -> Result<(&mut Objective, warehouse::Warehouse<'lua>)> {
-        let obj = objective_mut!(self, oid)?;
-        let airbase = self
-            .ephemeral
-            .airbase_by_oid
-            .get(&oid)
-            .ok_or_else(|| anyhow!("no logistics for objective {}", obj.name))?;
-        let warehouse = Airbase::get_instance(lua, &airbase)
+        let warehouse = self
+            .live_airbase(lua, oid)
             .context("getting airbase")?
             .get_warehouse()
             .context("getting warehouse")?;
+        let obj = objective_mut!(self, oid)?;
         reconcile_warehouse(obj, &warehouse, true).context("syncing objective to warehouse")?;
         Ok((obj, warehouse))
     }

@@ -1761,7 +1761,14 @@ impl Db {
                             if player_side != Some(obj.owner()) {
                                 return Ok(());
                             }
-                            let id = maybe!(self.ephemeral.airbase_by_oid, oid, "airbase")?;
+                            // A base with no DCS warehouse (a zone-only FOB, a
+                            // command center, a FARP whose pad is gone) has
+                            // nothing to credit -- that was logged as an error
+                            // on every such deslot.
+                            let Some(id) = self.ephemeral.airbase_by_oid.get(&oid).cloned() else {
+                                debug!("deslot at {oid:?}: no warehouse there to return the airframe to");
+                                return Ok(());
+                            };
                             let airbase = Airbase::get_instance(lua, &id).context("get airbase")?;
                             let wh = airbase.get_warehouse().context("get warehouse")?;
                             let mut sync: SmallVec<[String; 4]> = smallvec![typ.0.clone()];
