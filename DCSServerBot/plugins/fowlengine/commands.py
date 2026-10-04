@@ -161,10 +161,6 @@ def srv_params(server_name: str | None, **extra) -> dict:
     return p
 
 
-class EngineUnavailable(RuntimeError):
-    """bfdb answered, but the engine behind it didn't (HTTP 502/503/504)."""
-
-
 def srv_path(path: str, server_name: str | None) -> str:
     """`srv_params` for the places that build a URL string rather than pass
     params -- the admin GET/POST helpers, whose callers pass a full path."""
@@ -245,6 +241,10 @@ async def bfdb_session(http, api_url: str, username: str, password: str,
     cookie = await bfdb_login(http, api_url, username, password)
     _ADMIN_SESSION_CACHE[key] = (cookie, now)
     return cookie
+
+
+class BriefingUnavailable(RuntimeError):
+    """/api/situation answered 503: bfdb is up but the engine isn't answering."""
 
 
 async def bfdb_get_cached(api_url: str, username: str, password: str, path: str,
@@ -482,7 +482,7 @@ class FowlEngine(Plugin):
         self._instances_cache = None
         self._range_fail_counts = {}     # server name -> consecutive feed/status failures
         self._range_warned = set()       # (server name, reason) already logged once
-        self._briefing_engine_down = set()  # servers whose briefing fetch found no engine
+        self._briefing_down = {}         # (server name, side) -> why /api/situation is 503
         self._news_fail_counts = {}      # server name -> consecutive news feed failures
         self._gci_relay_tasks = {}  # server name -> asyncio.Task (GCI transcript relay)
         # Per-server live state for the engine log relay (not persisted -- rebuilt on connect).
@@ -2454,10 +2454,15 @@ class FowlEngine(Plugin):
         path = srv_path(f"/api/situation?side={side.lower()}", server_name)
         status, data = await bfdb_get_cached(api_url, username, password, path,
                                              timeout=BRIEFING_HTTP_TIMEOUT)
-        if status in (502, 503, 504):
-            raise EngineUnavailable(f"/api/situation {side} -> HTTP {status}")
         if status != 200 or data is None:
-            raise RuntimeError(f"/api/situation {side} -> HTTP {status}")
+            # bfdb says why in {"error": ...}; this used to be dropped, so two
+            # days of "HTTP 503" (Sept 28-30) never said which of engine down,
+            # no sortie yet or RPC breaker open it was.
+            why = data.get("error") if isinstance(data, dict) else None
+            detail = f"/api/situation {side} -> HTTP {status}" + (f": {why}" if why else "")
+            if status == 503:
+                raise BriefingUnavailable(detail)
+            raise RuntimeError(detail)
         return data
 
     @tasks.loop(minutes=BRIEFING_UPDATE_MINUTES)
@@ -2484,21 +2489,21 @@ class FowlEngine(Plugin):
                         f"and cannot be read without them.")
                     continue
                 for side, channel_id in channels.items():
+                    key = (server.name, side)
                     try:
                         await self._update_one_briefing(server, config, api_url, username,
                                                         password, side, channel_id)
-                        self._briefing_engine_down.discard(server.name)
-                    except EngineUnavailable as ex:
-                        # The engine isn't answering -- DCS is up but the
-                        # mission is loading, restarting or failed to start.
-                        # Not a briefing fault: say it once per outage, not
-                        # every tick per side (170 ERRORs in a week).
-                        if server.name not in self._briefing_engine_down:
-                            self._briefing_engine_down.add(server.name)
-                            self.log.warning(f"FowlEngine: briefings for {server.name} paused, "
-                                             f"the engine isn't answering ({ex}); they resume "
-                                             f"when it does")
-                        break
+                        if self._briefing_down.pop(key, None) is not None:
+                            self.log.info(f"FowlEngine: {side} briefing for {server.name} is updating again")
+                    except BriefingUnavailable as ex:
+                        # The engine isn't answering. That was an ERROR every
+                        # tick for as long as it lasted (127 in two days);
+                        # say it once per outage, and again if the reason
+                        # changes.
+                        if self._briefing_down.get(key) != str(ex):
+                            self._briefing_down[key] = str(ex)
+                            self.log.warning(f"FowlEngine: {side} briefing for {server.name} paused, "
+                                             f"engine not answering: {ex}")
                     except Exception as ex:
                         self.log.error(f"FowlEngine: {side} briefing for {server.name}: {ex}")
             except Exception as ex:

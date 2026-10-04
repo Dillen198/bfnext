@@ -6,7 +6,14 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { GradeBadge, QualityChip, ScoreChip } from '../../components/Chips'
 import { airframe, fmt, fmtClock, fmtSecs, fmtSigned, mToFt, pad3, weaponName } from '../../lib/format'
-import { engagementOutcomeLabel, missileOutcomeLabel, PASS_OUTCOME_LABEL } from '../../lib/headline'
+import {
+  CSAR_OUTCOME_LABEL,
+  FIELD_LANDING_OUTCOME_LABEL,
+  HOT_ZONE_OUTCOME_LABEL,
+  engagementOutcomeLabel,
+  missileOutcomeLabel,
+  PASS_OUTCOME_LABEL,
+} from '../../lib/headline'
 import { gradeName, parseCall } from '../../lib/lso'
 import { NM } from '../../lib/geo'
 import type { RangeRecord } from '../../types'
@@ -38,6 +45,17 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 const yn = (b: boolean | null | undefined) => (b === null || b === undefined ? '—' : b ? 'yes' : 'no')
 const ft = (m: number) => `${fmt(mToFt(m))} ft`
 const nm = (m: number) => `${fmt(m / NM, 1)} nm`
+const deg = (v: number | null) => (v === null ? '—' : `${fmtSigned(v, 1)}°`)
+const TIER_CHIP: Record<string, string> = { easy: 'live', medium: 'warn', hard: 'bad' }
+
+function Calls({ calls }: { calls: string[] }) {
+  if (!calls.length) return null
+  return (
+    <Section title="Calls">
+      <ul className="m-0 pl-4 text-[13px] flex flex-col gap-1">{calls.map(c => <li key={c}>{c}</li>)}</ul>
+    </Section>
+  )
+}
 
 export function Facts({ rec }: { rec: RangeRecord }) {
   const r = rec.result
@@ -112,6 +130,12 @@ export function Facts({ rec }: { rec: RangeRecord }) {
             <QualityChip q={r.quality} />
             <span className="muted text-[13px]">{r.clock} o'clock · φ {fmt(r.radial_deg, 1)}°</span>
           </div>
+          {(r.tier || r.gps_denied) && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {r.tier && <span className={`chip ${TIER_CHIP[r.tier] ?? 'outline'}`}>TIER: {r.tier.toUpperCase()}</span>}
+              {r.gps_denied && <span className="chip warn" title="Released inside an enemy GPS jammer's radius">GPS DENIED · {r.gps_denied}</span>}
+            </div>
+          )}
           <Section title="Weapon">
             <KV rows={[
               ['Weapon', weaponName(r.weapon, r.weapon_display)],
@@ -124,6 +148,8 @@ export function Facts({ rec }: { rec: RangeRecord }) {
               ['Left / right', `${fmtSigned(r.cross_m, 1)} m ${r.cross_m >= 0 ? '(right)' : '(left)'}`],
               ['Time of fall', fmtSecs(r.time_of_flight_s)],
               ['Hit the target object', yn(r.target_hit)],
+              ...(r.tier ? [['Station tier', r.tier] as Row] : []),
+              ...(r.gps_denied ? [['GPS', `denied by ${r.gps_denied}`] as Row] : []),
             ]} />
           </Section>
           <Section title="Release">
@@ -294,9 +320,10 @@ export function Facts({ rec }: { rec: RangeRecord }) {
           <div className="flex items-baseline gap-3"><span className="num text-[34px]">{fmt(r.distance_m, 1)}<span className="text-[15px] muted"> m</span></span><QualityChip q={r.quality} /></div>
           <Section title="Touchdown">
             <KV rows={[
-              ['Drill', r.drill], ['Pad', r.pad], ['Sink rate', `${fmt(r.touchdown_fpm)} fpm`],
+              ['Drill', r.drill], [r.drill === 'ship' ? 'Ship' : 'Pad', r.pad], ['Sink rate', `${fmt(r.touchdown_fpm)} fpm`],
               ['Heading error', r.heading_error_deg === null ? '—' : `${fmtSigned(r.heading_error_deg, 1)}°`],
               ['Hover before touchdown', fmtSecs(r.hover_s)],
+              ...(r.ship_speed_kts !== undefined ? [['Ship speed', `${fmt(r.ship_speed_kts)} kt`] as Row] : []),
             ]} />
           </Section>
         </>
@@ -335,6 +362,141 @@ export function Facts({ rec }: { rec: RangeRecord }) {
               ['9-line → impact', fmtClock(r.time_to_impact_s)], ['Miss', `${fmt(r.miss_m, 1)} m`],
               ['Nearest friendly', r.nearest_friendly_m === null ? '—' : `${fmt(r.nearest_friendly_m)} m`],
               ['Laser code', r.laser_code === null ? '—' : String(r.laser_code)],
+            ]} />
+          </Section>
+        </>
+      )
+    case 'sead':
+      return (
+        <>
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <span className="display text-[34px]" style={{ color: r.site_was_emitting ? 'var(--datum)' : 'var(--ball)' }}>
+              {r.site_destroyed ? 'Site destroyed' : r.site_was_emitting ? 'Radar kill' : 'DEAD kill'}
+            </span>
+            <span className={`chip ${r.site_was_emitting ? 'live' : 'warn'}`}>RADAR {r.site_was_emitting ? 'UP' : 'DARK'} AT LAUNCH</span>
+          </div>
+          <p className="muted text-[13px] mt-1 mb-0">
+            {r.site_was_emitting
+              ? 'The site was emitting when you fired: a true suppression shot.'
+              : 'The site was dark when you fired, so this was a destruction (DEAD) shot, not a reaction to an emitter.'}
+          </p>
+          <Section title="The kill">
+            <KV rows={[
+              ['Network', r.network],
+              ['Site', `${r.site} · ${r.system}`],
+              ['Killed', `${r.role} (${r.unit_type})`],
+              ['Weapon', `${weaponName(r.weapon)}${r.guidance ? ` · ${r.guidance.toUpperCase()}` : ''}`],
+              ['Launch range', r.launch_range_m === null ? '—' : nm(r.launch_range_m)],
+              ['Site status', r.site_destroyed ? 'every radar dead' : 'radars still alive'],
+            ]} />
+          </Section>
+          <Section title="What the network did to you">
+            <KV rows={[
+              ['SAMs fired at you', String(r.shots_at_you)],
+              ['Would have killed you', <span key="d" style={{ color: r.trainer_deaths ? 'var(--wave)' : undefined }}>{r.trainer_deaths}</span>],
+            ]} />
+          </Section>
+        </>
+      )
+    case 'hot_zone':
+      return (
+        <>
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <span className="num text-[34px] font-medium leading-none">{r.air_kills}<span className="text-[15px] muted"> air </span>{r.ground_kills}<span className="text-[15px] muted"> ground</span></span>
+            <span className={`chip ${r.outcome === 'shot_down' ? 'bad' : r.outcome === 'egressed' ? 'live' : 'outline'}`}>{(HOT_ZONE_OUTCOME_LABEL[r.outcome] ?? r.outcome).toUpperCase()}</span>
+          </div>
+          <Section title="Sortie">
+            <KV rows={[
+              ['Zone', r.zone],
+              ['Time in the zone', fmtClock(r.time_in_zone_s)],
+              ['Shots fired', String(r.shots_fired)],
+              ['Missiles defeated', String(r.missiles_defeated)],
+              ['Trainer deaths', <span key="d" style={{ color: r.trainer_deaths ? 'var(--wave)' : undefined }}>{r.trainer_deaths}</span>],
+              ['Kills per shot', r.shots_fired ? fmt((r.air_kills + r.ground_kills) / r.shots_fired, 2) : '—'],
+            ]} />
+          </Section>
+          {r.kills.length > 0 && (
+            <Section title="Kills, in order">
+              <ol className="m-0 pl-5 text-[13px] flex flex-col gap-0.5">{r.kills.map((k, i) => <li key={`${i}-${k}`}>{airframe(k)}</li>)}</ol>
+            </Section>
+          )}
+        </>
+      )
+    case 'low_level':
+      return (
+        <>
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <span className="num text-[34px] font-medium leading-none">{fmtSigned(r.tot_error_s, 0)}<span className="text-[15px] muted"> s TOT</span></span>
+            <QualityChip q={r.quality} />
+          </div>
+          <Section title="Route">
+            <KV rows={[
+              ['Route', r.route],
+              ['Gates', `${r.gates_hit} / ${r.gates_total}`],
+              ['Time · plan', `${fmtClock(r.time_s)} · ${fmtClock(r.planned_s)}`],
+              ['Time on target', `${fmtSigned(r.tot_error_s, 0)} s ${r.tot_error_s > 0.5 ? '(late)' : r.tot_error_s < -0.5 ? '(early)' : ''}`],
+              ['Average speed', `${fmt(r.avg_speed_kts)} kt`],
+            ]} />
+          </Section>
+          <Section title="Height">
+            <KV rows={[
+              ['Ceiling', `${fmt(r.max_allowed_agl_ft)} ft AGL`],
+              ['Under the ceiling', `${fmt(r.pct_below_ceiling)}% of the route`],
+              ['AGL avg · min · max', `${fmt(r.avg_agl_ft)} · ${fmt(r.min_agl_ft)} · ${fmt(r.max_agl_ft)} ft`],
+              ['Below the safety floor', fmtSecs(r.below_floor_s)],
+            ]} />
+          </Section>
+          <Calls calls={r.calls} />
+        </>
+      )
+    case 'field_landing':
+      return (
+        <>
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <span className="num text-[34px] font-medium leading-none">{fmtSigned(r.aim_error_m, 0)}<span className="text-[15px] muted"> m</span></span>
+            <QualityChip q={r.quality} />
+            {!r.stable && <span className="chip warn">UNSTABLE</span>}
+          </div>
+          <Section title="Touchdown">
+            <KV rows={[
+              ['Runway', `${r.airfield} ${r.runway}`],
+              ['Outcome', FIELD_LANDING_OUTCOME_LABEL[r.outcome] ?? r.outcome],
+              ['From the threshold', r.touchdown_from_threshold_m >= 0 ? `${fmt(r.touchdown_from_threshold_m)} m past` : `${fmt(-r.touchdown_from_threshold_m)} m short`],
+              ['Aim point', `${fmtSigned(r.aim_error_m, 0)} m ${r.aim_error_m >= 0 ? '(long)' : '(short)'}`],
+              ['Centreline', `${fmtSigned(r.centreline_m, 1)} m ${r.centreline_m >= 0 ? '(right)' : '(left)'}`],
+              ['Sink rate', `${fmt(r.touchdown_fpm)} fpm`],
+              ['Ground speed', `${fmt(r.touchdown_gs_kts)} kt`],
+            ]} />
+          </Section>
+          <Section title="Approach">
+            <KV rows={[
+              ['Stable from 1 nm', yn(r.stable)],
+              ['Glideslope 1 nm · ½ nm', `${deg(r.gs_error_1nm_deg)} · ${deg(r.gs_error_half_nm_deg)}`],
+              ['Lineup 1 nm · ½ nm', `${deg(r.lineup_1nm_deg)} · ${deg(r.lineup_half_nm_deg)}`],
+            ]} />
+          </Section>
+          <Calls calls={r.calls} />
+        </>
+      )
+    case 'csar':
+      return (
+        <>
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <span className="display text-[34px]" style={{ color: r.outcome === 'rescued' ? 'var(--datum)' : r.outcome === 'failed' ? 'var(--wave)' : 'var(--ball)' }}>
+              {r.outcome === 'rescued' ? 'Rescued' : r.outcome === 'failed' ? 'Not rescued' : 'Not home'}
+            </span>
+            <QualityChip q={r.quality} />
+            {r.hostile && <span className="chip bad">HOSTILE</span>}
+          </div>
+          <Section title="Rescue">
+            <KV rows={[
+              ['Area', r.area],
+              ['Outcome', CSAR_OUTCOME_LABEL[r.outcome] ?? r.outcome],
+              ['MAYDAY → pickup', fmtClock(r.time_to_pickup_s)],
+              ['MAYDAY → home', fmtClock(r.time_total_s)],
+              ['Pickup', r.pickup_method || '—'],
+              ['Delivered to', r.delivered_to ?? '—'],
+              ['Threat', r.hostile ? 'troops hunting the survivor' : 'permissive'],
             ]} />
           </Section>
         </>

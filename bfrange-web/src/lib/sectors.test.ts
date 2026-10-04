@@ -81,15 +81,29 @@ describe('sector shapes', () => {
     expect(cl.lat).toBeGreaterThan(42)
   })
 
-  it('draws all 27 sample sectors, largest first, in their F10 colours', () => {
+  it('draws all 45 sample sectors, largest first, in their F10 colours', () => {
     const drawn = drawSectors(SECTORS)
-    expect(drawn).toHaveLength(27)
+    expect(drawn).toHaveLength(45)
     for (let i = 1; i < drawn.length; i++) expect(drawn[i - 1].area_m2).toBeGreaterThanOrEqual(drawn[i].area_m2)
     const r1 = drawn.find(d => d.sector.id === 'r-1')!
     expect(r1.info.color).toBe('#FF9F1A')
     expect(drawn.find(d => d.sector.kind === 'aar')!.info.dashed).toBe(true)
     // a kind from a newer engine still draws
     expect(kindInfo('space_ops').label).toBe('SPACE OPS')
+    // the newer kinds, in the mission's colours
+    expect(kindInfo('hot_zone').color).toBe('#FF1744')
+    expect(kindInfo('ew').color).toBe('#00C8B4')
+    expect(kindInfo('csar')).toMatchObject({ color: '#7CFC4A', dashed: true })
+    expect(kindInfo('pattern')).toMatchObject({ color: '#F2F2F2', dashed: true })
+    expect(kindInfo('ship_deck').color).toBe('#F2F2F2')
+    // a low-level route draws its line down the middle of the corridor
+    const ll = drawn.find(d => d.sector.id === 'll-1')!
+    expect(ll.info.route).toBe(true)
+    expect(ll.centreline).toHaveLength(8)
+    const [lon, lat] = ll.centreline![0]
+    expect(lat).toBeCloseTo(42.06, 2)
+    expect(lon).toBeCloseTo(42.42, 2)
+    expect(drawn.filter(d => d.centreline)).toHaveLength(2)
   })
 
   it('the side filter keeps the shared sectors', () => {

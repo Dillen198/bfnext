@@ -74,6 +74,14 @@ pub struct MenuData {
     pub ships: Vec<(std::string::String, std::string::String)>,
     pub compositions: Vec<(std::string::String, std::string::String)>,
     pub sams: Vec<(std::string::String, std::string::String)>,
+    /// IADS networks (id, name)
+    pub iads: Vec<(std::string::String, std::string::String)>,
+    /// CSAR areas (id, name)
+    pub csar: Vec<(std::string::String, std::string::String)>,
+    pub hot_zones: bool,
+    pub jammers: bool,
+    pub low_level: bool,
+    pub decks: bool,
     pub is_helo: bool,
 }
 
@@ -106,6 +114,25 @@ pub fn build(lua: MizLua, gid: GroupId, d: &MenuData) -> Result<()> {
     let ms = sub(&ag, "SAM site 20 nm ahead (instructor)")?;
     for (k, l) in &d.sams {
         r(&ms, l, &format!("spawn:sam_site:type={k}&dist_nm=20&weapons_free=no"))?;
+    }
+    if !d.iads.is_empty() {
+        let se = sub(&ag, "SEAD / IADS ranges")?;
+        r(&se, "Enemy air defence sites", "iads:list")?;
+        let rb = sub(&se, "Rebuild a network (instructor)")?;
+        let mut p = Pager::new(gid, rb);
+        for (k, l) in &d.iads {
+            p.cmd(&mc, l, format!("iads:reset:{k}"))?;
+        }
+    }
+    if d.jammers {
+        r(&ag, "EW: GPS jammers", "ew:list")?;
+    }
+    if !d.jtacs.is_empty() {
+        let cas = sub(&ag, "CAS / JTAC")?;
+        let mut p = Pager::new(gid, cas);
+        for (k, l) in &d.jtacs {
+            p.cmd(&mc, &format!("Check in with {l}"), format!("spawn:cas_drill:jtac={k}"))?;
+        }
     }
 
     // 3. air-to-air
@@ -154,20 +181,21 @@ pub fn build(lua: MizLua, gid: GroupId, d: &MenuData) -> Result<()> {
     r(&duel, "Cancel / knock it off", "duel:cancel")?;
     r(&aa, "Missile trainer ON", "trainer:on")?;
     r(&aa, "Missile trainer OFF (live missiles)", "trainer:off")?;
+    if d.hot_zones {
+        r(&aa, "Hot zone: AWACS picture", "hz:picture")?;
+        r(&aa, "Hot zones: status", "hz:status")?;
+    }
 
-    // 4. tankers
-    let tk = sub(&root, "Tankers")?;
+    // 4. tankers and the carrier
+    let tk = sub(&root, "Tankers / Carrier")?;
     r(&tk, "Tankers on station", "tk:info")?;
     let tko = sub(&tk, "Tanker on my position")?;
     let mut p = Pager::new(gid, tko);
     for (k, l) in &d.tanker_types {
         p.cmd(&mc, l, format!("spawn:tanker:type={k}&alt_ft=20000&leg_nm=20"))?;
     }
-
-    // 5. carrier
-    let cv = sub(&root, "Carrier")?;
-    r(&cv, "Carrier status (BRC/FB/WOD, TACAN, ICLS)", "cv:info")?;
-    r(&cv, "My last pass", "res:last")?;
+    r(&tk, "Carrier status (BRC/FB/WOD, TACAN, ICLS)", "cv:info")?;
+    r(&tk, "My last pass", "res:last")?;
 
     // 6. anti-ship
     let sh = sub(&root, "Anti-ship")?;
@@ -194,16 +222,29 @@ pub fn build(lua: MizLua, gid: GroupId, d: &MenuData) -> Result<()> {
         }
         r(&he, "Troops: unload here", "helo:unload")?;
     }
-    let _ = d.is_helo;
-
-    // 8. CAS
-    if !d.jtacs.is_empty() {
-        let cas = sub(&root, "CAS / JTAC")?;
-        let mut p = Pager::new(gid, cas);
-        for (k, l) in &d.jtacs {
-            p.cmd(&mc, &format!("Check in with {l}"), format!("spawn:cas_drill:jtac={k}"))?;
+    if !d.csar.is_empty() {
+        let cs = sub(&he, "CSAR")?;
+        r(&cs, "CSAR areas and missions", "csar:status")?;
+        let mut p = Pager::new(gid, cs);
+        // the status command already sits on this page
+        p.used = 1;
+        for (k, l) in &d.csar {
+            let a = p.sub(&mc, l)?;
+            r(&a, "Pilot down (cold)", &format!("csar:req:{k}:cold"))?;
+            r(&a, "Pilot down, enemy troops near (HOT)", &format!("csar:req:{k}:hot"))?;
         }
     }
+    if d.decks {
+        r(&he, "Ship decks: where are they", "deck:list")?;
+    }
+    let _ = d.is_helo;
+
+    // 8. navigation and landing
+    let nav = sub(&root, "Low level / Landings")?;
+    if d.low_level {
+        r(&nav, "Low-level routes: gates and times", "ll:brief")?;
+    }
+    r(&nav, "How landings are graded", "pat:help")?;
 
     // 9. my spawns
     let my = sub(&root, "My spawns")?;

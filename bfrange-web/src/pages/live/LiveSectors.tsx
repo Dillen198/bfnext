@@ -5,7 +5,7 @@
  */
 import { useMemo, type CSSProperties, type Ref } from 'react'
 import { Layer, Marker, Source } from 'react-map-gl/maplibre'
-import type { FeatureCollection } from 'geojson'
+import type { Feature, FeatureCollection } from 'geojson'
 import { X } from '@icons'
 import { SECTOR_KIND_ORDER, kindInfo, metresPerPixel, type DrawnSector } from '../../lib/sectors'
 
@@ -19,7 +19,15 @@ function sideText(d: DrawnSector): string {
   return d.side === 'blue' ? 'Blue sector' : d.side === 'red' ? 'Red sector' : 'Shared by both sides'
 }
 
-function Swatch({ color, dashed, light, size = 12 }: { color: string; dashed?: boolean; light: boolean; size?: number }) {
+function Swatch({ color, dashed, route, light, size = 12 }: { color: string; dashed?: boolean; route?: boolean; light: boolean; size?: number }) {
+  // a route is a line on the map, so its key is a line too
+  if (route) {
+    return (
+      <span aria-hidden style={{ width: size, height: size, flex: 'none', display: 'inline-grid', placeItems: 'center' }}>
+        <span style={{ width: size, height: 3, borderRadius: 2, background: color, boxShadow: light ? '0 0 0 1px rgba(15, 24, 34, 0.45)' : '0 0 0 1px rgba(0, 0, 0, 0.5)' }} />
+      </span>
+    )
+  }
   return (
     <span
       aria-hidden
@@ -39,14 +47,32 @@ export function SectorShapes({ drawn, visible, highlight, light }: {
   highlight: string | null
   light: boolean
 }) {
-  const data = useMemo<FeatureCollection>(() => ({
-    type: 'FeatureCollection',
-    features: drawn.map(d => ({
-      type: 'Feature',
-      properties: { id: d.sector.id, color: d.info.color, dashed: d.info.dashed ? 1 : 0 },
-      geometry: { type: 'Polygon', coordinates: [d.ring] },
-    })),
-  }), [drawn])
+  const data = useMemo<FeatureCollection>(() => {
+    const features: Feature[] = []
+    for (const d of drawn) {
+      const route = d.centreline ? 1 : 0
+      // a route's corridor is drawn faint and dashed; the route line itself
+      // (and its gates) carries the colour
+      features.push({
+        type: 'Feature',
+        properties: { id: d.sector.id, color: d.info.color, dashed: d.info.dashed || route ? 1 : 0, route },
+        geometry: { type: 'Polygon', coordinates: [d.ring] },
+      })
+      if (d.centreline) {
+        features.push({
+          type: 'Feature',
+          properties: { id: d.sector.id, color: d.info.color, dashed: 0, route: 2 },
+          geometry: { type: 'LineString', coordinates: d.centreline },
+        })
+        features.push({
+          type: 'Feature',
+          properties: { id: d.sector.id, color: d.info.color, gate: 1 },
+          geometry: { type: 'MultiPoint', coordinates: d.centreline },
+        })
+      }
+    }
+    return { type: 'FeatureCollection', features }
+  }, [drawn])
   // Always mounted, hidden with `visibility`, so toggling never re-adds a
   // layer on top of the live shapes.
   const vis = visible ? 'visible' : 'none'
@@ -56,11 +82,16 @@ export function SectorShapes({ drawn, visible, highlight, light }: {
       <Layer id="sector-casing" type="line" layout={{ visibility: light && visible ? 'visible' : 'none' }}
         paint={{ 'line-color': '#0f1822', 'line-width': 3.5, 'line-opacity': 0.4 }} />
       <Layer id={SECTOR_HIT_LAYER} type="fill" layout={{ visibility: vis }}
-        paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': ['case', ['==', ['get', 'id'], hi], 0.3, 0.15] }} />
+        paint={{
+          'fill-color': ['get', 'color'],
+          'fill-opacity': ['case', ['==', ['get', 'id'], hi], ['case', ['==', ['get', 'route'], 1], 0.14, 0.3], ['case', ['==', ['get', 'route'], 1], 0.05, 0.15]],
+        }} />
       <Layer id="sector-line" type="line" filter={['==', ['get', 'dashed'], 0]} layout={{ visibility: vis }}
-        paint={{ 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0.9 }} />
+        paint={{ 'line-color': ['get', 'color'], 'line-width': ['case', ['==', ['get', 'route'], 2], 2.5, 2], 'line-opacity': 0.9 }} />
       <Layer id="sector-line-dashed" type="line" filter={['==', ['get', 'dashed'], 1]} layout={{ visibility: vis }}
-        paint={{ 'line-color': ['get', 'color'], 'line-width': 2, 'line-opacity': 0.9, 'line-dasharray': [3, 2] }} />
+        paint={{ 'line-color': ['get', 'color'], 'line-width': ['case', ['==', ['get', 'route'], 1], 1, 2], 'line-opacity': ['case', ['==', ['get', 'route'], 1], 0.5, 0.9], 'line-dasharray': [3, 2] }} />
+      <Layer id="sector-gates" type="circle" filter={['==', ['get', 'gate'], 1]} layout={{ visibility: vis }}
+        paint={{ 'circle-radius': 3.5, 'circle-color': ['get', 'color'], 'circle-stroke-color': light ? '#0f1822' : '#0b1118', 'circle-stroke-width': 1.2 }} />
       <Layer id="sector-hi" type="line" filter={['==', ['get', 'id'], hi]} layout={{ visibility: vis }}
         paint={{ 'line-color': ['get', 'color'], 'line-width': 3.5 }} />
     </Source>
@@ -116,7 +147,7 @@ export function SectorLegend({ drawn, light, canHover }: { drawn: DrawnSector[];
           const info = kindInfo(k)
           return (
             <div key={k} role="listitem" className="flex items-center gap-1.5 min-w-0">
-              <Swatch color={info.color} dashed={info.dashed} light={light} />
+              <Swatch color={info.color} dashed={info.dashed} route={info.route} light={light} />
               <span className="mono truncate" style={{ fontSize: 10.5 }}>{info.label}</span>
             </div>
           )
@@ -130,7 +161,7 @@ export function SectorLegend({ drawn, light, canHover }: { drawn: DrawnSector[];
 function SectorInfo({ d, light }: { d: DrawnSector; light: boolean }) {
   return (
     <div className="flex items-start gap-2 min-w-0">
-      <span className="mt-[3px]"><Swatch color={d.info.color} dashed={d.info.dashed} light={light} /></span>
+      <span className="mt-[3px]"><Swatch color={d.info.color} dashed={d.info.dashed} route={d.info.route} light={light} /></span>
       <div className="min-w-0">
         <div className="mono font-semibold text-[12.5px]" style={{ color: 'var(--chalk)' }}>{d.sector.name}</div>
         <div className="flex flex-wrap items-center gap-x-1.5 text-[11.5px]">

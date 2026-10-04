@@ -364,3 +364,109 @@ mod tests {
         assert_eq!(clock(16.), 1);
     }
 }
+
+fn from_points(p: i32) -> PrecisionQuality {
+    match p {
+        5.. => PrecisionQuality::Perfect,
+        4 => PrecisionQuality::Excellent,
+        3 => PrecisionQuality::Good,
+        2 => PrecisionQuality::Fair,
+        _ => PrecisionQuality::Poor,
+    }
+}
+
+/// A low-level route: start from 5 and lose a point per missed gate, for
+/// time spent above the ceiling, for a late/early time on target and for
+/// flying below the safety floor.
+pub fn low_level_quality(
+    gates_missed: u32,
+    pct_below_ceiling: f64,
+    tot_error_s: f64,
+    tot_tolerance_s: f64,
+    below_floor_s: f64,
+) -> PrecisionQuality {
+    let mut p = 5 - gates_missed.min(5) as i32;
+    if pct_below_ceiling < 80. {
+        p -= 2
+    } else if pct_below_ceiling < 95. {
+        p -= 1
+    }
+    let tot = tot_error_s.abs();
+    if tot > tot_tolerance_s * 3. {
+        p -= 2
+    } else if tot > tot_tolerance_s {
+        p -= 1
+    }
+    if below_floor_s > 5. {
+        p -= 1
+    }
+    from_points(p)
+}
+
+/// A runway landing: aim point, centreline, sink rate and a stable approach.
+pub fn field_landing_quality(
+    aim_error_m: f64,
+    centreline_m: f64,
+    touchdown_fpm: f64,
+    stable: bool,
+    undershoot: bool,
+) -> PrecisionQuality {
+    if undershoot {
+        return PrecisionQuality::Poor;
+    }
+    let mut p = 5;
+    let a = aim_error_m.abs();
+    if a > 300. {
+        p -= 2
+    } else if a > 150. {
+        p -= 1
+    }
+    let c = centreline_m.abs();
+    if c > 10. {
+        p -= 2
+    } else if c > 5. {
+        p -= 1
+    }
+    if touchdown_fpm > 900. {
+        p -= 2
+    } else if touchdown_fpm > 600. {
+        p -= 1
+    }
+    if !stable {
+        p -= 1
+    }
+    from_points(p)
+}
+
+/// CSAR: a rescue graded on the time from the MAYDAY to the survivor home.
+pub fn csar_quality(outcome: super::CsarOutcome, time_total_s: Option<f64>) -> PrecisionQuality {
+    use super::CsarOutcome::*;
+    match (outcome, time_total_s) {
+        (Rescued, Some(t)) if t <= 20. * 60. => PrecisionQuality::Perfect,
+        (Rescued, Some(t)) if t <= 30. * 60. => PrecisionQuality::Excellent,
+        (Rescued, Some(t)) if t <= 45. * 60. => PrecisionQuality::Good,
+        (Rescued, _) => PrecisionQuality::Fair,
+        (PickedUp, _) => PrecisionQuality::Fair,
+        (Failed, _) => PrecisionQuality::Poor,
+    }
+}
+
+#[cfg(test)]
+mod new_sector_tests {
+    use super::*;
+
+    #[test]
+    fn low_level_bands() {
+        assert_eq!(low_level_quality(0, 99., 3., 15., 0.), PrecisionQuality::Perfect);
+        assert_eq!(low_level_quality(1, 90., 20., 15., 0.), PrecisionQuality::Fair);
+        assert_eq!(low_level_quality(4, 50., 200., 15., 30.), PrecisionQuality::Poor);
+    }
+
+    #[test]
+    fn field_landing_bands() {
+        assert_eq!(field_landing_quality(40., 1., 300., true, false), PrecisionQuality::Perfect);
+        assert_eq!(field_landing_quality(200., 6., 700., true, false), PrecisionQuality::Fair);
+        assert_eq!(field_landing_quality(200., 6., 700., false, false), PrecisionQuality::Poor);
+        assert_eq!(field_landing_quality(0., 0., 100., true, true), PrecisionQuality::Poor);
+    }
+}

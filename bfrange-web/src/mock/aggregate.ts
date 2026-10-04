@@ -222,6 +222,109 @@ function insights(recs: RangeRecord[]): Insight[] {
     }
   }
 
+  // SEAD: anti-radiation shots at dark radars; deaths to the network
+  const sead = newest.filter(isKind('sead'))
+  const arm = sead.filter(r => r.result.guidance === 'arm')
+  const dark = arm.filter(r => !r.result.site_was_emitting)
+  if (arm.length >= 3 && dark.length * 10 >= arm.length * 4) {
+    out.push({
+      id: 'sead_arm_dark', kind: 'sead', severity: 'warn',
+      title: `${dark.length} of ${arm.length} anti-radiation kills fired at a dark radar`,
+      detail: 'Those missiles flew to where the radar had been. Fire when the site is emitting (a fresh RWR spike), or use position mode deliberately and expect a lower hit rate.',
+      evidence: dark.slice(0, 6).map(r => r.id),
+    })
+  }
+  const seadDeaths = sead.reduce((a, r) => a + r.result.trainer_deaths, 0)
+  if (seadDeaths >= 2) {
+    out.push({
+      id: 'sead_trainer_deaths', kind: 'sead', severity: 'warn',
+      title: `SAMs would have killed you ${seadDeaths} times on SEAD runs`,
+      detail: 'Launch from nearer the missile\'s maximum range, stay outside the engagement ring until the site is suppressed, and mask your ingress with the terrain.',
+      evidence: sead.filter(r => r.result.trainer_deaths > 0).slice(0, 6).map(r => r.id),
+    })
+  }
+
+  // hot zone: dying in the zone
+  const hz = newest.filter(isKind('hot_zone'))
+  const died = hz.filter(r => r.result.trainer_deaths > 0 || r.result.outcome === 'shot_down')
+  if (hz.length >= 3 && died.length * 3 >= hz.length) {
+    out.push({
+      id: 'hz_dying', kind: 'hot_zone', severity: 'warn',
+      title: `Killed on ${died.length} of your last ${hz.length} hot-zone sorties`,
+      detail: 'Check six before committing to a ground target, ask AWACS for the picture before you push, and keep the energy to defend when the CAP comes in.',
+      evidence: died.slice(0, 6).map(r => r.id),
+    })
+  }
+
+  // low level: ceiling busts and time on target
+  const ll = newest.filter(isKind('low_level'))
+  if (ll.length >= 3) {
+    const below = avg(ll.map(r => r.result.pct_below_ceiling))!
+    if (below < 90) {
+      out.push({
+        id: 'll_ceiling', kind: 'low_level', severity: 'warn',
+        title: `Above the ceiling for ${(100 - below).toFixed(0)}% of your routes`,
+        detail: 'Most busts come climbing over ridgelines: cross at the saddle, unload over the top and get back down on the far side.',
+        evidence: ll.slice(0, 6).map(r => r.id),
+      })
+    }
+    const tot = avg(ll.map(r => r.result.tot_error_s))!
+    if (Math.abs(tot) > 15) {
+      out.push({
+        id: `ll_tot_${tot > 0 ? 'late' : 'early'}`, kind: 'low_level', severity: 'warn',
+        title: `Consistently ${tot > 0 ? 'late' : 'early'} on target (${tot > 0 ? '+' : ''}${tot.toFixed(0)} s average)`,
+        detail: 'Hold the planned ground speed and check the gate times on each run to see where the error builds up.',
+        evidence: ll.slice(0, 6).map(r => r.id),
+      })
+    }
+  }
+
+  // field landings: long/short and centreline
+  const fl = newest.filter(isKind('field_landing')).filter(r => r.result.outcome !== 'undershoot')
+  if (fl.length >= 4) {
+    const aim = avg(fl.map(r => r.result.aim_error_m))!
+    if (Math.abs(aim) > 100) {
+      out.push({
+        id: `fl_${aim > 0 ? 'long' : 'short'}`, kind: 'field_landing', severity: 'warn',
+        title: `Landing ${aim > 0 ? 'long' : 'short'} of the aim point (${Math.abs(aim).toFixed(0)} m average)`,
+        detail: aim > 0
+          ? 'You are floating: cross the threshold at the right speed and height, then let it land rather than holding it off.'
+          : 'You are low on the approach: fly the glideslope down to the aim point and do not duck under it in the last half mile.',
+        evidence: fl.slice(0, 6).map(r => r.id),
+      })
+    }
+    const cl = avg(fl.map(r => r.result.centreline_m))!
+    if (Math.abs(cl) > 3) {
+      out.push({
+        id: `fl_centreline_${cl > 0 ? 'right' : 'left'}`, kind: 'field_landing', severity: 'warn',
+        title: `Touching down ${cl > 0 ? 'right' : 'left'} of the centreline (${Math.abs(cl).toFixed(1)} m average)`,
+        detail: 'Usually an uncorrected crosswind drift. Hold the centreline with rudder and into-wind aileron all the way to touchdown.',
+        evidence: fl.slice(0, 6).map(r => r.id),
+      })
+    }
+    const unstable = fl.filter(r => !r.result.stable)
+    if (unstable.length * 10 >= fl.length * 4) {
+      out.push({
+        id: 'fl_unstable', kind: 'field_landing', severity: 'warn',
+        title: `Unstable approach on ${unstable.length} of your last ${fl.length} landings`,
+        detail: 'Be on speed, on glideslope and lined up by 1 nm; if you are not, go around rather than fixing it in the flare.',
+        evidence: unstable.slice(0, 6).map(r => r.id),
+      })
+    }
+  }
+
+  // CSAR: survivors not brought home
+  const cs = newest.filter(isKind('csar'))
+  const notHome = cs.filter(r => r.result.outcome !== 'rescued')
+  if (cs.length >= 2 && notHome.length >= 2) {
+    out.push({
+      id: 'csar_not_home', kind: 'csar', severity: 'warn',
+      title: `${notHome.length} survivors never made it home`,
+      detail: 'Tune the beacon on the ADF as soon as the MAYDAY comes in, and plan the fuel for the trip home before you go looking.',
+      evidence: notHome.slice(0, 6).map(r => r.id),
+    })
+  }
+
   if (!out.length && recs.length) {
     out.push({
       id: 'keep-flying', kind: newest[0].result.kind, severity: 'info',
@@ -246,6 +349,13 @@ function quals(recs: RangeRecord[]): Qualification[] {
   const strafeGood = recs.filter(isKind('strafe')).filter(r => r.result.accuracy_pct >= 75 && !r.result.foul_line_crossed)
   const defeated = recs.filter(isKind('missile')).filter(r => r.result.perspective === 'target' && r.result.outcome === 'defeated')
   const landGood = recs.filter(isKind('landing')).filter(r => ['GOOD', 'EXCELLENT', 'PERFECT'].includes(r.result.quality))
+  const good = (q: string) => ['GOOD', 'EXCELLENT', 'PERFECT'].includes(q)
+  const deckGood = landGood.filter(r => r.result.drill === 'ship')
+  const seadUp = recs.filter(isKind('sead')).filter(r => r.result.site_was_emitting)
+  const hzClean = recs.filter(isKind('hot_zone')).filter(r => r.result.outcome === 'egressed' && r.result.trainer_deaths === 0 && r.result.air_kills + r.result.ground_kills > 0)
+  const llGood = recs.filter(isKind('low_level')).filter(r => good(r.result.quality) && r.result.gates_hit === r.result.gates_total)
+  const flGood = recs.filter(isKind('field_landing')).filter(r => r.result.stable && r.result.outcome !== 'undershoot' && good(r.result.quality))
+  const rescued = recs.filter(isKind('csar')).filter(r => r.result.outcome === 'rescued')
   const q = (id: string, name: string, description: string, have: number, need: number, extraOk = true, detail?: string): Qualification => ({
     id, name, description,
     earned: have >= need && extraOk,
@@ -262,6 +372,12 @@ function quals(recs: RangeRecord[]): Qualification[] {
     q('strafe-expert', 'Strafe expert', 'Three valid strafe passes at 75% or better.', strafeGood.length, 3),
     q('missile-def', 'Missile defence', 'Defeat five trainer shots without being killed.', defeated.length, 5),
     q('rotary-precision', 'Rotary precision', 'Five precision landings GOOD or better.', landGood.length, 5),
+    q('deck_landing', 'Deck Qual', 'Three helicopter deck landings on a ship under way, GOOD or better.', deckGood.length, 3),
+    q('sead', 'SEAD', 'Three IADS kills made while the site\'s radar was up.', seadUp.length, 3),
+    q('hot_zone', 'Hot Zone', 'Three hot-zone sorties with a kill, no trainer death and a clean egress.', hzClean.length, 3),
+    q('low_level', 'Low Level', 'Two low-level routes with every gate, graded GOOD or better.', llGood.length, 2),
+    q('pattern', 'Pattern', 'Five stable runway landings graded GOOD or better.', flGood.length, 5),
+    q('csar', 'CSAR', 'Two downed pilots found, picked up and brought home.', rescued.length, 2),
   ].filter(x => x.progress > 0 || ['cq-day', 'bomb-qual', 'aar-drogue'].includes(x.id))
 }
 
@@ -359,6 +475,39 @@ export function leaderboards(all: RangeRecord[], days: number | undefined, now: 
     defeated: rs.filter(r => r.result.outcome === 'defeated').length,
     killed: rs.filter(r => r.result.outcome === 'kill').length,
   })).sort((a, b) => b.defeated - b.killed - (a.defeated - a.killed))
+  const sead = [...groupBy(recs.filter(isKind('sead')))].map(([ucid, rs]) => ({
+    ucid, name: rs[0].pilot.name, count: rs.length,
+    radar_up: rs.filter(r => r.result.site_was_emitting).length,
+    sites_destroyed: rs.filter(r => r.result.site_destroyed).length,
+  })).sort((a, b) => b.radar_up - a.radar_up || b.count - a.count)
+  const hotZone = [...groupBy(recs.filter(isKind('hot_zone')))].map(([ucid, rs]) => ({
+    ucid, name: rs[0].pilot.name, count: rs.length,
+    air_kills: rs.reduce((a, r) => a + r.result.air_kills, 0),
+    ground_kills: rs.reduce((a, r) => a + r.result.ground_kills, 0),
+    deaths: rs.reduce((a, r) => a + r.result.trainer_deaths + (r.result.outcome === 'shot_down' ? 1 : 0), 0),
+  })).sort((a, b) => b.air_kills + b.ground_kills - (a.air_kills + a.ground_kills) || a.deaths - b.deaths)
+  const lowLevel = [...groupBy(recs.filter(isKind('low_level')))].map(([ucid, rs]) => {
+    const scores = rs.map(r => r.score ?? 0)
+    const tots = rs.filter(r => r.result.gates_hit === r.result.gates_total).map(r => Math.abs(r.result.tot_error_s))
+    return {
+      ucid, name: rs[0].pilot.name, count: rs.length,
+      best_score: Math.max(...scores), avg_score: avg(scores), best_tot_s: tots.length ? Math.min(...tots) : null,
+    }
+  }).sort((a, b) => (b.best_score ?? 0) - (a.best_score ?? 0) || (a.best_tot_s ?? 1e9) - (b.best_tot_s ?? 1e9))
+  const fieldLanding = [...groupBy(recs.filter(isKind('field_landing')))].filter(([, rs]) => rs.length >= 3).map(([ucid, rs]) => ({
+    ucid, name: rs[0].pilot.name, count: rs.length,
+    avg_score: avg(rs.map(r => r.score ?? 0)),
+    avg_aim_error_m: avg(rs.filter(r => r.result.outcome !== 'undershoot').map(r => Math.abs(r.result.aim_error_m))),
+    stable_pct: Math.round((rs.filter(r => r.result.stable).length / rs.length) * 100),
+  })).sort((a, b) => (b.avg_score ?? 0) - (a.avg_score ?? 0))
+  const deckLanding = [...groupBy(recs.filter(isKind('landing')).filter(r => r.result.drill === 'ship'))].filter(([, rs]) => rs.length >= 2).map(([ucid, rs]) => ({
+    ucid, name: rs[0].pilot.name, count: rs.length,
+    avg_score: avg(rs.map(r => r.score ?? 0)), avg_distance_m: avg(rs.map(r => r.result.distance_m)),
+  })).sort((a, b) => (b.avg_score ?? 0) - (a.avg_score ?? 0))
+  const csar = [...groupBy(recs.filter(isKind('csar')))].map(([ucid, rs]) => {
+    const times = rs.filter(r => r.result.outcome === 'rescued' && r.result.time_total_s !== null).map(r => r.result.time_total_s as number)
+    return { ucid, name: rs[0].pilot.name, count: rs.length, rescues: times.length, fastest_s: times.length ? Math.min(...times) : null }
+  }).filter(x => x.rescues > 0).sort((a, b) => (a.fastest_s ?? 1e9) - (b.fastest_s ?? 1e9))
   return {
     bombing,
     strafe,
@@ -366,6 +515,12 @@ export function leaderboards(all: RangeRecord[], days: number | undefined, now: 
     aar,
     duels: [...elo].map(([ucid, e]) => ({ ucid, name: e.name, wins: e.wins, losses: e.losses, elo: Math.round(e.elo) })).sort((a, b) => b.elo - a.elo),
     missile_defense: md,
+    sead,
+    hot_zone: hotZone,
+    low_level: lowLevel,
+    field_landing: fieldLanding,
+    deck_landing: deckLanding,
+    csar,
   }
 }
 

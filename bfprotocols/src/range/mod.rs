@@ -106,6 +106,11 @@ pub enum RangeResult {
     Troops(TroopResult),
     Gunnery(GunneryResult),
     Cas(CasResult),
+    Sead(SeadResult),
+    HotZone(HotZoneResult),
+    LowLevel(LowLevelResult),
+    FieldLanding(FieldLandingResult),
+    Csar(CsarResult),
 }
 
 impl RangeResult {
@@ -123,6 +128,11 @@ impl RangeResult {
             Self::Troops(_) => "troops",
             Self::Gunnery(_) => "gunnery",
             Self::Cas(_) => "cas",
+            Self::Sead(_) => "sead",
+            Self::HotZone(_) => "hot_zone",
+            Self::LowLevel(_) => "low_level",
+            Self::FieldLanding(_) => "field_landing",
+            Self::Csar(_) => "csar",
         }
     }
 
@@ -204,6 +214,46 @@ impl RangeResult {
                 "{pilot} ({typ}) CAS with {}: {}",
                 c.jtac,
                 if c.correct_target { "on target" } else { "wrong target" }
+            ),
+            Self::Sead(s) => format!(
+                "{pilot} ({typ}) {} killed the {} {} at {} ({})",
+                s.weapon,
+                s.system,
+                s.role,
+                s.site,
+                if s.site_was_emitting { "radar up" } else { "radar dark" }
+            ),
+            Self::HotZone(h) => format!(
+                "{pilot} ({typ}) {}: {} air, {} ground kills in {:.0} min, {}",
+                h.zone,
+                h.air_kills,
+                h.ground_kills,
+                h.time_in_zone_s / 60.,
+                h.outcome.label()
+            ),
+            Self::LowLevel(l) => format!(
+                "{pilot} ({typ}) {}: {}/{} gates, {:.0}% under the ceiling, TOT {:+.0} s, {}",
+                l.route,
+                l.gates_hit,
+                l.gates_total,
+                l.pct_below_ceiling,
+                l.tot_error_s,
+                l.quality.label()
+            ),
+            Self::FieldLanding(f) => format!(
+                "{pilot} ({typ}) landing {} rwy {}: {:+.0} m from the aim point, {:.1} m off centreline, {:.0} fpm, {}",
+                f.airfield,
+                f.runway,
+                f.aim_error_m,
+                f.centreline_m.abs(),
+                f.touchdown_fpm,
+                f.quality.label()
+            ),
+            Self::Csar(c) => format!(
+                "{pilot} ({typ}) CSAR {}: {}{}",
+                c.area,
+                c.outcome.label(),
+                c.time_total_s.map(|t| format!(" in {:.0} min", t / 60.)).unwrap_or_default()
             ),
         }
     }
@@ -340,6 +390,12 @@ pub struct BombResult {
     /// The GOOD radius this weapon was graded against.
     #[serde(default)]
     pub good_radius_m: f64,
+    /// The station's difficulty: "easy", "medium", "hard".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
+    /// Released inside an enemy GPS jammer's radius: the name of the jammer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gps_denied: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -831,6 +887,9 @@ pub struct LandingResult {
     pub pad_pos: GeoPt,
     #[serde(default)]
     pub touchdown_pos: GeoPt,
+    /// Deck landings: the ship's speed at touchdown, knots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ship_speed_kts: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -871,6 +930,240 @@ pub struct CasResult {
     pub nearest_friendly_m: Option<f64>,
     #[serde(default)]
     pub laser_code: Option<u16>,
+}
+
+// ---------------------------------------------------------------- SEAD
+
+/// A player killed part of an IADS site.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeadResult {
+    /// IADS name, e.g. "S-1 Gardabani IADS"
+    pub network: String,
+    /// Site name, e.g. "SA-6 battery"
+    pub site: String,
+    /// System, e.g. "SA-6 Kub"
+    pub system: String,
+    /// DCS type of the unit killed
+    pub unit_type: String,
+    /// "search radar", "track radar", "launcher", "EWR", "command post", "AAA"
+    pub role: String,
+    pub weapon: String,
+    /// "arm", "laser", "ins", "none" ...
+    #[serde(default)]
+    pub guidance: String,
+    #[serde(default)]
+    pub launch_range_m: Option<f64>,
+    /// the site's radar was on when the weapon was fired
+    pub site_was_emitting: bool,
+    /// the site's radars are all dead now
+    pub site_destroyed: bool,
+    /// SAMs this network launched at the pilot this sortie
+    #[serde(default)]
+    pub shots_at_you: u32,
+    /// of those, missiles the trainer removed because they would have killed
+    #[serde(default)]
+    pub trainer_deaths: u32,
+    #[serde(default)]
+    pub site_pos: GeoPt,
+    /// where the shooter was when the weapon left the rail
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_pos: Option<GeoPt>,
+}
+
+// ---------------------------------------------------------------- hot zone
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HotZoneOutcome {
+    /// flew out and came home
+    Egressed,
+    /// landed without leaving the zone first
+    Landed,
+    /// shot down for real
+    ShotDown,
+    /// left the aircraft (slot change, disconnect)
+    Left,
+}
+
+impl HotZoneOutcome {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Egressed => "egressed",
+            Self::Landed => "landed",
+            Self::ShotDown => "shot down",
+            Self::Left => "left the aircraft",
+        }
+    }
+}
+
+/// One player's sortie through a hot zone.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotZoneResult {
+    pub zone: String,
+    pub time_in_zone_s: f64,
+    pub air_kills: u32,
+    pub ground_kills: u32,
+    /// DCS types killed, in order
+    #[serde(default)]
+    pub kills: Vec<String>,
+    pub shots_fired: u32,
+    /// enemy missiles that went for the pilot and missed
+    pub missiles_defeated: u32,
+    /// enemy missiles the trainer removed because they would have killed
+    pub trainer_deaths: u32,
+    pub outcome: HotZoneOutcome,
+}
+
+// ---------------------------------------------------------------- low level
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateTime {
+    pub gate: String,
+    /// seconds after the first gate; None = missed
+    #[serde(default)]
+    pub t: Option<f64>,
+    /// planned time, seconds after the first gate
+    pub planned_t: f64,
+    #[serde(default)]
+    pub agl_ft: Option<f64>,
+    #[serde(default)]
+    pub pos: GeoPt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LowLevelResult {
+    pub route: String,
+    pub gates_hit: u32,
+    pub gates_total: u32,
+    #[serde(default)]
+    pub gates: Vec<GateTime>,
+    pub time_s: f64,
+    pub planned_s: f64,
+    /// + = late at the last gate
+    pub tot_error_s: f64,
+    pub avg_agl_ft: f64,
+    pub max_agl_ft: f64,
+    pub min_agl_ft: f64,
+    pub max_allowed_agl_ft: f64,
+    #[serde(default)]
+    pub min_allowed_agl_ft: f64,
+    /// share of the route flown at or below the ceiling
+    pub pct_below_ceiling: f64,
+    /// seconds below the safety floor
+    #[serde(default)]
+    pub below_floor_s: f64,
+    pub avg_speed_kts: f64,
+    pub quality: PrecisionQuality,
+    #[serde(default)]
+    pub calls: Vec<String>,
+}
+
+// ---------------------------------------------------------------- field landing
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldLandingOutcome {
+    FullStop,
+    TouchAndGo,
+    /// touched down short of the threshold or off the runway
+    Undershoot,
+}
+
+impl FieldLandingOutcome {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::FullStop => "full stop",
+            Self::TouchAndGo => "touch and go",
+            Self::Undershoot => "undershoot",
+        }
+    }
+}
+
+/// A runway landing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldLandingResult {
+    pub airfield: String,
+    /// e.g. "25" or "07L"
+    pub runway: String,
+    pub outcome: FieldLandingOutcome,
+    /// touchdown distance past the landing threshold, metres
+    pub touchdown_from_threshold_m: f64,
+    /// touchdown minus the aim point, metres (+ = long)
+    pub aim_error_m: f64,
+    /// + = right of the centreline
+    pub centreline_m: f64,
+    pub touchdown_fpm: f64,
+    pub touchdown_gs_kts: f64,
+    /// glideslope error at 1 nm and ½ nm, degrees (+ = high)
+    #[serde(default)]
+    pub gs_error_1nm_deg: Option<f64>,
+    #[serde(default)]
+    pub gs_error_half_nm_deg: Option<f64>,
+    /// lineup error at 1 nm and ½ nm, degrees (+ = right)
+    #[serde(default)]
+    pub lineup_1nm_deg: Option<f64>,
+    #[serde(default)]
+    pub lineup_half_nm_deg: Option<f64>,
+    /// on glideslope, lined up and not sinking hard from 1 nm in
+    pub stable: bool,
+    pub quality: PrecisionQuality,
+    #[serde(default)]
+    pub calls: Vec<String>,
+    #[serde(default)]
+    pub touchdown_pos: GeoPt,
+    /// landing direction, degrees true
+    #[serde(default)]
+    pub runway_heading_deg: f64,
+    #[serde(default)]
+    pub threshold_pos: GeoPt,
+    #[serde(default)]
+    pub aim_point_m: f64,
+    #[serde(default)]
+    pub runway_length_m: f64,
+}
+
+// ---------------------------------------------------------------- CSAR
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CsarOutcome {
+    /// picked up and brought home
+    Rescued,
+    /// picked up, not brought home
+    PickedUp,
+    /// never reached
+    Failed,
+}
+
+impl CsarOutcome {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Rescued => "RESCUED",
+            Self::PickedUp => "picked up, not delivered",
+            Self::Failed => "not rescued",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsarResult {
+    pub area: String,
+    /// enemy troops were hunting the survivor
+    pub hostile: bool,
+    pub outcome: CsarOutcome,
+    /// from the MAYDAY to the survivor on board, seconds
+    #[serde(default)]
+    pub time_to_pickup_s: Option<f64>,
+    /// from the MAYDAY to the survivor delivered, seconds
+    #[serde(default)]
+    pub time_total_s: Option<f64>,
+    /// "landed" or "hover"
+    #[serde(default)]
+    pub pickup_method: String,
+    #[serde(default)]
+    pub delivered_to: Option<String>,
+    pub survivor_pos: GeoPt,
+    pub quality: PrecisionQuality,
 }
 
 // ---------------------------------------------------------------- tracks
@@ -929,6 +1222,96 @@ pub struct RangeLive {
     /// seconds, engine uptime since mission start
     #[serde(default)]
     pub uptime_s: f64,
+    #[serde(default)]
+    pub iads: Vec<LiveIads>,
+    #[serde(default)]
+    pub hot_zones: Vec<LiveHotZone>,
+    #[serde(default)]
+    pub jammers: Vec<LiveJammer>,
+    #[serde(default)]
+    pub csar: Vec<LiveCsar>,
+    #[serde(default)]
+    pub ship_decks: Vec<LiveShipDeck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveSamSite {
+    pub id: String,
+    pub name: String,
+    pub system: String,
+    pub pos: GeoPt,
+    /// radar on right now
+    pub emitting: bool,
+    pub units_alive: u32,
+    pub units_total: u32,
+    /// engagement range, metres
+    #[serde(default)]
+    pub range_m: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveIads {
+    pub id: String,
+    pub name: String,
+    pub side: String,
+    pub weapons_free: bool,
+    pub sites: Vec<LiveSamSite>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveHotZone {
+    pub id: String,
+    pub name: String,
+    pub pos: GeoPt,
+    pub radius_m: f64,
+    pub ai_side: String,
+    /// AI fighters airborne in or near the zone
+    pub bandits: u32,
+    pub players: Vec<String>,
+    pub ground_alive: u32,
+    pub ground_total: u32,
+    #[serde(default)]
+    pub awacs: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveJammer {
+    pub id: String,
+    pub name: String,
+    pub side: String,
+    pub pos: GeoPt,
+    pub radius_m: f64,
+    pub gps: String,
+    #[serde(default)]
+    pub glonass: String,
+    pub radio: String,
+    pub alive: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveCsar {
+    pub area: String,
+    pub pilot: String,
+    /// rough position only: the searcher still has to find him
+    pub area_pos: GeoPt,
+    /// the MAYDAY circle's radius around `area_pos`, metres
+    #[serde(default)]
+    pub radius_m: f64,
+    pub started: DateTime<Utc>,
+    pub picked_up: bool,
+    pub hostile: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LiveShipDeck {
+    pub id: String,
+    pub name: String,
+    pub unit_type: String,
+    pub pos: GeoPt,
+    pub heading_deg: f64,
+    pub speed_kts: f64,
+    #[serde(default)]
+    pub tacan: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1122,6 +1505,8 @@ pub enum SpawnCategory {
     Ground,
     Helo,
     Jtac,
+    Sead,
+    Ew,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

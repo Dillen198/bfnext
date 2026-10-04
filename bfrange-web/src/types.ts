@@ -101,6 +101,10 @@ export interface BombResult {
   laser_code?: number
   rings_m: number[]
   good_radius_m: number
+  /** the station's difficulty; missing on untiered stations and older records */
+  tier?: 'easy' | 'medium' | 'hard'
+  /** released inside an enemy GPS jammer's radius: the jammer's name */
+  gps_denied?: string
 }
 
 export type StrafeQuality = 'INVALID' | 'POOR' | 'INEFFECTIVE' | 'GOOD' | 'EXCELLENT' | 'DEADEYE'
@@ -349,6 +353,8 @@ export interface LandingResult {
   quality: PrecisionQuality
   pad_pos: GeoPt
   touchdown_pos: GeoPt
+  /** deck landings (drill "ship"): the ship's speed at touchdown, knots */
+  ship_speed_kts?: number
 }
 
 export interface TroopResult {
@@ -384,6 +390,146 @@ export interface CasResult {
   laser_code: number | null
 }
 
+// ─── SEAD ──────────────────────────────────────────────────────────────────
+
+/** A player killed part of an IADS site. */
+export interface SeadResult {
+  /** IADS name, e.g. "S-1 Gardabani IADS" */
+  network: string
+  /** e.g. "SA-6 battery" */
+  site: string
+  /** e.g. "SA-6 Kub" */
+  system: string
+  /** DCS type of the unit killed */
+  unit_type: string
+  /** "search radar", "track radar", "launcher", "EWR", "command post", "AAA" */
+  role: string
+  weapon: string
+  /** "arm", "laser", "ins", "none" ... */
+  guidance: string
+  launch_range_m: number | null
+  /** the site's radar was on when the weapon was fired */
+  site_was_emitting: boolean
+  /** the site's radars are all dead now */
+  site_destroyed: boolean
+  /** SAMs this network launched at the pilot this sortie */
+  shots_at_you: number
+  /** of those, missiles the trainer removed because they would have killed */
+  trainer_deaths: number
+  site_pos: GeoPt
+  launch_pos?: GeoPt | null
+}
+
+// ─── hot zone ──────────────────────────────────────────────────────────────
+
+export type HotZoneOutcome = 'egressed' | 'landed' | 'shot_down' | 'left'
+
+/** One player's sortie through a hot zone. */
+export interface HotZoneResult {
+  zone: string
+  time_in_zone_s: number
+  air_kills: number
+  ground_kills: number
+  /** DCS types killed, in order */
+  kills: string[]
+  shots_fired: number
+  /** enemy missiles that went for the pilot and missed */
+  missiles_defeated: number
+  /** enemy missiles the trainer removed because they would have killed */
+  trainer_deaths: number
+  outcome: HotZoneOutcome
+}
+
+// ─── low level ─────────────────────────────────────────────────────────────
+
+export interface GateTime {
+  pos?: GeoPt
+  gate: string
+  /** seconds after the first gate; null = missed */
+  t: number | null
+  /** planned time, seconds after the first gate */
+  planned_t: number
+  agl_ft: number | null
+}
+
+export interface LowLevelResult {
+  route: string
+  gates_hit: number
+  gates_total: number
+  gates: GateTime[]
+  time_s: number
+  planned_s: number
+  /** + = late at the last gate */
+  tot_error_s: number
+  avg_agl_ft: number
+  max_agl_ft: number
+  min_agl_ft: number
+  max_allowed_agl_ft: number
+  min_allowed_agl_ft?: number
+  /** share of the route flown at or below the ceiling, percent */
+  pct_below_ceiling: number
+  /** seconds below the safety floor */
+  below_floor_s: number
+  avg_speed_kts: number
+  quality: PrecisionQuality
+  calls: string[]
+}
+
+// ─── field landing ─────────────────────────────────────────────────────────
+
+export type FieldLandingOutcome = 'full_stop' | 'touch_and_go' | 'undershoot'
+
+/** A runway landing. */
+export interface FieldLandingResult {
+  airfield: string
+  /** e.g. "25" or "07L" */
+  runway: string
+  outcome: FieldLandingOutcome
+  /** touchdown distance past the landing threshold, metres */
+  touchdown_from_threshold_m: number
+  /** touchdown minus the aim point, metres (+ = long) */
+  aim_error_m: number
+  /** + = right of the centreline */
+  centreline_m: number
+  touchdown_fpm: number
+  touchdown_gs_kts: number
+  /** glideslope error at 1 nm and ½ nm, degrees (+ = high) */
+  gs_error_1nm_deg: number | null
+  gs_error_half_nm_deg: number | null
+  /** lineup error at 1 nm and ½ nm, degrees (+ = right) */
+  lineup_1nm_deg: number | null
+  lineup_half_nm_deg: number | null
+  /** on glideslope, lined up and not sinking hard from 1 nm in */
+  stable: boolean
+  quality: PrecisionQuality
+  calls: string[]
+  touchdown_pos: GeoPt
+  runway_heading_deg?: number
+  threshold_pos?: GeoPt
+  aim_point_m?: number
+  runway_length_m?: number
+}
+
+// ─── CSAR ──────────────────────────────────────────────────────────────────
+
+export type CsarOutcome = 'rescued' | 'picked_up' | 'failed'
+
+export interface CsarResult {
+  area: string
+  /** enemy troops were hunting the survivor */
+  hostile: boolean
+  outcome: CsarOutcome
+  /** from the MAYDAY to the survivor on board, seconds */
+  time_to_pickup_s: number | null
+  /** from the MAYDAY to the survivor delivered, seconds */
+  time_total_s: number | null
+  /** "landed" or "hover" */
+  pickup_method: string
+  delivered_to: string | null
+  survivor_pos: GeoPt
+  quality: PrecisionQuality
+}
+
 // ─── the record ────────────────────────────────────────────────────────────
 
 /** `RangeResult`, internally tagged by `kind` (snake_case). */
@@ -400,6 +546,11 @@ export type RangeResult =
   | ({ kind: 'troops' } & TroopResult)
   | ({ kind: 'gunnery' } & GunneryResult)
   | ({ kind: 'cas' } & CasResult)
+  | ({ kind: 'sead' } & SeadResult)
+  | ({ kind: 'hot_zone' } & HotZoneResult)
+  | ({ kind: 'low_level' } & LowLevelResult)
+  | ({ kind: 'field_landing' } & FieldLandingResult)
+  | ({ kind: 'csar' } & CsarResult)
 
 export type ResultKind = RangeResult['kind']
 
@@ -409,6 +560,7 @@ export type ResultOf<K extends ResultKind> = Extract<RangeResult, { kind: K }>
 export const RESULT_KINDS: ResultKind[] = [
   'bomb', 'strafe', 'trap', 'aar', 'missile', 'engagement',
   'anti_ship', 'sling', 'landing', 'troops', 'gunnery', 'cas',
+  'sead', 'hot_zone', 'low_level', 'field_landing', 'csar',
 ]
 
 export interface TrackPt {
@@ -596,6 +748,89 @@ export interface LiveArena {
   status: string
 }
 
+/** One SAM, AAA or radar site of an IADS. */
+export interface LiveSamSite {
+  id: string
+  name: string
+  system: string
+  pos: GeoPt
+  /** radar on right now */
+  emitting: boolean
+  units_alive: number
+  units_total: number
+  /** engagement range, metres (0 = unknown) */
+  range_m: number
+}
+
+/** A network of SAM sites that behaves like an air defence system. */
+export interface LiveIads {
+  id: string
+  name: string
+  /** the defenders' side */
+  side: string
+  weapons_free: boolean
+  sites: LiveSamSite[]
+}
+
+/** An area that fights back: AI CAP, air defences and targets. */
+export interface LiveHotZone {
+  id: string
+  name: string
+  pos: GeoPt
+  radius_m: number
+  /** the AI's side */
+  ai_side: string
+  /** AI fighters airborne in or near the zone */
+  bandits: number
+  players: string[]
+  ground_alive: number
+  ground_total: number
+  awacs: string | null
+}
+
+/** A ground GPS / radio jammer. */
+export interface LiveJammer {
+  id: string
+  name: string
+  /** the jammer's own side: a "red" jammer denies blue pilots */
+  side: string
+  pos: GeoPt
+  radius_m: number
+  /** "off" / "jam" / "spoof" */
+  gps: string
+  glonass?: string
+  /** "off" / "simple" / "adaptive" */
+  radio: string
+  alive: boolean
+}
+
+/**
+ * A downed pilot waiting for rescue. Only the search AREA is ever sent: the
+ * searcher still has to find him, so the site never shows where he is.
+ */
+export interface LiveCsar {
+  area: string
+  /** the survivor's name */
+  pilot: string
+  /** rough position only */
+  area_pos: GeoPt
+  radius_m?: number
+  started: IsoTime
+  picked_up: boolean
+  hostile: boolean
+}
+
+/** A warship with a helicopter deck, steaming for deck landing practice. */
+export interface LiveShipDeck {
+  id: string
+  name: string
+  unit_type: string
+  pos: GeoPt
+  heading_deg: number
+  speed_kts: number
+  tacan: string | null
+}
+
 // ─── sectors (`bfprotocols/src/range/cfg.rs` SectorCfg) ────────────────────
 
 /** What a sector of the theatre is for; each kind has its own F10 colour. */
@@ -611,6 +846,12 @@ export type SectorKind =
   | 'aar'
   | 'carrier'
   | 'anti_ship'
+  | 'hot_zone'
+  | 'ew'
+  | 'low_level'
+  | 'csar'
+  | 'pattern'
+  | 'ship_deck'
 
 export interface SectorPoint {
   lat: number
@@ -674,6 +915,13 @@ export interface RangeLive {
   /** the range's sectors, as the F10 map draws them; missing from older engines */
   sectors?: Sector[]
   uptime_s: number
+  // the training disciplines added after the first release; older engines
+  // do not send them
+  iads?: LiveIads[]
+  hot_zones?: LiveHotZone[]
+  jammers?: LiveJammer[]
+  csar?: LiveCsar[]
+  ship_decks?: LiveShipDeck[]
 }
 
 // ─── spawning ──────────────────────────────────────────────────────────────
@@ -686,6 +934,8 @@ export type SpawnCategory =
   | 'ground'
   | 'helo'
   | 'jtac'
+  | 'sead'
+  | 'ew'
 
 export interface ParamOption {
   value: string
@@ -852,6 +1102,18 @@ export interface Leaderboards {
   aar: { ucid: string; name: string; count: number; avg_score: number | null }[]
   duels: { ucid: string; name: string; count?: number; wins: number; losses: number; elo: number }[]
   missile_defense: { ucid: string; name: string; count?: number; defeated: number; killed: number }[]
+  // boards added with the SEAD / hot zone / low-level / pattern / CSAR
+  // disciplines; missing from an older bfdb
+  /** IADS kills; `radar_up` = made while the site was emitting */
+  sead?: { ucid: string; name: string; count: number; radar_up: number; sites_destroyed: number }[]
+  /** `count` = sorties; `deaths` = trainer saves + real shoot-downs */
+  hot_zone?: { ucid: string; name: string; count: number; air_kills: number; ground_kills: number; deaths: number }[]
+  /** `best_tot_s` = smallest |TOT error| on a run that made every gate */
+  low_level?: { ucid: string; name: string; count: number; best_score: number | null; avg_score: number | null; best_tot_s: number | null }[]
+  field_landing?: { ucid: string; name: string; count: number; avg_score: number | null; avg_aim_error_m: number | null; stable_pct: number }[]
+  deck_landing?: { ucid: string; name: string; count: number; avg_score: number | null; avg_distance_m: number | null }[]
+  /** `count` = attempts; `fastest_s` = quickest MAYDAY-to-home */
+  csar?: { ucid: string; name: string; count: number; rescues: number; fastest_s: number | null }[]
 }
 
 export interface StationImpact {

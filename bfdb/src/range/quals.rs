@@ -10,8 +10,8 @@
 
 use super::boards::median;
 use bfprotocols::range::{
-    MissileOutcome, PassOutcome, PrecisionQuality, RangeRecord, RangeResult, StrafeQuality,
-    WeaponClass,
+    CsarOutcome, FieldLandingOutcome, HotZoneOutcome, MissileOutcome, PassOutcome,
+    PrecisionQuality, RangeRecord, RangeResult, StrafeQuality, WeaponClass,
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
@@ -221,6 +221,112 @@ pub(crate) fn evaluate(recs: &[&RangeRecord], now: DateTime<Utc>) -> Vec<Qual> {
             earned,
             progress: counted(n, 3, earned),
             detail: format!("{}/3 deliveries GOOD or better", n.min(3)),
+        });
+    }
+    // Deck landings: 3 on a moving ship GOOD or better
+    {
+        let n = within(90)
+            .filter(|r| {
+                matches!(&r.result, RangeResult::Landing(l)
+                    if l.drill == "ship" && l.quality >= PrecisionQuality::Good)
+            })
+            .count();
+        let earned = n >= 3;
+        out.push(Qual {
+            id: "deck_landing",
+            name: "Deck Qual",
+            description: "3 helicopter deck landings on a ship under way, GOOD or better (90 days)",
+            earned,
+            progress: counted(n, 3, earned),
+            detail: format!("{}/3 deck landings GOOD or better", n.min(3)),
+        });
+    }
+    // SEAD: 3 emitters killed while their radar was up
+    {
+        let n = within(90)
+            .filter(|r| matches!(&r.result, RangeResult::Sead(s) if s.site_was_emitting))
+            .count();
+        let earned = n >= 3;
+        out.push(Qual {
+            id: "sead",
+            name: "SEAD",
+            description: "3 IADS kills made while the site's radar was up (90 days)",
+            earned,
+            progress: counted(n, 3, earned),
+            detail: format!("{}/3 kills with the radar up", n.min(3)),
+        });
+    }
+    // Hot zone: 3 sorties out of the zone with a kill and no trainer death
+    {
+        let n = within(90)
+            .filter(|r| {
+                matches!(&r.result, RangeResult::HotZone(h)
+                    if h.outcome == HotZoneOutcome::Egressed
+                        && h.trainer_deaths == 0
+                        && h.air_kills + h.ground_kills > 0)
+            })
+            .count();
+        let earned = n >= 3;
+        out.push(Qual {
+            id: "hot_zone",
+            name: "Hot Zone",
+            description: "3 hot-zone sorties with a kill, no trainer death and a clean egress (90 days)",
+            earned,
+            progress: counted(n, 3, earned),
+            detail: format!("{}/3 clean sorties with a kill", n.min(3)),
+        });
+    }
+    // Low level: 2 routes GOOD or better with every gate
+    {
+        let n = within(90)
+            .filter(|r| {
+                matches!(&r.result, RangeResult::LowLevel(l)
+                    if l.quality >= PrecisionQuality::Good && l.gates_hit == l.gates_total)
+            })
+            .count();
+        let earned = n >= 2;
+        out.push(Qual {
+            id: "low_level",
+            name: "Low Level",
+            description: "2 low-level routes with every gate, graded GOOD or better (90 days)",
+            earned,
+            progress: counted(n, 2, earned),
+            detail: format!("{}/2 routes GOOD or better", n.min(2)),
+        });
+    }
+    // Pattern: 5 stable field landings GOOD or better
+    {
+        let n = within(90)
+            .filter(|r| {
+                matches!(&r.result, RangeResult::FieldLanding(f)
+                    if f.stable
+                        && f.outcome != FieldLandingOutcome::Undershoot
+                        && f.quality >= PrecisionQuality::Good)
+            })
+            .count();
+        let earned = n >= 5;
+        out.push(Qual {
+            id: "pattern",
+            name: "Pattern",
+            description: "5 stable runway landings graded GOOD or better (90 days)",
+            earned,
+            progress: counted(n, 5, earned),
+            detail: format!("{}/5 stable landings GOOD or better", n.min(5)),
+        });
+    }
+    // CSAR: 2 survivors brought home
+    {
+        let n = within(90)
+            .filter(|r| matches!(&r.result, RangeResult::Csar(c) if c.outcome == CsarOutcome::Rescued))
+            .count();
+        let earned = n >= 2;
+        out.push(Qual {
+            id: "csar",
+            name: "CSAR",
+            description: "2 downed pilots found, picked up and brought home (90 days)",
+            earned,
+            progress: counted(n, 2, earned),
+            detail: format!("{}/2 rescues", n.min(2)),
         });
     }
     out

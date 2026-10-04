@@ -6,10 +6,11 @@
  * out of a small pursuit simulation.
  */
 import { bodyFromWeapon, groundSpeedFromTas, trajectory, windComponents } from '../lib/ballistics'
-import { FT, KT, NM, destination, fromLocal, norm180, norm360, rad, type LatLon } from '../lib/geo'
+import { FT, KT, NM, destination, distanceM, fromLocal, norm180, norm360, rad, type LatLon } from '../lib/geo'
 import { aarGrade, bombQuality, clock as clockOf, goodRadius, precisionQuality, strafeQuality } from '../lib/grading'
 import { describe as describeCalls, gradePoints, parseCall } from '../lib/lso'
 import type {
+  GateTime,
   GeoPt,
   GrooveSample,
   PassOutcome,
@@ -25,11 +26,20 @@ import { Rng, hash } from './rng'
 import {
   ARENAS,
   CARRIERS,
+  CSAR_AREA,
+  FIELDS,
+  HOT_ZONE,
+  HOT_ZONE_KILLS,
+  IADS,
+  LOW_LEVEL,
   LZS,
   MISSION_DATE,
   PADS,
   PILOTS,
+  SAM_SYSTEM,
+  SHIP_DECKS,
   SLING_COURSES,
+  STATION_TIER,
   TANKERS,
   THEATRE,
   pt,
@@ -415,6 +425,9 @@ export function bombRecord(
     ...(w.guidance === 'laser' ? { laser_code: 1688 } : {}),
     rings_m: st.rings_m.length ? st.rings_m : [10, 25, 50, 100],
     good_radius_m: goodRadius(w.cls),
+    ...(STATION_TIER[st.id] ? { tier: STATION_TIER[st.id] } : {}),
+    // GPS weapons on the hard coordinate target fly into the jammer
+    ...(w.guidance === 'ins' && st.id === 'range_c_coord' ? { gps_denied: 'EW-1 Tsalka jammer' } : {}),
   }
   return { ...b0, score: { SHACK: 5, EXCELLENT: 4, GOOD: 3, INEFFECTIVE: 2, POOR: 1 }[quality], result, track: { kind: 'weapon', points } }
 }
@@ -814,7 +827,9 @@ export function slingRecord(p: MockPilot, rng: Rng, ts: number): RangeRecord {
 
 export function landingRecord(p: MockPilot, rng: Rng, ts: number): RangeRecord {
   const unit_type = rng.pick(p.airframes.filter(a => a !== 'M-1 Abrams'))
-  const pad = unit_type === 'AV8BNA' ? PADS[3] : rng.pick(PADS.slice(0, 3))
+  // helicopters also land on the frigates steaming off Kobuleti
+  const deck = { id: SHIP_DECKS[0].id, name: SHIP_DECKS[0].name, drill: 'ship', pos: pt(SHIP_DECKS[0].pos.lat, SHIP_DECKS[0].pos.lon, 6) }
+  const pad = unit_type === 'AV8BNA' ? PADS[3] : rng.pick([...PADS.slice(0, 3), deck])
   const dist = Math.abs(rng.gauss(0, 2.6 * (1.45 - p.skill))) + 0.15
   const quality = precisionQuality(3, dist)
   const td = geo(destination(pad.pos, rng.range(0, 360), dist), pad.pos.alt_m)
@@ -829,6 +844,7 @@ export function landingRecord(p: MockPilot, rng: Rng, ts: number): RangeRecord {
     quality,
     pad_pos: pad.pos,
     touchdown_pos: td,
+    ...(pad === PADS[3] ? { ship_speed_kts: CARRIERS[1].speed_kts } : pad === deck ? { ship_speed_kts: SHIP_DECKS[0].speed_kts } : {}),
   }
   return { ...base(p, unit_type, ts), score: PQ_SCORE[quality], result, track: { kind: 'path', paths: { [p.name]: approachPath(pad.pos, rng, 120, 3000) } } }
 }
@@ -890,6 +906,258 @@ export function casRecord(p: MockPilot, rng: Rng, ts: number): RangeRecord {
   return { ...base(p, unit_type, ts), score, result, track: { kind: 'path', paths: { [p.name]: approachPath(tgt, rng, 180, 14000, 3500) } } }
 }
 
+// ─── SEAD ──────────────────────────────────────────────────────────────────
+
+export function seadRecord(p: MockPilot, rng: Rng, ts: number): RangeRecord {
+  const unit_type = rng.pick(p.airframes)
+  const site = rng.pick(IADS.sites)
+  const sys = SAM_SYSTEM[site.system]
+  const [role, killed] = rng.pick(sys.roles)
+  const weapon = rng.weighted([['AGM_88C', 6], ['AGM_154C', 2], ['GBU_12', 1]] as const)
+  const guidance = weapon === 'AGM_88C' ? 'arm' : weapon === 'AGM_154C' ? 'ins' : 'laser'
+  const emitting = rng.chance(guidance === 'arm' ? 0.55 + p.skill * 0.35 : 0.3)
+  const launch = guidance === 'arm' ? rng.range(22_000, 70_000) * (0.6 + p.skill * 0.5) : guidance === 'ins' ? rng.range(18_000, 45_000) : rng.range(5_000, 12_000)
+  const shots = rng.int(0, 3)
+  const deaths = shots ? Math.min(shots, rng.chance((1 - p.skill) * 0.6) ? 1 : 0) : 0
+  const destroyed = rng.chance(0.3)
+  const brg = rng.range(0, 360)
+  const result: RangeResult = {
+    kind: 'sead',
+    network: IADS.name,
+    site: site.name,
+    system: sys.label,
+    unit_type: killed,
+    role,
+    weapon,
+    guidance,
+    launch_range_m: Math.round(launch),
+    site_was_emitting: emitting,
+    site_destroyed: destroyed,
+    shots_at_you: shots,
+    trainer_deaths: deaths,
+    site_pos: site.pos,
+  }
+  // in to the launch point, then away
+  const pts: TrackPt[] = []
+  for (let t = 0; t <= 240; t += 4) {
+    const f = t / 240
+    const d = f < 0.6 ? launch + 30_000 * (1 - f / 0.6) : launch + 25_000 * ((f - 0.6) / 0.4)
+    const q = destination(site.pos, brg, d)
+    pts.push({ t, lat: q.lat, lon: q.lon, alt_m: Math.round(f < 0.6 ? 7500 : 7500 - 4000 * ((f - 0.6) / 0.4)), speed_kts: 480 })
+  }
+  const score = Math.max(1, (destroyed ? 5 : emitting ? 4 : 3) - deaths)
+  return { ...base(p, unit_type, ts), score, result, track: { kind: 'path', paths: { [p.name]: pts } } }
+}
+
+// ─── hot zone ──────────────────────────────────────────────────────────────
+
+export function hotZoneRecord(p: MockPilot, rng: Rng, ts: number): RangeRecord {
+  const unit_type = rng.pick(p.airframes)
+  const air = clamp(Math.round(rng.gauss(p.skill * 2.2, 1)), 0, 4)
+  const ground = unit_type.startsWith('A-10') || unit_type.startsWith('F-16') ? clamp(Math.round(rng.gauss(1 + p.skill * 3, 1.2)), 0, 6) : rng.int(0, 1)
+  const kills = [
+    ...Array.from({ length: air }, () => rng.pick(HOT_ZONE_KILLS.air)),
+    ...Array.from({ length: ground }, () => rng.pick(HOT_ZONE_KILLS.ground)),
+  ]
+  const shots = air + ground + rng.int(1, 6)
+  const deaths = rng.chance((1 - p.skill) * 0.7) ? rng.int(1, 2) : 0
+  const outcome = rng.weighted([['egressed', 8], ['landed', 1], ['shot_down', 1], ['left', 0.5]] as const)
+  const time = Math.round(rng.range(540, 2400))
+  const result: RangeResult = {
+    kind: 'hot_zone',
+    zone: HOT_ZONE.name,
+    time_in_zone_s: time,
+    air_kills: air,
+    ground_kills: ground,
+    kills,
+    shots_fired: shots,
+    missiles_defeated: rng.int(0, 4),
+    trainer_deaths: deaths,
+    outcome,
+  }
+  const pts: TrackPt[] = []
+  const ph = rng.range(0, 6)
+  for (let t = 0; t <= time; t += 10) {
+    const a = ph + t / 180
+    const r = HOT_ZONE.radius_m * (0.25 + 0.5 * Math.abs(Math.sin(t / 400)))
+    const q = destination(HOT_ZONE.pos, (a * 180) / Math.PI, r)
+    pts.push({ t, lat: q.lat, lon: q.lon, alt_m: Math.round(4000 + 2500 * Math.sin(t / 150)), speed_kts: 430 })
+  }
+  const score = outcome === 'shot_down' ? 0.5 : clamp(1 + air + ground * 0.5 - deaths * 1.5, 0.5, 5)
+  return { ...base(p, unit_type, ts), score: r2(score), result, track: { kind: 'path', paths: { [p.name]: pts } } }
+}
+
+// ─── low level ─────────────────────────────────────────────────────────────
+
+export function lowLevelRecord(p: MockPilot, rng: Rng, ts: number): RangeRecord {
+  const unit_type = rng.pick(p.airframes)
+  const rt = LOW_LEVEL
+  const speed = rt.speed_kts * KT
+  const drift = rng.gauss(0.02, 0.05 * (1.3 - p.skill))
+  let planned = 0
+  let flown = 0
+  const gates: GateTime[] = []
+  const pts: TrackPt[] = []
+  for (let i = 0; i < rt.gates.length; i++) {
+    const [name, pos] = rt.gates[i]
+    if (i > 0) {
+      const leg = distanceM(rt.gates[i - 1][1], pos)
+      planned += leg / speed
+      flown += (leg / speed) * (1 + drift) + rng.gauss(0, 3)
+    }
+    const missed = i > 0 && i < rt.gates.length - 1 && rng.chance((1 - p.skill) * 0.12)
+    const agl = clamp(rng.gauss(300 + (1 - p.skill) * 180, 90), 60, 1100)
+    gates.push({ gate: name, t: missed ? null : r1(flown), planned_t: r1(planned), agl_ft: missed ? null : Math.round(agl) })
+    pts.push({ t: r1(flown), lat: pos.lat, lon: pos.lon, alt_m: Math.round(120 + agl * FT), speed_kts: Math.round(rt.speed_kts * (1 + drift)) })
+  }
+  const hit = gates.filter(g => g.t !== null).length
+  const agls = gates.map(g => g.agl_ft).filter((x): x is number => x !== null)
+  const above = agls.filter(a => a > rt.max_agl_ft).length / Math.max(1, agls.length)
+  const pctBelow = r1(clamp(100 - above * 60 - rng.range(0, 6), 40, 100))
+  const tot = r1(flown - planned)
+  const belowFloor = rng.chance(0.15) ? r1(rng.range(2, 14)) : 0
+  // bfprotocols grading::low_level_quality
+  let pts5 = 5 - Math.min(5, rt.gates.length - hit)
+  if (pctBelow < 80) pts5 -= 2
+  else if (pctBelow < 95) pts5 -= 1
+  if (Math.abs(tot) > 45) pts5 -= 2
+  else if (Math.abs(tot) > 15) pts5 -= 1
+  if (belowFloor > 5) pts5 -= 1
+  const quality = (['POOR', 'POOR', 'FAIR', 'GOOD', 'EXCELLENT', 'PERFECT'] as const)[clamp(pts5, 0, 5)]
+  const calls = [
+    ...gates.filter(g => g.t === null).map(g => `Missed gate ${g.gate}`),
+    ...(pctBelow < 95 ? [`Above ${rt.max_agl_ft} ft for ${fmtPct(100 - pctBelow)} of the route`] : []),
+    ...(Math.abs(tot) > 15 ? [`${tot > 0 ? 'Late' : 'Early'} at the last gate by ${Math.abs(Math.round(tot))} s`] : []),
+    ...(belowFloor > 5 ? [`Below ${rt.min_agl_ft} ft for ${Math.round(belowFloor)} s`] : []),
+  ]
+  const result: RangeResult = {
+    kind: 'low_level',
+    route: rt.name,
+    gates_hit: hit,
+    gates_total: rt.gates.length,
+    gates,
+    time_s: r1(flown),
+    planned_s: r1(planned),
+    tot_error_s: tot,
+    avg_agl_ft: Math.round(agls.reduce((a, b) => a + b, 0) / Math.max(1, agls.length)),
+    max_agl_ft: Math.round(Math.max(...agls, 0) + rng.range(0, 150)),
+    min_agl_ft: Math.round(Math.max(40, Math.min(...agls) - rng.range(0, 80))),
+    max_allowed_agl_ft: rt.max_agl_ft,
+    pct_below_ceiling: pctBelow,
+    below_floor_s: belowFloor,
+    avg_speed_kts: Math.round(rt.speed_kts * (1 + drift)),
+    quality,
+    calls,
+  }
+  return { ...base(p, unit_type, ts), score: PQ_SCORE[quality], result, track: { kind: 'path', paths: { [p.name]: pts } } }
+}
+
+const fmtPct = (x: number) => `${Math.round(x)}%`
+
+// ─── field landing ─────────────────────────────────────────────────────────
+
+export function fieldLandingRecord(p: MockPilot, rng: Rng, ts: number): RangeRecord {
+  const unit_type = rng.pick(p.airframes)
+  const f = rng.pick(FIELDS)
+  const aimPoint = 300
+  const aim = rng.gauss(40 + (1 - p.skill) * 80, 110 * (1.3 - p.skill))
+  const undershoot = aimPoint + aim < 0 || rng.chance((1 - p.skill) * 0.03)
+  const fromThr = undershoot ? -rng.range(10, 120) : aimPoint + aim
+  const cl = rng.gauss((1 - p.skill) * 2, 4 * (1.3 - p.skill))
+  const fpm = clamp(rng.gauss(380 + (1 - p.skill) * 300, 140), 80, 1400)
+  const gs1 = r1(rng.gauss(0.2, 0.5 * (1.3 - p.skill)))
+  const gsh = r1(rng.gauss(0.15, 0.4 * (1.3 - p.skill)))
+  const lu1 = r1(rng.gauss(0, 0.8 * (1.3 - p.skill)))
+  const luh = r1(rng.gauss(0, 0.5 * (1.3 - p.skill)))
+  const stable = Math.abs(gsh) < 0.7 && Math.abs(luh) < 1 && fpm < 900
+  const aimErr = r1(fromThr - aimPoint)
+  // bfprotocols grading::field_landing_quality
+  let q = 5
+  if (Math.abs(aimErr) > 300) q -= 2
+  else if (Math.abs(aimErr) > 150) q -= 1
+  if (Math.abs(cl) > 10) q -= 2
+  else if (Math.abs(cl) > 5) q -= 1
+  if (fpm > 900) q -= 2
+  else if (fpm > 600) q -= 1
+  if (!stable) q -= 1
+  const quality = undershoot ? 'POOR' : (['POOR', 'POOR', 'FAIR', 'GOOD', 'EXCELLENT', 'PERFECT'] as const)[clamp(q, 0, 5)]
+  const calls = [
+    ...(gs1 > 0.5 ? ['High at 1 nm'] : gs1 < -0.5 ? ['Low at 1 nm'] : []),
+    ...(Math.abs(luh) >= 1 ? [`Lined up ${luh > 0 ? 'right' : 'left'} at half a mile`] : []),
+    ...(fpm > 600 ? [`Firm touchdown (${Math.round(fpm)} fpm)`] : []),
+    ...(Math.abs(aimErr) > 150 ? [`${aimErr > 0 ? 'Long' : 'Short'} of the aim point`] : []),
+  ]
+  const hdg = f.heading_deg
+  const td = destination(destination(f.threshold, hdg, fromThr), hdg + 90, cl)
+  const result: RangeResult = {
+    kind: 'field_landing',
+    airfield: f.airfield,
+    runway: f.runway,
+    outcome: undershoot ? 'undershoot' : rng.chance(0.35) ? 'touch_and_go' : 'full_stop',
+    touchdown_from_threshold_m: r1(fromThr),
+    aim_error_m: aimErr,
+    centreline_m: r1(cl),
+    touchdown_fpm: Math.round(fpm),
+    touchdown_gs_kts: Math.round(unit_type === 'T-45' ? rng.range(118, 132) : rng.range(130, 158)),
+    gs_error_1nm_deg: gs1,
+    gs_error_half_nm_deg: gsh,
+    lineup_1nm_deg: lu1,
+    lineup_half_nm_deg: luh,
+    stable,
+    quality,
+    calls,
+    touchdown_pos: geo(td, f.threshold.alt_m),
+  }
+  // a straight-in from 4 nm on a 3° glideslope
+  const pts: TrackPt[] = []
+  for (let t = 0; t <= 110; t += 2) {
+    const d = 4 * NM * (1 - t / 110) - aimPoint
+    const q2 = destination(f.threshold, hdg + 180, d)
+    pts.push({ t, lat: q2.lat, lon: q2.lon, alt_m: Math.round(f.threshold.alt_m + Math.max(0, d + aimPoint) * Math.tan(rad(3))), speed_kts: 140 })
+  }
+  return { ...base(p, unit_type, ts), score: PQ_SCORE[quality], result, track: { kind: 'path', paths: { [p.name]: pts } } }
+}
+
+// ─── CSAR ──────────────────────────────────────────────────────────────────
+
+export function csarRecord(p: MockPilot, rng: Rng, ts: number): RangeRecord {
+  const unit_type = rng.pick(p.airframes.filter(a => a.startsWith('UH') || a.startsWith('CH') || a.startsWith('Mi')).length ? p.airframes.filter(a => a.startsWith('UH') || a.startsWith('CH') || a.startsWith('Mi')) : ['UH-1H'])
+  const surv = geo(destination(CSAR_AREA.pos, rng.range(0, 360), rng.range(1000, CSAR_AREA.radius_m * 0.8)), CSAR_AREA.pos.alt_m)
+  const hostile = rng.chance(0.4)
+  const outcome = rng.weighted([['rescued', 7 + p.skill * 4], ['picked_up', 1.5], ['failed', 1.5]] as const)
+  const pickup = outcome === 'failed' ? null : Math.round(rng.range(420, 1800) * (1.5 - p.skill))
+  const total = outcome === 'rescued' && pickup !== null ? pickup + Math.round(rng.range(480, 1100)) : null
+  // bfprotocols grading::csar_quality
+  const quality = outcome === 'failed' ? 'POOR' : outcome === 'picked_up' || total === null ? 'FAIR'
+    : total <= 20 * 60 ? 'PERFECT' : total <= 30 * 60 ? 'EXCELLENT' : total <= 45 * 60 ? 'GOOD' : 'FAIR'
+  const home = pt(42.1767, 42.4826, 45) // Kutaisi
+  const result: RangeResult = {
+    kind: 'csar',
+    area: CSAR_AREA.name,
+    hostile,
+    outcome,
+    time_to_pickup_s: pickup,
+    time_total_s: total,
+    pickup_method: outcome === 'failed' ? '' : rng.chance(hostile ? 0.3 : 0.5) ? 'hover' : 'landed',
+    delivered_to: outcome === 'rescued' ? 'Kutaisi' : null,
+    survivor_pos: surv,
+    quality,
+  }
+  // out from Kutaisi to the survivor, and home again when he was brought back
+  const leg = (from: GeoPt, to: GeoPt, t0: number): TrackPt[] => {
+    const d = distanceM(from, to)
+    const secs = d / (100 * KT)
+    return Array.from({ length: 41 }, (_, i) => {
+      const f = i / 40
+      const q = { lat: from.lat + (to.lat - from.lat) * f, lon: from.lon + (to.lon - from.lon) * f }
+      return { t: r1(t0 + secs * f), lat: q.lat, lon: q.lon, alt_m: Math.round(Math.max(from.alt_m, to.alt_m) + 150), speed_kts: f === 1 ? 0 : 100 }
+    })
+  }
+  const out = leg(home, surv, 0)
+  const back = outcome === 'rescued' ? leg(surv, home, out[out.length - 1].t + 60) : []
+  return { ...base(p, unit_type, ts), score: PQ_SCORE[quality], result, track: { kind: 'path', paths: { [p.name]: [...out, ...back] } } }
+}
+
 // ─── dispatcher ────────────────────────────────────────────────────────────
 
 const BUILDERS: Record<ResultKind, (p: MockPilot, rng: Rng, ts: number) => RangeRecord> = {
@@ -905,6 +1173,11 @@ const BUILDERS: Record<ResultKind, (p: MockPilot, rng: Rng, ts: number) => Range
   troops: troopsRecord,
   gunnery: gunneryRecord,
   cas: casRecord,
+  sead: seadRecord,
+  hot_zone: hotZoneRecord,
+  low_level: lowLevelRecord,
+  field_landing: fieldLandingRecord,
+  csar: csarRecord,
 }
 
 export function randomRecord(rng: Rng, ts: number, pilot?: MockPilot): RangeRecord {

@@ -15,6 +15,11 @@ export const KIND_LABEL: Record<ResultKind, string> = {
   troops: 'Troop drill',
   gunnery: 'Gunnery',
   cas: 'CAS / JTAC',
+  sead: 'SEAD / DEAD',
+  hot_zone: 'Hot zone',
+  low_level: 'Low-level route',
+  field_landing: 'Field landing',
+  csar: 'CSAR',
 }
 
 /** Four-letter plate used on compact cards. */
@@ -31,6 +36,11 @@ export const KIND_CODE: Record<ResultKind, string> = {
   troops: 'TRPS',
   gunnery: 'GNRY',
   cas: 'CAS',
+  sead: 'SEAD',
+  hot_zone: 'HOT',
+  low_level: 'LOLO',
+  field_landing: 'PATT',
+  csar: 'CSAR',
 }
 
 export const CATEGORY_LABEL: Record<SpawnCategory, string> = {
@@ -41,6 +51,8 @@ export const CATEGORY_LABEL: Record<SpawnCategory, string> = {
   ground: 'Ground forces',
   helo: 'Helicopter drills',
   jtac: 'JTAC',
+  sead: 'SEAD / IADS',
+  ew: 'Electronic warfare',
 }
 
 export const STATION_KIND_LABEL: Record<StationKind, string> = {

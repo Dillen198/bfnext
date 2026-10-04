@@ -11,7 +11,7 @@ import { fmt, fmtClock, pad3 } from '../lib/format'
 import type { RangeLive } from '../types'
 import { LiveFeed } from './live/LiveFeed'
 import { LiveMap } from './live/LiveMap'
-import { CarrierPanel, StationsPanel, TankersPanel } from './live/LivePanels'
+import { AirDefencePanel, CarrierPanel, HeloOpsPanel, HotZonesPanel, StationsPanel, TankersPanel } from './live/LivePanels'
 
 function StatusStrip({ live }: { live: RangeLive }) {
   const w = live.wind
@@ -80,6 +80,11 @@ export default function LivePage() {
             <>
               <CarrierPanel carriers={live.carriers} />
               <TankersPanel tankers={live.tankers} />
+              {(live.hot_zones ?? []).length > 0 && <HotZonesPanel zones={live.hot_zones!} />}
+              {(live.iads ?? []).length + (live.jammers ?? []).length > 0 && <AirDefencePanel iads={live.iads ?? []} jammers={live.jammers ?? []} />}
+              {(live.csar ?? []).length + (live.ship_decks ?? []).length > 0 && (
+                <HeloOpsPanel csar={live.csar ?? []} decks={live.ship_decks ?? []} now={live.server_time} />
+              )}
               <StationsPanel stations={live.stations} />
             </>
           )}

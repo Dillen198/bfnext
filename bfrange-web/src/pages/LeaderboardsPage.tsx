@@ -6,15 +6,16 @@ import { api } from '../api'
 import { DaysSeg } from '../components/Controls'
 import { windowDays } from '../lib/days'
 import { Empty, ErrorState, Loading } from '../components/States'
-import { TONE_VAR, fmt, scoreTone } from '../lib/format'
+import { TONE_VAR, fmt, fmtClock, scoreTone } from '../lib/format'
 import type { Leaderboards } from '../types'
 
 type Col<T> = { h: string; n?: boolean; v: (r: T) => ReactNode }
+type Rows<K extends keyof Leaderboards> = NonNullable<Leaderboards[K]>
 type Board<K extends keyof Leaderboards> = {
   id: K
   label: string
   blurb: string
-  cols: Col<Leaderboards[K][number]>[]
+  cols: Col<Rows<K>[number]>[]
 }
 
 const scoreCell = (s: number | null | undefined, d = 2) =>
@@ -54,11 +55,50 @@ const BOARDS = [
       { h: 'Killed', n: true, v: r => <span style={{ color: r.killed ? 'var(--wave)' : undefined }}>{r.killed}</span> },
       { h: 'Survival', n: true, v: r => (r.defeated + r.killed ? `${fmt((r.defeated / (r.defeated + r.killed)) * 100)}%` : '—') },
     ] } satisfies Board<'missile_defense'>,
+  { id: 'sead', label: 'SEAD kills', blurb: 'IADS kills, ranked by the ones made while the radar was up (true suppression), then by total.',
+    cols: [
+      { h: 'Radar up', n: true, v: r => <b style={{ color: 'var(--datum)' }}>{r.radar_up}</b> },
+      { h: 'Kills', n: true, v: r => r.count },
+      { h: 'Sites destroyed', n: true, v: r => r.sites_destroyed },
+    ] } satisfies Board<'sead'>,
+  { id: 'hot_zone', label: 'Hot zone', blurb: 'Kills in the hot zones, air and ground. Deaths are trainer saves plus real shoot-downs.',
+    cols: [
+      { h: 'Kills', n: true, v: r => <b>{r.air_kills + r.ground_kills}</b> },
+      { h: 'Air · ground', n: true, v: r => `${r.air_kills} · ${r.ground_kills}` },
+      { h: 'Deaths', n: true, v: r => <span style={{ color: r.deaths ? 'var(--wave)' : undefined }}>{r.deaths}</span> },
+      { h: 'Sorties', n: true, v: r => r.count },
+    ] } satisfies Board<'hot_zone'>,
+  { id: 'low_level', label: 'Low level', blurb: 'Best low-level route score, then the smallest time-on-target error on a run that made every gate.',
+    cols: [
+      { h: 'Best', n: true, v: r => <b>{scoreCell(r.best_score)}</b> },
+      { h: 'Best TOT', n: true, v: r => (r.best_tot_s === null ? '—' : `±${fmt(r.best_tot_s, 1)} s`) },
+      { h: 'Avg score', n: true, v: r => scoreCell(r.avg_score) },
+      { h: 'Runs', n: true, v: r => r.count },
+    ] } satisfies Board<'low_level'>,
+  { id: 'field_landing', label: 'Landing grades', blurb: 'Average runway landing grade: aim point, centreline, sink rate and a stable approach. Three landings minimum.',
+    cols: [
+      { h: 'Avg score', n: true, v: r => <b>{scoreCell(r.avg_score)}</b> },
+      { h: 'Aim error', n: true, v: r => (r.avg_aim_error_m === null ? '—' : `${fmt(r.avg_aim_error_m)} m`) },
+      { h: 'Stable', n: true, v: r => `${fmt(r.stable_pct)}%` },
+      { h: 'Landings', n: true, v: r => r.count },
+    ] } satisfies Board<'field_landing'>,
+  { id: 'deck_landing', label: 'Deck landings', blurb: 'Helicopter landings on ships under way. Two minimum.',
+    cols: [
+      { h: 'Avg score', n: true, v: r => <b>{scoreCell(r.avg_score)}</b> },
+      { h: 'Off the spot', n: true, v: r => (r.avg_distance_m === null ? '—' : `${fmt(r.avg_distance_m, 1)} m`) },
+      { h: 'Landings', n: true, v: r => r.count },
+    ] } satisfies Board<'deck_landing'>,
+  { id: 'csar', label: 'CSAR', blurb: 'Fastest rescue: from the MAYDAY to the survivor delivered home.',
+    cols: [
+      { h: 'Fastest', n: true, v: r => <b>{fmtClock(r.fastest_s)}</b> },
+      { h: 'Rescues', n: true, v: r => r.rescues },
+      { h: 'Attempts', n: true, v: r => r.count },
+    ] } satisfies Board<'csar'>,
 ] as const
 
 type BoardId = (typeof BOARDS)[number]['id']
 
-function Table<K extends keyof Leaderboards>({ rows, board }: { rows: Leaderboards[K]; board: Board<K> }) {
+function Table<K extends keyof Leaderboards>({ rows, board }: { rows: Rows<K>; board: Board<K> }) {
   if (!rows.length) return <Empty title="Nobody on this board yet">Fly some and you will be first.</Empty>
   return (
     <div className="table-scroll">
@@ -110,7 +150,7 @@ export default function LeaderboardsPage() {
         ) : q.error ? (
           <div className="panel-b"><ErrorState error={q.error} retry={() => q.refetch()} /></div>
         ) : q.data ? (
-          <Table rows={q.data[board.id]} board={board as unknown as Board<typeof board.id>} />
+          <Table rows={q.data[board.id] ?? []} board={board as unknown as Board<typeof board.id>} />
         ) : null}
       </div>
       {days === 0 && <p className="text-[12px] dim mt-2">"All" covers the last 365 days, the longest window the server keeps aggregates for.</p>}

@@ -222,6 +222,7 @@ impl AirToGround {
         cfg: &RangeCfg,
         rec: &mut Recorder,
         imp: Impact,
+        gps_denied: Option<String>,
         now: f64,
     ) -> Option<Impact> {
         if imp.w.purpose != Purpose::AirToGround || !imp.w.shooter.is_player() {
@@ -253,12 +254,12 @@ impl AirToGround {
             s.impacts.push((now, imp));
             return None;
         }
-        self.record_bomb(lua, cfg, rec, si, &imp, None);
+        self.record_bomb(lua, cfg, rec, si, &imp, None, gps_denied);
         None
     }
 
     /// Flush rocket ripples once no rocket has landed for 1.5 s.
-    pub fn flush_salvos(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, now: f64) {
+    pub fn flush_salvos(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, ew: &crate::ew::Ew, now: f64) {
         let done: Vec<(String, String)> = self
             .salvos
             .iter()
@@ -281,7 +282,8 @@ impl AirToGround {
             if let Some((si, _, imp)) = best {
                 let n = s.impacts.len();
                 let imp = imp.clone();
-                self.record_bomb(lua, cfg, rec, si, &imp, Some(n));
+                let denied = ew.denied_at(imp.w.rel_pos, imp.w.shooter.side);
+                self.record_bomb(lua, cfg, rec, si, &imp, Some(n), denied);
             }
         }
     }
@@ -294,6 +296,7 @@ impl AirToGround {
         si: usize,
         imp: &Impact,
         salvo: Option<usize>,
+        gps_denied: Option<String>,
     ) {
         let st = &mut self.stations[si];
         let Some(tgt) = st.nearest_target(imp.pos) else { return };
@@ -365,14 +368,17 @@ impl AirToGround {
                 st.cfg.rings_m.clone()
             },
             good_radius_m: good,
+            tier: st.cfg.tier.clone(),
+            gps_denied: gps_denied.clone(),
         };
         let sh = &w.shooter;
         if let Some(u) = &sh.ucid {
             st.hot.insert(u.to_string(), (sh.name.clone(), imp.w.last_t));
         }
         let msg = format!(
-            "RANGE {}: {} {:.0} m @ {} o'clock ({}) - {}\nreleased {:.0} ft AGL, {:.0} KTAS, {:.0} deg dive, {:.1} nm",
+            "RANGE {}{}: {} {:.0} m @ {} o'clock ({}) - {}\nreleased {:.0} ft AGL, {:.0} KTAS, {:.0} deg dive, {:.1} nm{}",
             st.cfg.name,
+            st.cfg.tier.as_ref().map(|t| format!(" [{}]", t.to_ascii_uppercase())).unwrap_or_default(),
             display,
             miss,
             clock,
@@ -382,6 +388,7 @@ impl AirToGround {
             tas,
             -util::fpa(rel_v),
             util::dist2(w.rel_pos, tpos) / util::NM,
+            gps_denied.as_ref().map(|j| format!("\nGPS DENIED at release ({j})")).unwrap_or_default(),
         );
         if cfg.in_game_results {
             if let Some(g) = sh.group_id {
@@ -669,9 +676,10 @@ fn spawn_station(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) -
                 alive: true,
             });
         }
-        // Targets hold fire unless the station is a live SAM site; SAM sites
-        // keep their radar on either way so RWRs light up.
-        let (roe, alarm) = if cfg.kind == StationKind::SamSite && cfg.weapons_free {
+        // Targets hold fire unless the station is weapons free (a live SAM
+        // site, the AAA and SHORAD of a tiered range, an escorted convoy);
+        // SAM sites keep their radar on either way so RWRs light up.
+        let (roe, alarm) = if cfg.weapons_free {
             (2, 2)
         } else if cfg.kind == StationKind::SamSite {
             (4, 2)

@@ -4,7 +4,9 @@
  * About 45 days of history is generated from a fixed seed on load (so every
  * reload shows the same pilots, passes and impacts), plus the two reference
  * cards from the design brief at /result/mock-ref-trap and
- * /result/mock-ref-bomb. A new result "lands" every 25 s of wall clock so
+ * /result/mock-ref-bomb, and one fixed result of each newer discipline
+ * (/result/mock-ref-sead, -hot-zone, -low-level, -field-landing, -csar,
+ * -deck-landing). A new result "lands" every 25 s of wall clock so
  * the live feed animates. Spawns and despawns are kept in memory.
  *
  * Switch who you are with the login button, or set
@@ -19,6 +21,7 @@ import type {
   LiveSpawn,
   Me,
   RangeRecord,
+  ResultKind,
   ResultsQuery,
   Summary,
 } from '../types'
@@ -26,7 +29,7 @@ import { greenie, leaderboards, pilotProfile, stationImpacts, within } from './a
 import { mockCardDataUrl } from './cards'
 import { CALIBRATION, CATALOG, WEAPON_DB } from './catalog'
 import { buildLive, spawnPosition } from './live'
-import { bombRecord, randomRecord, trapRecord } from './records'
+import { bombRecord, randomRecord, recordOfKind, trapRecord } from './records'
 import { Rng } from './rng'
 import { PILOTS, pilotByName } from './world'
 
@@ -70,6 +73,28 @@ function buildHistory(): RangeRecord[] {
   })
   gbu.id = 'mock-ref-bomb'
   out.push(gbu)
+  // one fixed result of every newer discipline, so each debrief opens by id
+  const refs: [ResultKind, string, number, string][] = [
+    ['sead', 'Viper', 11, 'mock-ref-sead'],
+    ['hot_zone', 'Hollywood', 12, 'mock-ref-hot-zone'],
+    ['low_level', 'Mongo', 13, 'mock-ref-low-level'],
+    ['field_landing', 'Casper', 14, 'mock-ref-field-landing'],
+    ['csar', 'Tuna', 15, 'mock-ref-csar'],
+  ]
+  refs.forEach(([kind, name, seed, id], i) => {
+    const r = recordOfKind(kind, pilotByName(name), new Rng(seed), REF - (12 + i) * 60_000)
+    r.id = id
+    out.push(r)
+  })
+  // a deck landing on the frigate (helicopters pick a pad at random)
+  for (let seed = 100; seed < 200; seed++) {
+    const r = recordOfKind('landing', pilotByName('Tuna'), new Rng(seed), REF - 20 * 60_000)
+    if (r.result.kind === 'landing' && r.result.drill === 'ship') {
+      r.id = 'mock-ref-deck-landing'
+      out.push(r)
+      break
+    }
+  }
   return out
 }
 

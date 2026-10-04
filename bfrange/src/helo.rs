@@ -437,6 +437,7 @@ impl Helo {
             quality: q,
             pad_pos: util::geo(lua, pad.pos),
             touchdown_pos: util::geo(lua, f.pos),
+            ship_speed_kts: None,
         };
         records::to_group(
             lua,

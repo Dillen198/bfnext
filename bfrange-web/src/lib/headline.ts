@@ -23,6 +23,27 @@ const ENGAGEMENT_OUTCOME: Record<string, string> = {
   abort: 'ABORTED',
 }
 
+export const HOT_ZONE_OUTCOME_LABEL: Record<string, string> = {
+  egressed: 'egressed',
+  landed: 'landed',
+  shot_down: 'shot down',
+  left: 'left the aircraft',
+}
+
+export const FIELD_LANDING_OUTCOME_LABEL: Record<string, string> = {
+  full_stop: 'full stop',
+  touch_and_go: 'touch and go',
+  undershoot: 'undershoot',
+}
+
+export const CSAR_OUTCOME_LABEL: Record<string, string> = {
+  rescued: 'RESCUED',
+  picked_up: 'picked up, not delivered',
+  failed: 'not rescued',
+}
+
+const sgn0 = (n: number) => (n >= 0 ? '+' : '') + n.toFixed(0)
+
 export function missileOutcomeLabel(o: string): string {
   return MISSILE_OUTCOME[o] ?? o
 }
@@ -72,5 +93,15 @@ export function headline(rec: Pick<RangeRecord, 'pilot' | 'unit_type' | 'result'
       return `${pilot} (${typ}) gunnery ${r.lane}: ${r.targets_killed}/${r.targets_total} targets in ${f0(r.time_s)} s`
     case 'cas':
       return `${pilot} (${typ}) CAS with ${r.jtac}: ${r.correct_target ? 'on target' : 'wrong target'}`
+    case 'sead':
+      return `${pilot} (${typ}) ${r.weapon} killed the ${r.system} ${r.role} at ${r.site} (${r.site_was_emitting ? 'radar up' : 'radar dark'})`
+    case 'hot_zone':
+      return `${pilot} (${typ}) ${r.zone}: ${r.air_kills} air, ${r.ground_kills} ground kills in ${f0(r.time_in_zone_s / 60)} min, ${HOT_ZONE_OUTCOME_LABEL[r.outcome] ?? r.outcome}`
+    case 'low_level':
+      return `${pilot} (${typ}) ${r.route}: ${r.gates_hit}/${r.gates_total} gates, ${f0(r.pct_below_ceiling)}% under the ceiling, TOT ${sgn0(r.tot_error_s)} s, ${r.quality}`
+    case 'field_landing':
+      return `${pilot} (${typ}) landing ${r.airfield} rwy ${r.runway}: ${sgn0(r.aim_error_m)} m from the aim point, ${f1(Math.abs(r.centreline_m))} m off centreline, ${f0(r.touchdown_fpm)} fpm, ${r.quality}`
+    case 'csar':
+      return `${pilot} (${typ}) CSAR ${r.area}: ${CSAR_OUTCOME_LABEL[r.outcome] ?? r.outcome}${r.time_total_s !== null ? ` in ${f0(r.time_total_s / 60)} min` : ''}`
   }
 }

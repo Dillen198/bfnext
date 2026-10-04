@@ -15,8 +15,8 @@
 
 use super::RangeCtx;
 use bfprotocols::range::{
-    lso, BombQuality, EngagementOutcome, MissileOutcome, PrecisionQuality, RangeRecord,
-    RangeResult, StrafeQuality,
+    lso, BombQuality, CsarOutcome, EngagementOutcome, FieldLandingOutcome, HotZoneOutcome,
+    MissileOutcome, PrecisionQuality, RangeRecord, RangeResult, StrafeQuality,
 };
 use serde_json::{json, Value};
 
@@ -153,11 +153,64 @@ pub(crate) fn title_and_color(r: &RangeRecord) -> (String, u32) {
             if s.method == "internal" { "Cargo delivery (internal)".into() } else { "Sling-load delivery".into() },
             precision_color(s.quality),
         ),
-        RangeResult::Landing(l) => ("Precision landing".into(), precision_color(l.quality)),
+        RangeResult::Landing(l) => (
+            if l.drill == "ship" { "Deck landing".into() } else { "Precision landing".into() },
+            precision_color(l.quality),
+        ),
         RangeResult::Troops(t) => ("Troop insertion".into(), precision_color(t.quality)),
         RangeResult::Gunnery(_) => ("Gunnery lane".into(), BLUE),
         RangeResult::Cas(c) => ("Close air support".into(), if c.correct_target { GREEN } else { RED }),
+        RangeResult::Sead(s) => (
+            if s.site_destroyed { "SEAD: site destroyed".into() } else { "SEAD / DEAD kill".into() },
+            match (s.site_destroyed, s.site_was_emitting) {
+                (true, _) => DARK_GREEN,
+                (false, true) => GREEN,
+                (false, false) => YELLOW,
+            },
+        ),
+        RangeResult::HotZone(h) => (
+            "Hot zone sortie".into(),
+            match h.outcome {
+                HotZoneOutcome::ShotDown => RED,
+                _ if h.trainer_deaths > 0 => ORANGE,
+                HotZoneOutcome::Left => GREY,
+                _ if h.air_kills + h.ground_kills > 0 => GREEN,
+                _ => YELLOW,
+            },
+        ),
+        RangeResult::LowLevel(l) => ("Low-level route".into(), precision_color(l.quality)),
+        RangeResult::FieldLanding(fl) => (
+            "Field landing".into(),
+            if fl.outcome == FieldLandingOutcome::Undershoot { RED } else { precision_color(fl.quality) },
+        ),
+        RangeResult::Csar(c) => (
+            "Combat search and rescue".into(),
+            if c.outcome == CsarOutcome::Failed { RED } else { precision_color(c.quality) },
+        ),
     }
+}
+
+/// Seconds as "m:ss".
+pub(crate) fn mmss(s: f64) -> String {
+    if !s.is_finite() {
+        return "-".into();
+    }
+    let t = s.abs().round() as u64;
+    format!("{}{}:{:02}", if s < 0. { "-" } else { "" }, t / 60, t % 60)
+}
+
+/// Where a runway touchdown was, in words.
+pub(crate) fn from_threshold(m: f64) -> String {
+    if m >= 0. {
+        format!("{m:.0} m past the threshold")
+    } else {
+        format!("{:.0} m short of the threshold", -m)
+    }
+}
+
+/// "+12.0 m (long)": a signed distance with the word for its sign.
+pub(crate) fn signed(v: f64, unit: &str, pos: &str, neg: &str) -> String {
+    format!("{v:+.1} {unit} ({})", if v >= 0. { pos } else { neg })
 }
 
 fn f(name: &str, value: impl Into<String>, inline: bool) -> (String, String, bool) {
@@ -206,6 +259,12 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
             o.push(f("Release speed", format!("{:.0} kts", b.release.tas_kts), true));
             o.push(f("Release heading", format!("{:03.0}°", b.release.heading_deg.rem_euclid(360.)), true));
             o.push(f("Dive", format!("{:.0}°", b.release.dive_deg), true));
+            if let Some(t) = &b.tier {
+                o.push(f("Tier", t.to_uppercase(), true));
+            }
+            if let Some(j) = &b.gps_denied {
+                o.push(f("GPS denied", format!("released inside {j}"), true));
+            }
         }
         RangeResult::Strafe(s) => {
             o.push(f("Range", format!("{}: {}", s.range, s.pit), true));
@@ -289,6 +348,9 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
             if let Some(h) = l.heading_error_deg {
                 o.push(f("Heading error", format!("{h:.0}°"), true));
             }
+            if let Some(v) = l.ship_speed_kts {
+                o.push(f("Ship speed", format!("{v:.0} kts"), true));
+            }
         }
         RangeResult::Troops(t) => {
             o.push(f("LZ", t.lz.clone(), true));
@@ -318,6 +380,118 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
                     c.nearest_friendly_m.map(|d| format!("{d:.0} m from friendlies")).unwrap_or_else(|| "yes".into()),
                     true,
                 ));
+            }
+        }
+        RangeResult::Sead(s) => {
+            o.push(f("Network", s.network.clone(), true));
+            o.push(f("Site", format!("{} ({})", s.site, s.system), true));
+            o.push(f("Killed", format!("{} ({})", s.role, s.unit_type), true));
+            let g = if s.guidance.is_empty() { String::new() } else { format!(" ({})", s.guidance.to_uppercase()) };
+            o.push(f("Weapon", format!("{}{g}", s.weapon), true));
+            o.push(f("Radar at launch", if s.site_was_emitting { "**UP** (emitting)" } else { "dark" }, true));
+            if let Some(r) = s.launch_range_m {
+                o.push(f("Launch range", format!("{:.1} nm", r / 1852.), true));
+            }
+            o.push(f("Site status", if s.site_destroyed { "**DESTROYED** (every radar dead)" } else { "radars still alive" }, true));
+            o.push(f(
+                "SAMs at you",
+                if s.trainer_deaths > 0 {
+                    format!("{} ({} would have killed you)", s.shots_at_you, s.trainer_deaths)
+                } else {
+                    s.shots_at_you.to_string()
+                },
+                true,
+            ));
+        }
+        RangeResult::HotZone(h) => {
+            o.push(f("Zone", h.zone.clone(), true));
+            o.push(f("Outcome", format!("**{}**", h.outcome.label()), true));
+            o.push(f("Time in zone", mmss(h.time_in_zone_s), true));
+            o.push(f("Air kills", h.air_kills.to_string(), true));
+            o.push(f("Ground kills", h.ground_kills.to_string(), true));
+            o.push(f("Shots fired", h.shots_fired.to_string(), true));
+            o.push(f("Missiles defeated", h.missiles_defeated.to_string(), true));
+            o.push(f(
+                "Trainer deaths",
+                if h.trainer_deaths > 0 { format!("**{}**", h.trainer_deaths) } else { "0".into() },
+                true,
+            ));
+            if !h.kills.is_empty() {
+                o.push(f("Kills", h.kills.join(", "), false));
+            }
+        }
+        RangeResult::LowLevel(l) => {
+            o.push(f("Route", l.route.clone(), true));
+            o.push(f("Quality", format!("**{}**", l.quality.label()), true));
+            o.push(f("Gates", format!("{}/{}", l.gates_hit, l.gates_total), true));
+            o.push(f("Time", format!("{} (plan {})", mmss(l.time_s), mmss(l.planned_s)), true));
+            let when = if l.tot_error_s > 0.5 {
+                " late"
+            } else if l.tot_error_s < -0.5 {
+                " early"
+            } else {
+                ""
+            };
+            o.push(f("Time on target", format!("{:+.0} s{when}", l.tot_error_s), true));
+            o.push(f(
+                "Under the ceiling",
+                format!("{:.0}% (ceiling {:.0} ft AGL)", l.pct_below_ceiling, l.max_allowed_agl_ft),
+                true,
+            ));
+            o.push(f(
+                "AGL avg / min / max",
+                format!("{:.0} / {:.0} / {:.0} ft", l.avg_agl_ft, l.min_agl_ft, l.max_agl_ft),
+                true,
+            ));
+            if l.below_floor_s > 0. {
+                o.push(f("Below the floor", format!("{:.0} s", l.below_floor_s), true));
+            }
+            o.push(f("Average speed", format!("{:.0} kts", l.avg_speed_kts), true));
+            if !l.calls.is_empty() {
+                o.push(f("Calls", l.calls.join("\n"), false));
+            }
+        }
+        RangeResult::FieldLanding(fl) => {
+            o.push(f("Runway", format!("{} {}", fl.airfield, fl.runway), true));
+            o.push(f("Outcome", fl.outcome.label(), true));
+            o.push(f("Quality", format!("**{}**", fl.quality.label()), true));
+            o.push(f("Touchdown", from_threshold(fl.touchdown_from_threshold_m), true));
+            o.push(f("Aim point", signed(fl.aim_error_m, "m", "long", "short"), true));
+            o.push(f("Centreline", signed(fl.centreline_m, "m", "right", "left"), true));
+            o.push(f("Sink rate", format!("{:.0} fpm", fl.touchdown_fpm), true));
+            o.push(f("Ground speed", format!("{:.0} kts", fl.touchdown_gs_kts), true));
+            o.push(f("Stable from 1 nm", if fl.stable { "yes" } else { "**NO**" }, true));
+            let deg = |v: Option<f64>| v.map(|v| format!("{v:+.1}°")).unwrap_or_else(|| "-".into());
+            if fl.gs_error_1nm_deg.is_some() || fl.gs_error_half_nm_deg.is_some() {
+                o.push(f(
+                    "Glideslope 1 / 0.5 nm",
+                    format!("{} / {}", deg(fl.gs_error_1nm_deg), deg(fl.gs_error_half_nm_deg)),
+                    true,
+                ));
+            }
+            if fl.lineup_1nm_deg.is_some() || fl.lineup_half_nm_deg.is_some() {
+                o.push(f(
+                    "Lineup 1 / 0.5 nm",
+                    format!("{} / {}", deg(fl.lineup_1nm_deg), deg(fl.lineup_half_nm_deg)),
+                    true,
+                ));
+            }
+            if !fl.calls.is_empty() {
+                o.push(f("Calls", fl.calls.join("\n"), false));
+            }
+        }
+        RangeResult::Csar(c) => {
+            o.push(f("Area", c.area.clone(), true));
+            o.push(f("Outcome", format!("**{}**", c.outcome.label()), true));
+            o.push(f("Quality", format!("**{}**", c.quality.label()), true));
+            o.push(f("Threat", if c.hostile { "hostile (troops hunting him)" } else { "permissive" }, true));
+            o.push(f("MAYDAY to pickup", c.time_to_pickup_s.map(mmss).unwrap_or_else(|| "-".into()), true));
+            o.push(f("MAYDAY to home", c.time_total_s.map(mmss).unwrap_or_else(|| "-".into()), true));
+            if !c.pickup_method.is_empty() {
+                o.push(f("Pickup", c.pickup_method.clone(), true));
+            }
+            if let Some(d) = &c.delivered_to {
+                o.push(f("Delivered to", d.clone(), true));
             }
         }
     }

@@ -59,15 +59,45 @@ describe('mock range API', () => {
   it('serves the range sectors, each with exactly one shape', async () => {
     const { live } = await mockApi.live()
     const sectors = live!.sectors!
-    expect(sectors).toHaveLength(27)
-    expect(new Set(sectors.map(s => s.id)).size).toBe(27)
+    expect(sectors).toHaveLength(45)
+    expect(new Set(sectors.map(s => s.id)).size).toBe(45)
     for (const s of sectors) {
       const shapes = [s.shape.polygon, s.shape.circle, s.shape.track].filter(Boolean)
       expect(shapes, s.id).toHaveLength(1)
       expect(['blue', 'red', 'all']).toContain(s.side)
       expect(s.purpose.length, s.id).toBeGreaterThan(5)
     }
-    expect(new Set(sectors.map(s => s.kind)).size).toBe(11)
+    expect(new Set(sectors.map(s => s.kind)).size).toBe(17)
+  })
+
+  it('serves the newer live layers, CSAR as an area only', async () => {
+    const { live } = await mockApi.live()
+    const l = live!
+    expect(l.iads![0].sites.length).toBeGreaterThan(3)
+    expect(l.iads![0].sites.some(s => s.emitting)).toBe(true)
+    expect(l.hot_zones![0].radius_m).toBeGreaterThan(0)
+    expect(l.jammers![0].alive).toBe(true)
+    expect(l.ship_decks!.length).toBe(2)
+    for (const c of l.csar!) {
+      expect(Object.keys(c)).not.toContain('survivor_pos')
+      expect(Number.isFinite(c.area_pos.lat)).toBe(true)
+    }
+  })
+
+  it('has a fixed result of every newer discipline', async () => {
+    for (const [id, kind] of [
+      ['mock-ref-sead', 'sead'], ['mock-ref-hot-zone', 'hot_zone'], ['mock-ref-low-level', 'low_level'],
+      ['mock-ref-field-landing', 'field_landing'], ['mock-ref-csar', 'csar'], ['mock-ref-deck-landing', 'landing'],
+    ] as const) {
+      const r = await mockApi.result(id)
+      expect(r.result.kind, id).toBe(kind)
+      expect(r.track?.kind, id).toBe('path')
+    }
+    const deck = await mockApi.result('mock-ref-deck-landing')
+    if (deck.result.kind !== 'landing') throw new Error('not a landing')
+    expect(deck.result.ship_speed_kts).toBeGreaterThan(0)
+    const { items } = await mockApi.results({ limit: 5000, kind: 'bomb' })
+    expect(items.some(s => s.result.kind === 'bomb' && s.result.tier === 'hard')).toBe(true)
   })
 
   it('serves DCS atmosphere and ship data the calculators prefill from', async () => {
@@ -101,6 +131,7 @@ describe('mock range API', () => {
     expect(g.rows.length).toBeGreaterThan(2)
     const lb = await mockApi.leaderboards(365)
     for (const k of ['bombing', 'strafe', 'lso', 'aar', 'duels', 'missile_defense'] as const) expect(lb[k].length, k).toBeGreaterThan(0)
+    for (const k of ['sead', 'hot_zone', 'low_level', 'field_landing', 'csar'] as const) expect(lb[k]?.length, k).toBeGreaterThan(0)
     const imp = await mockApi.stationImpacts('range_a_circle', { days: 365 })
     expect(imp.impacts.length).toBeGreaterThan(3)
     expect(imp.cep_m).toBeGreaterThan(0)

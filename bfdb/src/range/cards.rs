@@ -18,14 +18,20 @@
 //!   timeline, stats
 //! * missile -- plan view of missile and target tracks, launch point, closest
 //!   approach, outcome
-//! * anything else -- a generic card with the record's key fields
+//! * field landing -- the runway from above with the aim point and the
+//!   touchdown, then the approach numbers
+//! * low level -- AGL and timing at every gate against the ceiling and the
+//!   plan
+//! * anything else (SEAD, hot zone, CSAR, helo drills ...) -- a generic card
+//!   with the record's key fields
 
 use super::discord;
 use anyhow::{anyhow, Result};
 use bfprotocols::range::{
-    lso, AarResult, BombQuality, BombResult, GrooveSample, MissileOutcome, MissileResult,
-    RangeRecord, RangeResult, RefuelMethod, RelSample, StrafeQuality, StrafeResult, Track,
-    TrackPt, TrapResult,
+    lso, AarResult, BombQuality, BombResult, FieldLandingOutcome, FieldLandingResult,
+    GrooveSample, LowLevelResult, MissileOutcome, MissileResult, PrecisionQuality, RangeRecord,
+    RangeResult, RefuelMethod, RelSample, StrafeQuality, StrafeResult, Track, TrackPt,
+    TrapResult,
 };
 use resvg::{tiny_skia, usvg, usvg::fontdb};
 use std::{
@@ -293,6 +299,35 @@ fn strafe_color(q: StrafeQuality) -> &'static str {
     }
 }
 
+fn precision_color(q: PrecisionQuality) -> &'static str {
+    match q {
+        PrecisionQuality::Perfect | PrecisionQuality::Excellent => GREEN,
+        PrecisionQuality::Good => YELLOW,
+        PrecisionQuality::Fair => ORANGE,
+        PrecisionQuality::Poor => RED,
+    }
+}
+
+fn tier_color(tier: &str) -> &'static str {
+    match tier {
+        "easy" => GREEN,
+        "medium" => YELLOW,
+        "hard" => RED,
+        _ => MUTED,
+    }
+}
+
+/// Label / value rows in two columns from `y`, 24 px apart; returns the y
+/// below the last row.
+fn rows2(s: &mut Svg, x0: f64, y: f64, col_w: f64, key_w: f64, rows: &[(String, String)]) -> f64 {
+    for (i, (k, v)) in rows.iter().enumerate() {
+        let (x, yy) = (x0 + (i % 2) as f64 * col_w, y + (i / 2) as f64 * 24.);
+        s.text(x, yy, k, 14., MUTED, Anchor::Start, false);
+        s.text(x + key_w, yy, &trunc(v, 34), 14., TEXT, Anchor::Start, true);
+    }
+    y + rows.len().div_ceil(2) as f64 * 24.
+}
+
 pub(crate) fn grade_color(grade: &str) -> &'static str {
     match grade {
         "_OK_" | "OK" => GREEN,
@@ -346,6 +381,8 @@ pub(crate) fn render_svg(rec: &RangeRecord) -> String {
         RangeResult::Strafe(s) => strafe_card(rec, s),
         RangeResult::Aar(a) => aar_card(rec, a),
         RangeResult::Missile(m) => missile_card(rec, m),
+        RangeResult::FieldLanding(f) => field_landing_card(rec, f),
+        RangeResult::LowLevel(l) => low_level_card(rec, l),
         _ => generic_card(rec),
     }
 }
@@ -637,6 +674,14 @@ fn bomb_card(rec: &RangeRecord, b: &BombResult) -> String {
     let mut s = Svg::new(W, H);
     s.text(24., 40., &format!("Bombing result of {}", rec.pilot.name), 26., TEXT, Anchor::Start, true);
     s.text(24., 70., &format!("{}: {}", b.range, b.target), 16., MUTED, Anchor::Start, false);
+    if let Some(t) = &b.tier {
+        let c = tier_color(t);
+        s.rect(W - 144., 20., 120., 28., PANEL, Some((c, 1.5)), 4.);
+        s.text(W - 84., 40., &format!("TIER: {}", t.to_uppercase()), 14., c, Anchor::Middle, true);
+    }
+    if let Some(j) = &b.gps_denied {
+        s.text(W - 24., 72., &trunc(&format!("GPS DENIED · {j}"), 34), 14., ORANGE, Anchor::End, true);
+    }
 
     let ring_max = b.rings_m.iter().cloned().fold(0., f64::max);
     let ext = nice_ceil((ring_max * 1.15).max(b.miss_m * 1.25).max(30.));
@@ -1058,21 +1103,231 @@ fn missile_card(rec: &RangeRecord, m: &MissileResult) -> String {
     s.finish()
 }
 
+// ── field landing ──────────────────────────────────────────────────────
+
+fn field_landing_card(rec: &RangeRecord, fl: &FieldLandingResult) -> String {
+    const W: f64 = 900.;
+    const H: f64 = 640.;
+    let mut s = Svg::new(W, H);
+    let qc = if fl.outcome == FieldLandingOutcome::Undershoot { RED } else { precision_color(fl.quality) };
+    s.text(24., 40., &format!("Field landing of {}", rec.pilot.name), 26., TEXT, Anchor::Start, true);
+    s.text(
+        24.,
+        70.,
+        &format!("{} runway {}  ·  {}  ·  {}", fl.airfield, fl.runway, rec.unit_type, fl.outcome.label()),
+        16.,
+        MUTED,
+        Anchor::Start,
+        false,
+    );
+    s.text(W - 24., 44., fl.quality.label(), 28., qc, Anchor::End, true);
+
+    // top view: landing direction to the right, so right of centreline is
+    // down the page
+    let (px, py, pw, ph) = (40., 110., 820., 220.);
+    s.text(px, py - 10., "TOUCHDOWN (top view, lateral scale exaggerated)", 13., MUTED, Anchor::Start, true);
+    s.clip("rwy", px, py, pw, ph);
+    s.rect(px, py, pw, ph, PANEL, None, 4.);
+    let td = fl.touchdown_from_threshold_m;
+    let aim = td - fl.aim_error_m;
+    let lo = td.min(0.) - 250.;
+    let hi = (td.max(aim) + 500.).max(1500.);
+    let sx = pw / (hi - lo);
+    let x = |m: f64| px + (m - lo) * sx;
+    let half = (fl.centreline_m.abs() * 1.4).max(35.);
+    let sy = (ph / 2. - 18.) / half;
+    let cy = py + ph / 2.;
+    let y = |m: f64| cy + m * sy;
+    let _ = write!(s.b, r#"<g clip-path="url(#rwy)">"#);
+    // runway, 45 m wide
+    s.rect(x(0.), y(-22.5), x(hi + 1000.) - x(0.), 45. * sy, "#3a3d44", Some(("#8a8f98", 1.)), 0.);
+    s.line(x(0.), cy, x(hi + 1000.), cy, "#c9ccd1", 1.5, Some("14 10"));
+    // threshold bars
+    let mut b = -18.;
+    while b <= 18. {
+        s.line(x(0.) + 4., y(b), x(0.) + 30., y(b), "#e6e7ea", 3., None);
+        b += 6.;
+    }
+    // aim point markings
+    for side in [-1., 1.] {
+        s.rect(x(aim) - 12., y(side * 11.) - 4., 24., 8., "#e6e7ea", None, 1.);
+    }
+    s.raw("</g>");
+    s.text(x(0.) + 2., py + 16., "threshold", 11., MUTED, Anchor::Start, false);
+    s.text(x(aim), py + 16., &format!("aim point {aim:.0} m"), 11., MUTED, Anchor::Middle, false);
+    s.line(x(aim), py + 20., x(aim), py + ph - 4., MUTED, 1., Some("2 4"));
+    // approach arrow and the touchdown
+    let (tx, ty) = (x(td).clamp(px + 6., px + pw - 6.), y(fl.centreline_m).clamp(py + 6., py + ph - 6.));
+    s.arrow(px + 12., ty, (tx - 16.).max(px + 40.), ty, GREEN, 2.);
+    s.circle(tx, ty, 8., qc, Some(("#ffffff", 1.5)), None);
+    let lbl = format!(
+        "{:.0} m {}  ·  {:.1} m {}",
+        fl.aim_error_m.abs(),
+        if fl.aim_error_m >= 0. { "long" } else { "short" },
+        fl.centreline_m.abs(),
+        if fl.centreline_m >= 0. { "right" } else { "left" }
+    );
+    let (lx, anchor) = if tx > px + pw * 0.7 { (tx - 14., Anchor::End) } else { (tx + 14., Anchor::Start) };
+    let ly = if ty > cy { ty + 22. } else { ty - 14. };
+    s.text(lx, ly.clamp(py + 30., py + ph - 20.), &lbl, 14., qc, anchor, true);
+    // scale
+    let step = nice_step(hi - lo, 6.);
+    let mut g = (lo / step).ceil() * step;
+    while g <= hi {
+        let g0 = if g.abs() < 1e-6 { 0. } else { g };
+        s.text(x(g), py + ph + 16., &format!("{g0:.0}"), 11., MUTED, Anchor::Middle, false);
+        g += step;
+    }
+    s.text(px + pw, py + ph + 32., "metres past the threshold", 11., MUTED, Anchor::End, false);
+
+    let deg = |v: Option<f64>| v.map(|v| format!("{v:+.1}°")).unwrap_or_else(|| "-".into());
+    let rows: Vec<(String, String)> = vec![
+        ("Touchdown".into(), discord::from_threshold(td)),
+        ("Aim point".into(), discord::signed(fl.aim_error_m, "m", "long", "short")),
+        ("Centreline".into(), discord::signed(fl.centreline_m, "m", "right", "left")),
+        ("Sink rate".into(), format!("{:.0} fpm", fl.touchdown_fpm)),
+        ("Ground speed".into(), format!("{:.0} kts", fl.touchdown_gs_kts)),
+        ("Stable from 1 nm".into(), if fl.stable { "yes".into() } else { "NO".into() }),
+        ("Glideslope 1 / 0.5 nm".into(), format!("{} / {}", deg(fl.gs_error_1nm_deg), deg(fl.gs_error_half_nm_deg))),
+        ("Lineup 1 / 0.5 nm".into(), format!("{} / {}", deg(fl.lineup_1nm_deg), deg(fl.lineup_half_nm_deg))),
+    ];
+    let mut yy = rows2(&mut s, 40., 390., 430., 180., &rows) + 10.;
+    for c in fl.calls.iter().take(3) {
+        s.text(40., yy, &format!("• {}", trunc(c, 100)), 14., YELLOW, Anchor::Start, false);
+        yy += 22.;
+    }
+    footer(&mut s, rec);
+    s.finish()
+}
+
+// ── low level ──────────────────────────────────────────────────────────
+
+fn low_level_card(rec: &RangeRecord, l: &LowLevelResult) -> String {
+    const W: f64 = 900.;
+    const H: f64 = 730.;
+    let mut s = Svg::new(W, H);
+    let qc = precision_color(l.quality);
+    s.text(24., 40., &format!("Low-level route of {}", rec.pilot.name), 26., TEXT, Anchor::Start, true);
+    s.text(
+        24.,
+        70.,
+        &format!("{}  ·  {}  ·  {}/{} gates", l.route, rec.unit_type, l.gates_hit, l.gates_total),
+        16.,
+        MUTED,
+        Anchor::Start,
+        false,
+    );
+    s.text(W - 24., 44., l.quality.label(), 28., qc, Anchor::End, true);
+    let tc = if l.tot_error_s.abs() <= 15. { GREEN } else if l.tot_error_s.abs() <= 45. { YELLOW } else { RED };
+    s.text(W - 24., 70., &format!("TOT {:+.0} s", l.tot_error_s), 16., tc, Anchor::End, true);
+
+    let n = l.gates.len();
+    let (px, pw) = (70., 790.);
+    let slot = pw / n.max(1) as f64;
+    let gx = |i: usize| px + slot * (i as f64 + 0.5);
+    // AGL at each gate against the ceiling
+    let (ay, ah) = (110., 200.);
+    s.text(px, ay - 10., "HEIGHT AT EACH GATE (ft AGL)", 13., MUTED, Anchor::Start, true);
+    s.rect(px, ay, pw, ah, PANEL, None, 4.);
+    let top = nice_ceil(
+        l.gates
+            .iter()
+            .filter_map(|g| g.agl_ft)
+            .fold(l.max_allowed_agl_ft * 1.5, f64::max)
+            .max(100.),
+    );
+    let fy = |ft: f64| ay + ah - (ft / top).clamp(0., 1.) * ah;
+    let step = nice_step(top, 4.);
+    let mut g = step;
+    while g < top {
+        s.line(px, fy(g), px + pw, fy(g), GRID, 1., None);
+        s.text(px - 6., fy(g) + 4., &format!("{g:.0}"), 11., MUTED, Anchor::End, false);
+        g += step;
+    }
+    s.line(px, fy(l.max_allowed_agl_ft), px + pw, fy(l.max_allowed_agl_ft), RED, 1.5, Some("6 4"));
+    s.text(px + 4., fy(l.max_allowed_agl_ft) - 5., &format!("ceiling {:.0} ft", l.max_allowed_agl_ft), 11., RED, Anchor::Start, true);
+    // timing error at each gate
+    let (ty, th) = (360., 160.);
+    s.text(px, ty - 10., "TIMING AT EACH GATE (s against the plan, + = late)", 13., MUTED, Anchor::Start, true);
+    s.rect(px, ty, pw, th, PANEL, None, 4.);
+    let span = l
+        .gates
+        .iter()
+        .filter_map(|g| g.t.map(|t| (t - g.planned_t).abs()))
+        .fold(10., f64::max)
+        * 1.15;
+    let tmid = ty + th / 2.;
+    let fe = |e: f64| tmid - (e / span).clamp(-1., 1.) * (th / 2. - 8.);
+    s.line(px, tmid, px + pw, tmid, MUTED, 1., None);
+    let bw = (slot * 0.5).min(40.);
+    for (i, gate) in l.gates.iter().enumerate() {
+        let x = gx(i);
+        s.text(x, ty + th + 16., &trunc(&gate.gate, 12), 11., MUTED, Anchor::Middle, false);
+        match (gate.t, gate.agl_ft) {
+            (None, _) => {
+                s.text(x, ay + ah / 2., "MISSED", 12., RED, Anchor::Middle, true);
+                s.text(x, tmid - 6., "MISSED", 12., RED, Anchor::Middle, true);
+            }
+            (Some(t), agl) => {
+                if let Some(a) = agl {
+                    let c = if a <= l.max_allowed_agl_ft { GREEN } else { RED };
+                    s.rect(x - bw / 2., fy(a), bw, ay + ah - fy(a), c, None, 2.);
+                    s.text(x, fy(a) - 5., &format!("{a:.0}"), 11., c, Anchor::Middle, false);
+                }
+                let e = t - gate.planned_t;
+                let c = if e.abs() <= 15. { GREEN } else if e.abs() <= 45. { YELLOW } else { RED };
+                let (y0, y1) = (fe(e.max(0.)), fe(e.min(0.)));
+                s.rect(x - bw / 2., y0, bw, (y1 - y0).max(2.), c, None, 2.);
+                let lbl_y = if e >= 0. { y0 - 5. } else { y1 + 14. };
+                s.text(x, lbl_y, &format!("{e:+.0}"), 11., c, Anchor::Middle, false);
+            }
+        }
+    }
+    if n == 0 {
+        s.text(px + pw / 2., ay + ah / 2., "no gate times recorded", 15., MUTED, Anchor::Middle, false);
+        s.text(px + pw / 2., tmid, "no gate times recorded", 15., MUTED, Anchor::Middle, false);
+    }
+    let rows: Vec<(String, String)> = vec![
+        ("Time vs plan".into(), format!("{} / {}", discord::mmss(l.time_s), discord::mmss(l.planned_s))),
+        ("Under the ceiling".into(), format!("{:.0}% of the route", l.pct_below_ceiling)),
+        ("AGL avg / min / max".into(), format!("{:.0} / {:.0} / {:.0} ft", l.avg_agl_ft, l.min_agl_ft, l.max_agl_ft)),
+        ("Below the floor".into(), format!("{:.0} s", l.below_floor_s)),
+        ("Average speed".into(), format!("{:.0} kts", l.avg_speed_kts)),
+        ("Gates".into(), format!("{} of {}", l.gates_hit, l.gates_total)),
+    ];
+    let mut yy = rows2(&mut s, 40., 570., 430., 180., &rows) + 6.;
+    for c in l.calls.iter().take(2) {
+        s.text(40., yy, &format!("• {}", trunc(c, 100)), 14., YELLOW, Anchor::Start, false);
+        yy += 20.;
+    }
+    footer(&mut s, rec);
+    s.finish()
+}
+
 // ── generic ────────────────────────────────────────────────────────────
 
 fn generic_card(rec: &RangeRecord) -> String {
     let fields = discord::fields(rec);
-    let rows = fields.len().div_ceil(2) as f64;
+    // short fields in two columns, long ones (calls, kill lists) full width
+    let (short, long): (Vec<_>, Vec<_>) = fields.into_iter().partition(|(_, _, inline)| *inline);
+    let rows = short.len().div_ceil(2) as f64 + long.len() as f64;
     let h = (180. + rows * 30.).max(260.);
     let mut s = Svg::new(800., h);
     let (title, _) = discord::title_and_color(rec);
     s.text(24., 42., &title, 26., TEXT, Anchor::Start, true);
     s.text(24., 72., &format!("{} | {}", rec.pilot.name, rec.unit_type), 16., MUTED, Anchor::Start, false);
     s.text(24., 104., &trunc(&rec.headline(), 90), 15., TEXT, Anchor::Start, false);
-    for (i, (k, v, _)) in fields.iter().enumerate() {
+    let clean = |v: &str| v.replace("**", "").replace('\n', "  ·  ");
+    for (i, (k, v, _)) in short.iter().enumerate() {
         let (x, y) = (24. + (i % 2) as f64 * 390., 146. + (i / 2) as f64 * 30.);
         s.text(x, y, k, 14., MUTED, Anchor::Start, false);
-        s.text(x + 150., y, &trunc(&v.replace("**", ""), 30), 14., TEXT, Anchor::Start, true);
+        s.text(x + 150., y, &trunc(&clean(v), 30), 14., TEXT, Anchor::Start, true);
+    }
+    let y0 = 146. + short.len().div_ceil(2) as f64 * 30.;
+    for (i, (k, v, _)) in long.iter().enumerate() {
+        let y = y0 + i as f64 * 30.;
+        s.text(24., y, k, 14., MUTED, Anchor::Start, false);
+        s.text(174., y, &trunc(&clean(v), 78), 14., TEXT, Anchor::Start, true);
     }
     footer(&mut s, rec);
     s.finish()
@@ -1187,6 +1442,8 @@ pub(crate) mod tests {
                 laser_code: Some(1688),
                 rings_m: vec![5., 12.5, 25., 50.],
                 good_radius_m: 25.,
+                tier: Some("hard".into()),
+                gps_denied: Some("Jammer North".into()),
             }),
             Some(Track::Weapon { points: vec![] }),
         )
@@ -1285,7 +1542,158 @@ pub(crate) mod tests {
             None,
         );
         let no_track_trap = RangeRecord { track: None, ..trap() };
-        vec![trap(), no_track_trap, bomb(), strafe, aar, missile, sling]
+        let mut v = vec![trap(), no_track_trap, bomb(), strafe, aar, missile, sling];
+        v.extend(new_kinds());
+        v
+    }
+
+    /// One record of every discipline added with the SEAD / hot zone /
+    /// low-level / field landing / CSAR sectors, plus a deck landing.
+    pub(crate) fn new_kinds() -> Vec<RangeRecord> {
+        let sead = base(
+            RangeResult::Sead(SeadResult {
+                network: "S-1 Gardabani IADS".into(),
+                site: "SA-6 battery".into(),
+                system: "SA-6 Kub".into(),
+                unit_type: "Kub 1S91 str".into(),
+                role: "track radar".into(),
+                weapon: "AGM_88C".into(),
+                guidance: "arm".into(),
+                launch_range_m: Some(38000.),
+                site_was_emitting: true,
+                site_destroyed: true,
+                shots_at_you: 2,
+                trainer_deaths: 1,
+                site_pos: GeoPt { lat: 41.4, lon: 45.0, alt_m: 300. },
+                launch_pos: None,
+            }),
+            None,
+        );
+        let hz = base(
+            RangeResult::HotZone(HotZoneResult {
+                zone: "HZ-1 Kakheti".into(),
+                time_in_zone_s: 1260.,
+                air_kills: 2,
+                ground_kills: 3,
+                kills: vec!["MiG-29S".into(), "Su-27".into(), "T-72B".into(), "ZSU-23-4 Shilka".into(), "Ural-375".into()],
+                shots_fired: 9,
+                missiles_defeated: 3,
+                trainer_deaths: 0,
+                outcome: HotZoneOutcome::Egressed,
+            }),
+            None,
+        );
+        let gates: Vec<GateTime> = (0..6)
+            .map(|i| GateTime {
+                gate: format!("G{}", i + 1),
+                t: if i == 3 { None } else { Some(i as f64 * 62. + (i as f64 * 1.7)) },
+                planned_t: i as f64 * 60.,
+                agl_ft: if i == 3 { None } else { Some(220. + i as f64 * 70.) },
+                pos: GeoPt::default(),
+            })
+            .collect();
+        let ll = base(
+            RangeResult::LowLevel(LowLevelResult {
+                route: "LL-1 Alazani valley".into(),
+                gates_hit: 5,
+                gates_total: 6,
+                gates,
+                time_s: 318.,
+                planned_s: 300.,
+                tot_error_s: 18.,
+                avg_agl_ft: 380.,
+                max_agl_ft: 640.,
+                min_agl_ft: 140.,
+                max_allowed_agl_ft: 500.,
+                min_allowed_agl_ft: 100.,
+                pct_below_ceiling: 91.,
+                below_floor_s: 0.,
+                avg_speed_kts: 405.,
+                quality: PrecisionQuality::Fair,
+                calls: vec!["Missed gate G4".into(), "Late at the last gate".into()],
+            }),
+            None,
+        );
+        let fl = base(
+            RangeResult::FieldLanding(FieldLandingResult {
+                airfield: "Vaziani".into(),
+                runway: "31".into(),
+                outcome: FieldLandingOutcome::FullStop,
+                touchdown_from_threshold_m: 480.,
+                aim_error_m: 180.,
+                centreline_m: -4.2,
+                touchdown_fpm: 520.,
+                touchdown_gs_kts: 142.,
+                gs_error_1nm_deg: Some(0.6),
+                gs_error_half_nm_deg: Some(0.4),
+                lineup_1nm_deg: Some(-0.5),
+                lineup_half_nm_deg: None,
+                stable: true,
+                quality: PrecisionQuality::Good,
+                calls: vec!["A little high at 1 nm".into()],
+                touchdown_pos: GeoPt::default(),
+                runway_heading_deg: 95.,
+                threshold_pos: GeoPt::default(),
+                aim_point_m: 300.,
+                runway_length_m: 2400.,
+            }),
+            None,
+        );
+        let short = base(
+            RangeResult::FieldLanding(FieldLandingResult {
+                airfield: "Vaziani".into(),
+                runway: "13".into(),
+                outcome: FieldLandingOutcome::Undershoot,
+                touchdown_from_threshold_m: -60.,
+                aim_error_m: -360.,
+                centreline_m: 30.,
+                touchdown_fpm: 1100.,
+                touchdown_gs_kts: 150.,
+                gs_error_1nm_deg: None,
+                gs_error_half_nm_deg: None,
+                lineup_1nm_deg: None,
+                lineup_half_nm_deg: None,
+                stable: false,
+                quality: PrecisionQuality::Poor,
+                calls: vec![],
+                touchdown_pos: GeoPt::default(),
+                runway_heading_deg: 95.,
+                threshold_pos: GeoPt::default(),
+                aim_point_m: 300.,
+                runway_length_m: 2400.,
+            }),
+            None,
+        );
+        let csar = base(
+            RangeResult::Csar(CsarResult {
+                area: "CS-1 Tianeti".into(),
+                hostile: true,
+                outcome: CsarOutcome::Rescued,
+                time_to_pickup_s: Some(840.),
+                time_total_s: Some(1500.),
+                pickup_method: "landed".into(),
+                delivered_to: Some("Vaziani".into()),
+                survivor_pos: GeoPt { lat: 42.1, lon: 44.9, alt_m: 900. },
+                quality: PrecisionQuality::Excellent,
+            }),
+            None,
+        );
+        let deck = base(
+            RangeResult::Landing(LandingResult {
+                drill: "ship".into(),
+                pad: "FFG-7 Perry".into(),
+                distance_m: 1.1,
+                touchdown_fpm: 240.,
+                heading_error_deg: Some(3.),
+                hover_s: 12.,
+                quality: PrecisionQuality::Excellent,
+                pad_pos: GeoPt::default(),
+                touchdown_pos: GeoPt::default(),
+                ship_speed_kts: Some(12.),
+            }),
+            None,
+        );
+        vec![sead, hz, ll, fl, short, csar, deck]
     }
 
     #[test]
@@ -1299,6 +1707,23 @@ pub(crate) mod tests {
         }
         let u = unknown_svg("x", "y", "z", "now");
         assert!(png(&u).is_ok());
+    }
+
+    #[test]
+    fn new_kinds_round_trip_and_title() {
+        for rec in new_kinds() {
+            let js = serde_json::to_value(&rec).unwrap();
+            assert_eq!(js["result"]["kind"], rec.kind());
+            let back: RangeRecord = serde_json::from_value(js).unwrap();
+            assert_eq!(back.kind(), rec.kind());
+            let (title, _) = discord::title_and_color(&rec);
+            assert!(!title.is_empty());
+            assert!(!discord::fields(&rec).is_empty(), "{}", rec.kind());
+        }
+        let b = bomb();
+        let f = discord::fields(&b);
+        assert!(f.iter().any(|(k, v, _)| k == "Tier" && v == "HARD"));
+        assert!(f.iter().any(|(k, _, _)| k == "GPS denied"));
     }
 
     #[test]

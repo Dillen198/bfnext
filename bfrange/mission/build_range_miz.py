@@ -96,6 +96,7 @@ def xz2ll(x, z, lat=42.0, lon=42.0):
 # the range config and the F10 drawings are all generated from that table.
 
 import layout  # noqa: E402
+import training  # noqa: E402
 from layout import SECTORS, VAZIANI, MOZDOK, NM  # noqa: E402,F401
 
 ZONES = layout.ZONES
@@ -131,7 +132,8 @@ range, and you are told what a sector is for when you fly into it.
   amber  air-to-ground     yellow  tactical / CAS    red    threat / SEAD
   tan    CA gunnery        lime    helicopter        cyan   air-to-air
   blue   BVR               pink    duels             green  tanker tracks
-  white  carrier ops       violet  anti-ship
+  white  carrier ops       violet  anti-ship         hot red  HOT ZONE
+  teal   EW / GPS jamming  white line  low-level route  lime dashed  CSAR
 
 BLUE - Georgia
   R-1 SAMGORI        bomb circle, strafe pit (east of Vaziani)
@@ -141,6 +143,14 @@ BLUE - Georgia
   H-1 VAZIANI, H-2 TSKALTUBO (Kutaisi, mountains)   helicopter courses
   MOA KAKHETI        BFM over the mountains
   AR-4 TEXACO 2      KC-135 boom, 54Y, 254.0
+  S-1 AKHALKALAKI    LIVE SEAD/IADS: EWR, SA-2/3/6/11/10, Pantsir - weapons free
+  R-4 GAREJI         tiered targets: easy / medium (AAA) / hard (SHORAD)
+  EW-1 TSALKA        GPS jamming over coordinate targets
+  HZ-1 LIAKHVI       HOT ZONE: red CAP + SHORAD, AWACS Overlord 1 on 251.5
+  LL-1 KOLKHETI      low-level route, 8 gates, below 500 ft
+  CS-1 BAKHMARO      CSAR, beacon 350 kHz (Helicopter > CSAR)
+  PT-1 SENAKI        circuits; every landing everywhere is graded
+  FD-1 KOBULETI      frigate decks: FFG-7 41X, DDG 42X
 RED - Russia
   R-11 STEPNOYE      bomb circle, strafe pit (north of Mozdok)
   R-12 KARST         tactical array laser 1511, convoy, JDAM, JTAC Topor 124.5
@@ -150,16 +160,26 @@ RED - Russia
   H-11 MOZDOK, H-12 NALCHIK (foothills)   helicopter courses
   MOA NOGAI          BFM over the steppe
   AR-5 / AR-6        IL-78M, 59Y 124.0 (north) / 58Y 123.0 (west, over the sea)
+  S-11 KURSAVKA      LIVE SEAD/IADS: EWR, Patriot, Hawk, NASAMS, IRIS-T, Roland
+  R-15 EDISSEYA      tiered targets: easy / medium (AAA) / hard (SHORAD)
+  EW-11 TEREK        GPS jamming over coordinate targets
+  HZ-11 ZELENCHUK    HOT ZONE: blue CAP + SHORAD, AWACS Focus 1 on 124.5
+  LL-11 PSEKUPS      low-level route Krymsk - Maykop, 8 gates
+  CS-11 CHEGEM       CSAR, beacon 400 kHz
+  PT-11 MIN. VODY    circuits; every landing everywhere is graded
+  FD-11 UTRISH       frigate decks: Neustrashimy 43X, Project 22160 44X
 BLACK SEA - everyone
   CV OPAREA   CVN-72 TACAN 72X ICLS 11 Link-4 336.0, LHA-1 71X,
               recovery tanker A-6E 63Y 261.0. Every pass graded.
   W-1 / W-2   BFM        W-3 BVR        W-4 DUEL (blue meets red)
-  AS-1        shipping for anti-ship weapons
+  AS-1        shipping for anti-ship weapons (undefended)
+  AS-2 / AS-3 escorted convoys, red / NATO warships weapons free
   AR-1 TEXACO KC-135 51Y 251.0, AR-2 ARCO KC-135MPRS 52Y 252.0,
   AR-3 SHELL KC-130 53Y 253.0 (helicopters too)
 
 The MISSILE TRAINER removes any missile that would kill you and tells you
-so; guns are real. Chat: -range trainer on|off
+so - SAMs included, so the SEAD ranges, hot zones and escorted convoys are
+live fire you survive. Guns and AAA are real. Chat: -range trainer on|off
 """
 
 # ------------------------------------------------------------------ geometry of sectors
@@ -176,6 +196,26 @@ def sector_ring(shape):
         _, c, r = shape
         x, z = ll2xz(*c)
         return [(x + r * math.cos(a), z + r * math.sin(a)) for a in (i * math.pi / 24 for i in range(48))]
+    if kind == "route":
+        _, gates, width = shape
+        pts = [ll2xz(*g) for g in gates]
+        r = width / 2
+        left, right = [], []
+        for i, (x, z) in enumerate(pts):
+            # mitred normal: the average of the neighbouring legs' directions
+            dirs = []
+            for a, b in ((i - 1, i), (i, i + 1)):
+                if 0 <= a and b < len(pts):
+                    dx, dz = pts[b][0] - pts[a][0], pts[b][1] - pts[a][1]
+                    n = math.hypot(dx, dz) or 1
+                    dirs.append((dx / n, dz / n))
+            fx = sum(d[0] for d in dirs) / len(dirs)
+            fz = sum(d[1] for d in dirs) / len(dirs)
+            n = math.hypot(fx, fz) or 1
+            fx, fz = fx / n, fz / n
+            left.append((x - fz * r, z + fx * r))
+            right.append((x + fz * r, z - fx * r))
+        return left + right[::-1]
     if kind == "track":
         _, s, hdg, leg, width = shape
         x, z = ll2xz(*s)
@@ -204,6 +244,9 @@ def sector_label_at(shape):
         return x + r * 0.71, z - r * 0.71
     if shape[0] == "track":
         return min(p[0] for p in ring), min(p[1] for p in ring)
+    if shape[0] == "route":
+        x, z = ll2xz(*shape[1][0])
+        return x + 2500, z + 1500
     return max(p[0] for p in ring), min(p[1] for p in ring)
 
 
@@ -322,7 +365,8 @@ def sector_cfg(s):
         geo = {"track": {"lat": round(st[0], 5), "lon": round(st[1], 5), "heading_deg": hdg,
                          "leg_m": round(leg, 1), "width_m": round(width, 1)}}
     else:
-        pts = [xz2ll(x, z, *shape[1]) for x, z in sector_ring(shape)]
+        seed = shape[1][0] if shape[0] == "route" else shape[1]
+        pts = [xz2ll(x, z, *seed) for x, z in sector_ring(shape)]
         geo = {"polygon": [{"lat": round(a, 5), "lon": round(o, 5)} for a, o in pts]}
     return {"id": s["id"], "name": s["name"], "kind": s["kind"], "side": s["side"],
             "purpose": s["purpose"], "shape": geo}
@@ -343,6 +387,7 @@ def build_config():
         + gunnery("G11", "g11", "G-11 Starodub", *blue)
         + conventional("R14", "r14", "R-14 Kuban", *blue)
         + [tactical_array("R14", "r14", "R-14 Kuban", *blue, 1512)]
+        + training.extra_stations()
         + [{"id": "as1-ships", "name": "AS-1 Shipping - Merchant Ships", "kind": "ship_target",
             "loc": cfg_ll(layout.at("as-1", -3300, 21600)), "side": "red", "country": "CJTF Red", "respawn_s": 900,
             "targets": [{"typ": "Dry-cargo ship-1", "category": "ship"},
@@ -403,6 +448,7 @@ def build_config():
             {"id": "topor", "callsign": "Topor", "station": "r12-array", "loc": cfg_loc("R12-ARRAY"),
              "laser_code": 1511, "freq_mhz": 124.5, "typ": "MQ-9 Reaper", "friendlies_m": 600},
         ],
+        **training.config_sections(),
         "spawn": {"max_active_per_player": 3, "max_ai_units": 60, "cooldown_s": 20, "despawn_after_s": 3600,
                   "despawn_on_leave": True, "instructor_only": ["sam_site", "naval_group"], "instructors": []},
         "in_game_results": True,
@@ -448,12 +494,11 @@ def sector_drawings():
 
     Returns {layer name: [objects]}."""
     layers = {"Blue": [], "Red": [], "Common": []}
-    by_id = {s["id"]: s for s in SECTORS}
     for s in SECTORS:
         rgb = layout.COLOURS[s["kind"]]
         shape = s["shape"]
         layer = LAYER[s["side"]]
-        style = "dash" if s["kind"] == "aar" else "solid"
+        style = "dash" if s["kind"] in layout.DASHED_KINDS else "solid"
         common = {"visible": True, "layerName": layer, "primitiveType": "Polygon",
                   "colorString": _rgba(rgb, 0xff), "fillColorString": _rgba(rgb, 0x1a if s["side"] == "all" else 0x2c),
                   "thickness": 6 if s["kind"] == "aar" else 8, "style": style, "angle": 0}
@@ -461,6 +506,8 @@ def sector_drawings():
             _, c, r = shape
             x, z = ll2xz(*c)
             layers[layer].append({**common, "polygonMode": "circle", "radius": r, "mapX": x, "mapY": z, "name": s["name"]})
+        elif shape[0] == "route":
+            pass  # drawn as a line with its gates by training.extra_drawings
         else:
             ring = sector_ring(shape)
             cx = sum(p[0] for p in ring) / len(ring)
@@ -477,18 +524,8 @@ def sector_drawings():
             text = "\n".join([s["name"], f"{layout.KIND_LABEL[s['kind']]} - {side}"] + _wrap(s["purpose"]))
             size = 12
         layers[layer].append(_textbox(f"{s['name']} label", layer, sector_label_at(shape), text, rgb, size))
-    for side, sm in layout.SUMMARIES.items():
-        lines = [sm["title"]]
-        for sid in sm["ids"]:
-            sec = by_id[sid]
-            lines.append(f"{sec['name']}: " + sec["purpose"])
-        lines.append("F10 > Range > Sectors: bearing and range to each")
-        wrapped = []
-        for line in lines:
-            w = _wrap(line, 60)
-            wrapped += [w[0]] + ["    " + x for x in w[1:]]
-        layers[LAYER[side]].append(_textbox(sm["title"], LAYER[side], ll2xz(*sm["at"]), "\n".join(wrapped),
-                                            0xF2F2F2, 12, 0xe0))
+    for layer, objs in training.extra_drawings(ll2xz).items():
+        layers[layer] += objs
     legend = ["VECTOR STRIKE RANGE - SECTORS",
               "Every coloured area has one job:",
               "amber  air-to-ground     yellow  tactical / CAS",
@@ -496,9 +533,14 @@ def sector_drawings():
               "lime   helicopter        cyan    air-to-air",
               "blue   BVR               pink    duels",
               "green  tanker tracks     white   carrier ops",
-              "violet anti-ship",
+              "violet anti-ship         hot red  HOT ZONE (PvE)",
+              "teal   EW / GPS jamming  white line  low-level route",
+              "lime dashed  CSAR        white dashed  landing pattern",
               "R- range   G- gunnery   H- helicopter   W- over water",
               "MOA fight area   AR- tanker track   AS- anti-ship",
+              "S- SEAD/IADS  HZ- hot zone  EW- jamming  LL- low level",
+              "CS- CSAR  PT- pattern  FD- frigate decks",
+              "Red dashed rings: SAM threat rings (your enemy's)",
               "You see your side's sectors and the shared ones.",
               "F10 > Range > Sectors: bearing and range to each"]
     layers["Common"].append(_textbox("Range legend", "Common", ll2xz(*layout.LEGEND_AT), "\n".join(legend), 0xF2F2F2, 12, 0xe0))
@@ -749,6 +791,7 @@ def main():
     if old_init:
         files.pop("l10n/DEFAULT/" + old_init, None)
     files["l10n/DEFAULT/bfrange_mizinit.lua"] = LOADER.encode("utf-8")
+    files[training.BEACON_FILE] = training.beacon_wav()
 
     files["mission"] = luamiz.dump_mission(mv, m).encode("utf-8")
     files["l10n/DEFAULT/dictionary"] = luamiz.dump_mission(dv, dictionary).encode("utf-8")

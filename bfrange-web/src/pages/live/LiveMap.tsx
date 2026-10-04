@@ -2,11 +2,14 @@
  * The live range picture on the map: the range's sectors underneath, then
  * stations with their scoring rings, tankers with TACAN/frequency, carriers
  * with BRC and final bearing, arenas, on-demand spawns, and every player.
+ * The threat layer adds the IADS sites (lit when their radar is up), hot
+ * zones with their bandit count and GPS jammers; CSAR maydays show only the
+ * rough search area, never the survivor.
  */
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Layer, Marker, Source, type MapLayerMouseEvent } from 'react-map-gl/maplibre'
 import type { Feature, FeatureCollection } from 'geojson'
-import { Aircraft, Carrier, Helicopter, Refuel, Strike, Crosshair, Ship, Armor, Sam, type IconComponent } from '@icons'
+import { Aircraft, Antenna, Carrier, Csar, Explosion, Helicopter, Radar, Refuel, Strike, Crosshair, Ship, Armor, Sam, type IconComponent } from '@icons'
 import { RangeMap } from '../../components/RangeMap'
 import { useTheme } from '../../context/ThemeContext'
 import { airframe, fmt, pad3 } from '../../lib/format'
@@ -30,7 +33,20 @@ const STATION_ICON: Record<StationKind, IconComponent> = {
   sam_site: Sam,
 }
 
-type Layers = { stations: boolean; air: boolean; labels: boolean }
+type Layers = { stations: boolean; threats: boolean; air: boolean; labels: boolean }
+
+/** Colours of the new layers: the F10 map's own for hot zones and EW. */
+const HOT = '#FF1744'
+const EW = '#00C8B4'
+const CSAR_LIME = '#7CFC4A'
+const isRadarOnly = (system: string) => /ewr|radar|55g6|1l13|fps/i.test(system)
+
+/** "12 min" since an ISO time, against the server clock. */
+function since(iso: string, now: string): string {
+  const s = (new Date(now).getTime() - new Date(iso).getTime()) / 1000
+  if (!Number.isFinite(s) || s < 0) return ''
+  return s < 90 ? `${Math.round(s)} s` : `${Math.round(s / 60)} min`
+}
 
 /** The sector layer's settings, remembered per viewer. */
 interface SectorPref {
@@ -75,7 +91,13 @@ function placeTip(el: HTMLDivElement | null, p: Pointer | null) {
 export function LiveMap({ live, height }: { live: RangeLive; height: number | string }) {
   const { theme } = useTheme()
   const light = theme === 'light'
-  const [show, setShow] = useState<Layers>({ stations: true, air: true, labels: true })
+  const [show, setShow] = useState<Layers>({ stations: true, threats: true, air: true, labels: true })
+  const iads = live.iads ?? []
+  const hotZones = live.hot_zones ?? []
+  const jammers = live.jammers ?? []
+  const csar = live.csar ?? []
+  const decks = live.ship_decks ?? []
+  const hasThreats = iads.length + hotZones.length + jammers.length > 0
   const [zoom, setZoom] = useState(8)
   // how much text the labels carry: -1 none, 0 names only for the big
   // things, 1 names everywhere, 2 full detail (frequencies, BRC, targets)
@@ -127,7 +149,10 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
 
   // frame everything once, on first render (the sectors only when nothing else is up)
   const [bounds] = useState(() => {
-    const pts: LatLon[] = [...live.stations.map(s => s.pos), ...live.carriers.map(c => c.pos), ...live.tankers.map(t => t.pos), ...live.players.map(p => p.pos)]
+    const pts: LatLon[] = [
+      ...live.stations.map(s => s.pos), ...live.carriers.map(c => c.pos), ...live.tankers.map(t => t.pos), ...live.players.map(p => p.pos),
+      ...(live.hot_zones ?? []).map(h => h.pos), ...(live.iads ?? []).flatMap(n => n.sites.map(s => s.pos)), ...(live.ship_decks ?? []).map(d => d.pos),
+    ]
     if (!pts.length) pts.push(...drawn.flatMap(d => d.ring.map(([lon, lat]) => ({ lat, lon }))))
     return boundsOf(pts, 4000)
   })
@@ -147,6 +172,18 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
       const aft = destination(c.pos, c.fb_deg + 180, 4 * NM)
       f.push({ type: 'Feature', properties: { k: 'brc' }, geometry: { type: 'LineString', coordinates: [[c.pos.lon, c.pos.lat], [bow.lon, bow.lat]] } })
       f.push({ type: 'Feature', properties: { k: 'fb' }, geometry: { type: 'LineString', coordinates: [[aft.lon, aft.lat], [c.pos.lon, c.pos.lat]] } })
+    }
+    for (const n of live.iads ?? []) {
+      for (const s of n.sites) {
+        if (!(s.range_m > 0) || s.units_alive === 0) continue
+        f.push({ type: 'Feature', properties: { k: 'sam', on: s.emitting ? 1 : 0 }, geometry: { type: 'Polygon', coordinates: [circleRing(s.pos, s.range_m, 72)] } })
+      }
+    }
+    for (const h of live.hot_zones ?? []) {
+      f.push({ type: 'Feature', properties: { k: 'hz', hot: h.bandits > 0 ? 1 : 0 }, geometry: { type: 'Polygon', coordinates: [circleRing(h.pos, h.radius_m, 96)] } })
+    }
+    for (const j of live.jammers ?? []) {
+      f.push({ type: 'Feature', properties: { k: 'jam', on: j.alive && (j.gps !== 'off' || j.radio !== 'off') ? 1 : 0 }, geometry: { type: 'Polygon', coordinates: [circleRing(j.pos, j.radius_m, 72)] } })
     }
     return { type: 'FeatureCollection', features: f }
   }, [live])
@@ -172,6 +209,16 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
               paint={{ 'line-color': ['case', ['==', ['get', 'hot'], 1], '#38d77c', '#93a3b5'], 'line-width': 1, 'line-dasharray': [1, 2], 'line-opacity': 0.8 }} />
           )}
           <Layer id="brc" type="line" filter={['==', ['get', 'k'], 'brc']} paint={{ 'line-color': '#ffb23e', 'line-width': 1.6 }} />
+          <Layer id="hz-fill" type="fill" filter={['==', ['get', 'k'], 'hz']} layout={{ visibility: show.threats ? 'visible' : 'none' }}
+            paint={{ 'fill-color': HOT, 'fill-opacity': ['case', ['==', ['get', 'hot'], 1], 0.1, 0.04] }} />
+          <Layer id="hz-line" type="line" filter={['==', ['get', 'k'], 'hz']} layout={{ visibility: show.threats ? 'visible' : 'none' }}
+            paint={{ 'line-color': HOT, 'line-width': ['case', ['==', ['get', 'hot'], 1], 2, 1.2], 'line-dasharray': [4, 3] }} />
+          <Layer id="jam-fill" type="fill" filter={['==', ['get', 'k'], 'jam']} layout={{ visibility: show.threats ? 'visible' : 'none' }}
+            paint={{ 'fill-color': EW, 'fill-opacity': ['case', ['==', ['get', 'on'], 1], 0.08, 0.02] }} />
+          <Layer id="jam-line" type="line" filter={['==', ['get', 'k'], 'jam']} layout={{ visibility: show.threats ? 'visible' : 'none' }}
+            paint={{ 'line-color': EW, 'line-width': 1.2, 'line-dasharray': [1, 2], 'line-opacity': ['case', ['==', ['get', 'on'], 1], 0.9, 0.35] }} />
+          <Layer id="sam-ring" type="line" filter={['==', ['get', 'k'], 'sam']} layout={{ visibility: show.threats ? 'visible' : 'none' }}
+            paint={{ 'line-color': ['case', ['==', ['get', 'on'], 1], '#ff3b3b', '#93a3b5'], 'line-width': ['case', ['==', ['get', 'on'], 1], 1.6, 1], 'line-opacity': ['case', ['==', ['get', 'on'], 1], 0.9, 0.45], 'line-dasharray': [2, 2] }} />
           <Layer id="fb" type="line" filter={['==', ['get', 'k'], 'fb']} paint={{ 'line-color': '#38d77c', 'line-width': 1.2, 'line-dasharray': [3, 3] }} />
         </Source>
 
@@ -199,6 +246,88 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
             </Marker>
           )
         })}
+
+        {show.threats && hotZones.map(h => (
+          <Marker key={h.id} latitude={h.pos.lat} longitude={h.pos.lon} anchor="left" offset={[-11, 0]}>
+            <div className="flex items-center gap-1.5" title={`${h.name}: ${h.bandits} bandit(s) up, ${h.ground_alive}/${h.ground_total} ground targets${h.awacs ? ` · AWACS ${h.awacs}` : ''}`}>
+              <span className="grid place-items-center" style={{ width: 22, height: 22, borderRadius: 2, background: 'var(--panel)', border: `1.5px solid ${HOT}`, color: HOT }}>
+                <Explosion size={14} />
+              </span>
+              {detail >= 0 && (
+                <span className="map-label" style={{ color: HOT }}>
+                  <b>{h.name}</b> · {h.bandits ? `${h.bandits} bandit${h.bandits === 1 ? '' : 's'}` : 'quiet'}
+                  {detail >= 1 && h.players.length > 0 && <> · {h.players.join(', ')}</>}
+                  {detail >= 2 && <><br />ground {h.ground_alive}/{h.ground_total}{h.awacs ? ` · ${h.awacs}` : ''}</>}
+                </span>
+              )}
+            </div>
+          </Marker>
+        ))}
+
+        {show.threats && iads.flatMap(n => n.sites.map(s => {
+          const dead = s.units_alive === 0
+          const I = isRadarOnly(s.system) ? Radar : Sam
+          const c = dead ? 'var(--dim)' : s.emitting ? 'var(--wave)' : 'var(--haze)'
+          return (
+            <Marker key={`${n.id}/${s.id}`} latitude={s.pos.lat} longitude={s.pos.lon} anchor="left" offset={[-10, 0]}>
+              <div className="flex items-center gap-1" title={`${n.name} · ${s.name} (${s.system}) · ${dead ? 'destroyed' : s.emitting ? 'RADAR UP' : 'radar dark'} · ${s.units_alive}/${s.units_total} alive${n.weapons_free ? '' : ' · weapons hold'}`}>
+                <span className="grid place-items-center" style={{
+                  width: 20, height: 20, borderRadius: 2, background: 'var(--panel)', color: c, opacity: dead ? 0.6 : 1,
+                  border: `1.5px solid ${s.emitting && !dead ? 'var(--wave)' : 'var(--line-2)'}`,
+                  boxShadow: s.emitting && !dead ? '0 0 0 3px var(--wave-soft)' : undefined,
+                }}>
+                  <I size={13} />
+                </span>
+                {detail >= 1 && (
+                  <span className="map-label" style={{ color: s.emitting && !dead ? 'var(--wave)' : undefined, textDecoration: dead ? 'line-through' : undefined }}>
+                    {s.name}{detail >= 2 && <> · {s.system} · {dead ? 'destroyed' : s.emitting ? 'EMITTING' : 'dark'}</>}
+                  </span>
+                )}
+              </div>
+            </Marker>
+          )
+        }))}
+
+        {show.threats && jammers.map(j => (
+          <Marker key={j.id} latitude={j.pos.lat} longitude={j.pos.lon} anchor="left" offset={[-9, 0]}>
+            <div className="flex items-center gap-1" title={`${j.name} (${j.side}) · GPS ${j.gps} · radio ${j.radio}${j.alive ? '' : ' · destroyed'}`}>
+              <span style={{ color: j.alive ? EW : 'var(--dim)', display: 'inline-flex' }}><Antenna size={16} /></span>
+              {detail >= 1 && (
+                <span className="map-label" style={{ color: j.alive ? EW : undefined }}>
+                  {j.name}{detail >= 2 && <> · GPS {j.gps}{j.radio !== 'off' ? ` · radio ${j.radio}` : ''}</>}
+                </span>
+              )}
+            </div>
+          </Marker>
+        ))}
+
+        {show.stations && csar.map(c => (
+          <Marker key={`${c.area}/${c.pilot}`} latitude={c.area_pos.lat} longitude={c.area_pos.lon} anchor="left" offset={[-10, 0]}>
+            <div className="flex items-center gap-1" title={`MAYDAY: ${c.pilot} down in ${c.area}, ${since(c.started, live.server_time)} ago${c.hostile ? ' · hostile' : ''}. The search area only: the survivor's position is not shown.`}>
+              <span className="grid place-items-center" style={{ width: 20, height: 20, borderRadius: '50%', background: 'var(--panel)', border: `1.5px dashed ${CSAR_LIME}`, color: CSAR_LIME, opacity: c.picked_up ? 0.55 : 1 }}>
+                <Csar size={12} />
+              </span>
+              {detail >= 0 && (
+                <span className="map-label" style={{ color: CSAR_LIME }}>
+                  {c.picked_up ? 'picked up' : 'MAYDAY'} · {c.pilot}{detail >= 1 && <> · {since(c.started, live.server_time)}{c.hostile ? ' · hostile' : ''}</>}
+                </span>
+              )}
+            </div>
+          </Marker>
+        ))}
+
+        {show.stations && decks.map(d => (
+          <Marker key={d.id} latitude={d.pos.lat} longitude={d.pos.lon} anchor="left" offset={[-9, 0]}>
+            <div className="flex items-center gap-1.5">
+              <span style={{ color: 'var(--chalk)', transform: `rotate(${d.heading_deg}deg)`, display: 'inline-flex', filter: 'drop-shadow(0 0 2px var(--map-bg))' }}><Ship size={18} /></span>
+              {detail >= 1 && (
+                <span className="map-label">
+                  {d.name}{detail >= 2 && <> · {pad3(d.heading_deg)}° {fmt(d.speed_kts)} kt{d.tacan ? ` · ${d.tacan}` : ''}</>}
+                </span>
+              )}
+            </div>
+          </Marker>
+        ))}
 
         {live.carriers.map(c => (
           <Marker key={c.id} latitude={c.pos.lat} longitude={c.pos.lon} anchor="left" offset={[-11, 0]}>
@@ -258,6 +387,9 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
               <button aria-pressed={sec.on} onClick={() => setSec(s => ({ ...s, on: !s.on }))} title="The range's areas, as the F10 map draws them">Sectors</button>
             )}
             <button aria-pressed={show.stations} onClick={() => setShow(s => ({ ...s, stations: !s.stations }))}>Stations</button>
+            {hasThreats && (
+              <button aria-pressed={show.threats} onClick={() => setShow(s => ({ ...s, threats: !s.threats }))} title="Air defences, hot zones and jammers">Threats</button>
+            )}
             <button aria-pressed={show.air} onClick={() => setShow(s => ({ ...s, air: !s.air }))}>Traffic</button>
             <button aria-pressed={show.labels} onClick={() => setShow(s => ({ ...s, labels: !s.labels }))}>Labels</button>
           </div>

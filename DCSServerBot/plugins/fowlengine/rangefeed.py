@@ -238,7 +238,9 @@ def split_cap(items: list, cap: int = MAX_POSTS_PER_POLL) -> tuple[list, list]:
 
 
 def _kind_label(kind: str) -> str:
-    return {"aar": "AAR", "cas": "CAS", "anti_ship": "anti-ship"}.get(kind, kind.replace("_", " ") or "other")
+    return {"aar": "AAR", "cas": "CAS", "anti_ship": "anti-ship", "sead": "SEAD", "csar": "CSAR",
+            "hot_zone": "hot zone", "low_level": "low level", "field_landing": "landing"}.get(
+        kind, kind.replace("_", " ") or "other")
 
 
 def summary_line(skipped: list, overflow: bool, site_url: str = RANGE_SITE_URL,

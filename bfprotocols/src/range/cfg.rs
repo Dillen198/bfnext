@@ -53,6 +53,18 @@ pub enum SectorKind {
     Aar,
     Carrier,
     AntiShip,
+    /// PvE live-fire area: AI fighters, air defences and targets that fight back
+    HotZone,
+    /// GPS / radio jamming
+    Ew,
+    /// a low-level navigation route with gates
+    LowLevel,
+    /// combat search and rescue
+    Csar,
+    /// field landing pattern, every landing graded
+    Pattern,
+    /// frigates steaming with helicopter decks
+    ShipDeck,
 }
 
 impl SectorKind {
@@ -69,6 +81,12 @@ impl SectorKind {
             Self::Aar => "AIR REFUELLING",
             Self::Carrier => "CARRIER OPS",
             Self::AntiShip => "ANTI-SHIP",
+            Self::HotZone => "HOT ZONE",
+            Self::Ew => "EW / GPS JAMMING",
+            Self::LowLevel => "LOW-LEVEL ROUTE",
+            Self::Csar => "CSAR",
+            Self::Pattern => "LANDING PATTERN",
+            Self::ShipDeck => "SHIP DECKS",
         }
     }
 }
@@ -325,6 +343,10 @@ pub struct StationCfg {
     /// Only instructors can reset / reconfigure this station.
     #[serde(default)]
     pub locked: bool,
+    /// Difficulty of a tiered target area: "easy" (nothing shoots back),
+    /// "medium" (AAA), "hard" (short-range SAMs). Shown on the result card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<String>,
 }
 
 fn default_station_radius() -> f64 {
@@ -990,6 +1012,397 @@ impl Default for SpawnPolicyCfg {
     }
 }
 
+// ---------------------------------------------------------------- IADS / SEAD
+
+/// A network of SAM sites that behaves like an air defence system rather than
+/// a row of targets: radars come up when the network sees someone in range,
+/// go dark when an anti-radiation missile comes at them, and every kill of an
+/// emitter is graded as a SEAD/DEAD result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IadsCfg {
+    pub id: String,
+    pub name: String,
+    /// Whose kit it is (the defenders): "red" or "blue". The engine makes it
+    /// hostile to the other side's pilots.
+    #[serde(default = "default_side_red")]
+    pub side: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    pub sites: Vec<SamSiteCfg>,
+    /// "iads": tracking radars light up when the network (EWRs and search
+    /// radars) sees a target inside the site's engagement range;
+    /// "always_on": radars on all the time; "blink": on and off at random.
+    #[serde(default = "default_emcon")]
+    pub emcon: String,
+    /// A site an anti-radiation missile is fired at goes dark this long.
+    /// `None` = it never defends itself.
+    #[serde(default = "default_harm_dark")]
+    pub harm_defence_s: Option<u32>,
+    /// Weapons free (the missile trainer protects players); false keeps the
+    /// radars honest but holds fire.
+    #[serde(default = "yes")]
+    pub weapons_free: bool,
+    /// Rebuild a destroyed site after this long. `None` = only on reset.
+    #[serde(default = "default_site_respawn")]
+    pub respawn_s: Option<u32>,
+    /// Only aircraft inside this circle wake the network up, so a long-range
+    /// SAM doesn't engage pilots taking off or on their way to other ranges.
+    /// Normally the IADS sector itself. None = anywhere in range.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engage_within: Option<EngageArea>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EngageArea {
+    pub loc: Loc,
+    pub radius_nm: f64,
+}
+
+fn default_emcon() -> String {
+    "iads".into()
+}
+fn default_harm_dark() -> Option<u32> {
+    Some(45)
+}
+fn default_site_respawn() -> Option<u32> {
+    Some(900)
+}
+
+/// One SAM, AAA or radar site of an IADS.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SamSiteCfg {
+    pub id: String,
+    pub name: String,
+    /// The engine's system key (see `bfrange::iads::SYSTEMS`): sa2 sa3 sa5
+    /// sa6 sa8 sa10 sa11 sa13 sa15 sa19 pantsir tor_m2 zsu ewr_1l13 ewr_55g6
+    /// hawk patriot nasams iris_t roland gepard avenger rapier hq7 ewr_fps117.
+    pub system: String,
+    pub loc: Loc,
+    /// Which way the battery faces, degrees true.
+    #[serde(default)]
+    pub heading_deg: f64,
+}
+
+// ---------------------------------------------------------------- hot zone
+
+/// An area that always fights back: AI fighters on CAP while anyone is in
+/// it, air defences and targets that respawn, and an AWACS on your side
+/// calling the picture. The range's answer to a PvE server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotZoneCfg {
+    pub id: String,
+    pub name: String,
+    pub loc: Loc,
+    #[serde(default = "default_hz_radius")]
+    pub radius_nm: f64,
+    /// The AI's side: "red" (blue pilots fight here) or "blue".
+    #[serde(default = "default_side_red")]
+    pub ai_side: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    /// DCS fighter types the CAP is drawn from.
+    #[serde(default)]
+    pub cap_types: Vec<String>,
+    /// Flights kept up while a player is in the zone.
+    #[serde(default = "two")]
+    pub cap_flights: u32,
+    #[serde(default = "two")]
+    pub flight_size: u32,
+    #[serde(default = "default_hz_skill")]
+    pub cap_skill: String,
+    /// "guns", "fox2", "fox1" or "fox3"
+    #[serde(default = "default_hz_weapons")]
+    pub cap_weapons: String,
+    /// A new flight launches this long after one is lost.
+    #[serde(default = "default_hz_respawn")]
+    pub cap_respawn_s: u32,
+    #[serde(default = "default_hz_alt")]
+    pub cap_alt_ft: f64,
+    /// Ground sites (defences and targets) inside the zone.
+    #[serde(default)]
+    pub ground: Vec<HotZoneSiteCfg>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub awacs: Option<AwacsCfg>,
+    /// Remove the CAP when nobody has been in the zone this long.
+    #[serde(default = "default_hz_idle")]
+    pub idle_despawn_s: u32,
+}
+
+fn two() -> u32 {
+    2
+}
+fn default_hz_radius() -> f64 {
+    20.
+}
+fn default_hz_skill() -> String {
+    "Good".into()
+}
+fn default_hz_weapons() -> String {
+    "fox3".into()
+}
+fn default_hz_respawn() -> u32 {
+    300
+}
+fn default_hz_alt() -> f64 {
+    22000.
+}
+fn default_hz_idle() -> u32 {
+    600
+}
+
+/// A ground site in a hot zone. `composition` is one of the engine's ground
+/// compositions (armour, trucks, AAA, SHORAD ...; see
+/// `bfrange::hotzone::HOT_ZONE_COMPOSITIONS`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HotZoneSiteCfg {
+    pub id: String,
+    pub name: String,
+    pub loc: Loc,
+    pub composition: String,
+    #[serde(default = "default_hz_site_respawn")]
+    pub respawn_s: u32,
+}
+
+fn default_hz_site_respawn() -> u32 {
+    600
+}
+
+/// An AI AWACS kept on station. It gives its side datalink, and the engine
+/// answers F10 "Picture" requests with what it can see.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AwacsCfg {
+    /// "E-3A", "E-2C", "A-50", "KJ-2000"
+    pub typ: String,
+    /// "Overlord", "Magic", "Wizard", "Focus", "Darkstar"
+    pub callsign: String,
+    #[serde(default = "one")]
+    pub callsign_number: u8,
+    pub loc: Loc,
+    #[serde(default)]
+    pub heading_deg: f64,
+    #[serde(default = "default_awacs_leg")]
+    pub leg_nm: f64,
+    #[serde(default = "default_awacs_alt")]
+    pub alt_ft: f64,
+    pub freq_mhz: f64,
+}
+
+fn default_awacs_leg() -> f64 {
+    25.
+}
+fn default_awacs_alt() -> f64 {
+    30000.
+}
+
+/// NATO AWACS callsign ids as DCS numbers them.
+pub fn awacs_callsign_id(name: &str) -> i64 {
+    match name.to_ascii_lowercase().as_str() {
+        "magic" => 2,
+        "wizard" => 3,
+        "focus" => 4,
+        "darkstar" => 5,
+        _ => 1, // Overlord
+    }
+}
+
+// ---------------------------------------------------------------- EW
+
+/// A ground jammer (DCS's GPS_Spoofer units and the ActivateJammer command):
+/// GPS/GLONASS jamming or spoofing, and radio jamming. Weapons released inside
+/// its radius are flagged "GPS denied" on their result cards.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JammerCfg {
+    pub id: String,
+    pub name: String,
+    /// The jammer's own side: a "red" jammer denies blue pilots.
+    #[serde(default = "default_side_red")]
+    pub side: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    pub loc: Loc,
+    /// "off", "jam" or "spoof"
+    #[serde(default = "default_gps_mode")]
+    pub gps: String,
+    #[serde(default = "default_gps_mode")]
+    pub glonass: String,
+    /// "off", "simple" or "adaptive"
+    #[serde(default = "default_radio_mode")]
+    pub radio: String,
+    /// Radio jamming band, MHz.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radio_band_mhz: Option<[f64; 2]>,
+    /// Where spoofed receivers think they are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoof_to: Option<Loc>,
+    /// The radius the range treats as denied, for results and warnings.
+    #[serde(default = "default_jam_radius")]
+    pub radius_nm: f64,
+}
+
+fn default_gps_mode() -> String {
+    "jam".into()
+}
+fn default_radio_mode() -> String {
+    "off".into()
+}
+fn default_jam_radius() -> f64 {
+    15.
+}
+
+// ---------------------------------------------------------------- low level
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateCfg {
+    pub name: String,
+    pub loc: Loc,
+    /// Fly within this of the gate to pass it.
+    #[serde(default = "default_gate_radius")]
+    pub radius_m: f64,
+}
+
+fn default_gate_radius() -> f64 {
+    1000.
+}
+
+/// A low-level navigation route: fly the gates in order, below the ceiling,
+/// on time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LowLevelRouteCfg {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "default_sector_side")]
+    pub side: String,
+    pub gates: Vec<GateCfg>,
+    #[serde(default = "default_ll_ceiling")]
+    pub max_agl_ft: f64,
+    /// Below this is unsafe and costs points.
+    #[serde(default = "default_ll_floor")]
+    pub min_agl_ft: f64,
+    /// Planned ground speed for the time-on-target.
+    #[serde(default = "default_ll_speed")]
+    pub speed_kts: f64,
+    #[serde(default = "default_ll_tot")]
+    pub tot_tolerance_s: f64,
+}
+
+fn default_ll_ceiling() -> f64 {
+    500.
+}
+fn default_ll_floor() -> f64 {
+    100.
+}
+fn default_ll_speed() -> f64 {
+    420.
+}
+fn default_ll_tot() -> f64 {
+    15.
+}
+
+// ---------------------------------------------------------------- pattern
+
+/// Field landings: every runway landing at the listed fields is graded
+/// (touchdown point, centreline, sink rate, approach stability).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PatternCfg {
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// Airbase names as DCS has them; empty = every airfield.
+    #[serde(default)]
+    pub fields: Vec<String>,
+    #[serde(default = "default_pattern_gs")]
+    pub glideslope_deg: f64,
+    /// Touchdown aim point past the threshold, metres.
+    #[serde(default = "default_aim_point")]
+    pub aim_point_m: f64,
+}
+
+fn default_pattern_gs() -> f64 {
+    3.
+}
+fn default_aim_point() -> f64 {
+    300.
+}
+
+impl Default for PatternCfg {
+    fn default() -> Self {
+        Self { enabled: true, fields: vec![], glideslope_deg: default_pattern_gs(), aim_point_m: default_aim_point() }
+    }
+}
+
+// ---------------------------------------------------------------- CSAR
+
+/// Where downed pilots can be.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsarAreaCfg {
+    pub id: String,
+    pub name: String,
+    /// Who flies the rescue: "blue", "red" or "all".
+    #[serde(default = "default_sector_side")]
+    pub side: String,
+    pub loc: Loc,
+    #[serde(default = "default_csar_radius")]
+    pub radius_m: f64,
+    /// The survivor's beacon, kHz AM (helicopter ADFs tune 150-1750 kHz).
+    #[serde(default = "default_beacon_khz")]
+    pub beacon_khz: f64,
+}
+
+fn default_csar_radius() -> f64 {
+    15000.
+}
+fn default_beacon_khz() -> f64 {
+    350.
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CsarCfg {
+    #[serde(default)]
+    pub areas: Vec<CsarAreaCfg>,
+    /// Sound file in the .miz that the beacon transmits
+    /// (`l10n/DEFAULT/<file>`). None = no audible beacon, smoke only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beacon_file: Option<String>,
+}
+
+// ---------------------------------------------------------------- ship decks
+
+/// A warship with a helicopter deck, steaming a leg back and forth, for deck
+/// landing practice.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShipDeckCfg {
+    pub id: String,
+    pub name: String,
+    /// DCS type with a helicopter deck: "PERRY", "USS_Arleigh_Burke_IIa",
+    /// "TICONDEROG", "NEUSTRASH", "CHAP_Project22160", "Type_054A" ...
+    pub typ: String,
+    #[serde(default = "default_side_blue")]
+    pub side: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    pub loc: Loc,
+    #[serde(default)]
+    pub heading_deg: f64,
+    #[serde(default = "default_deck_speed")]
+    pub speed_kts: f64,
+    #[serde(default = "default_deck_leg")]
+    pub leg_nm: f64,
+    /// Touchdown within this of the deck centreline is PERFECT.
+    #[serde(default = "default_deck_perfect")]
+    pub perfect_m: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tacan: Option<TacanCfg>,
+}
+
+fn default_deck_speed() -> f64 {
+    10.
+}
+fn default_deck_leg() -> f64 {
+    6.
+}
+fn default_deck_perfect() -> f64 {
+    1.5
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RangeCfg {
     /// Publish RPCs under this netidx base (bfdb's instance `base`).
@@ -1025,6 +1438,20 @@ pub struct RangeCfg {
     pub helo: HeloCfg,
     #[serde(default)]
     pub jtacs: Vec<JtacCfg>,
+    #[serde(default)]
+    pub iads: Vec<IadsCfg>,
+    #[serde(default)]
+    pub hot_zones: Vec<HotZoneCfg>,
+    #[serde(default)]
+    pub jammers: Vec<JammerCfg>,
+    #[serde(default)]
+    pub low_level: Vec<LowLevelRouteCfg>,
+    #[serde(default)]
+    pub pattern: PatternCfg,
+    #[serde(default)]
+    pub csar: CsarCfg,
+    #[serde(default)]
+    pub ship_decks: Vec<ShipDeckCfg>,
     #[serde(default)]
     pub scoring: ScoringCfg,
     #[serde(default)]
@@ -1130,6 +1557,93 @@ impl RangeCfg {
                 bail!("sector {:?}: side must be blue, red or all, not {:?}", s.id, s.side)
             }
         }
+        let side_ok = |s: &str| matches!(s, "blue" | "red");
+        for n in &self.iads {
+            if !ok_id(&n.id) || !ids.insert(format!("iads:{}", n.id)) {
+                bail!("iads id {:?} is empty, invalid or duplicated", n.id)
+            }
+            if !side_ok(&n.side) {
+                bail!("iads {:?}: side must be blue or red, not {:?}", n.id, n.side)
+            }
+            if !matches!(n.emcon.as_str(), "iads" | "always_on" | "blink") {
+                bail!("iads {:?}: emcon must be iads, always_on or blink, not {:?}", n.id, n.emcon)
+            }
+            for site in &n.sites {
+                if !ok_id(&site.id) || !ids.insert(format!("site:{}", site.id)) {
+                    bail!("iads {:?}: site id {:?} is empty, invalid or duplicated", n.id, site.id)
+                }
+            }
+        }
+        for h in &self.hot_zones {
+            if !ok_id(&h.id) || !ids.insert(format!("hot_zone:{}", h.id)) {
+                bail!("hot zone id {:?} is empty, invalid or duplicated", h.id)
+            }
+            if !side_ok(&h.ai_side) {
+                bail!("hot zone {:?}: ai_side must be blue or red, not {:?}", h.id, h.ai_side)
+            }
+            if h.cap_flights > 0 && h.cap_types.is_empty() {
+                bail!("hot zone {:?}: cap_flights needs at least one cap_types entry", h.id)
+            }
+            if !(h.radius_nm > 0.) {
+                bail!("hot zone {:?}: radius_nm must be positive", h.id)
+            }
+            for g in &h.ground {
+                if !ok_id(&g.id) || !ids.insert(format!("hz_site:{}", g.id)) {
+                    bail!("hot zone {:?}: site id {:?} is empty, invalid or duplicated", h.id, g.id)
+                }
+            }
+        }
+        for j in &self.jammers {
+            if !ok_id(&j.id) || !ids.insert(format!("jammer:{}", j.id)) {
+                bail!("jammer id {:?} is empty, invalid or duplicated", j.id)
+            }
+            if !side_ok(&j.side) {
+                bail!("jammer {:?}: side must be blue or red, not {:?}", j.id, j.side)
+            }
+            for (what, v, ok) in [
+                ("gps", &j.gps, &["off", "jam", "spoof"][..]),
+                ("glonass", &j.glonass, &["off", "jam", "spoof"][..]),
+                ("radio", &j.radio, &["off", "simple", "adaptive"][..]),
+            ] {
+                if !ok.contains(&v.as_str()) {
+                    bail!("jammer {:?}: {what} must be one of {ok:?}, not {v:?}", j.id)
+                }
+            }
+        }
+        for r in &self.low_level {
+            if !ok_id(&r.id) || !ids.insert(format!("route:{}", r.id)) {
+                bail!("low-level route id {:?} is empty, invalid or duplicated", r.id)
+            }
+            if r.gates.len() < 2 {
+                bail!("low-level route {:?} needs at least two gates", r.id)
+            }
+            if !(r.max_agl_ft > r.min_agl_ft) || !(r.speed_kts > 0.) {
+                bail!("low-level route {:?}: needs max_agl_ft above min_agl_ft and a positive speed", r.id)
+            }
+        }
+        for a in &self.csar.areas {
+            if !ok_id(&a.id) || !ids.insert(format!("csar:{}", a.id)) {
+                bail!("CSAR area id {:?} is empty, invalid or duplicated", a.id)
+            }
+            if !(a.radius_m > 0.) || !(150. ..=1750.).contains(&a.beacon_khz) {
+                bail!("CSAR area {:?}: needs a positive radius and a beacon of 150-1750 kHz", a.id)
+            }
+        }
+        for d in &self.ship_decks {
+            if !ok_id(&d.id) || !ids.insert(format!("deck:{}", d.id)) {
+                bail!("ship deck id {:?} is empty, invalid or duplicated", d.id)
+            }
+            if !side_ok(&d.side) {
+                bail!("ship deck {:?}: side must be blue or red, not {:?}", d.id, d.side)
+            }
+        }
+        for s in &self.stations {
+            if let Some(t) = &s.tier {
+                if !matches!(t.as_str(), "easy" | "medium" | "hard") {
+                    bail!("station {:?}: tier must be easy, medium or hard, not {t:?}", s.id)
+                }
+            }
+        }
         if let Some(b) = &self.netidx_bind {
             if let Err(e) = b.parse::<netidx::publisher::BindCfg>() {
                 bail!("netidx_bind {b:?} is not a netidx bind address: {e}")
@@ -1196,6 +1710,16 @@ mod tests {
         c.validate().unwrap();
         assert_eq!(c.carriers[0].recovery_tanker.as_ref().unwrap().typ, "A-6E");
         assert!(c.stations.iter().any(|s| s.kind == StationKind::StrafePit));
+        // the training sectors: both sides get one of each
+        assert_eq!(c.iads.len(), 2);
+        assert_eq!(c.hot_zones.len(), 2);
+        assert_eq!(c.jammers.len(), 2);
+        assert_eq!(c.low_level.len(), 2);
+        assert_eq!(c.csar.areas.len(), 2);
+        assert_eq!(c.ship_decks.len(), 4);
+        assert_eq!(c.stations.iter().filter(|s| s.tier.is_some()).count(), 6);
+        assert!(c.iads.iter().all(|n| n.engage_within.is_some()));
+        assert!(c.sectors.iter().any(|s| s.kind == SectorKind::LowLevel && s.shape.polygon.is_some()));
     }
 
     #[test]

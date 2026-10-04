@@ -251,6 +251,37 @@ export const CATALOG: SpawnCatalog = {
       ],
     },
     {
+      id: 'sead_site',
+      category: 'sead',
+      label: 'SEAD / DEAD site',
+      description: 'A SAM battery tied into the IADS: its radar comes up when the network sees you, goes dark when an anti-radiation missile is fired at it. Every emitter kill is graded.',
+      relative_to_player: false,
+      instructor_only: true,
+      params: [
+        { key: 'system', label: 'System', default: 'sa6', kind: { type: 'choice', options: [
+          { value: 'sa2', label: 'SA-2 Guideline' }, { value: 'sa3', label: 'SA-3 Goa' }, { value: 'sa6', label: 'SA-6 Gainful' },
+          { value: 'sa11', label: 'SA-11 Gadfly' }, { value: 'sa15', label: 'SA-15 Gauntlet' },
+        ] } },
+        { key: 'weapons', label: 'Weapons', default: 'free', kind: { type: 'choice', options: [
+          { value: 'free', label: 'Weapons free (trainer on)' }, { value: 'hold', label: 'Radar only, weapons hold' },
+        ] } },
+      ],
+    },
+    {
+      id: 'ew_jammer',
+      category: 'ew',
+      label: 'GPS jammer',
+      description: 'A ground jammer near a target area: GPS weapons released inside its radius are flagged GPS denied on their result cards.',
+      relative_to_player: false,
+      instructor_only: false,
+      params: [
+        { key: 'gps', label: 'GPS', default: 'jam', kind: { type: 'choice', options: [
+          { value: 'jam', label: 'Jam' }, { value: 'spoof', label: 'Spoof' },
+        ] } },
+        { key: 'radius_nm', label: 'Radius', default: '15', kind: { type: 'number', min: 5, max: 40, step: 1, unit: 'nm' } },
+      ],
+    },
+    {
       id: 'reset_range',
       category: 'air_to_ground',
       label: 'Reset a range station',

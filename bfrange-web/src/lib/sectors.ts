@@ -14,6 +14,12 @@ export interface SectorKindInfo {
   color: string
   /** drawn with a dashed outline in game */
   dashed?: boolean
+  /**
+   * a route rather than an area: the sector is the corridor around it (the
+   * engine writes it out along one side and back along the other), and the
+   * map draws the route line down its middle
+   */
+  route?: boolean
 }
 
 export const SECTOR_KINDS: Record<SectorKind, SectorKindInfo> = {
@@ -28,12 +34,19 @@ export const SECTOR_KINDS: Record<SectorKind, SectorKindInfo> = {
   aar: { label: 'AIR REFUELLING', color: '#3DFF88', dashed: true },
   carrier: { label: 'CARRIER OPS', color: '#F2F2F2' },
   anti_ship: { label: 'ANTI-SHIP', color: '#C266FF' },
+  hot_zone: { label: 'HOT ZONE', color: '#FF1744', dashed: true },
+  ew: { label: 'EW / GPS JAMMING', color: '#00C8B4' },
+  low_level: { label: 'LOW-LEVEL ROUTE', color: '#FFFFFF', route: true },
+  csar: { label: 'CSAR', color: '#7CFC4A', dashed: true },
+  pattern: { label: 'LANDING PATTERN', color: '#F2F2F2', dashed: true },
+  ship_deck: { label: 'SHIP DECKS', color: '#F2F2F2', dashed: true },
 }
 
 /** Legend order: ground work first, then the air, then the sea. */
 export const SECTOR_KIND_ORDER: SectorKind[] = [
-  'air_to_ground', 'tactical', 'threat', 'gunnery', 'helo',
-  'air_to_air', 'bvr', 'duel', 'aar', 'carrier', 'anti_ship',
+  'air_to_ground', 'tactical', 'threat', 'ew', 'gunnery', 'helo', 'csar',
+  'hot_zone', 'air_to_air', 'bvr', 'duel', 'low_level', 'aar', 'pattern',
+  'carrier', 'ship_deck', 'anti_ship',
 ]
 
 /** A kind this site does not know yet (a newer engine) still draws, in grey. */
@@ -194,6 +207,24 @@ export interface DrawnSector {
   /** east-west extent, metres: how much room its name has */
   width_m: number
   area_m2: number
+  /** route kinds: the line down the middle of the corridor, [lon, lat] */
+  centreline?: Ring
+}
+
+/**
+ * The middle of a corridor polygon written out along one side and back
+ * along the other (2n points): point i pairs with point 2n-1-i.
+ */
+export function corridorCentreline(polygon: { lat: number; lon: number }[]): Ring | null {
+  const pts = polygon.filter(p => finite(p.lat, p.lon))
+  const n = pts.length
+  if (n < 4 || n % 2 !== 0) return null
+  const out: Ring = []
+  for (let i = 0; i < n / 2; i++) {
+    const a = pts[i], b = pts[n - 1 - i]
+    out.push([(a.lon + b.lon) / 2, (a.lat + b.lat) / 2])
+  }
+  return out
 }
 
 /**
@@ -206,7 +237,9 @@ export function drawSectors(sectors: Sector[] | undefined): DrawnSector[] {
     const ring = sectorRing(s.shape ?? {})
     if (!ring) continue
     const { width_m, area_m2 } = ringSize(ring)
-    out.push({ sector: s, info: kindInfo(s.kind), side: sectorSide(s), ring, label: sectorLabelPoint(s.shape, ring), width_m, area_m2 })
+    const info = kindInfo(s.kind)
+    const centreline = info.route && s.shape.polygon ? corridorCentreline(s.shape.polygon) ?? undefined : undefined
+    out.push({ sector: s, info, side: sectorSide(s), ring, label: sectorLabelPoint(s.shape, ring), width_m, area_m2, centreline })
   }
   return out.sort((a, b) => b.area_m2 - a.area_m2)
 }

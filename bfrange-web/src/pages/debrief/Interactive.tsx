@@ -5,8 +5,10 @@
 import { Empty } from '../../components/States'
 import { AarPlots } from '../../components/plots/AarPlots'
 import { BombPlot } from '../../components/plots/BombPlot'
+import { GatePlot } from '../../components/plots/GatePlot'
 import { InterceptReplay } from '../../components/plots/InterceptReplay'
 import { StrafePit } from '../../components/plots/StrafePit'
+import { RunwayPlot } from '../../components/plots/RunwayPlot'
 import { PathReplay, TrackMap } from '../../components/plots/TrackMap'
 import { TrapSheet } from '../../components/plots/TrapSheet'
 import { TONE_VAR, fmt, qualityTone } from '../../lib/format'
@@ -14,7 +16,7 @@ import { toLocal } from '../../lib/geo'
 import type { GeoPt, PrecisionQuality, RangeRecord } from '../../types'
 
 /** Default "perfect" radii from bfprotocols cfg.rs (a server may override them). */
-const PERFECT = { landing: 3, sling: 5 }
+const PERFECT = { landing: 3, deck: 1.5, sling: 5 }
 
 /** Where a helicopter set down against its pad / drop zone. */
 function PrecisionPlot({ centre, at, perfect, quality, label }: { centre: GeoPt; at: GeoPt; perfect: number; quality: PrecisionQuality; label: string }) {
@@ -110,7 +112,10 @@ export function Interactive({ rec }: { rec: RangeRecord }) {
     case 'landing':
       return (
         <div className="flex flex-col gap-4">
-          <PrecisionPlot centre={r.pad_pos} at={r.touchdown_pos} perfect={PERFECT.landing} quality={r.quality} label="Touchdown against the pad" />
+          <PrecisionPlot
+            centre={r.pad_pos} at={r.touchdown_pos} perfect={r.drill === 'ship' ? PERFECT.deck : PERFECT.landing} quality={r.quality}
+            label={r.drill === 'ship' ? `Touchdown against the deck spot${r.ship_speed_kts !== undefined ? ` · ship at ${fmt(r.ship_speed_kts)} kt` : ''}` : 'Touchdown against the pad'}
+          />
           {t?.kind === 'path' && <PathReplay paths={t.paths} height={340} />}
         </div>
       )
@@ -135,5 +140,71 @@ export function Interactive({ rec }: { rec: RangeRecord }) {
     case 'troops':
     case 'cas':
       return t?.kind === 'path' ? <PathReplay paths={t.paths} /> : none
+    case 'field_landing':
+      return (
+        <div className="flex flex-col gap-4">
+          <RunwayPlot r={r} />
+          {t?.kind === 'path' && <PathReplay paths={t.paths} height={340} />}
+        </div>
+      )
+    case 'low_level':
+      return r.gates.length || t?.kind === 'path' ? (
+        <div className="flex flex-col gap-4">
+          <GatePlot r={r} />
+          {t?.kind === 'path' && <PathReplay paths={t.paths} height={380} />}
+        </div>
+      ) : none
+    case 'sead': {
+      const path = t?.kind === 'path' ? Object.values(t.paths)[0] ?? [] : []
+      return (
+        <figure className="m-0">
+          <figcaption className="caps mb-1">Your flight and the site{r.launch_range_m !== null ? ` · fired from ${fmt(r.launch_range_m / 1852, 1)} nm` : ''}</figcaption>
+          <TrackMap
+            height={420}
+            lines={path.length > 1 ? [{ id: 'you', pts: path, color: 'var(--ball)' }] : []}
+            points={[
+              ...(path.length ? [{ id: 'start', lat: path[0].lat, lon: path[0].lon, label: rec.pilot.name, color: 'var(--ball)', shape: 'ring' as const }] : []),
+              { id: 'site', lat: r.site_pos.lat, lon: r.site_pos.lon, label: `${r.site} · ${r.system}${r.site_destroyed ? ' · destroyed' : ''}`, color: r.site_destroyed ? 'var(--datum)' : 'var(--wave)', shape: 'diamond' },
+            ]}
+          />
+        </figure>
+      )
+    }
+    case 'hot_zone':
+      return (
+        <div className="flex flex-col gap-4">
+          <figure className="m-0">
+            <figcaption className="caps mb-2">Kills</figcaption>
+            {r.kills.length === 0 ? (
+              <div className="muted text-[13px]">No kills this sortie.</div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {r.kills.map((k, i) => (
+                  <div key={`${i}-${k}`} className="grid place-items-center mono text-[11px] px-2" style={{ minWidth: 64, height: 40, borderRadius: 2, border: '1px solid var(--datum)', background: 'var(--datum-soft)', color: 'var(--datum)' }}>
+                    {k}
+                  </div>
+                ))}
+              </div>
+            )}
+          </figure>
+          {t?.kind === 'path' && <PathReplay paths={t.paths} height={380} />}
+        </div>
+      )
+    case 'csar': {
+      const path = t?.kind === 'path' ? Object.values(t.paths)[0] ?? [] : []
+      return (
+        <figure className="m-0">
+          <figcaption className="caps mb-1">Your flight and where the survivor was</figcaption>
+          <TrackMap
+            height={420}
+            lines={path.length > 1 ? [{ id: 'you', pts: path, color: 'var(--sky)' }] : []}
+            points={[
+              ...(path.length ? [{ id: 'start', lat: path[0].lat, lon: path[0].lon, label: rec.pilot.name, color: 'var(--sky)', shape: 'ring' as const }] : []),
+              { id: 'surv', lat: r.survivor_pos.lat, lon: r.survivor_pos.lon, label: `survivor · ${r.area}`, color: '#7CFC4A', shape: 'diamond' },
+            ]}
+          />
+        </figure>
+      )
+    }
   }
 }

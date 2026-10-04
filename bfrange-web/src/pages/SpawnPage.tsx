@@ -16,7 +16,7 @@ import { CATEGORY_LABEL, fmtAgo } from '../lib/format'
 import { useNow } from '../lib/useNow'
 import type { CatalogItem, LiveSpawn, ParamSpec, SpawnCategory } from '../types'
 
-const ORDER: SpawnCategory[] = ['air_to_air', 'air_to_ground', 'tanker', 'naval', 'ground', 'helo', 'jtac']
+const ORDER: SpawnCategory[] = ['air_to_air', 'air_to_ground', 'sead', 'ew', 'tanker', 'naval', 'ground', 'helo', 'jtac']
 
 function ParamField({ p, value, onChange, disabled }: { p: ParamSpec; value: string; onChange: (v: string) => void; disabled: boolean }) {
   if (p.kind.type === 'choice') {

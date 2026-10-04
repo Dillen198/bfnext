@@ -19,10 +19,17 @@ mod antiship;
 mod bg;
 mod carrier;
 mod catalog;
+mod csar;
+mod decks;
+mod ew;
 mod ground;
 mod harvest;
 mod helo;
+mod hotzone;
+mod iads;
+mod lowlevel;
 mod menu;
+mod pattern;
 mod players;
 mod records;
 mod sectors;
@@ -118,6 +125,14 @@ struct Ctx {
     ship: AntiShip,
     ground: Ground,
     sectors: sectors::Sectors,
+    iads: iads::Iads,
+    hz: hotzone::HotZones,
+    ew: ew::Ew,
+    ll: lowlevel::LowLevel,
+    pattern: pattern::Pattern,
+    csar: csar::Csar,
+    decks: decks::Decks,
+    last_fine: f64,
     handler: Option<HandlerId>,
     menus: FxHashSet<GroupId>,
     menu_queue: Vec<GroupId>,
@@ -258,13 +273,19 @@ fn delayed_init(lua: MizLua) -> Result<()> {
     };
     cfg.validate()?;
     info!(
-        "range {:?} (sortie {sortie}): {} stations, {} tankers, {} carriers, {} pads, {} JTACs",
+        "range {:?} (sortie {sortie}): {} stations, {} tankers, {} carriers, {} pads, {} JTACs, {} IADS, {} hot zones, {} jammers, {} low-level routes, {} CSAR areas, {} ship decks",
         cfg.name,
         cfg.stations.len(),
         cfg.tankers.len(),
         cfg.carriers.len(),
         cfg.helo.pads.len(),
-        cfg.jtacs.len()
+        cfg.jtacs.len(),
+        cfg.iads.len(),
+        cfg.hot_zones.len(),
+        cfg.jammers.len(),
+        cfg.low_level.len(),
+        cfg.csar.areas.len(),
+        cfg.ship_decks.len()
     );
     let cfg = Arc::new(cfg);
     ctx.cfg = cfg.clone();
@@ -291,6 +312,13 @@ fn delayed_init(lua: MizLua) -> Result<()> {
     ctx.helo.init(lua, &cfg);
     ctx.ground.init(lua, &cfg);
     ctx.sectors.init(lua, &cfg);
+    ctx.iads.init(lua, &cfg, &mut ctx.spawns, now);
+    ctx.hz.init(lua, &cfg, &mut ctx.spawns, now);
+    ctx.ew.init(lua, &cfg, &mut ctx.spawns, now);
+    ctx.ll.init(lua, &cfg);
+    ctx.pattern.init(lua, &cfg);
+    ctx.csar.init(lua, &cfg);
+    ctx.decks.init(lua, &cfg, &mut ctx.spawns, now);
     for a in &cfg.air_to_air.arenas {
         match ag::resolve(lua, &a.loc) {
             Ok(p) => ctx.arenas.push((a.clone(), p)),
@@ -418,8 +446,16 @@ fn is_instructor(ctx: &Ctx, ucid: &str, dashboard_admin: bool) -> bool {
 }
 
 /// A player is out of their aircraft (death, slot change, disconnect).
-fn player_out(lua: MizLua, ctx: &mut Ctx, unit: &str, now: f64) {
+/// `died`: shot down / crashed, rather than leaving the slot.
+fn player_out(lua: MizLua, ctx: &mut Ctx, unit: &str, died: bool, now: f64) {
     let Some(f) = ctx.players.left(unit) else { return };
+    let cfg = ctx.cfg.clone();
+    ctx.hz.player_out(lua, &cfg, &mut ctx.rec, unit, died);
+    ctx.ll.player_out(lua, &cfg, &mut ctx.rec, unit);
+    ctx.pattern.player_out(lua, &cfg, &mut ctx.rec, unit);
+    ctx.csar.player_out(lua, &mut ctx.rec, &f);
+    ctx.decks.player_left(unit);
+    ctx.iads.player_left(&f.ucid.to_string(), now);
     ctx.aa.player_left(unit);
     let msg_s = ctx.cfg.message_s;
     ctx.aar.player_left(lua, &mut ctx.rec, unit, msg_s, now);
@@ -492,7 +528,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         Event::PlayerLeaveUnit(l) => {
             if let Some(oid) = l.initiator {
                 if let Some(name) = ctx.oids.remove(&oid) {
-                    player_out(lua, ctx, &name, now);
+                    player_out(lua, ctx, &name, false, now);
                 }
             }
         }
@@ -502,8 +538,11 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                     let name = name.to_string();
                     ctx.aa.unit_dead(&name);
                     ctx.ag.object_dead(&name, now);
+                    ctx.iads.unit_dead(&name, now);
+                    ctx.hz.unit_dead(&name, now);
+                    ctx.ew.unit_dead(lua, &name, now);
                     if ctx.players.flying.contains_key(&name) {
-                        player_out(lua, ctx, &name, now);
+                        player_out(lua, ctx, &name, true, now);
                     }
                 }
             }
@@ -513,7 +552,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 let name = name.to_string();
                 ctx.aa.unit_dead(&name);
                 if ctx.players.flying.contains_key(&name) {
-                    player_out(lua, ctx, &name, now);
+                    player_out(lua, ctx, &name, true, now);
                 }
             }
         }
@@ -523,6 +562,9 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             let desc = s.weapon.get_weapon_desc()?;
             let (purpose, class) = weapons::classify(&desc);
             ctx.ground.lane_shot(&sh.unit_name);
+            ctx.iads.on_shot(lua, &ctx.players, &s.weapon, &desc, &sh, pos, now);
+            let target = s.weapon.get_target().ok().flatten().and_then(|t| t.get_name().ok()).map(|t| t.to_string());
+            ctx.hz.on_shot(&sh.unit_name, target.as_deref(), class == bfprotocols::range::WeaponClass::Missile);
             match purpose {
                 Purpose::AirToAir => {
                     let cfg = ctx.cfg.clone();
@@ -608,6 +650,11 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             let shooter = k.initiator.as_ref().and_then(|t| t.get_name().ok()).map(|s| s.to_string());
             if let Some(t) = &target {
                 ctx.ag.object_dead(t, now);
+                let cfg = ctx.cfg.clone();
+                let ttype = k.target.as_ref().and_then(|o| o.get_type_name().ok()).map(|s| s.to_string()).unwrap_or_default();
+                ctx.iads.on_kill(lua, &cfg, &mut ctx.rec, &ctx.players, shooter.as_deref(), t, k.weapon.as_ref(), k.weapon_name.as_ref().map(|w| w.as_str()), now);
+                ctx.hz.on_kill(shooter.as_deref(), t, &ttype, now);
+                ctx.ew.unit_dead(lua, t, now);
                 if let Some(s) = &shooter {
                     if let Some(f) = ctx.players.flying.get(s).cloned() {
                         if f.is_ground {
@@ -619,6 +666,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         }
         Event::Takeoff(e) => {
             if let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) {
+                ctx.pattern.took_off(name.as_str());
                 if let Some(f) = ctx.players.flying.get(name.as_str()) {
                     ctx.players.takeoff(f.ucid);
                 }
@@ -630,16 +678,21 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             let place = e.place.as_ref().and_then(|p| p.get_name().ok()).map(|s| s.to_string()).unwrap_or_default();
             if let Some(f) = ctx.players.flying.get(&name).cloned() {
                 ctx.players.land(f.ucid);
+                let cfg = ctx.cfg.clone();
+                ctx.hz.landed(lua, &cfg, &mut ctx.rec, &name);
                 if carrier::carrier_by_place(&ctx.cv, &place) {
                     ctx.cv.touch(lua, &name, &place, true, now);
                 }
                 if f.is_helo {
-                    let cfg = ctx.cfg.clone();
                     let mut f = f;
                     if let Some(Ok(p)) = e.initiator.as_ref().map(|o| o.get_point()) {
                         f.pos = p.0;
                     }
-                    ctx.helo.landed(lua, &cfg, &mut ctx.rec, &f, now);
+                    let at = if place.is_empty() { None } else { Some((place.clone(), None)) };
+                    ctx.csar.landed(lua, &cfg, &mut ctx.rec, &ctx.players, &name, at, now);
+                    if !ctx.decks.landed(lua, &cfg, &mut ctx.rec, &f, &place, now) {
+                        ctx.helo.landed(lua, &cfg, &mut ctx.rec, &f, now);
+                    }
                 }
             }
         }
@@ -648,6 +701,9 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             let place = e.place.as_ref().and_then(|p| p.get_name().ok()).map(|s| s.to_string()).unwrap_or_default();
             if carrier::carrier_by_place(&ctx.cv, &place) {
                 ctx.cv.touch(lua, name.as_str(), &place, false, now);
+            } else if let Some(f) = ctx.players.flying.get(name.as_str()).cloned() {
+                let cfg = ctx.cfg.clone();
+                ctx.pattern.touch(lua, &cfg, &f, &place, now);
             }
         }
         Event::RunwayTakeoff(e) => {
@@ -656,6 +712,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             if carrier::carrier_by_place(&ctx.cv, &place) {
                 ctx.cv.runway_takeoff(name.as_str(), &place, now);
             }
+            ctx.pattern.took_off(name.as_str());
         }
         Event::Refueling(r) => {
             if let Some(n) = r.initiator.and_then(|o| o.get_name().ok()) {
@@ -710,7 +767,8 @@ fn fast_tick_inner(lua: MizLua, ctx: &mut Ctx, now: f64) -> Result<f64> {
                 None => continue,
             };
             ctx.ground.impact(lua, &cfg, &ctx.ag, &mut ctx.rec, &imp, now);
-            let _ = ctx.ag.score_impact(lua, &cfg, &mut ctx.rec, imp, now);
+            let denied = ctx.ew.denied_at(imp.w.rel_pos, imp.w.shooter.side);
+            let _ = ctx.ag.score_impact(lua, &cfg, &mut ctx.rec, imp, denied, now);
         }
     }
     // missile trainer
@@ -719,6 +777,8 @@ fn fast_tick_inner(lua: MizLua, ctx: &mut Ctx, now: f64) -> Result<f64> {
         let kills = ctx.aa.tick(lua, &cfg.air_to_air.missile_trainer, &ctx.players, &ctx.spawns, &mut ctx.rec, cfg.message_s, now);
         for k in kills {
             ctx.aa.trainer_kill(lua, &k);
+            ctx.iads.trainer_kill(&ctx.players, &k);
+            ctx.hz.trainer_kill(&k);
         }
         if let Some(d) = ctx.aa.next_due() {
             next = next.min(d.max(now + 0.02));
@@ -743,6 +803,15 @@ fn fast_tick_inner(lua: MizLua, ctx: &mut Ctx, now: f64) -> Result<f64> {
         if ctx.helo.active() {
             next = next.min(now + 0.2);
         }
+    }
+    // field landings and ship decks at 5 Hz
+    if now - ctx.last_fine >= 0.2 {
+        ctx.last_fine = now;
+        ctx.pattern.tick(lua, &cfg, &ctx.players, &mut ctx.rec, now);
+        ctx.decks.tick(lua, &ctx.players, &mut ctx.spawns, now);
+    }
+    if ctx.pattern.active() || ctx.decks.active() {
+        next = next.min(now + 0.2);
     }
     // strafe passes at 4 Hz
     if now - ctx.last_strafe >= 0.25 && !ctx.ag.strafe.is_empty() {
@@ -805,11 +874,12 @@ fn slow_tick_inner(lua: MizLua, ctx: &mut Ctx, now: f64) -> Result<()> {
     let gone: Vec<Ucid> = std::mem::take(&mut ctx.disconnects);
     for ucid in gone {
         if let Some(f) = ctx.players.by_ucid(&ucid).cloned() {
-            player_out(lua, ctx, &f.unit_name, now);
+            player_out(lua, ctx, &f.unit_name, false, now);
         }
         if cfg.spawn.despawn_on_leave {
             despawn_owned(lua, ctx, &ucid.to_string());
         }
+        let _ = &cfg;
     }
     // player positions
     let names: Vec<std::string::String> = ctx.players.flying.keys().cloned().collect();
@@ -830,7 +900,7 @@ fn slow_tick_inner(lua: MizLua, ctx: &mut Ctx, now: f64) -> Result<()> {
                     }
                 }
             }
-            Err(_) => player_out(lua, ctx, &n, now),
+            Err(_) => player_out(lua, ctx, &n, false, now),
         }
     }
     ctx.sectors.tick(lua, &ctx.players, now);
@@ -845,7 +915,13 @@ fn slow_tick_inner(lua: MizLua, ctx: &mut Ctx, now: f64) -> Result<()> {
         }
     }
     ctx.ag.slow_tick(lua, &mut ctx.spawns, now);
-    ctx.ag.flush_salvos(lua, &cfg, &mut ctx.rec, now);
+    ctx.ag.flush_salvos(lua, &cfg, &mut ctx.rec, &ctx.ew, now);
+    ctx.iads.tick(lua, &ctx.players, &mut ctx.spawns, now);
+    ctx.hz.tick(lua, &cfg, &ctx.players, &mut ctx.spawns, &mut ctx.rec, now);
+    ctx.ew.tick(lua, &ctx.players, &mut ctx.spawns, now);
+    ctx.ll.tick(lua, &cfg, &ctx.players, &mut ctx.rec, now);
+    let night = night_now(lua, ctx);
+    ctx.csar.tick(lua, &cfg, &ctx.players, &mut ctx.rec, night, now);
     ctx.aa.slow_tick(lua, &cfg, &mut ctx.spawns, &mut ctx.rec, now);
     if now - ctx.last_tanker >= 5. {
         ctx.last_tanker = now;
@@ -896,6 +972,20 @@ fn despawn_owned(lua: MizLua, ctx: &mut Ctx, ucid: &str) -> usize {
     gone.len()
 }
 
+/// Is it night on the range (sun below the horizon at the first station or
+/// carrier)?
+fn night_now(lua: MizLua, ctx: &Ctx) -> bool {
+    let reference = ctx
+        .cv
+        .carriers
+        .first()
+        .map(|c| c.op_center)
+        .or_else(|| ctx.ag.stations.first().map(|s| s.center))
+        .unwrap_or_else(V3::zeros);
+    let g = util::geo(lua, reference);
+    ctx.rec.clock.is_night(g.lat, g.lon, abs_of(lua))
+}
+
 fn menu_data(ctx: &Ctx, is_helo: bool) -> menu::MenuData {
     let advs = if ctx.cfg.air_to_air.adversaries.is_empty() {
         aa::default_adversaries()
@@ -913,6 +1003,12 @@ fn menu_data(ctx: &Ctx, is_helo: bool) -> menu::MenuData {
         ships: antiship::TARGET_SHIPS.iter().map(|(a, b)| pair(a, b)).collect(),
         compositions: catalog::GROUND_COMPOSITIONS.iter().map(|(k, l, _)| pair(k, l)).collect(),
         sams: catalog::SAMS.iter().map(|(k, l, _)| pair(k, l)).collect(),
+        iads: ctx.iads.list(),
+        csar: ctx.csar.list_all(),
+        hot_zones: !ctx.cfg.hot_zones.is_empty(),
+        jammers: !ctx.cfg.jammers.is_empty(),
+        low_level: !ctx.cfg.low_level.is_empty(),
+        decks: !ctx.cfg.ship_decks.is_empty(),
         is_helo,
     }
 }
@@ -1020,6 +1116,11 @@ fn live(lua: MizLua, ctx: &Ctx, now: f64) -> RangeLive {
         arenas,
         sectors: ctx.cfg.sectors.clone(),
         uptime_s: now,
+        iads: ctx.iads.live(lua),
+        hot_zones: ctx.hz.live(lua),
+        jammers: ctx.ew.live(lua),
+        csar: ctx.csar.live(lua, &ctx.players),
+        ship_decks: ctx.decks.live(lua),
     }
 }
 
@@ -1374,6 +1475,41 @@ pub(crate) fn on_menu(lua: MizLua, gid: GroupId, action: &str) -> Result<()> {
                 });
             }
             "tk" => say(&format!("Tankers:\n{}", ctx.aar.describe().join("\n"))),
+            "iads" => match a1 {
+                "reset" => {
+                    if !is_instructor(ctx, &f.ucid.to_string(), false) {
+                        bail!("only an instructor can rebuild an air defence network")
+                    }
+                    let m = ctx.iads.reset(lua, a2, &mut ctx.spawns, now)?;
+                    say(&m);
+                }
+                _ => records::to_group(lua, gid, &ctx.iads.describe(f.pos, f.side).join("\n"), 40),
+            },
+            "ew" => {
+                let d = ctx.ew.describe(f.pos, f.side);
+                say(&if d.is_empty() { "No enemy jammers on this range".to_string() } else { format!("Jammers:\n{}", d.join("\n")) });
+            }
+            "hz" => match a1 {
+                "picture" => records::to_group(lua, gid, &ctx.hz.picture(lua, &f), 30),
+                _ => {
+                    let d = ctx.hz.describe(f.pos, f.side);
+                    say(&if d.is_empty() { "No hot zones for your side".to_string() } else { format!("Hot zones:\n{}", d.join("\n")) });
+                }
+            },
+            "csar" => match a1 {
+                "req" => {
+                    let (area, mode) = a2.split_once(':').unwrap_or((a2, "cold"));
+                    let m = ctx.csar.request(lua, &f, area, mode == "hot", &mut ctx.spawns, now)?;
+                    let _ = m;
+                }
+                _ => say(&format!("CSAR areas:\n{}", ctx.csar.describe(f.pos, f.side, now).join("\n"))),
+            },
+            "deck" => {
+                let d = ctx.decks.describe(lua, f.pos);
+                say(&if d.is_empty() { "No ship decks on this range".to_string() } else { format!("Ship decks:\n{}", d.join("\n")) });
+            }
+            "ll" => records::to_group(lua, gid, &ctx.ll.brief(f.pos, f.side).join("\n"), 60),
+            "pat" => say("LANDINGS: every runway landing is graded: touchdown against the aim point (300 m past the threshold), the centreline, sink rate in the last second, and your approach at 1 nm and 1/2 nm against a 3 deg glideslope. Fly a stable straight-in or a proper overhead break; touch-and-gos are graded too. Your card follows 15 s after touchdown."),
             "cv" => {
                 let d = ctx.cv.describe(lua);
                 say(&if d.is_empty() { "No carriers on this range".to_string() } else { d.join("\n") });

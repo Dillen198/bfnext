@@ -6,6 +6,26 @@ from core import Plugin, utils
 from ._icons import icon, icon_emoji, unicode
 
 
+def pick_forum_tags(forum: discord.ForumChannel, wanted: str | None) -> list:
+    """The tag(s) a new ticket post gets. `forum_tag` in tickets.yaml names one;
+    otherwise a tag called Ticket/Support if the forum has one. When the forum
+    requires a tag and none of those exist, its first tag -- an untagged post is
+    refused outright."""
+    available = list(getattr(forum, "available_tags", None) or [])
+    if not available:
+        return []
+    names = [wanted] if wanted else []
+    names += ["ticket", "tickets", "support", "help"]
+    for name in names:
+        for tag in available:
+            if tag.name.strip().lower() == str(name).strip().lower():
+                return [tag]
+    flags = getattr(forum, "flags", None)
+    if flags is not None and getattr(flags, "require_tag", False):
+        return [available[0]]
+    return []
+
+
 class TicketModal(ui.Modal, title="Create Support Ticket"):
     """Form modal for user ticket details."""
 
@@ -68,11 +88,23 @@ class TicketModal(ui.Modal, title="Create Support Ticket"):
         intro_embed.set_footer(text="DCSServerBot | Click 'Close Ticket' below when resolved.")
 
         # 2. Create Forum Thread
-        thread_with_msg = await forum_channel.create_thread(
-            name=f"[{user.name}] {self.subject.value}"[:100],
-            embed=intro_embed,
-            view=TicketControlView(self.plugin)
-        )
+        # A forum set to "require tags" refuses an untagged post with a 400
+        # (Sept 29: "A tag is required to create a forum post in this
+        # channel"), and the player's ticket vanished with nothing said.
+        tags = pick_forum_tags(forum_channel, config.get("forum_tag"))
+        try:
+            thread_with_msg = await forum_channel.create_thread(
+                name=f"[{user.name}] {self.subject.value}"[:100],
+                embed=intro_embed,
+                view=TicketControlView(self.plugin),
+                applied_tags=tags,
+            )
+        except discord.HTTPException as e:
+            self.plugin.log.error(f"[Tickets] could not open a ticket thread for {user.id}: {e}")
+            await interaction.followup.send(
+                "Sorry -- the ticket could not be created. The staff have been told in the bot log; "
+                "please ping them directly for now.", ephemeral=True)
+            return
         thread = thread_with_msg.thread
 
         # 3. Add user explicitly to the thread

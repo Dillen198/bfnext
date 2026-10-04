@@ -301,6 +301,10 @@ pub enum Pending {
     GroupTask { group: String, task: J },
     GroupOption { group: String, id: i64, value: J },
     UnitCommand { unit: String, cmd: J },
+    /// radars on/off (`Group.enableEmission`)
+    Emission { group: String, on: bool },
+    /// a ship's TACAN, once the ship exists and has a unit id
+    ShipTacan { group: String, unit: String, tacan: bfprotocols::range::cfg::TacanCfg },
 }
 
 /// What a spawn is, for the modules that drive it after creation.
@@ -416,6 +420,13 @@ impl Spawns {
                     Pending::UnitCommand { unit, cmd } => {
                         util::unit_controller_call(lua, unit, "setCommand", cmd.clone())
                     }
+                    Pending::Emission { group, on } => dcso3::group::Group::get_by_name(lua, group)
+                        .and_then(|g| g.enable_emission(*on))
+                        .map_err(|e| anyhow!("{e:?}")),
+                    Pending::ShipTacan { group, unit, tacan } => match first_unit_id(lua, group) {
+                        Some(id) => util::unit_controller_call(lua, unit, "setCommand", tacan_cmd(id, tacan, false)),
+                        None => Err(anyhow!("ship {unit} has no unit id yet")),
+                    },
                 };
                 if let Err(e) = r {
                     warn!("deferred controller action {p:?} failed: {e:?}")

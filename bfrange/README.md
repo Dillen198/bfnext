@@ -44,12 +44,16 @@ red fields, and Combined Arms slots. `bfrange/RANGE_CFG.sample.json` is the
 same config. `deploy/range.md` ("Setup, start to finish") walks through
 deploying it.
 
-**Sectors.** The whole theatre is divided into 27 sectors with one job each,
+**Sectors.** The whole theatre is divided into 45 sectors with one job each,
 defined once in `bfrange/mission/layout.py`. The builder turns that table
 into the trigger zones (`<SECTOR>-<WHAT>`, e.g. `R1-BOMB`, `H2-PINNACLE`),
 the config's `sectors`, and Mission Editor drawings: each sector outlined and
-lightly filled in its discipline's colour with a label, a summary box per
-side and a colour legend. A side's sectors are drawn on that side's layer
+lightly filled in its discipline's colour with a two-line tag (name and
+kind; tanker tracks and the carrier keep their frequencies), SAM threat
+rings, jammer radii, low-level routes as lines with their gates, and a
+colour legend in the open sea. There are no summary boxes: DCS draws text
+at a fixed screen size, so at theatre zoom they covered the ranges; what
+each sector is for is on F10 and announced when you fly in. A side's sectors are drawn on that side's layer
 (only that coalition sees them), the shared ones on Common. The engine lists
 them on **F10 > Range > Sectors** (nearest first, bearing and range) and tells
 a player what a sector is for when they fly into it (once per 15 min per
@@ -76,6 +80,15 @@ sector).
 | W-1, W-2 / W-3 / W-4 | all | BFM / BVR / blue-vs-red duels, over the sea |
 | AS-1 SHIPPING | all | merchant ships for anti-ship weapons |
 | AR-1, AR-2, AR-3 | blue | KC-135, KC-135MPRS, KC-130 over the sea |
+| S-1 AKHALKALAKI / S-11 KURSAVKA | blue / red | **live SEAD/IADS**: red kit (EWR, SA-2/3/6/11/10, Pantsir) on the Javakheti plateau; NATO kit (EWR, Patriot, Hawk, NASAMS, IRIS-T SLM, Roland, Gepard) on the Stavropol upland |
+| R-4 GAREJI / R-15 EDISSEYA | blue / red | **tiered** targets: easy, medium (AAA), hard (SHORAD) |
+| EW-1 TSALKA / EW-11 TEREK | blue / red | **GPS jammer** over coordinate targets |
+| HZ-1 LIAKHVI / HZ-11 ZELENCHUK | blue / red | **hot zone**: AI CAP, SHORAD and targets that fight back; AWACS Overlord 1 (251.5) / Focus 1 (124.5) |
+| LL-1 KOLKHETI / LL-11 PSEKUPS | blue / red | **low-level route**, 8 gates, below 500 ft AGL at 420 kts |
+| CS-1 BAKHMARO / CS-11 CHEGEM | blue / red | **CSAR** areas, beacons 350 / 400 kHz |
+| PT-1 SENAKI / PT-11 MINERALNYE VODY | blue / red | pattern fields (every runway landing everywhere is graded) |
+| FD-1 KOBULETI / FD-11 UTRISH | blue / red | **frigate decks**: Perry 41X and Arleigh Burke 42X / Neustrashimy 43X and Project 22160 44X |
+| AS-2 SUKHUMI / AS-3 TAMAN | all | **escorted convoys**: red warships (Krivak, Neustrashimy, Tor-armed Project 22160) / NATO (Arleigh Burke, Perry), weapons free |
 
 Ground sectors were placed against DCS's own 1:1M raster chart of the
 theatre: open, low ground, clear of towns, rivers and each other. They were not
@@ -126,19 +139,19 @@ reason.
 
 ## The F10 menu
 
-**F10 > Range** is the same for everyone:
+**F10 > Range** is the same for everyone (DCS shows ten entries a page, so
+the root has exactly ten):
 
 | Menu | What |
 |---|---|
 | Range status | the sector you are in; stations, tankers and carriers with bearing and range from you |
 | Sectors: what is where | your side's sectors and the shared ones, nearest first, with bearing, range and what each is for |
-| Air-to-Ground | per station: info, smoke, reset; ground targets 10 nm ahead; SAM site 20 nm ahead (instructors) |
-| Air-to-Air | pick set-up, adversary, weapons (guns / Fox 2 / Fox 1 / Fox 3), skill, BVR range and number, then **FIGHT'S ON**; duels; missile trainer on/off |
-| Tankers | who is on station; a tanker of any type (incl. the A-6E) on your position |
-| Carrier | BRC/FB, wind over deck, TACAN/ICLS; your last pass |
+| Air-to-Ground | per station: info, smoke, reset; ground targets 10 nm ahead; SAM site 20 nm ahead (instructors); **SEAD / IADS ranges** (site list, rebuild a network: instructors); **EW: GPS jammers**; **CAS / JTAC** check-in |
+| Air-to-Air | pick set-up, adversary, weapons (guns / Fox 2 / Fox 1 / Fox 3), skill, BVR range and number, then **FIGHT'S ON**; duels; missile trainer on/off; **hot zone AWACS picture** and status |
+| Tankers / Carrier | who is on station; a tanker of any type (incl. the A-6E) on your position; carrier BRC/FB, wind over deck, TACAN/ICLS; your last pass |
 | Anti-ship | an undefended ship 30 nm ahead |
-| Helicopter | pads, where to deliver dynamic cargo, sling-load courses, troops load/unload |
-| CAS / JTAC | check in with a JTAC for a nine-line |
+| Helicopter | pads, where to deliver dynamic cargo, sling-load courses, troops load/unload, **CSAR** (pilot down cold or hot, per area), **ship decks** |
+| Low level / Landings | low-level routes with gates, headings and planned times; how landings are graded |
 | My spawns | list, despawn all |
 | Results | your last results, help |
 
@@ -165,6 +178,14 @@ adversary overrides this.
 | Helicopter | Pads: distance from the mark at LAND, the steepest descent in the last second (a hard landing caps the grade), heading error, hover time. Sling courses: the cargo is polled; delivered when back on the ground and still. **DCS dynamic cargo** (the ground crew's cargo loader at a home field): every package (`<player>\|HH:MM\|PKG<n>`) is watched from its birth, marked *internal* once seen in the cabin (`getCargosOnBoard`), and graded when set down at any pad, drop zone or LZ -- no F10 step. Troops: land in the LZ. | PERFECT inside the pad's radius, then EXCELLENT ×2, GOOD ×4, FAIR ×8, POOR. |
 | CAS drill | The AI JTAC lases the target and passes a nine-line; your first impact near the station is scored. | Time from the nine-line, miss distance, right target, danger close (friendlies within 150 m). |
 | CA gunnery | Hits and kills by a Combined Arms player on a gunnery lane's targets. | Fraction of the lane killed. |
+| SEAD / DEAD | An IADS behaves like one: EWRs always up, SAM radars dark until the network sees a target inside that site's ring (only aircraft inside the IADS sector wake it), point defence watches for itself, a site an ARM is fired at goes dark for 45 s, destroyed sites are rebuilt after 15 min. Weapons free; the missile trainer is the safety net. Every emitter, launcher or command post a player kills is graded. | 5: an emitter killed while its radar was up; 4: killed dark, or the kill that took the site down; 3: anything else. The card carries the weapon, launch range, and how many SAMs the network fired at you and how many would have killed you. |
+| Tiered ranges | Easy (trucks), medium (armour under AAA: the guns are real), hard (modern armour under SHORAD, weapons free). | Scored as bombs; the card carries the tier. |
+| EW / GPS jamming | A GPS jammer/spoofer (DCS's ZIL SKP-11 and `ActivateJammer`) over a set of coordinate targets. You are warned when you fly into its radius. | Bombs scored as usual; the card says **GPS denied** when the release was inside the radius. Kill the jammer to clear it (rebuilt after 15 min). |
+| Hot zone | AI CAP launched from the far edge while a player of the other side is inside (a new flight 5 min after one is lost; home after 10 min empty), ground defences and targets that respawn, and an AWACS on your side (datalink, and F10 BRAA picture). | One card per trip: time inside, air and ground kills, missiles defeated, trainer deaths, egressed / landed / shot down. |
+| Low-level route | The clock starts at gate 1 below the ceiling; each gate is timed against the planned speed; height above ground sampled every second. | Start at 5; a point per missed gate, for more than 5% of the route above the ceiling (2 for 20%), for a time on target outside the tolerance (2 for 3x), and for time below the safety floor. |
+| Field landings | Every runway landing at every airfield: runway and landing end from the touchdown point and your own track; touchdown against a 300 m aim point and the centreline; sink rate in the last second; glideslope and lineup at 1 nm and 1/2 nm; a take-off within 15 s makes it a touch-and-go. | Start at 5; points off for the aim point (150 m / 300 m), centreline (5 m / 10 m), sink rate (600 / 900 fpm) and an unstable approach. Short of the threshold is POOR. |
+| CSAR | A survivor on open ground somewhere in the area; the MAYDAY gives a rough circle, the beacon is on an ADF frequency, he pops smoke (flare at night) when he hears you within 3 km. Land within 50 m (or hover low over him) for 8 s, then land at any airfield, FARP or ship. Hot missions put enemy troops near him. | PERFECT home inside 20 min, EXCELLENT 30, GOOD 45, then FAIR; picked up but not delivered is FAIR, not reached is POOR. |
+| Ship decks | Frigates steaming a leg; a landing on one is graded in the ship's frame. | Distance off the deck centreline against 1.5 m, sink rate relative to the deck and heading against the ship's; the card carries the ship's speed. |
 
 ## Wind and ship heading: always DCS's own
 

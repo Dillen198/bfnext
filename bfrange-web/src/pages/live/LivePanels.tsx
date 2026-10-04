@@ -1,9 +1,9 @@
 import { Link } from 'react-router-dom'
-import { Carrier, Refuel } from '@icons'
+import { Carrier, Csar, Explosion, Refuel, Sam } from '@icons'
 import { Panel } from '../../components/Controls'
 import { Empty } from '../../components/States'
 import { STATION_KIND_LABEL, airframe, fmt, pad3 } from '../../lib/format'
-import type { LiveCarrier, LiveStation, LiveTanker, StationKind } from '../../types'
+import type { LiveCarrier, LiveCsar, LiveHotZone, LiveIads, LiveJammer, LiveShipDeck, LiveStation, LiveTanker, StationKind } from '../../types'
 
 const TANKER_STATE: Record<LiveTanker['state'], { label: string; cls: string }> = {
   on_station: { label: 'ON STATION', cls: 'live' },
@@ -87,6 +87,119 @@ export function CarrierPanel({ carriers }: { carriers: LiveCarrier[] }) {
           </div>
         ))
       )}
+    </Panel>
+  )
+}
+
+const sideDot = (side: string) => (
+  <span className="dot" style={{ background: side === 'blue' ? 'var(--sky)' : side === 'red' ? 'var(--wave)' : 'var(--haze)' }} />
+)
+
+/** IADS networks site by site (lit when the radar is up), then the jammers. */
+export function AirDefencePanel({ iads, jammers }: { iads: LiveIads[]; jammers: LiveJammer[] }) {
+  return (
+    <Panel title={<span className="inline-flex items-center gap-2"><Sam size={14} /> Air defences &amp; EW</span>} bodyClass="">
+      {iads.map(n => {
+        const up = n.sites.filter(s => s.emitting && s.units_alive > 0).length
+        return (
+          <div key={n.id} className="px-3 py-2.5 border-b border-[var(--line)]">
+            <div className="flex items-center gap-2">
+              {sideDot(n.side)}
+              <span className="font-semibold text-[13.5px] truncate">{n.name}</span>
+              <span className={`chip ${up ? 'bad' : 'outline'} ml-auto`}>{up ? `${up} RADAR${up === 1 ? '' : 'S'} UP` : 'DARK'}</span>
+            </div>
+            {!n.weapons_free && <div className="text-[12px] muted mt-0.5">Weapons hold: radars honest, no launches</div>}
+            <ul className="m-0 mt-1.5 p-0 list-none flex flex-col gap-0.5">
+              {n.sites.map(s => {
+                const dead = s.units_alive === 0
+                return (
+                  <li key={s.id} className="flex items-center gap-2 text-[12.5px]" style={{ opacity: dead ? 0.55 : 1 }}>
+                    <span className="dot" style={{ background: dead ? 'var(--dim)' : s.emitting ? 'var(--wave)' : 'var(--line-2)', boxShadow: s.emitting && !dead ? '0 0 0 3px var(--wave-soft)' : undefined }} />
+                    <span className="truncate" style={{ textDecoration: dead ? 'line-through' : undefined }}>{s.name}</span>
+                    <span className="muted truncate">{s.system}</span>
+                    <span className="mono ml-auto shrink-0" title="units alive">{s.units_alive}/{s.units_total}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )
+      })}
+      {jammers.length > 0 && (
+        <ul className="m-0 p-0 list-none">
+          {jammers.map(j => (
+            <li key={j.id} className="px-3 py-2 border-b border-[var(--line)] last:border-b-0" style={{ opacity: j.alive ? 1 : 0.55 }}>
+              <div className="flex items-center gap-2">
+                {sideDot(j.side)}
+                <span className="font-medium text-[13px] truncate">{j.name}</span>
+                <span className="chip outline ml-auto" style={{ color: j.alive ? '#00C8B4' : undefined }}>{j.alive ? 'JAMMING' : 'DESTROYED'}</span>
+              </div>
+              <div className="text-[12px] muted pl-[15px]">
+                GPS {j.gps} · radio {j.radio} · {fmt(j.radius_m / 1852)} nm radius
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
+  )
+}
+
+export function HotZonesPanel({ zones }: { zones: LiveHotZone[] }) {
+  return (
+    <Panel title={<span className="inline-flex items-center gap-2"><Explosion size={14} /> Hot zones</span>} bodyClass="">
+      <ul className="m-0 p-0 list-none">
+        {zones.map(h => (
+          <li key={h.id} className="px-3 py-2.5 border-b border-[var(--line)] last:border-b-0">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-[13.5px] truncate">{h.name}</span>
+              <span className={`chip ${h.bandits ? 'bad' : 'outline'} ml-auto`}>{h.bandits ? `${h.bandits} BANDIT${h.bandits === 1 ? '' : 'S'}` : 'QUIET'}</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 mt-1.5 mono text-[12px]">
+              <span><span className="dim block text-[10px]">GROUND</span>{h.ground_alive}/{h.ground_total}</span>
+              <span><span className="dim block text-[10px]">RADIUS</span>{fmt(h.radius_m / 1852)} nm</span>
+              <span><span className="dim block text-[10px]">AWACS</span>{h.awacs ?? '—'}</span>
+            </div>
+            <div className="text-[12px] mt-1.5">
+              <span className="muted">In the zone: </span>
+              {h.players.length ? h.players.join(', ') : <span className="dim">nobody</span>}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  )
+}
+
+/** Active maydays (area only, never the survivor) and the ships to land on. */
+export function HeloOpsPanel({ csar, decks, now }: { csar: LiveCsar[]; decks: LiveShipDeck[]; now: string }) {
+  const mins = (iso: string) => Math.max(0, Math.round((new Date(now).getTime() - new Date(iso).getTime()) / 60_000))
+  return (
+    <Panel title={<span className="inline-flex items-center gap-2"><Csar size={14} /> CSAR &amp; ship decks</span>} bodyClass="">
+      <ul className="m-0 p-0 list-none">
+        {csar.map(c => (
+          <li key={`${c.area}/${c.pilot}`} className="px-3 py-2 border-b border-[var(--line)]">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-[13px] truncate">{c.pilot}</span>
+              <span className="muted text-[12px] truncate">{c.area}</span>
+              <span className={`chip ${c.picked_up ? 'live' : 'warn'} ml-auto`}>{c.picked_up ? 'ON BOARD' : 'MAYDAY'}</span>
+            </div>
+            <div className="text-[12px] muted">
+              down {mins(c.started)} min{c.hostile ? ' · hostile: troops hunting him' : ''}
+            </div>
+          </li>
+        ))}
+        {decks.map(d => (
+          <li key={d.id} className="px-3 py-2 border-b border-[var(--line)] last:border-b-0">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-[13px] truncate">{d.name}</span>
+              <span className="muted text-[12px] truncate">{d.unit_type}</span>
+              <span className="mono text-[12px] ml-auto shrink-0">{pad3(d.heading_deg)}° · {fmt(d.speed_kts)} kt</span>
+            </div>
+            {d.tacan && <div className="text-[12px] muted">TACAN {d.tacan}</div>}
+          </li>
+        ))}
+      </ul>
     </Panel>
   )
 }

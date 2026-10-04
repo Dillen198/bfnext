@@ -11,8 +11,8 @@
 
 use super::boards::median;
 use bfprotocols::range::{
-    lso, MissileOutcome, PassOutcome, RangeRecord, RangeResult, StrafeQuality,
-    WeaponClass,
+    lso, CsarOutcome, FieldLandingOutcome, HotZoneOutcome, MissileOutcome, PassOutcome,
+    PrecisionQuality, RangeRecord, RangeResult, StrafeQuality, WeaponClass,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -56,7 +56,17 @@ pub(crate) fn derive(recs: &[&RangeRecord]) -> Vec<Insight> {
     traps(&get("trap"), &mut out);
     aar(&get("aar"), &mut out);
     missiles(&get("missile"), &mut out);
+    sead(&get("sead"), &mut out);
+    hot_zone(&get("hot_zone"), &mut out);
+    low_level(&get("low_level"), &mut out);
+    field_landing(&get("field_landing"), &mut out);
+    landing(&get("landing"), &mut out);
+    csar(&get("csar"), &mut out);
     out
+}
+
+fn ids<T>(v: &[(&RangeRecord, T)]) -> Vec<String> {
+    v.iter().map(|(r, _)| r.id.clone()).collect()
 }
 
 // ── bombing ────────────────────────────────────────────────────────────
@@ -533,6 +543,555 @@ fn missiles(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
                 ),
                 worst.3.clone(),
             ));
+        }
+    }
+}
+
+// ── SEAD / DEAD ────────────────────────────────────────────────────────
+
+fn sead(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
+    let kills: Vec<(&RangeRecord, &bfprotocols::range::SeadResult)> = recs
+        .iter()
+        .filter_map(|r| match &r.result {
+            RangeResult::Sead(s) => Some((*r, s)),
+            _ => None,
+        })
+        .collect();
+    if kills.is_empty() {
+        return;
+    }
+    // anti-radiation shots that were fired at a dark radar
+    let arm: Vec<_> = kills.iter().filter(|(_, s)| s.guidance.eq_ignore_ascii_case("arm")).cloned().collect();
+    let dark: Vec<_> = arm.iter().filter(|(_, s)| !s.site_was_emitting).cloned().collect();
+    if arm.len() >= 3 && dark.len() * 10 >= arm.len() * 4 {
+        out.push(ins(
+            "sead_arm_dark",
+            "sead",
+            "warn",
+            format!("{} of {} anti-radiation kills fired at a dark radar", dark.len(), arm.len()),
+            "Those missiles flew to where the radar had been, not to an emitter. A real site that \
+             shuts down in time defeats that shot. Fire when the site is emitting (a fresh RWR \
+             spike on it), or use pre-briefed / position mode deliberately and expect a lower \
+             hit rate."
+                .into(),
+            ids(&dark),
+        ));
+    }
+    // how often the network would have killed the pilot: one count per
+    // sortie (records of the same network within 30 minutes)
+    let mut sorties: Vec<(&str, i64, u32, u32, Vec<String>)> = vec![];
+    for (r, sd) in &kills {
+        let t = r.ts.timestamp();
+        match sorties.iter_mut().find(|x| x.0 == sd.network && (x.1 - t).abs() < 1800) {
+            Some(x) => {
+                x.1 = t;
+                x.2 = x.2.max(sd.shots_at_you);
+                x.3 = x.3.max(sd.trainer_deaths);
+                x.4.push(r.id.clone());
+            }
+            None => sorties.push((sd.network.as_str(), t, sd.shots_at_you, sd.trainer_deaths, vec![r.id.clone()])),
+        }
+    }
+    let deaths: u32 = sorties.iter().map(|x| x.3).sum();
+    let shot_at: u32 = sorties.iter().map(|x| x.2).sum();
+    if deaths >= 2 {
+        out.push(ins(
+            "sead_trainer_deaths",
+            "sead",
+            "warn",
+            format!("SAMs would have killed you {deaths} times in {} SEAD sorties", sorties.len()),
+            format!(
+                "The networks fired {shot_at} missiles at you and the trainer removed {deaths} that \
+                 would have hit. Launch anti-radiation missiles from nearer their maximum range, \
+                 stay outside the site's engagement ring until it is suppressed, and use the \
+                 terrain to mask your ingress."
+            ),
+            sorties.iter().filter(|x| x.3 > 0).flat_map(|x| x.4.clone()).collect(),
+        ));
+    }
+    let ranges: Vec<f64> = arm.iter().filter_map(|(_, s)| s.launch_range_m).collect();
+    if ranges.len() >= 3 {
+        if let Some(m) = median(&ranges) {
+            if m < 20_000. {
+                out.push(ins(
+                    "sead_arm_close",
+                    "sead",
+                    "info",
+                    format!("Anti-radiation shots from {:.0} nm (median)", m / 1852.),
+                    "You are getting close to the sites before firing. An anti-radiation missile's \
+                     job is to kill or suppress the radar from outside its missiles' reach: \
+                     try firing earlier and turning away."
+                        .into(),
+                    ids(&arm),
+                ));
+            }
+        }
+    }
+    let destroyed: Vec<_> = kills.iter().filter(|(_, s)| s.site_destroyed).cloned().collect();
+    if destroyed.len() >= 3 && deaths == 0 {
+        out.push(ins(
+            "sead_clean",
+            "sead",
+            "good",
+            format!("{} sites rolled back", destroyed.len()),
+            "Every radar at those sites is dead and no SAM got close to you doing it.".into(),
+            vec![],
+        ));
+    }
+}
+
+// ── hot zone ───────────────────────────────────────────────────────────
+
+fn hot_zone(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
+    let sorties: Vec<(&RangeRecord, &bfprotocols::range::HotZoneResult)> = recs
+        .iter()
+        .filter_map(|r| match &r.result {
+            RangeResult::HotZone(h) => Some((*r, h)),
+            _ => None,
+        })
+        .collect();
+    if sorties.len() < 3 {
+        return;
+    }
+    let n = sorties.len();
+    let died: Vec<_> = sorties
+        .iter()
+        .filter(|(_, h)| h.trainer_deaths > 0 || h.outcome == HotZoneOutcome::ShotDown)
+        .cloned()
+        .collect();
+    if died.len() * 3 >= n {
+        let defeated: u32 = sorties.iter().map(|(_, h)| h.missiles_defeated).sum();
+        let deaths: u32 = sorties.iter().map(|(_, h)| h.trainer_deaths).sum();
+        out.push(ins(
+            "hz_dying",
+            "hot_zone",
+            "warn",
+            format!("Killed on {} of your last {n} hot-zone sorties", died.len()),
+            format!(
+                "You defeated {defeated} missiles but {deaths} more would have hit. Check six \
+                 before committing to a ground target, ask AWACS for the picture before you \
+                 push, and keep enough energy and altitude to defend when the CAP comes in."
+            ),
+            ids(&died),
+        ));
+    }
+    let shots: u32 = sorties.iter().map(|(_, h)| h.shots_fired).sum();
+    let kills: u32 = sorties.iter().map(|(_, h)| h.air_kills + h.ground_kills).sum();
+    if shots >= 8 && (kills == 0 || shots as f64 / kills as f64 > 4.) {
+        out.push(ins(
+            "hz_shots_per_kill",
+            "hot_zone",
+            "info",
+            if kills == 0 { format!("{shots} shots, no kills") } else { format!("{:.1} shots per kill", shots as f64 / kills as f64) },
+            "A lot of weapons are going out for what they kill. Shoot air-to-air missiles \
+             inside the no-escape zone rather than at max range, and check the ground target \
+             is in range and locked before you release."
+                .into(),
+            ids(&sorties),
+        ));
+    }
+    let landed: Vec<_> = sorties.iter().filter(|(_, h)| h.outcome == HotZoneOutcome::Landed).cloned().collect();
+    if landed.len() >= 2 {
+        out.push(ins(
+            "hz_no_egress",
+            "hot_zone",
+            "info",
+            format!("{} sorties ended without an egress", landed.len()),
+            "Plan the way out as carefully as the way in: fly out of the zone before you \
+             land, so the sortie counts as a clean egress."
+                .into(),
+            ids(&landed),
+        ));
+    }
+    if died.is_empty() && kills as f64 / n as f64 >= 2. {
+        out.push(ins(
+            "hz_good",
+            "hot_zone",
+            "good",
+            format!("{:.1} kills per sortie, no deaths", kills as f64 / n as f64),
+            format!("{kills} kills over your last {n} hot-zone sorties without the trainer saving you once."),
+            vec![],
+        ));
+    }
+}
+
+// ── low-level routes ───────────────────────────────────────────────────
+
+fn low_level(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
+    let runs: Vec<(&RangeRecord, &bfprotocols::range::LowLevelResult)> = recs
+        .iter()
+        .filter_map(|r| match &r.result {
+            RangeResult::LowLevel(l) => Some((*r, l)),
+            _ => None,
+        })
+        .collect();
+    if runs.len() < 3 {
+        return;
+    }
+    let n = runs.len();
+    let (below, _) = mean(runs.iter().map(|(_, l)| l.pct_below_ceiling)).unwrap();
+    if below < 90. {
+        let busts: Vec<_> = runs.iter().filter(|(_, l)| l.pct_below_ceiling < 95.).cloned().collect();
+        let ceil = runs[0].1.max_allowed_agl_ft;
+        out.push(ins(
+            "ll_ceiling",
+            "low_level",
+            "warn",
+            format!("Above the ceiling for {:.0}% of your routes", 100. - below),
+            format!(
+                "Over your last {n} runs you spent {:.0}% of the route above the {ceil:.0} ft \
+                 ceiling. Most busts come climbing over ridgelines: cross them at the saddle, \
+                 unload over the top and get back down on the far side instead of holding the \
+                 climb.",
+                100. - below
+            ),
+            ids(&busts),
+        ));
+    }
+    let floor: Vec<_> = runs.iter().filter(|(_, l)| l.below_floor_s > 5.).cloned().collect();
+    if floor.len() >= 2 {
+        out.push(ins(
+            "ll_floor",
+            "low_level",
+            "warn",
+            format!("Below the safety floor on {} runs", floor.len()),
+            "Low is good, too low is how people hit the ground: pick a height you can hold with \
+             your eyes out of the cockpit and fly the floor as a hard limit."
+                .into(),
+            ids(&floor),
+        ));
+    }
+    let (tot, _) = mean(runs.iter().map(|(_, l)| l.tot_error_s)).unwrap();
+    if tot.abs() > 15. {
+        let (dir, fix) = if tot > 0. {
+            ("late", "Plan and hold the planned ground speed, and make up time on the straight legs rather than at the last gate")
+        } else {
+            ("early", "Throttle back to the planned ground speed; arriving early is as wrong as late when the package is timed")
+        };
+        out.push(ins(
+            &format!("ll_tot_{dir}"),
+            "low_level",
+            "warn",
+            format!("Consistently {dir} on target ({tot:+.0} s average)"),
+            format!(
+                "Your last {n} runs finished {:.0} s {dir} on average. {fix}. Check the gate \
+                 times on each run to see where the error builds up.",
+                tot.abs()
+            ),
+            ids(&runs),
+        ));
+    }
+    // the gate that gets missed most
+    let mut missed: HashMap<&str, Vec<String>> = HashMap::new();
+    for (r, l) in &runs {
+        for g in l.gates.iter().filter(|g| g.t.is_none()) {
+            missed.entry(g.gate.as_str()).or_default().push(r.id.clone());
+        }
+    }
+    if let Some((gate, ev)) = missed.into_iter().filter(|(_, v)| v.len() >= 2).max_by_key(|(_, v)| v.len()) {
+        out.push(ins(
+            "ll_missed_gate",
+            "low_level",
+            "warn",
+            format!("Gate {gate} missed on {} runs", ev.len()),
+            format!(
+                "You miss {gate} more than any other gate. Mark it on the map before you go and \
+                 pick a visual feature near it to steer for."
+            ),
+            ev,
+        ));
+    }
+    let scores: Vec<f64> = runs.iter().filter_map(|(r, _)| r.score).collect();
+    if scores.len() >= 3 {
+        let (m, _) = mean(scores.iter().cloned()).unwrap();
+        if m >= 4. {
+            out.push(ins(
+                "ll_good",
+                "low_level",
+                "good",
+                format!("Low-level average {m:.1}"),
+                "Low, on the route and on time.".into(),
+                vec![],
+            ));
+        }
+    }
+}
+
+// ── field landings ─────────────────────────────────────────────────────
+
+fn field_landing(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
+    let all: Vec<(&RangeRecord, &bfprotocols::range::FieldLandingResult)> = recs
+        .iter()
+        .filter_map(|r| match &r.result {
+            RangeResult::FieldLanding(f) => Some((*r, f)),
+            _ => None,
+        })
+        .collect();
+    if all.len() < 4 {
+        return;
+    }
+    let n = all.len();
+    let under: Vec<_> = all.iter().filter(|(_, f)| f.outcome == FieldLandingOutcome::Undershoot).cloned().collect();
+    if !under.is_empty() {
+        out.push(ins(
+            "fl_undershoot",
+            "field_landing",
+            "warn",
+            format!("{} landing(s) short of the runway", under.len()),
+            "Touching down before the threshold is a crash in real life. Keep the aim point \
+             fixed in the windscreen: if it moves up you are going low, add power early."
+                .into(),
+            ids(&under),
+        ));
+    }
+    let on: Vec<_> = all.iter().filter(|(_, f)| f.outcome != FieldLandingOutcome::Undershoot).cloned().collect();
+    if on.len() >= 4 {
+        let (aim, _) = mean(on.iter().map(|(_, f)| f.aim_error_m)).unwrap();
+        if aim.abs() > 100. {
+            let (dir, fix) = if aim > 0. {
+                ("long", "you are floating: cross the threshold at the right speed and height, then close the throttle and let it land rather than holding it off")
+            } else {
+                ("short", "you are low on the approach: fly the glideslope down to the aim point and don't duck under it in the last half mile")
+            };
+            out.push(ins(
+                &format!("fl_{dir}"),
+                "field_landing",
+                "warn",
+                format!("Landing {dir} of the aim point ({:.0} m average)", aim.abs()),
+                format!("Your last {} touchdowns landed {:.0} m {dir} of the aim point on average: {fix}.", on.len(), aim.abs()),
+                ids(&on),
+            ));
+        }
+        let (cl, _) = mean(on.iter().map(|(_, f)| f.centreline_m)).unwrap();
+        if cl.abs() > 3. {
+            let side = if cl > 0. { "right" } else { "left" };
+            out.push(ins(
+                &format!("fl_centreline_{side}"),
+                "field_landing",
+                "warn",
+                format!("Touching down {side} of the centreline ({:.1} m average)", cl.abs()),
+                format!(
+                    "Consistently {side} usually means an uncorrected crosswind drift or lining \
+                     up on the runway edge in the flare. Hold the centreline with rudder and \
+                     into-wind aileron all the way to touchdown."
+                ),
+                ids(&on),
+            ));
+        }
+    }
+    let (fpm, _) = mean(all.iter().map(|(_, f)| f.touchdown_fpm)).unwrap();
+    let hard: Vec<_> = all.iter().filter(|(_, f)| f.touchdown_fpm > 600.).cloned().collect();
+    if fpm > 600. || hard.len() * 3 >= n {
+        out.push(ins(
+            "fl_firm",
+            "field_landing",
+            "warn",
+            format!("Firm touchdowns ({fpm:.0} fpm average)"),
+            "Start the flare a little higher and smoother; a stable approach at the right speed \
+             is what makes a soft landing possible."
+                .into(),
+            ids(&hard),
+        ));
+    }
+    let unstable: Vec<_> = all.iter().filter(|(_, f)| !f.stable).cloned().collect();
+    if unstable.len() * 10 >= n * 4 {
+        // what makes them unstable: glideslope or lineup at half a mile
+        let gs: Vec<f64> = all.iter().filter_map(|(_, f)| f.gs_error_half_nm_deg).collect();
+        let lu: Vec<f64> = all.iter().filter_map(|(_, f)| f.lineup_half_nm_deg).collect();
+        let gsm = mean(gs.iter().cloned()).map(|x| x.0).unwrap_or(0.);
+        let lum = mean(lu.iter().cloned()).map(|x| x.0).unwrap_or(0.);
+        let why = if gsm.abs() >= 0.5 && gsm.abs() >= lum.abs() {
+            format!("You are {:.1}° {} the glideslope at half a mile on average.", gsm.abs(), if gsm > 0. { "above" } else { "below" })
+        } else if lum.abs() >= 0.5 {
+            format!("You are {:.1}° {} of the centreline at half a mile on average.", lum.abs(), if lum > 0. { "right" } else { "left" })
+        } else {
+            "Your glideslope and lineup wander more than they are off on average: make smaller, earlier corrections.".into()
+        };
+        out.push(ins(
+            "fl_unstable",
+            "field_landing",
+            "warn",
+            format!("Unstable approach on {} of your last {n} landings", unstable.len()),
+            format!(
+                "{why} Be on speed, on glideslope and lined up by 1 nm; if you are not, go \
+                 around rather than fixing it in the flare."
+            ),
+            ids(&unstable),
+        ));
+    }
+    let scores: Vec<f64> = all.iter().filter_map(|(r, _)| r.score).collect();
+    if scores.len() >= 5 {
+        let (m, _) = mean(scores.iter().cloned()).unwrap();
+        if m >= 4. {
+            out.push(ins(
+                "fl_good",
+                "field_landing",
+                "good",
+                format!("Landing average {m:.1}"),
+                "On the numbers, on the centreline and soft.".into(),
+                vec![],
+            ));
+        }
+    }
+}
+
+// ── helicopter landings ────────────────────────────────────────────────
+
+fn landing(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
+    let all: Vec<(&RangeRecord, &bfprotocols::range::LandingResult)> = recs
+        .iter()
+        .filter_map(|r| match &r.result {
+            RangeResult::Landing(l) => Some((*r, l)),
+            _ => None,
+        })
+        .collect();
+    if all.len() >= 5 {
+        let (fpm, n) = mean(all.iter().map(|(_, l)| l.touchdown_fpm)).unwrap();
+        if fpm > 300. {
+            out.push(ins(
+                "landing_firm",
+                "landing",
+                "warn",
+                format!("Firm helicopter touchdowns ({fpm:.0} fpm average)"),
+                format!(
+                    "Your last {n} landings touched down at {fpm:.0} fpm on average. Arrive in a \
+                     stable hover over the spot first, then lower the collective slowly until \
+                     the gear settles."
+                ),
+                ids(&all),
+            ));
+        }
+    }
+    let deck: Vec<_> = all.iter().filter(|(_, l)| l.drill == "ship").cloned().collect();
+    if deck.len() >= 3 {
+        let (d, n) = mean(deck.iter().map(|(_, l)| l.distance_m)).unwrap();
+        if deck.iter().filter(|(_, l)| l.quality <= PrecisionQuality::Fair).count() * 2 >= deck.len() {
+            out.push(ins(
+                "deck_landing_off",
+                "landing",
+                "warn",
+                format!("Deck landings {d:.1} m off the spot"),
+                format!(
+                    "Your last {n} deck landings averaged {d:.1} m from the spot. Match the \
+                     ship's speed and heading alongside first, then move across and down \
+                     together with the deck rather than chasing it."
+                ),
+                ids(&deck),
+            ));
+        }
+    }
+}
+
+// ── CSAR ───────────────────────────────────────────────────────────────
+
+fn csar(recs: &[&RangeRecord], out: &mut Vec<Insight>) {
+    let all: Vec<(&RangeRecord, &bfprotocols::range::CsarResult)> = recs
+        .iter()
+        .filter_map(|r| match &r.result {
+            RangeResult::Csar(c) => Some((*r, c)),
+            _ => None,
+        })
+        .collect();
+    if all.len() < 2 {
+        return;
+    }
+    let dropped: Vec<_> = all.iter().filter(|(_, c)| c.outcome == CsarOutcome::PickedUp).cloned().collect();
+    if dropped.len() >= 2 {
+        out.push(ins(
+            "csar_not_delivered",
+            "csar",
+            "warn",
+            format!("{} survivors picked up but never brought home", dropped.len()),
+            "The rescue only counts once he is at a friendly base or FARP. Plan the fuel for the \
+             trip home before you go looking."
+                .into(),
+            ids(&dropped),
+        ));
+    }
+    let failed: Vec<_> = all.iter().filter(|(_, c)| c.outcome == CsarOutcome::Failed).cloned().collect();
+    if failed.len() >= 2 {
+        out.push(ins(
+            "csar_failed",
+            "csar",
+            "warn",
+            format!("{} survivors not reached", failed.len()),
+            "Tune the survivor's beacon on the ADF as soon as the MAYDAY comes in and fly the \
+             needle; once close, ask for smoke and approach from downwind."
+                .into(),
+            ids(&failed),
+        ));
+    }
+    let pick: Vec<(f64, String)> = all.iter().filter_map(|(r, c)| c.time_to_pickup_s.map(|t| (t, r.id.clone()))).collect();
+    if pick.len() >= 3 {
+        if let Some(m) = median(&pick.iter().map(|x| x.0).collect::<Vec<_>>()) {
+            if m > 20. * 60. {
+                out.push(ins(
+                    "csar_slow_find",
+                    "csar",
+                    "info",
+                    format!("{:.0} minutes to reach the survivor (median)", m / 60.),
+                    "Most of the time goes into the search. Take the bearing from the beacon \
+                     straight away, fly it at a speed you can see from, and cross-check with a \
+                     second bearing rather than searching the whole area."
+                        .into(),
+                    pick.iter().map(|x| x.1.clone()).collect(),
+                ));
+            }
+        }
+    }
+    let hostile_hover: Vec<_> = all
+        .iter()
+        .filter(|(_, c)| c.hostile && c.pickup_method == "hover")
+        .cloned()
+        .collect();
+    if hostile_hover.len() >= 2 && hostile_hover.len() * 2 >= all.iter().filter(|(_, c)| c.hostile).count() {
+        out.push(ins(
+            "csar_hostile_hover",
+            "csar",
+            "info",
+            format!("Hover pickups in hostile areas ({})", hostile_hover.len()),
+            "A long hover with troops hunting the survivor is when helicopters get shot. If there \
+             is a clearing, land, load and go."
+                .into(),
+            ids(&hostile_hover),
+        ));
+    }
+    let rescued: Vec<_> = all.iter().filter(|(_, c)| c.outcome == CsarOutcome::Rescued).collect();
+    if rescued.len() >= 3 && rescued.len() == all.len() {
+        out.push(ins(
+            "csar_good",
+            "csar",
+            "good",
+            format!("{} of {} survivors home", rescued.len(), all.len()),
+            "Every survivor you went for came home.".into(),
+            vec![],
+        ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_kinds_produce_insights() {
+        let mut recs = vec![];
+        for _ in 0..5 {
+            recs.extend(super::super::cards::tests::new_kinds());
+        }
+        // the CSAR / field landings need a sample, the SEAD a death per sortie
+        for (i, r) in recs.iter_mut().enumerate() {
+            r.ts = r.ts - chrono::Duration::hours(i as i64);
+        }
+        let refs: Vec<&RangeRecord> = recs.iter().collect();
+        let out = derive(&refs);
+        let has = |id: &str| out.iter().any(|i| i.id == id);
+        assert!(has("sead_trainer_deaths"), "{out:#?}");
+        assert!(has("ll_tot_late"), "{out:#?}");
+        assert!(has("ll_missed_gate"), "{out:#?}");
+        assert!(has("fl_undershoot"), "{out:#?}");
+        for i in &out {
+            assert!(!i.title.is_empty() && !i.detail.is_empty());
         }
     }
 }

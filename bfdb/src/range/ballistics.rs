@@ -548,6 +548,8 @@ mod tests {
             laser_code: None,
             rings_m: vec![],
             good_radius_m: 0.,
+            tier: None,
+            gps_denied: None,
         }
     }
 

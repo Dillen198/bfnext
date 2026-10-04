@@ -15,7 +15,8 @@ use super::{
     RangeCtx,
 };
 use bfprotocols::range::{
-    EngagementOutcome, MissileOutcome, PassOutcome, RangeRecord, RangeResult, WeaponClass,
+    CsarOutcome, EngagementOutcome, FieldLandingOutcome, HotZoneOutcome, MissileOutcome,
+    PassOutcome, RangeRecord, RangeResult, WeaponClass,
 };
 use chrono::{DateTime, Datelike, Duration, Utc};
 use serde_json::{json, Value};
@@ -290,6 +291,28 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
         draws: usize,
         defeated: usize,
         killed: usize,
+        // SEAD: kills, of them with the radar up, sites finished off
+        sead_kills: usize,
+        sead_radar_up: usize,
+        sead_sites: usize,
+        // hot zone
+        hz_sorties: usize,
+        hz_air: u32,
+        hz_ground: u32,
+        hz_deaths: u32,
+        // low level: scores, and |TOT error| of complete runs
+        ll_score: Vec<f64>,
+        ll_tot: Vec<f64>,
+        // field landings
+        fl_score: Vec<f64>,
+        fl_aim: Vec<f64>,
+        fl_stable: usize,
+        // helicopter deck landings
+        deck_score: Vec<f64>,
+        deck_dist: Vec<f64>,
+        // CSAR: attempts, rescue times
+        csar_attempts: usize,
+        csar_times: Vec<f64>,
     }
     let mut by: HashMap<String, P> = HashMap::new();
     // (sorted pair, 30 s bucket) -> already applied, so the two participants'
@@ -300,7 +323,21 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
     for s in rows {
         let Some(ucid) = s.ucid() else { continue };
         let kind = s.kind();
-        if !matches!(kind, "bomb" | "strafe" | "trap" | "aar" | "engagement" | "missile") {
+        if !matches!(
+            kind,
+            "bomb"
+                | "strafe"
+                | "trap"
+                | "aar"
+                | "engagement"
+                | "missile"
+                | "sead"
+                | "hot_zone"
+                | "low_level"
+                | "field_landing"
+                | "landing"
+                | "csar"
+        ) {
             continue;
         }
         let Some(r) = s.decode() else { continue };
@@ -369,6 +406,54 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
                     }
                 }
             }
+            RangeResult::Sead(sd) => {
+                p.sead_kills += 1;
+                if sd.site_was_emitting {
+                    p.sead_radar_up += 1;
+                }
+                if sd.site_destroyed {
+                    p.sead_sites += 1;
+                }
+            }
+            RangeResult::HotZone(h) => {
+                p.hz_sorties += 1;
+                p.hz_air += h.air_kills;
+                p.hz_ground += h.ground_kills;
+                p.hz_deaths += h.trainer_deaths + (h.outcome == HotZoneOutcome::ShotDown) as u32;
+            }
+            RangeResult::LowLevel(l) => {
+                if let Some(sc) = r.score {
+                    p.ll_score.push(sc);
+                }
+                if l.gates_total > 0 && l.gates_hit == l.gates_total {
+                    p.ll_tot.push(l.tot_error_s.abs());
+                }
+            }
+            RangeResult::FieldLanding(fl) => {
+                if let Some(sc) = r.score {
+                    p.fl_score.push(sc);
+                }
+                if fl.outcome != FieldLandingOutcome::Undershoot {
+                    p.fl_aim.push(fl.aim_error_m.abs());
+                }
+                if fl.stable {
+                    p.fl_stable += 1;
+                }
+            }
+            RangeResult::Landing(l) if l.drill == "ship" => {
+                if let Some(sc) = r.score {
+                    p.deck_score.push(sc);
+                }
+                p.deck_dist.push(l.distance_m);
+            }
+            RangeResult::Csar(c) => {
+                p.csar_attempts += 1;
+                if c.outcome == CsarOutcome::Rescued {
+                    if let Some(t) = c.time_total_s {
+                        p.csar_times.push(t);
+                    }
+                }
+            }
             _ => (),
         }
     }
@@ -378,6 +463,14 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
     let mut aar = vec![];
     let mut duels = vec![];
     let mut md = vec![];
+    let mut sead = vec![];
+    let mut hot_zone = vec![];
+    let mut low_level = vec![];
+    let mut field_landing = vec![];
+    let mut deck_landing = vec![];
+    let mut csar = vec![];
+    let fmin = |v: &[f64]| v.iter().cloned().fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.min(x))));
+    let fmax = |v: &[f64]| v.iter().cloned().fold(None, |m: Option<f64>, x| Some(m.map_or(x, |m| m.max(x))));
     for (ucid, p) in &by {
         if p.bomb_miss.len() >= 5 {
             bombing.push(json!({
@@ -419,6 +512,48 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
                 "defeated": p.defeated, "killed": p.killed,
             }));
         }
+        if p.sead_kills > 0 {
+            sead.push(json!({
+                "ucid": ucid, "name": p.name, "count": p.sead_kills,
+                "radar_up": p.sead_radar_up, "sites_destroyed": p.sead_sites,
+            }));
+        }
+        if p.hz_sorties > 0 {
+            hot_zone.push(json!({
+                "ucid": ucid, "name": p.name, "count": p.hz_sorties,
+                "air_kills": p.hz_air, "ground_kills": p.hz_ground, "deaths": p.hz_deaths,
+            }));
+        }
+        if !p.ll_score.is_empty() {
+            low_level.push(json!({
+                "ucid": ucid, "name": p.name, "count": p.ll_score.len(),
+                "best_score": fmax(&p.ll_score).map(r2),
+                "avg_score": mean(&p.ll_score).map(r2),
+                "best_tot_s": fmin(&p.ll_tot).map(r1),
+            }));
+        }
+        if p.fl_score.len() >= 3 {
+            field_landing.push(json!({
+                "ucid": ucid, "name": p.name, "count": p.fl_score.len(),
+                "avg_score": mean(&p.fl_score).map(r2),
+                "avg_aim_error_m": mean(&p.fl_aim).map(|x| x.round()),
+                "stable_pct": ((p.fl_stable as f64 / p.fl_score.len() as f64) * 100.).round(),
+            }));
+        }
+        if p.deck_dist.len() >= 2 {
+            deck_landing.push(json!({
+                "ucid": ucid, "name": p.name, "count": p.deck_dist.len(),
+                "avg_score": mean(&p.deck_score).map(r2),
+                "avg_distance_m": mean(&p.deck_dist).map(r1),
+            }));
+        }
+        if !p.csar_times.is_empty() {
+            csar.push(json!({
+                "ucid": ucid, "name": p.name, "count": p.csar_attempts,
+                "rescues": p.csar_times.len(),
+                "fastest_s": fmin(&p.csar_times).map(|x| x.round()),
+            }));
+        }
     }
     let f = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(f64::NAN);
     let desc = |k: &'static str| {
@@ -431,6 +566,26 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
     lso.sort_by(desc("avg_points"));
     aar.sort_by(desc("avg_score"));
     duels.sort_by(desc("elo"));
+    let asc = |k: &'static str| {
+        move |a: &Value, b: &Value| {
+            let (x, y) = (f(a, k), f(b, k));
+            // missing values last
+            match (x.is_nan(), y.is_nan()) {
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                _ => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+            }
+        }
+    };
+    sead.sort_by(|a, b| desc("radar_up")(a, b).then(desc("count")(a, b)).then(desc("sites_destroyed")(a, b)));
+    hot_zone.sort_by(|a, b| {
+        let k = |v: &Value| f(v, "air_kills") + f(v, "ground_kills");
+        k(b).partial_cmp(&k(a)).unwrap_or(std::cmp::Ordering::Equal).then(asc("deaths")(a, b))
+    });
+    low_level.sort_by(|a, b| desc("best_score")(a, b).then(asc("best_tot_s")(a, b)));
+    field_landing.sort_by(desc("avg_score"));
+    deck_landing.sort_by(|a, b| desc("avg_score")(a, b).then(asc("avg_distance_m")(a, b)));
+    csar.sort_by(asc("fastest_s"));
     md.sort_by(|a, b| {
         let ra = f(a, "defeated") / f(a, "count");
         let rb = f(b, "defeated") / f(b, "count");
@@ -445,6 +600,12 @@ pub(crate) fn leaderboards(rows: &[Stored]) -> Value {
         "aar": aar,
         "duels": duels,
         "missile_defense": md,
+        "sead": sead,
+        "hot_zone": hot_zone,
+        "low_level": low_level,
+        "field_landing": field_landing,
+        "deck_landing": deck_landing,
+        "csar": csar,
     })
 }
 

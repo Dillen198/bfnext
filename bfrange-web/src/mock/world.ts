@@ -23,27 +23,27 @@ export interface MockPilot {
 
 export const PILOTS: MockPilot[] = [
   { ucid: 'c45e7a1f0b2d4c6e8a9b1c3d5e7f9a0b', name: 'Casper', callsign: 'Casper 1-1', airframes: ['T-45', 'FA-18C_hornet'], skill: 0.55,
-    kinds: [['trap', 10], ['aar', 3], ['bomb', 2], ['missile', 1]] },
+    kinds: [['trap', 10], ['aar', 3], ['bomb', 2], ['field_landing', 3], ['missile', 1]] },
   { ucid: '5b70c3e1d9f24a8b6c1e3f5a7b9d0c2e', name: 'Sprocket', callsign: 'Sprocket 2-1', airframes: ['FA-18C_hornet'], skill: 0.7,
-    kinds: [['bomb', 6], ['trap', 5], ['aar', 3], ['anti_ship', 2], ['strafe', 1]] },
+    kinds: [['bomb', 6], ['trap', 5], ['aar', 3], ['anti_ship', 2], ['strafe', 1], ['low_level', 2], ['sead', 2], ['field_landing', 1]] },
   { ucid: 'a1b2c3d4e5f60718293a4b5c6d7e8f90', name: 'Hollywood', callsign: 'Showtime 1-1', airframes: ['F-14B'], skill: 0.8,
-    kinds: [['trap', 6], ['engagement', 4], ['missile', 4], ['aar', 2], ['bomb', 1]] },
+    kinds: [['trap', 6], ['engagement', 4], ['missile', 4], ['aar', 2], ['bomb', 1], ['hot_zone', 3]] },
   { ucid: '0f1e2d3c4b5a69788796a5b4c3d2e1f0', name: 'Viper', callsign: 'Viper 1-1', airframes: ['F-16C_50'], skill: 0.75,
-    kinds: [['bomb', 5], ['strafe', 4], ['aar', 4], ['missile', 3], ['engagement', 1]] },
+    kinds: [['bomb', 5], ['strafe', 4], ['aar', 4], ['missile', 3], ['engagement', 1], ['sead', 4], ['hot_zone', 2], ['field_landing', 2]] },
   { ucid: 'd00c5d00c5d00c5d00c5d00c5d00c5d0', name: 'Dutch', callsign: 'Hawg 1-1', airframes: ['A-10C_2'], skill: 0.62,
-    kinds: [['strafe', 6], ['bomb', 5], ['cas', 4], ['aar', 2]] },
+    kinds: [['strafe', 6], ['bomb', 5], ['cas', 4], ['aar', 2], ['hot_zone', 2], ['low_level', 2]] },
   { ucid: '9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d', name: 'Nitro', callsign: 'Enfield 1-1', airframes: ['FA-18C_hornet'], skill: 0.66,
-    kinds: [['engagement', 5], ['missile', 5], ['trap', 3], ['anti_ship', 2]] },
+    kinds: [['engagement', 5], ['missile', 5], ['trap', 3], ['anti_ship', 2], ['hot_zone', 2]] },
   { ucid: '7e57a11e7e57a11e7e57a11e7e57a11e', name: 'Tuna', callsign: 'Chalk 1', airframes: ['UH-1H', 'CH-47Fbl1'], skill: 0.58,
-    kinds: [['sling', 5], ['landing', 5], ['troops', 3]] },
+    kinds: [['sling', 5], ['landing', 5], ['troops', 3], ['csar', 4]] },
   { ucid: '3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f', name: 'Kestrel', callsign: 'Gunfighter 1', airframes: ['AH-64D_BLK_II', 'M-1 Abrams'], skill: 0.68,
     kinds: [['gunnery', 5], ['cas', 3], ['landing', 2]] },
   { ucid: 'b0b0b0b0c1c1c1c1d2d2d2d2e3e3e3e3', name: 'Rook', callsign: 'Nitro 3-1', airframes: ['AV8BNA'], skill: 0.45,
-    kinds: [['bomb', 4], ['landing', 3], ['strafe', 2], ['aar', 1]] },
+    kinds: [['bomb', 4], ['landing', 3], ['strafe', 2], ['aar', 1], ['field_landing', 3]] },
   { ucid: 'bl4ckj4ckbl4ckj4ckbl4ckj4ck00001', name: 'Blackjack', callsign: 'Victory 2-1', airframes: ['F-14B'], skill: 0.6,
     kinds: [['trap', 5], ['bomb', 3], ['anti_ship', 2]] },
   { ucid: 'm0ng0m0ng0m0ng0m0ng0m0ng0m0ng000', name: 'Mongo', callsign: 'Dude 1-1', airframes: ['F-15ESE'], skill: 0.5,
-    kinds: [['bomb', 5], ['aar', 3], ['missile', 2]] },
+    kinds: [['bomb', 5], ['aar', 3], ['missile', 2], ['low_level', 3], ['sead', 1], ['field_landing', 2]] },
 ]
 
 export const pilotByName = (n: string) => PILOTS.find(p => p.name === n)!
@@ -167,4 +167,88 @@ export const LZS = ['LZ Fox', 'LZ Dagger', 'LZ Tango']
 export const ARENAS = [
   { id: 'bfm', name: 'BFM Box', pos: pt(42.46, 41.28, 6000), radius_m: 18_520 },
   { id: 'bvr', name: 'BVR Lane', pos: pt(42.72, 41.62, 9000), radius_m: 74_000 },
+]
+
+// ─── the newer disciplines ─────────────────────────────────────────────────
+//
+// Placed inside their sectors from bfrange/RANGE_CFG.sample.json (the mock
+// sector layer), not next to the older mock stations above.
+
+/** Station difficulty for the tiered-target results (bomb cards). */
+export const STATION_TIER: Record<string, 'easy' | 'medium' | 'hard'> = {
+  range_a_circle: 'easy',
+  range_b_array: 'medium',
+  range_b_convoy: 'medium',
+  range_c_laser: 'hard',
+  range_c_coord: 'hard',
+}
+
+export interface MockSamSite { id: string; name: string; system: string; pos: GeoPt; range_m: number; units: number }
+
+/** S-1: the Javakheti plateau IADS (sample `iads[0]`, engages within 25 nm of 41.43, 43.40). */
+export const IADS = {
+  id: 's1-iads',
+  name: 'S-1 Akhalkalaki IADS',
+  side: 'red',
+  sites: [
+    { id: 's1-ewr', name: 'Javakheti EWR', system: 'ewr_55g6', pos: pt(41.47, 43.33, 1900), range_m: 0, units: 1 },
+    { id: 's1-sa10', name: 'SA-10 battery', system: 'sa10', pos: pt(41.41, 43.47, 1750), range_m: 75_000, units: 6 },
+    { id: 's1-sa2', name: 'SA-2 site', system: 'sa2', pos: pt(41.52, 43.46, 1800), range_m: 40_000, units: 7 },
+    { id: 's1-sa11', name: 'SA-11 battery', system: 'sa11', pos: pt(41.36, 43.31, 1700), range_m: 35_000, units: 5 },
+    { id: 's1-sa3', name: 'SA-3 site', system: 'sa3', pos: pt(41.45, 43.21, 1850), range_m: 18_000, units: 6 },
+    { id: 's1-sa6', name: 'SA-6 battery', system: 'sa6', pos: pt(41.33, 43.42, 1650), range_m: 25_000, units: 5 },
+    { id: 's1-shorad', name: 'Pantsir point defence', system: 'pantsir', pos: pt(41.42, 43.44, 1740), range_m: 20_000, units: 1 },
+  ] as MockSamSite[],
+}
+
+/** What a SEAD kill took out, by system. */
+export const SAM_SYSTEM: Record<string, { label: string; roles: [string, string][] }> = {
+  ewr_55g6: { label: '55G6 EWR', roles: [['EWR', 'EWR 55G6']] },
+  sa10: { label: 'SA-10 Grumble', roles: [['search radar', 'S-300PS 64H6E sr'], ['track radar', 'S-300PS 40B6M tr'], ['launcher', 'S-300PS 5P85C ln']] },
+  sa2: { label: 'SA-2 Guideline', roles: [['track radar', 'SNR_75V'], ['search radar', 'p-19 s-125 sr'], ['launcher', 'S_75M_Volhov']] },
+  sa11: { label: 'SA-11 Buk', roles: [['search radar', 'SA-11 Buk SR 9S18M1'], ['launcher', 'SA-11 Buk LN 9A310M1'], ['command post', 'SA-11 Buk CC 9S470M1']] },
+  sa3: { label: 'SA-3 Goa', roles: [['track radar', 'snr s-125 tr'], ['search radar', 'p-19 s-125 sr'], ['launcher', '5p73 s-125 ln']] },
+  sa6: { label: 'SA-6 Kub', roles: [['track radar', 'Kub 1S91 str'], ['launcher', 'Kub 2P25 ln']] },
+  pantsir: { label: 'Pantsir-S1', roles: [['launcher', '2S6 Tunguska']] },
+}
+
+/** HZ-1 Liakhvi (sample `hot_zones[0]`, 20 nm). */
+export const HOT_ZONE = { id: 'hz1', name: 'HZ-1 Liakhvi', pos: pt(42.38, 44.1, 900), radius_m: 20 * 1852, ai_side: 'red', awacs: 'Overlord 1 (251.5)', ground: 9 }
+
+export const HOT_ZONE_KILLS = {
+  air: ['MiG-29S', 'Su-27', 'J-11A'],
+  ground: ['T-72B', 'BMP-2', 'ZSU-23-4 Shilka', 'Tor 9A331', 'Ural-375', 'SA-18 Igla manpad'],
+}
+
+/** EW-1 Tsalka (sample `jammers[0]`, 12 nm), inside the EW-1 sector. */
+export const JAMMER = { id: 'ew1', name: 'EW-1 Tsalka jammer', side: 'red', pos: pt(41.69, 44.15, 1500), radius_m: 12 * 1852, gps: 'jam', radio: 'off' }
+
+/** LL-1 Kolkheti: the middle of the sample's corridor, gate by gate. */
+export const LOW_LEVEL = {
+  id: 'll1',
+  name: 'LL-1 Kolkheti',
+  max_agl_ft: 500,
+  min_agl_ft: 100,
+  speed_kts: 420,
+  gates: [
+    ['ALPHA', pt(42.06, 42.42)], ['BRAVO', pt(42.12, 42.2)], ['CHARLIE', pt(42.12, 41.93)], ['DELTA', pt(42.28, 41.83)],
+    ['ECHO', pt(42.42, 41.86)], ['FOXTROT', pt(42.5, 42.05)], ['GOLF', pt(42.52, 42.25)], ['HOTEL', pt(42.45, 42.4)],
+  ] as [string, GeoPt][],
+}
+
+/** Runways the pattern grades (threshold, landing heading). */
+export const FIELDS = [
+  { airfield: 'Senaki-Kolkhi', runway: '09', threshold: pt(42.2413, 42.0263, 13), heading_deg: 94 },
+  { airfield: 'Kutaisi', runway: '07', threshold: pt(42.1728, 42.4602, 45), heading_deg: 74 },
+  { airfield: 'Kobuleti', runway: '07', threshold: pt(41.9282, 41.8543, 18), heading_deg: 70 },
+  { airfield: 'Batumi', runway: '13', threshold: pt(41.6103, 41.5997, 10), heading_deg: 126 },
+]
+
+/** CS-1 Bakhmaro (sample `csar.areas[0]`). */
+export const CSAR_AREA = { id: 'cs1', name: 'CS-1 Bakhmaro', pos: pt(41.83, 42.4, 1600), radius_m: 14_250 }
+
+/** FD-1 Kobuleti (sample `ship_decks`). */
+export const SHIP_DECKS = [
+  { id: 'fd1-perry', name: 'FFG-7 Perry', unit_type: 'PERRY', pos: pt(42.0, 41.453), heading_deg: 90, speed_kts: 10, leg_m: 4 * 1852, tacan: '41X FFG' },
+  { id: 'fd1-burke', name: 'DDG Arleigh Burke', unit_type: 'USS_Arleigh_Burke_IIa', pos: pt(41.965, 41.587), heading_deg: 270, speed_kts: 14, leg_m: 4 * 1852, tacan: '42X DDG' },
 ]

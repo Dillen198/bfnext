@@ -7,7 +7,10 @@ import { windOverDeck } from '../lib/wod'
 import type { GeoPt, LivePlayer, LiveSpawn, LiveTanker, RangeLive } from '../types'
 import { MOCK_QNH_HPA, mockAtmo, mockLayer } from './atmo'
 import { SECTORS } from './sectors'
-import { ARENAS, CARRIERS, MISSION_DATE, PADS, PILOTS, SLING_COURSES, STATIONS, TANKERS, THEATRE, pilotByName } from './world'
+import {
+  ARENAS, CARRIERS, CSAR_AREA, HOT_ZONE, IADS, JAMMER, MISSION_DATE, PADS, PILOTS, SHIP_DECKS, SLING_COURSES, STATIONS, TANKERS, THEATRE,
+  pilotByName,
+} from './world'
 
 const r1 = (x: number) => Math.round(x * 10) / 10
 
@@ -192,6 +195,55 @@ export function buildLive(now: number, spawns: LiveSpawn[]): RangeLive {
     // a fresh copy each poll, as the real API sends
     sectors: structuredClone(SECTORS),
     uptime_s: (t % 14_400) + 600,
+    // radars come up and go dark in turn, as the IADS reacts to traffic
+    iads: [{
+      id: IADS.id,
+      name: IADS.name,
+      side: IADS.side,
+      weapons_free: true,
+      sites: IADS.sites.map((s, i) => ({
+        id: s.id,
+        name: s.name,
+        system: s.system,
+        pos: s.pos,
+        emitting: s.system.startsWith('ewr') || Math.floor(t / 20 + i * 1.7) % 3 === 0,
+        units_alive: s.id === 's1-sa3' ? 0 : s.id === 's1-sa6' ? s.units - 2 : s.units,
+        units_total: s.units,
+        range_m: s.range_m,
+      })),
+    }],
+    hot_zones: [{
+      id: HOT_ZONE.id,
+      name: HOT_ZONE.name,
+      pos: HOT_ZONE.pos,
+      radius_m: HOT_ZONE.radius_m,
+      ai_side: HOT_ZONE.ai_side,
+      bandits: [0, 2, 4, 2][Math.floor(t / 90) % 4],
+      players: Math.floor(t / 90) % 4 === 0 ? [] : ['Viper'],
+      ground_alive: HOT_ZONE.ground - (Math.floor(t / 120) % 4),
+      ground_total: HOT_ZONE.ground,
+      awacs: HOT_ZONE.awacs,
+    }],
+    jammers: [{ id: JAMMER.id, name: JAMMER.name, side: JAMMER.side, pos: JAMMER.pos, radius_m: JAMMER.radius_m, gps: JAMMER.gps, radio: JAMMER.radio, alive: true }],
+    // only the search area: the survivor's own position is never published
+    csar: [{
+      area: CSAR_AREA.name,
+      pilot: 'Dagger 2-1',
+      area_pos: CSAR_AREA.pos,
+      started: new Date(now - ((t % 1800) + 120) * 1000).toISOString(),
+      picked_up: (t % 1800) > 1500,
+      hostile: true,
+    }],
+    ship_decks: SHIP_DECKS.map((d, i) => {
+      // steam the leg out and back
+      const per = (2 * d.leg_m) / (d.speed_kts * KT)
+      const ph = ((t + i * 400) % per) / per
+      const out = ph < 0.5
+      const along = d.leg_m * (out ? ph * 2 : 2 - ph * 2)
+      const hdg = norm360(d.heading_deg + (out ? 0 : 180))
+      const pos = destination(d.pos, d.heading_deg, along)
+      return { id: d.id, name: d.name, unit_type: d.unit_type, pos: { lat: pos.lat, lon: pos.lon, alt_m: 0 }, heading_deg: hdg, speed_kts: d.speed_kts, tacan: d.tacan }
+    }),
   }
 }
 
