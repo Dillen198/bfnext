@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, connectGroundwar, type GroundFrame, type GroundPicture } from '../../api'
 import type { GroundMock } from '../groundwarMock'
+import { normalizePicture } from './normalize'
 
 export type Link = 'connecting' | 'live' | 'polling' | 'offline' | 'mock'
 
@@ -87,7 +88,7 @@ export function useGroundFeed(side: 'Blue' | 'Red' | undefined, instance: string
       try {
         const pic = await api.groundwar.picture(side)
         if (stopped || wsLive) return
-        put({ pic, reason: null, error: null, link: 'polling' })
+        put({ pic: normalizePicture(pic), reason: null, error: null, link: 'polling' })
         schedule(POLL_MS)
       } catch (e) {
         if (stopped || wsLive) return
@@ -106,7 +107,7 @@ export function useGroundFeed(side: 'Blue' | 'Red' | undefined, instance: string
           window.clearTimeout(pollTimer)
           pollTimer = null
         }
-        if (f.picture) put({ pic: f.picture, reason: null, error: null, link: 'live' })
+        if (f.picture) put({ pic: normalizePicture(f.picture), reason: null, error: null, link: 'live' })
         else put({ reason: f.reason ?? 'unavailable', link: 'live', ...(f.reason === 'unavailable' ? {} : { pic: null }) })
       },
       (s) => {
