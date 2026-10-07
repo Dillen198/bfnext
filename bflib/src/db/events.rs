@@ -452,6 +452,10 @@ pub struct EventScheduler {
     /// Retried each tick until the DCS group appears (spawn queue lag).
     #[serde(skip)]
     pub pending_moves: FxHashMap<GroupId, Vec<Vector2>>,
+    /// Reactive air response held back until then, per (side, rotary): the
+    /// `cap_probability` roll failed, so this incursion is answered late.
+    #[serde(skip)]
+    pub cap_hold_until: FxHashMap<(Side, bool), DateTime<Utc>>,
     /// CAP event → list of spawned group IDs (for cleanup on expiry).
     #[serde(skip)]
     pub cap_groups: FxHashMap<EventId, SmallVec<[GroupId; 2]>>,

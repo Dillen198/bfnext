@@ -40,7 +40,7 @@ mod command;
 mod economy;
 mod example;
 mod ground_war;
-pub use ground_war::{GroundAiCfg, GroundCombatCfg, GroundWarCfg};
+pub use ground_war::{GarrisonCfg, GroundAiCfg, GroundCombatCfg, GroundWarCfg};
 mod hq;
 pub use hq::{EscortPolicy, HqAirCfg, HqAirTemplate, HqCfg, HqCostsCfg, HqPackagesCfg, HqGapFillCfg, HqLimitsCfg, HqRequestsCfg, HqStrategistCfg};
 
@@ -580,6 +580,32 @@ pub struct IadnConfig {
     /// to lose lock/fly past, short enough not to blind the site for long.
     #[serde(default = "default_harm_defense_cooldown_secs")]
     pub harm_defense_cooldown_secs: u32,
+    /// Share of SAM sites (0..1) drilled to shut down for anti-radiation
+    /// missiles. Rolled per site every mission load, so which sites drop
+    /// their radar for a HARM and which keep radiating (and die to it)
+    /// changes from one round to the next. The rest have DCS's own
+    /// ARM evasion turned off too. Default 0.6.
+    #[serde(default = "default_arm_discipline")]
+    pub arm_discipline: f64,
+    /// Chance (0..1) that a drilled site notices one ARM that is actually
+    /// flying at it, before decoys. Rolled once per missile per site.
+    /// Default 0.75.
+    #[serde(default = "default_arm_react_chance")]
+    pub arm_react_chance: f64,
+    /// An ARM counts as flying at a site when the site is within this many
+    /// degrees of its heading. Sites off its nose ignore it. Default 25.
+    #[serde(default = "default_arm_aim_cone_deg")]
+    pub arm_aim_cone_deg: f64,
+    /// Decoy weapon type names (TALD, MALD). Decoys in the air near a site
+    /// saturate it: each cuts the chance it notices a real ARM by
+    /// `decoy_saturation`. Default ADM_141A, ADM_141B.
+    #[serde(default = "default_decoy_weapons")]
+    pub decoy_weapons: FxHashSet<std::string::String>,
+    /// How much each decoy within `harm_defense_radius_m` of a site cuts its
+    /// chance of noticing an ARM (multiplicative). Default 0.3: four TALDs
+    /// leave a drilled site under a one-in-five chance.
+    #[serde(default = "default_decoy_saturation")]
+    pub decoy_saturation: f64,
     /// Once cued hot, a SAM site stays hot for at least this long (s) even
     /// if the cue drops, instead of flickering dark the instant a target
     /// loses fused-track quality for a moment. Default 15.
@@ -648,6 +674,11 @@ impl Default for IadnConfig {
             anti_radiation_weapons: FxHashSet::default(),
             harm_defense_radius_m: default_harm_defense_radius_m(),
             harm_defense_cooldown_secs: default_harm_defense_cooldown_secs(),
+            arm_discipline: default_arm_discipline(),
+            arm_react_chance: default_arm_react_chance(),
+            arm_aim_cone_deg: default_arm_aim_cone_deg(),
+            decoy_weapons: default_decoy_weapons(),
+            decoy_saturation: default_decoy_saturation(),
             min_hot_dwell_secs: default_min_hot_dwell_secs(),
             reaction_delay_max_secs: default_reaction_delay_max_secs(),
             track_radar_range_fraction: default_track_radar_range_fraction(),
@@ -668,6 +699,13 @@ fn default_sam_cue_enabled() -> bool { true }
 fn default_sam_cue_confidence_threshold() -> f32 { 0.4 }
 fn default_harm_defense_radius_m() -> f64 { 20_000.0 }
 fn default_harm_defense_cooldown_secs() -> u32 { 20 }
+fn default_arm_discipline() -> f64 { 0.6 }
+fn default_arm_react_chance() -> f64 { 0.75 }
+fn default_arm_aim_cone_deg() -> f64 { 25.0 }
+fn default_decoy_weapons() -> FxHashSet<std::string::String> {
+    ["ADM_141A", "ADM_141B"].into_iter().map(std::string::String::from).collect()
+}
+fn default_decoy_saturation() -> f64 { 0.3 }
 fn default_min_hot_dwell_secs() -> u32 { 15 }
 fn default_reaction_delay_max_secs() -> u32 { 4 }
 fn default_track_radar_range_fraction() -> f32 { 0.5 }
@@ -3072,7 +3110,9 @@ pub struct CampaignEventsCfg {
     /// Distance from an objective (metres) within which a CAP orbit is placed. Default: 15000.
     #[serde(default = "default_cap_orbit_radius")]
     pub cap_orbit_radius_m: f64,
-    /// Probability that a CAP event is spawned on each slow-events check (0.0–1.0). Default: 0.35.
+    /// Chance (0.0-1.0) that a reactive CAP answers an incursion at once;
+    /// otherwise it launches 2-8 minutes later, so fighters don't always
+    /// arrive on the same beat. 1 = always at once. Default: 0.35.
     #[serde(default = "default_cap_probability")]
     pub cap_probability: f64,
     /// Seconds a troop must continuously occupy an objective before it is captured.
@@ -4204,6 +4244,11 @@ pub struct Cfg {
     /// admin (`CommandCfg`). On with defaults when absent.
     #[serde(default)]
     pub command: CommandCfg,
+    /// Base garrisons defend themselves: react to enemy ground units, call
+    /// a quick reaction force, patrol (`GarrisonCfg`). On with defaults when
+    /// absent.
+    #[serde(default)]
+    pub garrison: GarrisonCfg,
 }
 
 /// See `Cfg::modern_war`. Each part is independent; leave one out to turn it

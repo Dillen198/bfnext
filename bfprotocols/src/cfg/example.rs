@@ -2482,6 +2482,7 @@ impl Default for Cfg {
             population_scaling: None,
             economy: EconomyCfg::default(),
             command: CommandCfg::default(),
+            garrison: GarrisonCfg::default(),
             ground_vehicle_cargo: FxHashMap::default(),
             smart_commander: Some(SmartCommanderCfg {
                 tick_period_secs: 60,

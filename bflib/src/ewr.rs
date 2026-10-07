@@ -476,6 +476,37 @@ pub struct AirContact {
     pub detected_by: DetectedBy,
 }
 
+/// An anti-radiation missile (or a decoy) in flight, for the IADN's HARM
+/// defence.
+#[derive(Debug, Clone)]
+struct TrackedArm {
+    oid: DcsOid<ClassWeapon>,
+    /// The side whose SAM sites it threatens (the shooter's opposite).
+    side: Side,
+    /// For a safety expiry if the weapon object outlives any reasonable
+    /// flight.
+    launched: DateTime<Utc>,
+    /// A TALD/MALD: never makes a site go dark, only saturates it.
+    decoy: bool,
+    /// Per site it has flown at: whether that site noticed it. Rolled once.
+    rolled: FxHashMap<GroupId, bool>,
+}
+
+/// Drawn once per mission load: which sites are drilled for ARMs changes
+/// every round.
+static ARM_SEED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+
+/// Is this SAM site drilled to shut down for an anti-radiation missile?
+/// `arm_discipline` of them are, chosen per site and per mission load.
+pub(crate) fn site_drilled(gid: GroupId, cfg: &IadnConfig) -> bool {
+    use std::hash::{Hash, Hasher};
+    let seed = *ARM_SEED.get_or_init(|| rand::Rng::r#gen(&mut rand::thread_rng()));
+    let mut h = fxhash::FxHasher::default();
+    seed.hash(&mut h);
+    gid.hash(&mut h);
+    (h.finish() % 10_000) as f64 / 10_000. < cfg.arm_discipline.clamp(0., 1.)
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Ewr {
     tracks: FxHashMap<Side, FxHashMap<EnId, Track>>,
@@ -491,7 +522,7 @@ pub struct Ewr {
     /// go dark before impact. (weapon object id, side under threat, launch
     /// time -- used for a safety expiry if the weapon object outlives any
     /// reasonable ARM flight time).
-    tracked_arms: Vec<(DcsOid<ClassWeapon>, Side, DateTime<Utc>)>,
+    tracked_arms: Vec<TrackedArm>,
     /// SAM site group -> timestamp its radar is forced dark until, due to a
     /// detected ARM threat. Consulted by the EMCON logic in update_tracks,
     /// which overrides the normal cue-based decision while an entry here is
@@ -903,6 +934,12 @@ impl Ewr {
                             let _ = con.set_option(dcso3::controller::AiOption::Ground(
                                 dcso3::controller::GroundOption::AlarmState(desired),
                             ));
+                            // DCS's own ARM evasion is near-perfect on its
+                            // own; it follows the site's drill too, or every
+                            // site would still drop for every HARM.
+                            let _ = con.set_option(dcso3::controller::AiOption::Ground(
+                                dcso3::controller::GroundOption::EvasionOfArm(site_drilled(gid, iadn)),
+                            ));
                         }
                     }
                     // Layered search/track radar: an optional second control
@@ -1233,16 +1270,24 @@ impl Ewr {
 
     /// IADN HARM defense: register a freshly-launched weapon for in-flight
     /// tracking, once the caller (Event::Shot handler) has already matched
-    /// its type name against cfg.iadn.anti_radiation_weapons. `threatened_side`
-    /// is the side whose SAM sites this missile might be homing on -- i.e.
-    /// the opposite of whoever fired it.
+    /// its type name against cfg.iadn.anti_radiation_weapons (or, with
+    /// `decoy`, decoy_weapons). `threatened_side` is the side whose SAM
+    /// sites this missile might be homing on -- i.e. the opposite of
+    /// whoever fired it.
     pub fn track_potential_arm(
         &mut self,
         oid: DcsOid<ClassWeapon>,
         threatened_side: Side,
         now: DateTime<Utc>,
+        decoy: bool,
     ) {
-        self.tracked_arms.push((oid, threatened_side, now));
+        self.tracked_arms.push(TrackedArm {
+            oid,
+            side: threatened_side,
+            launched: now,
+            decoy,
+            rolled: FxHashMap::default(),
+        });
     }
 
     /// IADN HARM defense: poll all in-flight tracked ARMs and, for any
@@ -1261,38 +1306,93 @@ impl Ewr {
     /// ever reads donor_snapshot (already culling-safe) and writes
     /// timestamps keyed by GroupId, never touching a live DCS handle for the
     /// SAM site itself.
+    ///
+    /// It used to be omniscient: every search radar within range of any ARM
+    /// went dark, every time, so a HARM never hit anything that radiated
+    /// (the "6 TALDs and 2 HARMs can't kill a radar" complaint, Oct 7).
+    /// Now only a site the missile is flying at reacts; only drilled sites
+    /// (`site_drilled`, re-rolled each mission load) react at all; and a
+    /// drilled one notices with `arm_react_chance`, cut by every decoy in
+    /// the air near it -- rolled once per missile per site, so a miss
+    /// stays a miss.
     fn update_harm_threats(&mut self, lua: MizLua, cfg: &IadnConfig, now: DateTime<Utc>) {
         const MAX_ARM_FLIGHT_SECS: i64 = 90;
-        let range_sq = cfg.harm_defense_radius_m.powi(2);
+        let range = cfg.harm_defense_radius_m;
         let cooldown = chrono::Duration::seconds(cfg.harm_defense_cooldown_secs as i64);
+        let cone = cfg.arm_aim_cone_deg.clamp(1., 180.).to_radians();
         let Self { tracked_arms, donor_snapshot, harm_dark_until, .. } = self;
-        tracked_arms.retain(|(oid, threatened_side, launched_at)| {
-            if (now - *launched_at).num_seconds() > MAX_ARM_FLIGHT_SECS {
+        // Where everything still in the air is this tick.
+        let mut live: Vec<(usize, Vector2, Vector2)> = Vec::new();
+        let mut i = 0;
+        tracked_arms.retain(|a| {
+            let idx = i;
+            i += 1;
+            if (now - a.launched).num_seconds() > MAX_ARM_FLIGHT_SECS {
                 return false;
             }
-            let weapon = match Weapon::get_instance(lua, oid) {
-                Ok(w) => w,
-                Err(_) => return false, // impacted or otherwise gone
+            let Ok(obj) = Weapon::get_instance(lua, &a.oid).and_then(|w| w.as_object()) else {
+                return false; // impacted or otherwise gone
             };
-            let pos = match weapon.as_object().and_then(|o| o.get_point()) {
-                Ok(p) => p,
-                Err(_) => return false,
-            };
-            let arm_pos = Vector2::new(pos.x, pos.z);
+            let Ok(p) = obj.get_point() else { return false };
+            let v = obj.get_velocity().map(|v| Vector2::new(v.0.x, v.0.z)).unwrap_or_default();
+            live.push((idx, Vector2::new(p.x, p.z), v));
+            true
+        });
+        // `retain` dropped entries; map the surviving original indices onto
+        // their new positions.
+        let mut kept = 0;
+        let live: Vec<(usize, Vector2, Vector2)> = live
+            .into_iter()
+            .map(|(_, p, v)| {
+                let k = kept;
+                kept += 1;
+                (k, p, v)
+            })
+            .collect();
+        let decoys: SmallVec<[(Side, Vector2); 16]> = live
+            .iter()
+            .filter(|(k, _, _)| tracked_arms[*k].decoy)
+            .map(|(k, p, _)| (tracked_arms[*k].side, *p))
+            .collect();
+        let mut rng = rand::thread_rng();
+        for (k, arm_pos, vel) in live {
+            let arm = &mut tracked_arms[k];
+            if arm.decoy {
+                continue;
+            }
             for donor in donor_snapshot.iter() {
-                if donor.side != *threatened_side
-                    || !matches!(donor.sensor_type, SensorType::SamSearchRadar)
-                {
+                if donor.side != arm.side || !matches!(donor.sensor_type, SensorType::SamSearchRadar) {
                     continue;
                 }
                 let Some(gid) = donor.gid else { continue };
-                let donor_pos = Vector2::new(donor.pos.p.x, donor.pos.p.z);
-                if na::distance_squared(&arm_pos.into(), &donor_pos.into()) <= range_sq {
+                let site = Vector2::new(donor.pos.p.x, donor.pos.p.z);
+                let to_site = site - arm_pos;
+                let d = to_site.norm();
+                if d > range {
+                    continue;
+                }
+                // Flying at it? (A missile too slow to have a heading yet
+                // counts as aimed at everything in range.)
+                if vel.norm() > 50. && d > 1. && vel.angle(&to_site) > cone {
+                    continue;
+                }
+                let noticed = *arm.rolled.entry(gid).or_insert_with(|| {
+                    if !site_drilled(gid, cfg) {
+                        return false;
+                    }
+                    let near = decoys
+                        .iter()
+                        .filter(|(s, p)| *s == donor.side && (*p - site).norm() <= range)
+                        .count() as i32;
+                    let chance = cfg.arm_react_chance.clamp(0., 1.)
+                        * (1. - cfg.decoy_saturation.clamp(0., 1.)).powi(near);
+                    rand::Rng::gen_bool(&mut rng, chance.clamp(0., 1.))
+                });
+                if noticed {
                     harm_dark_until.insert(gid, now + cooldown);
                 }
             }
-            true // still in flight, keep tracking
-        });
+        }
     }
 
     /// IADN engagement doctrine: decide whether a SAM site should be hot

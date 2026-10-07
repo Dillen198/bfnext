@@ -1294,6 +1294,8 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                         && !tags.contains(UnitTag::Aircraft)
                     {
                         modern_war::on_sam_shot(ctx, gid, start_ts);
+                        // ... and gives its position away: it moves after.
+                        ctx.groundwar.garrison.note_sam_shot(gid, start_ts);
                     }
                 }
                 // AI helo missions near an air-defence launch re-route.
@@ -1306,13 +1308,22 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             // side can be warned to go dark before it arrives.
             if let Some(iadn) = ctx.db.ephemeral.cfg.iadn.as_ref() {
                 let arm_name = e.weapon_name.as_ref().map(|n| n.as_str()).unwrap_or("");
-                if iadn.anti_radiation_weapons.contains(arm_name) {
-                    let shooter_side = e.initiator.as_ref().and_then(|u| u.object_id().ok())
+                let decoy = iadn.decoy_weapons.contains(arm_name);
+                if decoy || iadn.anti_radiation_weapons.contains(arm_name) {
+                    // Players' aircraft aren't in the unit db, so their side
+                    // comes from DCS: every player-fired HARM used to go
+                    // untracked here.
+                    let shooter_side = e
+                        .initiator
+                        .as_ref()
+                        .and_then(|u| u.object_id().ok())
                         .and_then(|obj_id| ctx.db.ephemeral.get_uid_by_object_id(&obj_id))
                         .and_then(|uid| ctx.db.unit(uid).ok())
-                        .map(|u| u.side);
+                        .map(|u| u.side)
+                        .or_else(|| e.initiator.as_ref().and_then(|u| u.get_coalition().ok()))
+                        .filter(|s| *s != Side::Neutral);
                     if let (Some(shooter_side), Ok(weapon_oid)) = (shooter_side, e.weapon.object_id()) {
-                        ctx.ewr.track_potential_arm(weapon_oid, shooter_side.opposite(), start_ts);
+                        ctx.ewr.track_potential_arm(weapon_oid, shooter_side.opposite(), start_ts, decoy);
                     }
                 }
             }
@@ -3714,6 +3725,9 @@ struct ThreatResponseCfg {
     balance_gap: u32,
     /// Side-wide launches allowed per rolling hour. 0 = unlimited.
     max_sorties_per_hour: u32,
+    /// Chance an incursion is answered at once; otherwise the answer comes
+    /// 2-8 minutes later (`cap_probability`; helos always at once).
+    probability: f64,
 }
 
 impl ThreatResponseCfg {
@@ -3730,6 +3744,7 @@ impl ThreatResponseCfg {
                 trigger_on_known_players: c.helo_trigger_on_known_players,
                 balance_gap: c.helo_balance_gap,
                 max_sorties_per_hour: c.helo_max_sorties_per_hour,
+                probability: 1.,
             }
         } else {
             Self {
@@ -3743,6 +3758,7 @@ impl ThreatResponseCfg {
                 trigger_on_known_players: c.cap_trigger_on_known_players,
                 balance_gap: c.cap_balance_gap,
                 max_sorties_per_hour: c.cap_max_sorties_per_hour,
+                probability: c.cap_probability,
             }
         }
     }
@@ -4090,6 +4106,30 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
                 }
             };
 
+            // `cap_probability` was declared and documented but never read,
+            // so every incursion met fighters on the same beat. Now a failed
+            // roll doesn't cancel the response, it delays it: the fighters
+            // turn up 2-8 minutes into the attack, or not before it's over.
+            if rc.probability < 1. {
+                let key = (defending_side, rotary);
+                match ctx.event_scheduler.cap_hold_until.get(&key).copied() {
+                    Some(t) if now < t => continue,
+                    Some(_) => {
+                        ctx.event_scheduler.cap_hold_until.remove(&key);
+                    }
+                    None => {
+                        let mut rng = rand::thread_rng();
+                        if !rand::Rng::gen_bool(&mut rng, rc.probability.clamp(0., 1.)) {
+                            let wait = rand::Rng::gen_range(&mut rng, 120..=480);
+                            ctx.event_scheduler
+                                .cap_hold_until
+                                .insert(key, now + chrono::Duration::seconds(wait));
+                            info!("{}: {defending_side:?} answers this incursion in {wait}s", rc.label);
+                            continue;
+                        }
+                    }
+                }
+            }
             let obj_name = dcso3::String::from(obj.name.as_str());
             let direction = bearing_to_compass(centroid, cluster_center);
             let attacking_side = match defending_side {

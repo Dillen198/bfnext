@@ -556,7 +556,7 @@ fn decimate(pts: &[Vector2], spacing: f64) -> Vec<Vector2> {
     out
 }
 
-fn ground_point<'lua>(
+pub(super) fn ground_point<'lua>(
     land: &Land<'lua>,
     pos: Vector2,
     formation: VehicleFormation,
@@ -2070,7 +2070,7 @@ impl Db {
     }
 
     /// Every unit in `gid` can drive (`crate::unitdb::can_drive`).
-    fn group_can_drive(&self, gid: &GroupId) -> bool {
+    pub(super) fn group_can_drive(&self, gid: &GroupId) -> bool {
         self.persisted.groups.get(gid).map_or(true, |g| {
             g.units
                 .into_iter()

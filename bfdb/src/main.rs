@@ -3862,6 +3862,7 @@ const WIKI_FACT_KEYS: &[&str] = &[
     "smart_commander",
     "ground_war",
     "command",
+    "garrison",
     "factory",
     "carrier",
     "frontline",

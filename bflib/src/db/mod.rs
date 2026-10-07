@@ -51,6 +51,7 @@ pub mod emergency_repair;
 pub mod ephemeral;
 pub mod events;
 pub mod formation;
+pub mod garrison;
 pub mod ghosts;
 pub mod ground_insertion;
 pub mod group;

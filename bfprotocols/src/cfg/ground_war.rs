@@ -487,3 +487,125 @@ mod tests {
         assert!(c.combat.break_morale > 0. && c.combat.break_morale < 1.);
     }
 }
+
+/// Base garrisons that defend themselves (`Cfg::garrison`). Without it a
+/// base's armour sat where the mission put it, so one player tank could
+/// shoot a whole objective to pieces from outside its reach.
+///
+/// - **React:** an armed enemy ground unit (a player's tank, deployed units,
+///   troops, a formation) within `react_m` of a live base sends the base's
+///   armour and infantry out to meet it -- spread across its line of
+///   approach, weapons free, at most `leash_m` past the base's edge -- and
+///   back home once the ground has been clear for `clear_secs`.
+/// - **Quick reaction force:** an intruder still there after `qrf_delay_secs`
+///   brings the nearest idle ground-war formation within `qrf_range_m` to
+///   defend the base, or raises one at a neighbouring base (needs
+///   `ground_war`).
+/// - **Patrol:** a quiet live base moves some of its armour to new spots
+///   inside the base every `patrol_secs` or so, so its layout isn't one
+///   fixed picture to snipe from a known spot.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GarrisonCfg {
+    /// Default true.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// How far past a base's edge an enemy ground unit sets the garrison
+    /// moving, metres. Default 5000.
+    #[serde(default = "default_react_m")]
+    pub react_m: f64,
+    /// How far past the base's edge the garrison will go to meet it,
+    /// metres. Default 2500.
+    #[serde(default = "default_leash_m")]
+    pub leash_m: f64,
+    /// Seconds without an intruder before the garrison goes home. Default 120.
+    #[serde(default = "default_clear_secs")]
+    pub clear_secs: u32,
+    /// Bring in a formation as a quick reaction force. Default true.
+    #[serde(default = "default_true")]
+    pub qrf: bool,
+    /// Seconds an intruder must stay before the QRF is called. Default 60.
+    #[serde(default = "default_qrf_delay_secs")]
+    pub qrf_delay_secs: u32,
+    /// How far away a QRF may come from, metres. Default 40000.
+    #[serde(default = "default_qrf_range_m")]
+    pub qrf_range_m: f64,
+    /// Most QRFs out at once per side. Default 2.
+    #[serde(default = "default_qrf_max")]
+    pub qrf_max: u32,
+    /// Patrol inside quiet live bases. Default true.
+    #[serde(default = "default_true")]
+    pub patrol: bool,
+    /// Average seconds between patrol moves (randomised +/-50%). Default 480.
+    #[serde(default = "default_patrol_secs")]
+    pub patrol_secs: u32,
+    /// Mobile SAM sites (every vehicle drives: SA-6, SA-8, SA-11, Tor,
+    /// NASAMS...) relocate inside their base: `sam_scoot_secs` after they
+    /// stop firing, and about every `sam_redeploy_secs` while quiet. Where
+    /// they end up is saved, so a site is rarely where it was last round.
+    /// Default true.
+    #[serde(default = "default_true")]
+    pub sam_relocate: bool,
+    /// Quiet seconds after its last launch before a site moves. Default 90.
+    #[serde(default = "default_sam_scoot_secs")]
+    pub sam_scoot_secs: u32,
+    /// Average seconds between unprovoked moves of a live site (+/-50%).
+    /// Default 2700.
+    #[serde(default = "default_sam_redeploy_secs")]
+    pub sam_redeploy_secs: u32,
+    /// Farthest a site moves in one go, metres (it also stays inside its
+    /// base). Default 1500.
+    #[serde(default = "default_sam_move_m")]
+    pub sam_move_m: f64,
+}
+
+impl Default for GarrisonCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            react_m: default_react_m(),
+            leash_m: default_leash_m(),
+            clear_secs: default_clear_secs(),
+            qrf: true,
+            qrf_delay_secs: default_qrf_delay_secs(),
+            qrf_range_m: default_qrf_range_m(),
+            qrf_max: default_qrf_max(),
+            patrol: true,
+            patrol_secs: default_patrol_secs(),
+            sam_relocate: true,
+            sam_scoot_secs: default_sam_scoot_secs(),
+            sam_redeploy_secs: default_sam_redeploy_secs(),
+            sam_move_m: default_sam_move_m(),
+        }
+    }
+}
+
+fn default_react_m() -> f64 {
+    5_000.
+}
+fn default_leash_m() -> f64 {
+    2_500.
+}
+fn default_clear_secs() -> u32 {
+    120
+}
+fn default_qrf_delay_secs() -> u32 {
+    60
+}
+fn default_qrf_range_m() -> f64 {
+    40_000.
+}
+fn default_qrf_max() -> u32 {
+    2
+}
+fn default_patrol_secs() -> u32 {
+    480
+}
+fn default_sam_scoot_secs() -> u32 {
+    90
+}
+fn default_sam_redeploy_secs() -> u32 {
+    2_700
+}
+fn default_sam_move_m() -> f64 {
+    1_500.
+}

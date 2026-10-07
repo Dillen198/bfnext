@@ -2,6 +2,20 @@
 
 ## October 7, 2026
 
+**A harder, less predictable enemy**
+- **Bases defend themselves**: garrisons drive out to meet enemy vehicles, call
+  in a quick reaction force if they stay, and patrol inside the base. See
+  [Ground war](../advanced/ground-war.md#bases-defend-themselves).
+- **Mobile SAMs shoot and scoot**: after firing, and now and then anyway, they
+  move somewhere else inside their base.
+- **SEAD works**: SAM sites no longer all shut down perfectly for every HARM.
+  Only the site a missile is flying at can react, only some sites are drilled
+  to (which ones changes every round), and TALD/MALD decoys in the air make a
+  drilled site likelier to miss the real missile. HARMs fired by players are
+  now seen by the air-defence network too.
+- **Enemy fighters are less predictable**: a reactive CAP may launch at once
+  or several minutes into your attack.
+
 **Command** — see [Command](../advanced/command.md)
 - **GROUND COMMAND is now COMMAND**: every asset your side has in the field on
   one live map (AI flights, convoys, deployed units, troops, batteries,

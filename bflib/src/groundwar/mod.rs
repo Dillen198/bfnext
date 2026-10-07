@@ -74,6 +74,8 @@ pub(crate) struct GroundWar {
     cmds: Vec<Cmd>,
     last_think: Option<DateTime<Utc>>,
     pub(crate) last_order: FxHashMap<Ucid, DateTime<Utc>>,
+    /// Base garrisons defending themselves (`Db::tick_garrisons`).
+    pub(crate) garrison: crate::db::garrison::GarrisonRt,
     frontline_hash: u64,
     frontline_drawn: Option<DateTime<Utc>>,
 }
@@ -291,6 +293,12 @@ fn frontline(ctx: &mut Context, cfg: &GroundWarCfg, now: DateTime<Utc>) {
 
 /// The slow-tick entry point.
 pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: DateTime<Utc>) {
+    // Garrisons defend their bases with or without the ground war; only
+    // the quick reaction force needs it.
+    {
+        let gw = &mut ctx.groundwar;
+        ctx.db.tick_garrisons(&mut gw.rt, &mut gw.garrison, lua, now);
+    }
     let Some(cfg) = cfg(ctx) else {
         // Switched off with formations still out: send them home, or their
         // groups stay out of their bases' garrisons for good.

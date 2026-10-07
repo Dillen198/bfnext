@@ -91,6 +91,28 @@ In the field they're fair game. You'll find columns on the roads and fights
 around contested bases: real targets for CAS, attack helicopters and
 artillery. Recon flights see them too.
 
+## Bases defend themselves
+
+A base's garrison doesn't sit and wait to be shot:
+
+- **It comes out to fight.** An armed enemy vehicle, deployed unit or troops
+  within about {{cfg:garrison.react_m|5000}} m of a live base sends the base's
+  armour and infantry out to meet it, spread across its line of approach, up
+  to {{cfg:garrison.leash_m|2500}} m past the base's edge. They go back to
+  their positions once the ground has been clear for a couple of minutes.
+- **It calls for help.** An intruder still there after
+  {{cfg:garrison.qrf_delay_secs|60}} s brings a **quick reaction force**: the
+  nearest idle formation, or a new one raised at a neighbouring base.
+- **It moves about.** While a live base is quiet, some of its armour shifts
+  to new spots inside the base every few minutes.
+- **Mobile SAM sites relocate.** An SA-6, SA-8, SA-11, Tor or NASAMS site that
+  has fired moves somewhere else inside its base a minute or two later, and
+  every so often anyway. Where it ends up is kept, so a site is rarely where
+  you saw it last round.
+
+One tank parked outside a base can't take it apart on its own any more: bring
+friends, or soften it up from the air first.
+
 ## Taking a base
 
 A formation attacking a base fights its garrison, and the garrison's losses
