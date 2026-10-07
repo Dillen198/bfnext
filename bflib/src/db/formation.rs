@@ -83,7 +83,7 @@ use dcso3::{
     centroid2d,
     coalition::Side,
     controller::{
-        ActionTyp, AiOption, AlarmState, AltType, GroundOption, MissionPoint, PointType, Task,
+        ActionTyp, AiOption, AlarmState, AltType, GroundOption, GroundRoe, MissionPoint, PointType, Task,
         VehicleFormation,
     },
     env::miz::MizIndex,
@@ -263,6 +263,18 @@ fn full() -> f64 {
 impl Formation {
     pub fn ai_controlled(&self, now: DateTime<Utc>) -> bool {
         self.locked_until.map_or(true, |t| now >= t)
+    }
+
+    /// On the march under a player's Move order: going somewhere, not
+    /// fighting. It keeps to column and drives on past an enemy it merely
+    /// sees, where an attack, a defence or the AI's own moves stop and
+    /// deploy. A Move is the only player order that leaves `Order::Hold`.
+    pub fn marching(&self, now: DateTime<Utc>) -> bool {
+        self.posture == Posture::Moving
+            && self.order == Order::Hold
+            && self.commander.is_some()
+            && !self.ai_controlled(now)
+            && !self.broken
     }
 
     pub fn destination(&self) -> Option<Vector2> {
@@ -621,11 +633,16 @@ fn dcs_route<'lua>(
 
 /// March discipline for a formation's DCS group: keep the column on the
 /// road under fire (dispersing breaks DCS columns for good), fight when it
-/// sees the enemy.
-fn set_march_ai(group: &Group) -> Result<()> {
+/// sees the enemy. On a player's Move (`marching`) it only returns fire:
+/// weapons free, DCS halts a ground group to engage anything it sees in
+/// range, so an ordered column parked on its first waypoint the moment an
+/// enemy came into view and never drove on.
+fn set_march_ai(group: &Group, marching: bool) -> Result<()> {
     let con = group.get_controller()?;
     con.set_option(AiOption::Ground(GroundOption::DisperseOnAttack(0)))?;
     con.set_option(AiOption::Ground(GroundOption::AlarmState(AlarmState::Auto)))?;
+    let roe = if marching { GroundRoe::ReturnFire } else { GroundRoe::WeaponFree };
+    con.set_option(AiOption::Ground(GroundOption::Roe(roe)))?;
     Ok(())
 }
 
@@ -1315,8 +1332,9 @@ impl Db {
         }
         self.ephemeral.dirty();
         let what = format_compact!(
-            "{name}: moving to a position {km:.0} km away{}",
-            if off_road { " across country" } else { " by road" }
+            "{name}: moving to a position {km:.0} km away{}{}",
+            if off_road { " across country" } else { " by road" },
+            if by.is_some() { ", returning fire only" } else { "" }
         );
         let who = by
             .as_ref()
@@ -2233,6 +2251,7 @@ impl Db {
             _ => (vec![], false),
         };
         let deployed = matches!(f.deployment, Deployment::Deployed | Deployment::DugIn) && !f.broken;
+        let marching = f.marching(Utc::now());
         let speed = self.formation_speed_kph(cfg, f).max(3.) / 3.6;
         let land = Land::singleton(lua)?;
         // The persisted positions carry the map's x/y; DCS wants the ground
@@ -2252,7 +2271,7 @@ impl Db {
             .spawn_group(perf, &self.persisted, idx, &spctx, group!(self, gid)?, route)
             .with_context(|| format_compact!("spawning formation {id} group {gid}"))?;
         if let Some(crate::spawnctx::Spawned::Group(g)) = spawned {
-            if let Err(e) = set_march_ai(&g) {
+            if let Err(e) = set_march_ai(&g, marching) {
                 warn!("ground war: march orders for {gid}: {e:?}");
             }
         }
@@ -2277,12 +2296,13 @@ impl Db {
                 _ => (vec![], false),
             };
             let deployed = matches!(f.deployment, Deployment::Deployed | Deployment::DugIn) && !f.broken;
+            let marching = f.marching(Utc::now());
             let speed = self.formation_speed_kph(cfg, f).max(3.) / 3.6;
             for gid in f.groups.iter().filter(|g| rt.live.contains(g)) {
                 let Some(g) = self.persisted.groups.get(gid) else { continue };
                 let from = self.group_center(gid).unwrap_or(f.pos);
                 let res = Group::get_by_name(lua, &g.name).and_then(|group| {
-                    set_march_ai(&group)?;
+                    set_march_ai(&group, marching)?;
                     let route = dcs_route(&land, from, &path, off_road, deployed, speed);
                     group
                         .get_controller()?
@@ -2475,7 +2495,12 @@ impl Db {
             let quiet_for = rt.contact_ts.get(&id).map_or(i64::MAX, |t| (now - *t).num_seconds());
             let stationary = f.posture != Posture::Moving;
             let held = (now - f.deployment_ts.unwrap_or(f.order_ts)).num_seconds();
+            // On a player's Move it drives on past what it only sees, and
+            // stops to fight only when the enemy is close enough to engage.
+            let marching = f.marching(now) && !threat.map_or(false, |t| dist(t, pos) <= cfg.engage_m);
             let next = match (f.deployment, contact.is_some()) {
+                (Deployment::Column, _) if marching => Deployment::Column,
+                (Deployment::Deploying | Deployment::Deployed | Deployment::DugIn, _) if marching => Deployment::Column,
                 (Deployment::Column, true) if !f.broken => Deployment::Deploying,
                 (Deployment::Deploying, _) if held >= cfg.deploy_secs as i64 => Deployment::Deployed,
                 (Deployment::Column, false) if stationary => Deployment::Deployed,

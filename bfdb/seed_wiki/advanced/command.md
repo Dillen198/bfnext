@@ -47,7 +47,7 @@ hotkey, or right-click the map for its main order:
 
 | Asset | Orders |
 |---|---|
-| Ground formations | Attack, defend, withdraw, hold (as before), and **Move** (**M**) to any point that isn't an enemy base |
+| Ground formations | Attack, defend, withdraw, hold (as before), and **Move** (**M**) to any point that isn't an enemy base. A Move is a road march: the column drives on past enemies it only sees and returns fire, stopping to fight only when the enemy is within about 3 km. To go looking for a fight, give an Attack |
 | AI flights | **Station** (**S**): go to a point and work there (CAP station, tanker or AWACS orbit, attack area). **RTB** (**B**) |
 | Deployed units, troops | **Move** (**M**) |
 | Batteries | **Fire** (**G**) on a point inside the orange ring |
