@@ -31,9 +31,14 @@ const LAYER_LABELS: [keyof Layers, string, string][] = [
   ['enemyAir', 'HOS', 'Enemy aircraft our side can see'],
 ]
 
-export function LayerToggles({ layers, set }: { layers: Layers; set: (l: Layers) => void }): ReactElement {
+export function LayerToggles({ layers, set, offline }: { layers: Layers; set: (l: Layers) => void; offline: boolean }): ReactElement {
   return (
     <div className="cm-layers" role="group" aria-label="Map layers">
+      {offline && (
+        <div className="cm-offline" title="Our aircraft, convoys and batteries aren't on this map yet: this server's engine and bfdb need the update that adds the command map.">
+          ASSETS<br />OFFLINE
+        </div>
+      )}
       {LAYER_LABELS.map(([k, label, title]) => (
         <button key={k} className={layers[k] ? 'on' : ''} title={title} onClick={() => set({ ...layers, [k]: !layers[k] })}>
           {label}
@@ -316,10 +321,10 @@ export function BaseOrders({ obj, side, cp, canCommand, busy, onOrder }: {
   canCommand: boolean
   busy: boolean
   onOrder: (o: CommandOrder, confirm?: string) => void
-}): ReactElement {
-  if (!cp) {
-    return <div className="cm-bord"><div className="cm-bord-note">Orders to bases need the server update that adds the command map.</div></div>
-  }
+}): ReactElement | null {
+  // Nothing to order until the server has the command map (the layer
+  // buttons say so).
+  if (!cp) return null
   const ours = obj.owner === side
   const ops = cp.launch.filter((l) => l.objective === obj.id)
   const off = !canCommand || busy

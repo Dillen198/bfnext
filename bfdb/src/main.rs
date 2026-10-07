@@ -8800,6 +8800,12 @@ async fn main() -> Result<()> {
         .or(admin_bot_status)
         .or(admin_cfg_get_route)
         .or(admin_cfg_schema_route)
+        // GETs belong in this group, ahead of the dashboard's catch-all
+        // page: added after it, they were never reached (the SPA answered
+        // /api/command with index.html, 200).
+        .or(command_me_route)
+        .or(command_picture_route)
+        .or(admin_commanders_route)
         .boxed();
 
     // ── Maintenance routes: shutdown, session revocation, metrics ──────────
@@ -8919,10 +8925,7 @@ async fn main() -> Result<()> {
             .or(intel_markup_delete_route)
             .or(groundwar_command_route)
             .or(hq_command_route)
-            .or(command_me_route)
-            .or(command_picture_route)
             .or(command_order_route)
-            .or(admin_commanders_route)
             .or(admin_commander_grant_route)
             .boxed())
         .or(admin_bot_start

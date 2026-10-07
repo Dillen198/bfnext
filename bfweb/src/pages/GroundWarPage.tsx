@@ -786,11 +786,6 @@ export default function GroundWarPage(): ReactElement {
                 : notCommander ?? 'View only: link your Discord (-linkme in DCS chat) and take a slot this campaign to give orders.'}
           </div>
         )}
-        {!mock && cmdQ.isError && (
-          <div className="gw-banner">
-            Our aircraft, convoys and batteries aren't on this map yet: this server's engine and bfdb need the update that adds the command map.
-          </div>
-        )}
         {assetMode !== 'none' && (
           <div className="gw-modebar">{MODE_TEXT[assetMode]} · ESC TO CANCEL</div>
         )}
@@ -815,7 +810,7 @@ export default function GroundWarPage(): ReactElement {
           onOrder={(o, c) => void order(o, c)} onFocus={(p) => flyTo(p, 11)} onBarrage={() => armAsset('barrage')}
           onClose={() => setShowLaunch(false)} />
       )}
-      <LayerToggles layers={layers} set={setLayers} />
+      <LayerToggles layers={layers} set={setLayers} offline={!mock && cmdQ.isError} />
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
       <CommandBar
         pic={pic}

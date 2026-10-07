@@ -265,6 +265,8 @@
 .gw-dest-eta { font: 600 9px var(--font-mono); letter-spacing: 0.08em; color: var(--gw-ink); white-space: nowrap; padding-right: 3px; }
 
 .gw-pl { position: relative; width: 24px; height: 24px; pointer-events: none; }
+/* A live pilot sits over the base they are parked at, not under it. */
+.maplibregl-marker.gw-pl { z-index: 3; }
 .gw-pl-ico { width: 24px; height: 24px; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8)); }
 .gw-pl-ico svg { display: block; }
 .gw-pl-tag {
@@ -869,3 +871,17 @@
 .cm-op-btn span { color: var(--gw-pencil); margin-left: 4px; }
 .cm-orders button.cm-op-btn:disabled span { color: inherit; }
 @media (max-width: 720px) { .gw-obase { flex-direction: column; } .cm-bord { max-width: none; } }
+
+/* The command feed isn't there (an older server): said under the layers. */
+.cm-offline {
+  font: 700 7.5px var(--font-mono);
+  letter-spacing: 0.1em;
+  line-height: 1.25;
+  text-align: center;
+  color: var(--gw-warn);
+  background: var(--gw-glass);
+  border: 1px solid rgba(232, 197, 71, 0.45);
+  padding: 4px 3px;
+  cursor: help;
+  order: 1;
+}
