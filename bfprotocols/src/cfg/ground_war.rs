@@ -47,10 +47,17 @@ pub struct GroundWarCfg {
     /// Default 30000 m.
     #[serde(default = "default_bubble_m")]
     pub player_bubble_m: f64,
-    /// ... or when an enemy formation, or the enemy objective it is
-    /// attacking, is this close. Default 10000 m.
+    /// ... or when an enemy formation, the enemy objective it is attacking,
+    /// or any enemy ground unit that is in DCS (a supply convoy, deployed
+    /// units, troops, an ambush or search party, a spawned garrison) is this
+    /// close. Default 10000 m.
     #[serde(default = "default_contact_m")]
     pub contact_m: f64,
+    /// ... or while it is carrying out a player's order (from the F10 menu
+    /// or the dashboard), for as long as that order holds
+    /// (`player_order_lock_secs`). Default true.
+    #[serde(default = "default_true")]
+    pub live_when_ordered: bool,
     /// A live formation with no reason to be live any more is despawned
     /// after this long. Default 300.
     #[serde(default = "default_despawn_grace")]

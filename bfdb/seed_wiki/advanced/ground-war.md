@@ -28,9 +28,17 @@ as it goes.
 
 They only become real DCS units where it matters:
 
+- while they are carrying out **a player's order** (from the F10 menu or the
+  dashboard), for as long as that order holds;
 - when a player is within {{cfg:ground_war.player_bubble_m|30000}} m of them;
-- when they meet an enemy formation, or close to within
-  {{cfg:ground_war.contact_m|10000}} m of the base they are attacking.
+- when they meet an enemy formation, come within
+  {{cfg:ground_war.contact_m|10000}} m of **any enemy ground unit that is in
+  DCS** (a supply convoy, deployed units, troops, an ambush or search party, a
+  garrison), or close to within that of the base they are attacking.
+
+Up to {{cfg:ground_war.max_live_formations|6}} formations can be in DCS at
+once. A formation under a player's order takes the place of one that is only
+there because a player is near; a formation that is fighting keeps its place.
 
 Away from players they move on the campaign map only, which keeps the server
 fast. Either way their vehicles are where the map says they are: zoom in on

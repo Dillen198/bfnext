@@ -30,8 +30,10 @@ for more details.
 //!   is.
 //! - Live. Its groups are real DCS groups following the same path, and DCS
 //!   fights whatever they meet. A formation goes live when a player comes
-//!   near, when it meets an enemy formation, or when it closes on the
-//!   objective it is attacking -- as many as `max_live_formations` allow.
+//!   near, while it is carrying out a player's order, when it meets an
+//!   enemy formation or comes within reach of any enemy ground unit that is
+//!   already in DCS, or when it closes on the objective it is attacking --
+//!   as many as `max_live_formations` allow.
 //!   Two enemy formations that meet while the budget is spent halt and fight
 //!   it out on the map instead.
 //!
@@ -439,14 +441,36 @@ impl FormationRt {
 #[derive(Debug, Clone, Copy, Default)]
 struct Want {
     player: bool,
+    /// Carrying out a player's order.
+    ordered: bool,
     contact: bool,
+    /// An enemy ground unit that is in DCS is within reach: only a live
+    /// formation can fight it, but unlike `contact` it is no reason to halt
+    /// when there is no room to go live.
+    enemy: bool,
     target: bool,
     assault: bool,
 }
 
 impl Want {
     fn any(&self) -> bool {
-        self.player || self.contact || self.target || self.assault
+        self.player || self.ordered || self.contact || self.enemy || self.target || self.assault
+    }
+
+    fn reason(&self) -> &'static str {
+        if self.ordered {
+            "under a player's orders"
+        } else if self.player {
+            "a player is near"
+        } else if self.assault {
+            "assaulting"
+        } else if self.contact {
+            "in contact with an enemy formation"
+        } else if self.enemy {
+            "enemy units in DCS within reach"
+        } else {
+            "closing on its target"
+        }
     }
 
     fn fighting(&self) -> bool {
@@ -454,8 +478,11 @@ impl Want {
     }
 
     fn priority(&self) -> u32 {
-        (self.player as u32) * 8 + (self.assault as u32) * 4 + (self.contact as u32) * 2
-            + self.target as u32
+        (self.ordered as u32) * 16
+            + (self.player as u32) * 8
+            + (self.assault as u32) * 4
+            + (self.contact as u32) * 2
+            + (self.target || self.enemy) as u32
     }
 }
 
@@ -1863,17 +1890,38 @@ impl Db {
             .instanced_players()
             .map(|(_, _, i)| Vector2::new(i.position.p.x, i.position.p.z))
             .collect();
-        let all: SmallVec<[(FormationId, Side, Vector2, Order, Posture, bool); 16]> = self
+        let all: SmallVec<[(FormationId, Side, Vector2, Order, Posture, bool, bool); 16]> = self
             .formations()
-            .map(|f| (f.id, f.side, f.pos, f.order, f.posture, rt.is_live(f)))
+            .map(|f| {
+                let ordered = f.commander.is_some() && !f.ai_controlled(now);
+                (f.id, f.side, f.pos, f.order, f.posture, rt.is_live(f), ordered)
+            })
             .collect();
+        // Every ground group in DCS right now, one point each: whatever a
+        // formation would have to be in DCS itself to fight.
+        let mut in_dcs: SmallVec<[(Side, Vector2); 64]> = SmallVec::new();
+        let mut seen: FxHashSet<GroupId> = FxHashSet::default();
+        for uid in self.ephemeral.object_id_by_uid.keys() {
+            let Some(u) = self.persisted.units.get(uid) else { continue };
+            if u.dead || !seen.insert(u.group) {
+                continue;
+            }
+            match self.persisted.groups.get(&u.group) {
+                Some(g) if g.kind == Some(GroupCategory::Ground) && g.side != Side::Neutral => {
+                    in_dcs.push((g.side, u.pos))
+                }
+                _ => (),
+            }
+        }
         let mut wants: SmallVec<[(FormationId, Want, bool); 16]> = smallvec::smallvec![];
-        for (id, side, pos, order, posture, live) in &all {
+        for (id, side, pos, order, posture, live, ordered) in &all {
             let want = Want {
                 player: players.iter().any(|p| dist(*p, *pos) <= cfg.player_bubble_m),
+                ordered: *ordered && cfg.live_when_ordered,
                 contact: all
                     .iter()
                     .any(|(_, s, p, ..)| s != side && dist(*p, *pos) <= cfg.contact_m),
+                enemy: in_dcs.iter().any(|(s, p)| s != side && dist(*p, *pos) <= cfg.contact_m),
                 target: match order {
                     Order::Attack(oid) => self
                         .persisted
@@ -1919,13 +1967,32 @@ impl Db {
         // Queued spawns already hold their budget.
         let queued: FxHashSet<FormationId> = rt.spawnq.iter().map(|(f, _)| *f).collect();
         budget = budget.saturating_sub(queued.len());
+        // With the budget spent, a player's order still gets its formation
+        // into DCS: it takes the slot of a live formation with a weaker claim
+        // that isn't fighting (weakest first).
+        let mut bumpable: SmallVec<[(FormationId, u32); 16]> = wants
+            .iter()
+            .filter(|(_, w, live)| *live && w.any() && !w.ordered && !w.fighting())
+            .map(|(id, w, _)| (*id, w.priority()))
+            .collect();
+        bumpable.sort_by_key(|(_, p)| std::cmp::Reverse(*p));
         let mut halted = FxHashSet::default();
         for (id, want) in waiting {
             if budget > 0 {
                 budget -= 1;
+                info!("ground war: formation {id} into DCS: {}", want.reason());
+                self.materialize(rt, id);
+            } else if want.ordered
+                && bumpable.last().map_or(false, |(_, p)| *p < want.priority())
+            {
+                let (out, _) = bumpable.pop().unwrap();
+                info!("ground war: formation {out} leaves DCS to make room for {id}, {}", want.reason());
+                self.dematerialize(rt, lua, out, now);
                 self.materialize(rt, id);
             } else if want.fighting() {
                 halted.insert(id);
+            } else if want.ordered {
+                log::debug!("ground war: formation {id} is under orders but all {} live slots are fighting", cfg.max_live_formations);
             }
         }
         rt.halted = halted;
