@@ -516,6 +516,8 @@ export interface CommandPicture {
   can_command: boolean
   god_mode: boolean
   commander?: CommanderStatus | null
+  /** Set when the engine missed the last refreshes: how old this picture is. */
+  stale_secs?: number
 }
 
 /** POST /api/command/order (externally tagged, as the engine parses it). */

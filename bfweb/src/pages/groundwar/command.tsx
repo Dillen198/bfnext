@@ -31,12 +31,15 @@ const LAYER_LABELS: [keyof Layers, string, string][] = [
   ['enemyAir', 'HOS', 'Enemy aircraft our side can see'],
 ]
 
-export function LayerToggles({ layers, set, offline }: { layers: Layers; set: (l: Layers) => void; offline: boolean }): ReactElement {
+/** Why our own assets may be missing or behind: two short lines and the long story. */
+export interface AssetNote { top: string; bottom: string; title: string }
+
+export function LayerToggles({ layers, set, note }: { layers: Layers; set: (l: Layers) => void; note: AssetNote | null }): ReactElement {
   return (
     <div className="cm-layers" role="group" aria-label="Map layers">
-      {offline && (
-        <div className="cm-offline" title="Our aircraft, convoys and batteries aren't on this map yet: this server's engine and bfdb need the update that adds the command map.">
-          ASSETS<br />OFFLINE
+      {note && (
+        <div className="cm-offline" title={note.title}>
+          {note.top}<br />{note.bottom}
         </div>
       )}
       {LAYER_LABELS.map(([k, label, title]) => (

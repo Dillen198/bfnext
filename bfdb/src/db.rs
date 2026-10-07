@@ -732,6 +732,9 @@ pub(crate) struct InstanceState {
     /// a row have failed, fail the rest instantly and let one probe through
     /// periodically to notice the engine coming back.
     rpc_failures: StdMutex<(u32, Option<std::time::Instant>)>,
+    /// Per procedure: when a late reply was last logged, the worst since,
+    /// and how many (`note_slow_rpc`).
+    slow_rpcs: StdMutex<std::collections::HashMap<std::string::String, (Option<std::time::Instant>, std::time::Duration, u32)>>,
     /// Subscribed engine RPC procedures, keyed by (sortie, proc name).
     ///
     /// `Proc::new` performs a resolver lookup and a subscription handshake, and
@@ -781,6 +784,7 @@ impl InstanceState {
             sortie_override: cfg.sortie.as_deref().map(Scenario::from),
             discovered_sortie: StdMutex::new(None),
             rpc_failures: StdMutex::new((0, None)),
+            slow_rpcs: StdMutex::new(Default::default()),
             stats_dir: cfg.stats_dir.clone(),
             stats_jsonl: cfg.stats_jsonl.clone(),
             current_sortie: StdMutex::new(None),
@@ -819,6 +823,24 @@ impl InstanceState {
     }
 
     /// The breaker is open: enough calls in a row went unanswered.
+    /// Log a late reply, once a minute per procedure, with the worst seen.
+    fn note_slow_rpc(&self, proc_name: &str, took: std::time::Duration) {
+        let mut g = self.slow_rpcs.lock().unwrap();
+        let e = g.entry(proc_name.to_string()).or_insert((None, std::time::Duration::ZERO, 0));
+        e.1 = e.1.max(took);
+        e.2 += 1;
+        if e.0.map_or(true, |t: std::time::Instant| t.elapsed() >= std::time::Duration::from_secs(60)) {
+            warn!(
+                "[{}] engine slow: {proc_name} answered after {} ms ({} slow replies, worst {} ms,                  since the last report)",
+                self.id,
+                took.as_millis(),
+                e.2,
+                e.1.as_millis()
+            );
+            *e = (Some(std::time::Instant::now()), std::time::Duration::ZERO, 0);
+        }
+    }
+
     fn breaker_open(&self) -> bool {
         self.rpc_failures.lock().unwrap().0 >= RPC_FAIL_THRESHOLD
     }
@@ -1062,6 +1084,20 @@ enum JsonlRead {
 /// Drop guard that reports an engine RPC's fate to the instance's breaker.
 /// Dropped without `reached` being set means the caller's timeout fired and
 /// took the whole future with it, i.e. the engine never replied.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RpcGuard {
+    /// Failures count toward the breaker, and the breaker can refuse it.
+    Counted,
+    /// A procedure the engine may not publish: failures don't count, but an
+    /// open breaker still refuses it.
+    Optional,
+    /// Someone is waiting on it: never refused, failures don't count.
+    Patient,
+}
+
+/// A reply this slow is logged (once a minute per procedure).
+const SLOW_RPC: std::time::Duration = std::time::Duration::from_secs(3);
+
 struct RpcOutcome<'a> {
     inst: &'a InstanceState,
     reached: bool,
@@ -1792,7 +1828,7 @@ impl StatsDb {
         proc_name: &str,
         args: Vec<(&str, netidx::publisher::Value)>,
     ) -> Result<netidx::publisher::Value> {
-        self.call_engine_rpc_inner(inst, proc_name, args, true).await
+        self.call_engine_rpc_inner(inst, proc_name, args, RpcGuard::Counted).await
     }
 
     /// `call_engine_rpc` for a procedure the running engine may not publish
@@ -1808,7 +1844,22 @@ impl StatsDb {
         proc_name: &str,
         args: Vec<(&str, netidx::publisher::Value)>,
     ) -> Result<netidx::publisher::Value> {
-        self.call_engine_rpc_inner(inst, proc_name, args, false).await
+        self.call_engine_rpc_inner(inst, proc_name, args, RpcGuard::Optional).await
+    }
+
+    /// `call_engine_rpc_optional` that goes through even while the breaker is
+    /// open. For a person waiting on an answer from a page they are acting
+    /// in (the command map and its orders): the breaker opens on timeouts
+    /// from the background pollers, and on a busy engine (vs1, Oct 7) those
+    /// time out while it still answers in a few seconds -- so the breaker
+    /// was refusing commanders' orders the engine would have carried out.
+    pub(crate) async fn call_engine_rpc_patient(
+        &self,
+        inst: &InstanceState,
+        proc_name: &str,
+        args: Vec<(&str, netidx::publisher::Value)>,
+    ) -> Result<netidx::publisher::Value> {
+        self.call_engine_rpc_inner(inst, proc_name, args, RpcGuard::Patient).await
     }
 
     async fn call_engine_rpc_inner(
@@ -1816,7 +1867,7 @@ impl StatsDb {
         inst: &InstanceState,
         proc_name: &str,
         args: Vec<(&str, netidx::publisher::Value)>,
-        count_failure: bool,
+        guard_kind: RpcGuard,
     ) -> Result<netidx::publisher::Value> {
         use netidx_protocols::rpc::client::Proc;
         let (subscriber, base) = match (&inst.subscriber, &inst.base) {
@@ -1832,7 +1883,11 @@ impl StatsDb {
         // An optional call must not spend the open breaker's probe: the
         // probe is how the instance finds out its engine is back, and a
         // procedure the engine doesn't publish would waste it every time.
-        let allowed = if count_failure { inst.rpc_allowed() } else { !inst.breaker_open() };
+        let allowed = match guard_kind {
+            RpcGuard::Counted => inst.rpc_allowed(),
+            RpcGuard::Optional => !inst.breaker_open(),
+            RpcGuard::Patient => true,
+        };
         if !allowed {
             bail!(
                 "instance {:?}: engine not answering (breaker open, retrying every {}s)",
@@ -1860,11 +1915,18 @@ impl StatsDb {
         // A timed-out caller does not cancel `proc.call`, it drops the whole
         // future -- so the outcome has to be recorded from a guard that runs on
         // drop, not from the code after the await (which never runs).
-        let mut guard = RpcOutcome { inst, reached: false, counted: count_failure };
+        let mut guard = RpcOutcome { inst, reached: false, counted: guard_kind == RpcGuard::Counted };
+        let started = std::time::Instant::now();
         let res = proc.call(args).await;
         // A reply carrying bflib's own error still means the engine is there;
         // a transport error does not.
         guard.reached = res.is_ok();
+        // Late but answered: the callers' timeouts only show the calls that
+        // gave up, never how slow the ones that made it were.
+        let took = started.elapsed();
+        if res.is_ok() && took >= SLOW_RPC {
+            inst.note_slow_rpc(proc_name, took);
+        }
         res
     }
 

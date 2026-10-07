@@ -1075,9 +1075,38 @@ async fn call_engine_rpc_str_optional(
     proc_name: &str,
     args: Vec<(&str, netidx::publisher::Value)>,
 ) -> std::result::Result<std::string::String, Error> {
+    rpc_str_uncounted(db, inst, proc_name, args, false).await
+}
+
+/// `call_engine_rpc_str_optional` that is not refused while the breaker is
+/// open (see `StatsDb::call_engine_rpc_patient`): orders, and the command
+/// map a commander is giving them from.
+async fn call_engine_rpc_str_patient(
+    db: &StatsDb,
+    inst: &InstanceState,
+    proc_name: &str,
+    args: Vec<(&str, netidx::publisher::Value)>,
+) -> std::result::Result<std::string::String, Error> {
+    rpc_str_uncounted(db, inst, proc_name, args, true).await
+}
+
+async fn rpc_str_uncounted(
+    db: &StatsDb,
+    inst: &InstanceState,
+    proc_name: &str,
+    args: Vec<(&str, netidx::publisher::Value)>,
+    patient: bool,
+) -> std::result::Result<std::string::String, Error> {
     use netidx::publisher::Value;
     const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
-    let reply = match tokio::time::timeout(RPC_TIMEOUT, db.call_engine_rpc_optional(inst, proc_name, args)).await {
+    let call = async {
+        if patient {
+            db.call_engine_rpc_patient(inst, proc_name, args).await
+        } else {
+            db.call_engine_rpc_optional(inst, proc_name, args).await
+        }
+    };
+    let reply = match tokio::time::timeout(RPC_TIMEOUT, call).await {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
             log::warn!("[{}] {proc_name}: {e}", inst.id);
@@ -1463,7 +1492,7 @@ async fn api_groundwar_command(
         return Err(websec::forbidden(command::refusal(&inst, status.as_ref())).into());
     }
     let cmd = serde_json::to_string(&body).map_err(anyhow::Error::from)?;
-    let raw = call_engine_rpc_str_optional(
+    let raw = call_engine_rpc_str_patient(
         &db,
         &inst,
         "ground-command",
@@ -1564,7 +1593,7 @@ async fn api_hq_command(
         _ => "blue",
     };
     let cmd = serde_json::to_string(&body).map_err(anyhow::Error::from)?;
-    let raw = call_engine_rpc_str_optional(
+    let raw = call_engine_rpc_str_patient(
         &db,
         &inst,
         "hq-command",
@@ -4933,6 +4962,13 @@ const COMMAND_PICTURE_TTL: std::time::Duration = std::time::Duration::from_milli
 static COMMAND_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Arc<std::string::String>>> =
     std::sync::LazyLock::new(websec::CacheMap::new);
 
+/// The last picture the engine did send, per instance and side, served when
+/// a refresh fails -- for this long, after which the error shows instead.
+static COMMAND_LAST_GOOD: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<std::string::String, (std::time::Instant, Arc<std::string::String>)>>,
+> = std::sync::LazyLock::new(Default::default);
+const COMMAND_STALE_MAX: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// GET /api/command — the command map's picture of the caller's side: its
 /// own AI flights, convoys, deployed units, troops, batteries and carrier
 /// groups, where DCS has them now, the treasury, and what can be launched.
@@ -4953,14 +4989,30 @@ async fn api_command(
         _ => "blue",
     };
     let key = format!("{}:{side_str}", inst.id);
-    let raw = COMMAND_CACHE
+    let fresh = COMMAND_CACHE
         .entry(&key)
         .get_or_refresh(COMMAND_PICTURE_TTL, || async {
-            call_engine_rpc_str_optional(&db, &inst, "query-command", vec![("side", Value::from(side_str.to_string()))])
+            call_engine_rpc_str_patient(&db, &inst, "query-command", vec![("side", Value::from(side_str.to_string()))])
                 .await
                 .map(Arc::new)
         })
-        .await?;
+        .await;
+    // A busy engine misses a refresh now and then; the map keeps the last
+    // picture it had, says how old it is, and goes on asking, rather than
+    // blanking out for a commander mid-order.
+    let (raw, stale) = {
+        let mut last = COMMAND_LAST_GOOD.lock().unwrap_or_else(|e| e.into_inner());
+        match fresh {
+            Ok(raw) => {
+                last.insert(key, (std::time::Instant::now(), raw.clone()));
+                (raw, None)
+            }
+            Err(e) => match last.get(&key) {
+                Some((at, raw)) if at.elapsed() < COMMAND_STALE_MAX => (raw.clone(), Some(at.elapsed().as_secs())),
+                _ => return Err(e),
+            },
+        }
+    };
     let mut v: serde_json::Value = serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
     let can = (c.god_mode && c.session.is_admin) || c.commands(&db, &inst);
     let status = c.command_status(&db, &inst);
@@ -4968,6 +5020,9 @@ async fn api_command(
         o.insert("can_command".into(), serde_json::json!(can));
         o.insert("god_mode".into(), serde_json::json!(c.god_mode));
         o.insert("commander".into(), status);
+        if let Some(secs) = stale {
+            o.insert("stale_secs".into(), serde_json::json!(secs));
+        }
     }
     Ok(json_response(v.to_string()))
 }
@@ -5011,7 +5066,7 @@ async fn api_command_order(
     };
     let order = serde_json::to_string(&body).map_err(anyhow::Error::from)?;
     log::info!("[{}] command order from {} ({side_str}): {order}", inst.id, c.session.username);
-    let raw = call_engine_rpc_str_optional(
+    let raw = call_engine_rpc_str_patient(
         &db,
         &inst,
         "command-order",

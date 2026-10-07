@@ -34,7 +34,7 @@ import { useGroundFeed } from './groundwar/useGroundFeed'
 import { createGroundwarMock } from './groundwarMock'
 import { createCommandMock } from './commandMock'
 import { visibleNames } from './groundwar/declutter'
-import { AssetLines, AssetMarker, AssetPanel, BaseOrders, EnemyAirMarker, LaunchPanel, LayerToggles } from './groundwar/command'
+import { AssetLines, AssetMarker, AssetPanel, BaseOrders, EnemyAirMarker, LaunchPanel, LayerToggles, type AssetNote } from './groundwar/command'
 import { ALL_LAYERS, MODE_TEXT, shown, useCommandFeed, useEnemyAir, type AssetMode, type Layers } from './groundwar/commandFeed'
 import { rankFor } from '../ranks'
 import './groundwar/groundwar.css'
@@ -114,6 +114,18 @@ export default function GroundWarPage(): ReactElement {
   const setLayers = (l: Layers) => { setLayersState(l); savePref('cm.layers', l) }
   const cmdQ = useCommandFeed(sideParam, instance, cmdMock, !!pic?.enabled)
   const cp = cmdQ.data ?? null
+  // A busy engine (vs1) misses refreshes: that is not the same as an engine
+  // without the command map, and the commander should know which it is.
+  const cmdErr = cmdQ.error instanceof Error ? cmdQ.error.message : ''
+  const engineBusy = /did not answer|not answering|not reachable|busy/i.test(cmdErr)
+  const assetNote: AssetNote | null = mock ? null
+    : cp?.stale_secs != null
+      ? { top: `${cp.stale_secs}s`, bottom: 'OLD', title: "The game server is busy and missed the last updates: our assets are shown where it last reported them. Still asking every few seconds; orders still go through." }
+      : cmdQ.isError
+        ? engineBusy
+          ? { top: 'ENGINE', bottom: 'BUSY', title: "The game server isn't answering the command map right now. Retrying every few seconds." }
+          : { top: 'ASSETS', bottom: 'OFFLINE', title: "Our aircraft, convoys and batteries aren't on this map yet: this server's engine and bfdb need the update that adds the command map." }
+        : null
   const enemyAir = useEnemyAir(!mock && layers.enemyAir && !!pic?.enabled)
   const { data: fronts = NO_FRONTS } = useQuery<Frontlines>({
     queryKey: ['frontline'],
@@ -696,7 +708,7 @@ export default function GroundWarPage(): ReactElement {
     },
     { key: '␣', label: 'CENTRE', icon: Pin, disabled: selIds.length ? null : 'Nothing selected', run: () => centre(selIds) },
     { key: 'F', label: follow ? 'FOLLOWING' : 'FOLLOW ME', icon: Aircraft, active: follow, disabled: selfPlayer ? null : 'Your aircraft is not live in DCS', run: toggleFollow },
-    { key: 'L', label: 'COMMAND', icon: Strike, active: showLaunch, disabled: cp ? null : cmdQ.isError ? "This server's engine predates the command map" : 'The command picture has not arrived', run: () => setShowLaunch((s) => !s) },
+    { key: 'L', label: 'COMMAND', icon: Strike, active: showLaunch, disabled: cp ? null : cmdQ.isError ? (engineBusy ? "The game server isn't answering right now -- retrying" : "This server's engine predates the command map") : 'The command picture has not arrived', run: () => setShowLaunch((s) => !s) },
     { key: '?', label: 'CONTROLS', icon: Info, disabled: null, run: () => setHelp(true) },
   ]
 
@@ -810,7 +822,7 @@ export default function GroundWarPage(): ReactElement {
           onOrder={(o, c) => void order(o, c)} onFocus={(p) => flyTo(p, 11)} onBarrage={() => armAsset('barrage')}
           onClose={() => setShowLaunch(false)} />
       )}
-      <LayerToggles layers={layers} set={setLayers} offline={!mock && cmdQ.isError} />
+      <LayerToggles layers={layers} set={setLayers} note={assetNote} />
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
       <CommandBar
         pic={pic}
