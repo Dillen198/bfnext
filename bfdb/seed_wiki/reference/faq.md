@@ -92,7 +92,7 @@ to a friendly base with supply open behind it. See
 (Major, a campaign score of 50 at the default), the same score the leaderboard
 ranks you by; captures, logistics and kills all count. An admin can also make
 you one. Commanders give the ground war's orders, can take over the Theatre
-HQ, and get the Blue or Red Commander role on Discord. The GROUND COMMAND page
+HQ, and get the Blue or Red Commander role on Discord. The COMMAND page
 tells you how far off you are.
 
 ### Q: Who decides what the AI does?

@@ -4100,6 +4100,114 @@ impl Db {
     /// Player-requested indirect fire support. Finds nearby friendly Armor/Mr/Lr
     /// groups within `cfg.max_range_m` and issues `Task::FireAtPoint` toward
     /// `args.pos`. Up to `cfg.max_groups` groups fire simultaneously.
+    /// What moving a player's deployed group or troops to `pos` costs this
+    /// side, by the server's own Move action: its price per step of
+    /// distance. None if the server has no Move action (nobody may move
+    /// them) or the group isn't one that moves.
+    pub(crate) fn move_price(&self, side: Side, gid: &GroupId, pos: Vector2) -> Result<Option<u32>> {
+        let group = group!(self, gid)?;
+        let Some(action) = self
+            .ephemeral
+            .cfg
+            .actions
+            .get(&side)
+            .and_then(|a| a.values().find(|a| matches!(a.kind, ActionKind::Move(_))))
+        else {
+            return Ok(None);
+        };
+        let ActionKind::Move(mc) = &action.kind else { return Ok(None) };
+        let step = match &group.origin {
+            DeployKind::Deployed { .. } => mc.deployable,
+            DeployKind::Troop { .. } => mc.troop,
+            _ => return Ok(None),
+        };
+        let from = self.group_center(gid)?;
+        Ok(Some(move_cost(na::distance(&from.into(), &pos.into()), step, action.cost)))
+    }
+
+    /// A commander's Move: drive one of `side`'s deployed groups or troops to
+    /// `pos` -- the same route a player's Move gives it, without charging a
+    /// player (the caller charges the side).
+    pub(crate) fn command_move_group(&mut self, spctx: &SpawnCtx, side: Side, gid: GroupId, pos: Vector2) -> Result<()> {
+        let group = group!(self, gid)?;
+        if group.side != side {
+            bail!("that isn't ours")
+        }
+        let owner = match &group.origin {
+            DeployKind::Deployed { player, .. } | DeployKind::Troop { player, .. } => player.clone(),
+            _ => bail!("only deployed units and troops can be moved"),
+        };
+        self.move_group(
+            spctx,
+            side,
+            &owner,
+            0,
+            WithPosAndGroup { cfg: MoveCfg { troop: 1, deployable: 1 }, pos, group: gid },
+        )?;
+        Ok(())
+    }
+
+    /// The longest reach of `gid`'s live guns and launchers, if it has any.
+    pub(crate) fn battery_range(&self, gid: &GroupId) -> Option<f64> {
+        let group = self.persisted.groups.get(gid)?;
+        group
+            .units
+            .into_iter()
+            .filter_map(|uid| self.persisted.units.get(uid))
+            .filter(|u| !u.dead && (u.tags.contains(UnitTag::Artillery) || u.tags.contains(UnitTag::Launcher)))
+            .map(|u| crate::unitdb::artillery_range(self.ephemeral.cfg.artillery.as_ref(), &u.typ.0).1)
+            .filter(|max| *max > 0.)
+            .reduce(f64::max)
+    }
+
+    /// A commander's Fire: one battery of `side`'s fires on `target`. It has
+    /// to be in range and reloaded (`ArtilleryCfg::cooldown_secs`, the same
+    /// clock the Request Fires menu runs on).
+    pub(crate) fn command_fire(&mut self, lua: MizLua, side: Side, gid: GroupId, target: Vector2) -> Result<compact_str::CompactString> {
+        let cfg = self
+            .ephemeral
+            .cfg
+            .artillery
+            .clone()
+            .ok_or_else(|| anyhow!("artillery isn't enabled on this server"))?;
+        let group = group!(self, gid)?;
+        if group.side != side {
+            bail!("that battery isn't ours")
+        }
+        let name = group.name.clone();
+        let range = self.battery_range(&gid).ok_or_else(|| anyhow!("{name} has no guns left"))?;
+        let center = self.group_center(&gid)?;
+        let d = na::distance(&center.into(), &target.into());
+        if d > range {
+            bail!("{name} reaches {:.1} km; that is {:.1} km away", range / 1000., d / 1000.)
+        }
+        let now = Utc::now();
+        let cooldown = Duration::seconds(cfg.cooldown_secs as i64);
+        if let Some(t) = self.ephemeral.arty_last_fired.get(&gid) {
+            if now - *t < cooldown {
+                bail!("{name} is reloading: ready in {} s", (cooldown - (now - *t)).num_seconds().max(1))
+            }
+        }
+        let land = Land::singleton(lua)?;
+        let alt = land.get_height(LuaVec2(target)).unwrap_or(0.);
+        let fire_task = Task::FireAtPoint {
+            point: LuaVec2(target),
+            radius: Some(cfg.radius_m),
+            expend_qty: None,
+            weapon_type: None,
+            altitude: Some(alt),
+            altitude_type: Some(AltType::BARO),
+            counter_battery_radius: cfg.shoot_and_scoot_m,
+        };
+        let dcs_group = Group::get_by_name(lua, name.as_str())
+            .with_context(|| format_compact!("{name} is not in DCS right now"))?;
+        let task = aim_and_fire_route(center, target, group_facing(self, &gid), fire_task);
+        dcs_group.get_controller()?.set_task(task)?;
+        self.ephemeral.arty_last_fired.insert(gid, now);
+        info!("command: {side:?} battery {name} firing at {target:?}");
+        Ok(format_compact!("{name} firing, {:.1} km", d / 1000.))
+    }
+
     pub(crate) fn artillery_strike(
         &mut self,
         lua: MizLua,

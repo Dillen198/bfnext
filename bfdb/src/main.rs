@@ -4926,6 +4926,105 @@ async fn api_admin_perf(
     Ok(json_response(data))
 }
 
+/// One engine call per side per this long, however many commanders are
+/// watching: the picture reads every own unit's position out of DCS.
+const COMMAND_PICTURE_TTL: std::time::Duration = std::time::Duration::from_millis(1500);
+
+static COMMAND_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Arc<std::string::String>>> =
+    std::sync::LazyLock::new(websec::CacheMap::new);
+
+/// GET /api/command — the command map's picture of the caller's side: its
+/// own AI flights, convoys, deployed units, troops, batteries and carrier
+/// groups, where DCS has them now, the treasury, and what can be launched.
+/// Only ever the caller's own side's assets; the enemy comes from the
+/// fog-of-war feeds (`/ws/tacmap`, `/ws/groundwar`). Coalition-locked like
+/// those; an admin with no side looks at `?side=`.
+async fn api_command(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    use netidx::publisher::Value;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let side_str = match c.side {
+        dcso3::coalition::Side::Red => "red",
+        _ => "blue",
+    };
+    let key = format!("{}:{side_str}", inst.id);
+    let raw = COMMAND_CACHE
+        .entry(&key)
+        .get_or_refresh(COMMAND_PICTURE_TTL, || async {
+            call_engine_rpc_str_optional(&db, &inst, "query-command", vec![("side", Value::from(side_str.to_string()))])
+                .await
+                .map(Arc::new)
+        })
+        .await?;
+    let mut v: serde_json::Value = serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
+    let can = (c.god_mode && c.session.is_admin) || c.commands(&db, &inst);
+    let status = c.command_status(&db, &inst);
+    if let Some(o) = v.as_object_mut() {
+        o.insert("can_command".into(), serde_json::json!(can));
+        o.insert("god_mode".into(), serde_json::json!(c.god_mode));
+        o.insert("commander".into(), status);
+    }
+    Ok(json_response(v.to_string()))
+}
+
+/// POST /api/command/order — a commander's order from the command map. The
+/// body is a `CommandOrder`. The side is the caller's own (an admin with no
+/// side gives `?side=` and orders with admin authority); bfdb checks they
+/// command, and the engine checks the asset is that side's, that the
+/// treasury can pay, and the rest.
+async fn api_command_order(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: bfprotocols::command::CommandOrder,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    use netidx::publisher::Value;
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let ucid = if c.god_mode {
+        if !c.session.is_admin {
+            return Err(websec::forbidden("commanding needs a pilot registered on a side").into());
+        }
+        std::string::String::new()
+    } else {
+        let Some(u) = c.ucid() else {
+            return Err(websec::forbidden(
+                "account not linked -- type -linkme <token> in DCS chat (get the token with /linkme in Discord)",
+            )
+            .into());
+        };
+        if !c.commands(&db, &inst) {
+            let status = task::block_in_place(|| command::status_of(&db, &inst, u)).ok().flatten();
+            return Err(websec::forbidden(command::refusal(&inst, status.as_ref())).into());
+        }
+        u.to_string()
+    };
+    let side_str = match c.side {
+        dcso3::coalition::Side::Red => "red",
+        _ => "blue",
+    };
+    let order = serde_json::to_string(&body).map_err(anyhow::Error::from)?;
+    log::info!("[{}] command order from {} ({side_str}): {order}", inst.id, c.session.username);
+    let raw = call_engine_rpc_str_optional(
+        &db,
+        &inst,
+        "command-order",
+        vec![
+            ("side", Value::from(side_str.to_string())),
+            ("ucid", Value::from(ucid)),
+            ("order", Value::from(order)),
+        ],
+    )
+    .await?;
+    Ok(json_response(raw))
+}
+
 /// GET /api/command/me — the caller's commander standing on this server:
 /// rank, score, what unlocks command and whether they have it. `can_command`
 /// is what the order endpoints will check.
@@ -8557,6 +8656,26 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_groundwar_command);
 
+    let command_picture_route = warp::path!("api" / "command")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_command);
+
+    let command_order_route = warp::path!("api" / "command" / "order")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<bfprotocols::command::CommandOrder>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_command_order);
+
     let command_me_route = warp::path!("api" / "command" / "me")
         .and(warp::get())
         .and(extract_session_cookie())
@@ -8801,6 +8920,8 @@ async fn main() -> Result<()> {
             .or(groundwar_command_route)
             .or(hq_command_route)
             .or(command_me_route)
+            .or(command_picture_route)
+            .or(command_order_route)
             .or(admin_commanders_route)
             .or(admin_commander_grant_route)
             .boxed())

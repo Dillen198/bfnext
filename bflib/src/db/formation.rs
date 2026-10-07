@@ -88,7 +88,7 @@ use dcso3::{
     },
     env::miz::MizIndex,
     group::{Group, GroupCategory},
-    land::{Land, RoadType},
+    land::{Land, RoadType, SurfaceType},
     net::Ucid,
     trigger::{ArrowSpec, LineType, MarkId, SideFilter},
     LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
@@ -667,7 +667,7 @@ pub fn pressure(persisted: &Persisted, weight: f64) -> Vec<(f64, f64, f64)> {
 }
 
 impl Db {
-    fn ground_war_cfg(&self) -> Result<GroundWarCfg> {
+    pub(crate) fn ground_war_cfg(&self) -> Result<GroundWarCfg> {
         self.ephemeral
             .cfg
             .ground_war
@@ -1243,6 +1243,88 @@ impl Db {
             let who = self.persisted.players.get(ucid).map(|p| p.name.clone()).unwrap_or_default();
             rt.event(side, "order", format_compact!("{who}: {what}"), Some(from), Some(id), now);
         }
+        Ok(what)
+    }
+
+    /// Send formation `id` to a point of the commander's choosing, to hold
+    /// there: the command map's Move. `by` is the commander (None = a server
+    /// admin). It is a human order like any other: the AI leaves the
+    /// formation alone for `player_order_lock_secs`.
+    ///
+    /// Not a way round the rules: the point can't be inside an enemy base
+    /// (taking one is an Attack, with its assault and capture rules) or in
+    /// the water, a broken formation only withdraws, and a commander can't
+    /// take a formation from another player whose order still stands.
+    pub fn move_formation_to(
+        &mut self,
+        rt: &mut FormationRt,
+        lua: MizLua,
+        id: FormationId,
+        to: Vector2,
+        by: Option<Ucid>,
+        now: DateTime<Utc>,
+    ) -> Result<CompactString> {
+        let cfg = self.ground_war_cfg()?;
+        let f = self
+            .persisted
+            .formations
+            .get(&id)
+            .ok_or_else(|| anyhow!("no such formation {id}"))?;
+        let (side, from, name) = (f.side, f.pos, f.name.clone());
+        if f.broken {
+            bail!("{name} has broken and is falling back; it can only be ordered to withdraw")
+        }
+        if let (Some(b), Some(c)) = (by.as_ref(), f.commander.as_ref()) {
+            if b != c && !f.ai_controlled(now) {
+                let who = self.persisted.players.get(c).map(|p| p.name.clone()).unwrap_or_default();
+                bail!("{name} is carrying out {who}'s order")
+            }
+        }
+        if let Some((_, o)) = self
+            .objectives()
+            .find(|(_, o)| o.owner() != side && o.owner() != Side::Neutral && o.contains(to))
+        {
+            bail!("{} is an enemy base: order an attack to take it", o.name)
+        }
+        let land = Land::singleton(lua)?;
+        if matches!(land.get_surface_type(LuaVec2(to))?, SurfaceType::Water | SurfaceType::ShallowWater) {
+            bail!("that point is in the water")
+        }
+        let (path, off_road) = self.plan_path(lua, from, to)?;
+        let km = {
+            let mut prev = from;
+            path.iter().fold(0., |d, p| {
+                let d = d + dist(prev, *p);
+                prev = *p;
+                d
+            }) / 1000.
+        };
+        let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+        f.order = Order::Hold;
+        f.posture = Posture::Moving;
+        f.path = path;
+        f.off_road = off_road;
+        f.order_ts = now;
+        f.commander = by;
+        f.locked_until = Some(now + Duration::seconds(cfg.player_order_lock_secs as i64));
+        let live = rt.is_live(f);
+        rt.stall.remove(&id);
+        rt.halted.remove(&id);
+        if live {
+            rt.route_dirty.insert(id);
+        }
+        self.ephemeral.dirty();
+        let what = format_compact!(
+            "{name}: moving to a position {km:.0} km away{}",
+            if off_road { " across country" } else { " by road" }
+        );
+        let who = by
+            .as_ref()
+            .and_then(|u| self.persisted.players.get(u))
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "Command".into());
+        info!("ground war: {side:?} {what} (by {who})");
+        rt.event(side, "order", format_compact!("{who}: {what}"), Some(from), Some(id), now);
         Ok(what)
     }
 
@@ -1957,7 +2039,8 @@ impl Db {
         let all: SmallVec<[(FormationId, Side, Vector2, Order, Posture, bool, bool); 16]> = self
             .formations()
             .map(|f| {
-                let ordered = f.commander.is_some() && !f.ai_controlled(now);
+                // Locked = a human order (a player's, or an admin's) stands.
+                let ordered = !f.ai_controlled(now);
                 (f.id, f.side, f.pos, f.order, f.posture, rt.is_live(f), ordered)
             })
             .collect();

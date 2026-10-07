@@ -19,6 +19,12 @@ export const BONE = '#e6e1cf'
 
 export const other = (s: Side): Side => (s === 'Blue' ? 'Red' : 'Blue')
 
+/** Every map icon -- formations, enemy contacts, our assets, pilots, bases --
+ *  is drawn to one scale, so none dominates: a NATO frame is `ICON` px tall
+ *  (milsymbol's `size`), a glyph `GLYPH` px square. */
+export const ICON = 18
+export const GLYPH = 24
+
 /** At or above this zoom the map draws every vehicle instead of one symbol. */
 export const NEAR_ZOOM = 10.5
 

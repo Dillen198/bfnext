@@ -8,7 +8,7 @@ import {
 } from '@icons'
 import type { Map as MlMap } from 'maplibre-gl'
 import type { GroundKind, GroundRole, LivePlayer } from '../../api'
-import { BONE, ROLES, SIDE_BRIGHT, type Side } from './theme'
+import { BONE, GLYPH, ROLES, SIDE_BRIGHT, type Side } from './theme'
 
 // ── Vehicle silhouettes ──────────────────────────────────────────────────
 
@@ -283,7 +283,7 @@ export function playerSvg(cat: LivePlayer['category'], fill: string): string {
     cat === 'helicopter'
       ? '<circle cx="12" cy="9" r="8.4" fill="none" stroke="rgba(255,255,255,0.45)" stroke-width="0.8" stroke-dasharray="2 1.6"/>'
       : ''
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26">${rotor}<path d="${PLAYER_PATH[cat] ?? PLAYER_PATH.plane}" fill="${fill}" stroke="rgba(0,0,0,0.85)" stroke-width="1.1" stroke-linejoin="round"/></svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${GLYPH}" height="${GLYPH}">${rotor}<path d="${PLAYER_PATH[cat] ?? PLAYER_PATH.plane}" fill="${fill}" stroke="rgba(0,0,0,0.85)" stroke-width="1.1" stroke-linejoin="round"/></svg>`
 }
 
 // ── Base glyphs, by objective kind ───────────────────────────────────────

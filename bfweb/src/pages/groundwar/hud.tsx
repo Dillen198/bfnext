@@ -113,7 +113,7 @@ export function TopHud({
     <header className="gw-hud" style={{ ['--own' as string]: SIDE_COLOR[side] }}>
       <div className="gw-hud-id">
         <span className="gw-hud-side">{side === 'Blue' ? 'BLUE FORCES' : 'RED FORCES'}</span>
-        <span className="gw-hud-title">GROUND COMMAND</span>
+        <span className="gw-hud-title">COMMAND</span>
       </div>
       <div className="gw-hud-stats">
         <div className="gw-stat"><span>ZULU</span><b><Clock base={pic.time} at={frameAt} /></b></div>
@@ -465,6 +465,13 @@ const KEYS: [string, string][] = [
   ['W', 'Withdraw to home, or the nearest base we hold'],
   ['X', 'Hand back to the AI'],
   ['R', 'Raise a formation at the base under the cursor or selected'],
+  ['M', 'Move: formations or the selected asset to a point (then click the map)'],
+  ['Right-click map', 'Away from bases: move the selected formations there; with an asset selected, its main order'],
+  ['S', 'Station: send the selected AI flight to work at a point'],
+  ['B', 'Send the selected AI flight home'],
+  ['G', 'Fire: the selected battery on a point inside its ring'],
+  ['V', 'Barrage: every battery of ours in range on a point'],
+  ['L', 'Command panel: treasury, logistics, the HQ operations to launch'],
   ['Ctrl / Alt + 1-9', 'Make the selection a group'],
   ['1-9', 'Select a group; twice to centre on it'],
   ['Space', 'Centre on the selection'],

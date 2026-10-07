@@ -71,6 +71,8 @@ pub struct Rpcs {
     _hq_directive: Proc,
     _hq_command: Proc,
     _set_commanders: Proc,
+    _query_command: Proc,
+    _command_order: Proc,
     _ground_command: Proc,
     _query_unitdb: Proc,
     _query_gci: Proc,
@@ -893,6 +895,66 @@ impl Rpcs {
             cmd: Chars = Value::Null; "JSON HqCommand"
         )?;
         let _q = Arc::clone(&q);
+        let query_command = define_rpc!(
+            publisher,
+            base.append("query-command"),
+            "One side's own assets (AI flights, convoys, deployed units, troops, batteries, carriers) with live unit positions, and what its commanders can launch (returns JSON CommandPicture)",
+            |mut c: RpcCall, side: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::QueryCommand { side }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)"
+        )?;
+        let _q = Arc::clone(&q);
+        let command_order = define_rpc!(
+            publisher,
+            base.append("command-order"),
+            "A commander's order from the command map (JSON CommandOrder), as a player or as an admin with an empty ucid; returns a JSON CommandReply",
+            |mut c: RpcCall, side: Chars, ucid: Chars, order: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let side = match Side::from_str(&side.trim().to_lowercase()) {
+                    Ok(side) => side,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                let ucid = if ucid.trim().is_empty() {
+                    None
+                } else {
+                    match Ucid::from_str(&ucid) {
+                        Ok(ucid) => Some(ucid),
+                        Err(e) => {
+                            c.reply.send(Value::Error(format!("{e:?}").into()));
+                            return None
+                        }
+                    }
+                };
+                let order = match serde_json::from_str::<bfprotocols::command::CommandOrder>(&order) {
+                    Ok(o) => o,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad order: {e}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::CommandOrder { side, ucid, order }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "The side (blue, red)",
+            ucid: Chars = Value::Null; "The commander's ucid, empty for a server admin",
+            order: Chars = Value::Null; "JSON CommandOrder"
+        )?;
+        let _q = Arc::clone(&q);
         let set_commanders = define_rpc!(
             publisher,
             base.append("set-commanders"),
@@ -1475,6 +1537,8 @@ impl Rpcs {
             _hq_directive: hq_directive,
             _hq_command: hq_command,
             _set_commanders: set_commanders,
+            _query_command: query_command,
+            _command_order: command_order,
             _ground_command: ground_command,
             _query_unitdb: query_unitdb,
             _query_gci: query_gci,

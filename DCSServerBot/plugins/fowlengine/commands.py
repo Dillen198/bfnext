@@ -2892,6 +2892,106 @@ class FowlEngine(Plugin):
         except Exception as ex:
             await interaction.followup.send(f"Error: {ex}")
 
+    # ── Commanders ──────────────────────────────────────────────────────────
+
+    def _admin_creds(self, server):
+        config = self.get_config(server) or {}
+        return (config.get("api_url", "http://localhost:8880"),
+                config.get("admin_username"), config.get("admin_password"))
+
+    async def _commander_roster(self, server):
+        """(status, roster) from bfdb's /api/admin/commanders for one server."""
+        api_url, username, password = self._admin_creds(server)
+        if not username or not password:
+            return None, None
+        return await bfdb_admin_get(api_url, username, password,
+                                    srv_path("/api/admin/commanders", server.name))
+
+    @command(description='Who commands each side on one server: earned by rank, or granted.')
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS')
+    async def fe_commanders(self, interaction: discord.Interaction,
+                            server: app_commands.Transform[Server, utils.ServerTransformer()]):
+        await interaction.response.defer(ephemeral=True)
+        status, data = await self._commander_roster(server)
+        if status is None:
+            await interaction.followup.send(f"{icon('bad')} admin_username/admin_password must be set "
+                                            f"in fowlengine.yaml to read the commander roster.")
+            return
+        if status == 404:
+            await interaction.followup.send(f"{icon('bad')} {server.name}'s bfdb predates commander access.")
+            return
+        if status != 200 or not isinstance(data, dict):
+            await interaction.followup.send(f"{icon('bad')} commander roster: HTTP {status}")
+            return
+        need_tier = data.get("commander_rank", 4)
+        need_score = data.get("commander_score", 50)
+        embed = discord.Embed(title=f"Commanders · {server.name}", color=0xd4a017)
+        for side in ("Blue", "Red"):
+            rows = []
+            for p in data.get("pilots") or []:
+                if not p.get("commander") or p.get("side") != side:
+                    continue
+                why = "admin" if p.get("admin") else ("granted" if p.get("grant") == "granted" else "rank")
+                rows.append(f"**{p.get('name', '?')}** · {RANK_TITLES[max(1, min(8, p.get('tier', 1))) - 1]}"
+                            f" · {round(p.get('score', 0))} ({why})")
+            embed.add_field(name=f"{side} ({len(rows)})", value="\n".join(rows[:20]) or "nobody yet", inline=True)
+        embed.set_footer(text=f"Command unlocks at {RANK_TITLES[max(1, min(8, need_tier)) - 1]} "
+                              f"(campaign score {round(need_score)}). Admins can grant or withdraw it.")
+        await interaction.followup.send(embed=embed, allowed_mentions=NO_PINGS)
+
+    @command(description='Grant or withdraw commander access for one member (admin).')
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    @app_commands.describe(
+        server="Which campaign server's roster to look the member up in (a grant applies on every server)",
+        member="The Discord member (they must have linked their DCS account with /linkme)",
+        access="Grant it whatever their rank, withdraw it, or go back to what their rank says",
+    )
+    @app_commands.choices(access=[
+        app_commands.Choice(name="Grant", value="granted"),
+        app_commands.Choice(name="Withdraw", value="revoked"),
+        app_commands.Choice(name="By rank", value="rank"),
+    ])
+    async def fe_commander(self, interaction: discord.Interaction,
+                           server: app_commands.Transform[Server, utils.ServerTransformer()],
+                           member: discord.Member, access: app_commands.Choice[str]):
+        await interaction.response.defer(ephemeral=True)
+        api_url, username, password = self._admin_creds(server)
+        status, data = await self._commander_roster(server)
+        if status is None:
+            await interaction.followup.send(f"{icon('bad')} admin_username/admin_password must be set "
+                                            f"in fowlengine.yaml to manage commanders.")
+            return
+        if status != 200 or not isinstance(data, dict):
+            await interaction.followup.send(f"{icon('bad')} commander roster: HTTP {status}")
+            return
+        ucid = await self._ucid_for_member(member, data.get("pilots") or [])
+        if not ucid:
+            await interaction.followup.send(f"{icon('bad')} {member.mention} hasn't linked a DCS account "
+                                            f"(/linkme), so there is no pilot to give command to.",
+                                            allowed_mentions=NO_PINGS)
+            return
+        grant = None if access.value == "rank" else access.value
+        status, res = await bfdb_admin_post(api_url, username, password,
+                                            srv_path("/api/admin/commanders", server.name),
+                                            {"ucid": ucid, "grant": grant})
+        if status != 200:
+            await interaction.followup.send(f"{icon('bad')} HTTP {status}")
+            return
+        st = (res or {}).get("status") or {}
+        now = "a commander" if st.get("commander") else "not a commander"
+        what = {"granted": "granted command", "revoked": "withdrew command",
+                "rank": "put command back on rank"}[access.value]
+        self.log.info(f"FowlEngine: {interaction.user} {what} for {member} ({ucid})")
+        await interaction.followup.send(f"{icon('good')} {what} for {member.mention}: on {server.name} they are "
+                                        f"{now}. The Discord role follows within a few minutes.",
+                                        allowed_mentions=NO_PINGS)
+        try:
+            await self._sync_role_kind(ROLE_KINDS[1])
+        except Exception as ex:
+            self.log.debug(f"FowlEngine: commander role sync after a grant: {ex}")
+
     @command(description='Move a pilot to the other coalition on one server.')
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')
@@ -4422,3 +4522,8 @@ ROLE_KINDS = [
      "granted": "commander of their coalition", "revoked": "no longer a commander",
      "empty_ok": True},
 ]
+
+# The rank ladder's titles by tier (NATO service), as the dashboard and the
+# engine name them.
+RANK_TITLES = ["2nd Lieutenant", "1st Lieutenant", "Captain", "Major",
+               "Lieutenant Colonel", "Colonel", "Brigadier General", "Major General"]

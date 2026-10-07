@@ -258,6 +258,19 @@ pub enum AdminCommand {
         ucid: Option<Ucid>,
         cmd: bfprotocols::hq::HqCommand,
     },
+    /// One side's own assets and launch options for the command map
+    /// (`crate::command::picture`).
+    QueryCommand {
+        side: Side,
+    },
+    /// A commander's order from the command map. `ucid` is resolved and
+    /// trusted by bfdb from the login; `None` is bfdb acting for a server
+    /// admin. The engine re-checks everything else itself.
+    CommandOrder {
+        side: Side,
+        ucid: Option<Ucid>,
+        order: bfprotocols::command::CommandOrder,
+    },
     /// Who commands each side (`crate::command`), from bfdb.
     SetCommanders {
         commanders: bfprotocols::command::Commanders,
@@ -3159,6 +3172,7 @@ impl AdminCommand {
                 | Self::CockpitMenuInvoke { .. }
                 | Self::SetServerInfo { .. }
                 | Self::SetCommanders { .. }
+                | Self::QueryCommand { .. }
                 | Self::SetIntelMarks(_)
         )
     }
@@ -3668,6 +3682,21 @@ fn run_admin_command(
                 match serde_json::to_string(&reply) {
                     Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize the HQ reply: {e:?}"),
+                }
+            }
+            AdminCommand::QueryCommand { side } => {
+                let picture = crate::command::picture(lua, ctx, side, Utc::now());
+                match serde_json::to_string(&picture) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the command picture: {e:?}"),
+                }
+            }
+            AdminCommand::CommandOrder { side, ucid, order } => {
+                let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+                let reply = crate::command::order(lua, ctx, perf, side, ucid, order, Utc::now());
+                match serde_json::to_string(&reply) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the command reply: {e:?}"),
                 }
             }
             AdminCommand::SetCommanders { commanders } => {

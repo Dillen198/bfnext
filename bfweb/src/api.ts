@@ -457,6 +457,86 @@ export interface CommandMe {
   status: CommanderStatus | null
 }
 
+// ── Command map (bfprotocols::command) ─────────────────────────────────
+
+export type AssetKind = 'air' | 'convoy' | 'deployed' | 'troops' | 'artillery' | 'naval' | 'ground'
+export type AssetVerb = 'move' | 'fire' | 'station' | 'rtb' | 'sail'
+
+export interface AssetUnit {
+  typ: string
+  pos: LatLon
+  heading: number
+  alt_m: number
+  speed_kts: number
+}
+
+/** One of our groups the command map shows and can order. */
+export interface Asset {
+  id: number
+  name: string
+  kind: AssetKind
+  role: string
+  typ: string
+  pos: LatLon
+  heading: number
+  alt_m: number
+  speed_kts: number
+  alive: number
+  total: number
+  /** Positions are live from DCS. */
+  live: boolean
+  task: string | null
+  dest: LatLon | null
+  base: string | null
+  range_m: number | null
+  orders: AssetVerb[]
+  units: AssetUnit[]
+}
+
+/** An HQ operation a commander can launch now. */
+export interface LaunchOption {
+  kind: HqOpKind
+  objective: number
+  objective_name: string
+  pos: LatLon
+  cost: number
+  why: string
+  ready: boolean
+}
+
+/** GET /api/command */
+export interface CommandPicture {
+  side: 'Blue' | 'Red'
+  time: number
+  treasury: number
+  assets: Asset[]
+  launch: LaunchOption[]
+  hq: boolean
+  /** Added by bfdb. */
+  can_command: boolean
+  god_mode: boolean
+  commander?: CommanderStatus | null
+}
+
+/** POST /api/command/order (externally tagged, as the engine parses it). */
+export type CommandOrder =
+  | { move: { group: number; to: LatLon } }
+  | { move_formation: { formation: number; to: LatLon } }
+  | { fire: { group: number; at: LatLon } }
+  | { barrage: { at: LatLon } }
+  | { station: { group: number; at: LatLon } }
+  | { rtb: { group: number } }
+  | { sail: { group: number; to: LatLon } }
+  | { convoy: { to: number } }
+  | { helo_supply: { to: number } }
+  | { helo_troops: { to: number } }
+  | { launch: { kind: HqOpKind; objective: number } }
+
+export interface CommandReply {
+  ok: boolean
+  message: string
+}
+
 /** GET /api/admin/commanders */
 export interface CommanderRoster {
   instance: string
@@ -1896,6 +1976,9 @@ export const api = {
   /** Commander access: earned by rank, or granted by an admin. */
   command: {
     me: () => get<CommandMe>('/command/me'),
+    picture: (side?: 'Blue' | 'Red') => get<CommandPicture>(side ? `/command?side=${side}` : '/command'),
+    order: (o: CommandOrder, side?: 'Blue' | 'Red') =>
+      post<CommandReply>(side ? `/command/order?side=${side}` : '/command/order', o),
     roster: () => get<CommanderRoster>('/admin/commanders'),
     /** grant = null goes back to what the pilot's rank says. */
     setGrant: (ucid: string, grant: 'granted' | 'revoked' | null) =>

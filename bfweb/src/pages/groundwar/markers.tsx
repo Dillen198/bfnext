@@ -7,9 +7,9 @@ import { Defend, Objective as ObjIcon } from '@icons'
 import type { GroundBattle, GroundEnemyContact, GroundFormation, GroundObjective } from '../../api'
 import { fmtAge, offset } from './geo'
 import { OBJ_ICON, natoSymbol, shortName } from './sprites'
-import { ATTACK, PENCIL, SIDE_COLOR, WITHDRAW, other, type Side } from './theme'
+import { ATTACK, ICON, PENCIL, SIDE_COLOR, WITHDRAW, other, type Side } from './theme'
 
-const SYM = 34
+const SYM = ICON
 const SYM_NEAR = 15
 
 export interface PickHandlers {
@@ -112,7 +112,7 @@ function EnemyMarkerImpl({ e, side, near, onPick }: EProps): ReactElement {
     kind: e.kind,
     hostile: true,
     ghost,
-    size: near && e.units.length ? SYM_NEAR : 28,
+    size: near && e.units.length ? SYM_NEAR : ICON,
     fill: SIDE_COLOR[other(side)],
     direction: e.moving && !ghost && !(near && e.units.length) ? e.heading : null,
   })

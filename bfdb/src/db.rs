@@ -3535,6 +3535,7 @@ impl StatsDb {
             ("advanced/modern-war", "Modern War: EW, Air Defence, Raids & Tempo", "Advanced Topics", 8, include_str!("../seed_wiki/advanced/modern-war.md")),
             ("advanced/ground-war", "Ground War: Formations on the March", "Advanced Topics", 9, include_str!("../seed_wiki/advanced/ground-war.md")),
             ("advanced/theatre-hq", "Theatre HQ: the AI Commander", "Advanced Topics", 10, include_str!("../seed_wiki/advanced/theatre-hq.md")),
+            ("advanced/command", "Command: the Commander's Map", "Advanced Topics", 11, include_str!("../seed_wiki/advanced/command.md")),
         ];
         let mut refreshed = 0u32;
         for (slug, title, section, order, content) in seed {

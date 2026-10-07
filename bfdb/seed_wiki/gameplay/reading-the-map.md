@@ -190,7 +190,7 @@ want the detail.
 ## The ground war
 
 Ground formations add three things to the map, and one to the world. The
-dashboard's GROUND COMMAND page has its own, richer set: see
+dashboard's COMMAND page has its own, richer set: see
 [Ground War](../advanced/ground-war.md#reading-the-battlefield).
 
 ```mapsymbols

@@ -113,6 +113,7 @@ export default function App() {
                 <Route path="pilots" element={<Pilots />} />
                 <Route path="kills" element={<KillFeed />} />
               <Route path="intel" element={<RequireCoalition what="recon intel"><IntelPage /></RequireCoalition>} />
+              <Route path="command" element={<RequireCoalition what="command"><GroundWarPage /></RequireCoalition>} />
               <Route path="ground" element={<RequireCoalition what="ground command"><GroundWarPage /></RequireCoalition>} />
               <Route path="hq" element={<RequireCoalition what="the theatre HQ"><HqPage /></RequireCoalition>} />
               <Route path="admin" element={<AdminPage />} />

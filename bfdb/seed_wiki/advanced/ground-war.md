@@ -137,7 +137,7 @@ ground war and read the status report; only commanders can give orders, raise
 formations or take over the HQ. Commanders get the **Blue Commander** or
 **Red Commander** role on Discord.
 
-The dashboard's **GROUND COMMAND** page is the battlefield your coalition
+The dashboard's **COMMAND** page ([Command](./command.md)) is the battlefield your coalition
 sees, live: your formations and every vehicle in them, enemies where you have
 spotted them, battles, and your side's pilots in the air. Your own aircraft
 is marked **YOU**. Select formations with a click, Shift+click or Shift+drag,
@@ -182,7 +182,7 @@ map.
 ]
 ```
 
-### On the dashboard: GROUND COMMAND
+### On the dashboard: COMMAND
 
 The dashboard draws the ground war as the battlefield your coalition can see.
 It uses the dashboard's red and blue, not the F10 map's violet and azure. The

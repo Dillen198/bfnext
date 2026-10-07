@@ -120,7 +120,7 @@ pub struct AssetUnit {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Asset {
     /// The group's id.
-    pub id: u64,
+    pub id: i64,
     pub name: String,
     pub kind: AssetKind,
     /// What it is, for a label: "Tanker", "AWACS", "Supply convoy", "SA-11",
@@ -154,7 +154,7 @@ pub struct Asset {
 pub struct LaunchOption {
     pub kind: crate::hq::OpKind,
     /// The objective it is about (or nearest to).
-    pub objective: u64,
+    pub objective: i64,
     pub objective_name: String,
     pub pos: LatLon,
     /// Treasury points, escort and SEAD included.
@@ -186,27 +186,27 @@ pub struct CommandPicture {
 #[serde(rename_all = "snake_case")]
 pub enum CommandOrder {
     /// A ground group (deployed, troops, other ground) drives to a point.
-    Move { group: u64, to: LatLon },
+    Move { group: i64, to: LatLon },
     /// A ground formation drives to a point and holds there.
     MoveFormation { formation: u32, to: LatLon },
     /// A battery fires on a point.
-    Fire { group: u64, at: LatLon },
+    Fire { group: i64, at: LatLon },
     /// Every battery of ours in range fires on a point.
     Barrage { at: LatLon },
     /// An AI flight goes to a point and works there.
-    Station { group: u64, at: LatLon },
+    Station { group: i64, at: LatLon },
     /// An AI flight goes home.
-    Rtb { group: u64 },
+    Rtb { group: i64 },
     /// A carrier group sails to a point.
-    Sail { group: u64, to: LatLon },
+    Sail { group: i64, to: LatLon },
     /// A supply convoy to one of our bases.
-    Convoy { to: u64 },
+    Convoy { to: i64 },
     /// A helicopter supply run to one of our bases.
-    HeloSupply { to: u64 },
+    HeloSupply { to: i64 },
     /// A helicopter troop insertion at an objective.
-    HeloTroops { to: u64 },
+    HeloTroops { to: i64 },
     /// One of the HQ's operations, paid from the treasury.
-    Launch { kind: crate::hq::OpKind, objective: u64 },
+    Launch { kind: crate::hq::OpKind, objective: i64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

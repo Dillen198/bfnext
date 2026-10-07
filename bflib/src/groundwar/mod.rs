@@ -73,7 +73,7 @@ pub(crate) struct GroundWar {
     pub(crate) rt: FormationRt,
     cmds: Vec<Cmd>,
     last_think: Option<DateTime<Utc>>,
-    last_order: FxHashMap<Ucid, DateTime<Utc>>,
+    pub(crate) last_order: FxHashMap<Ucid, DateTime<Utc>>,
     frontline_hash: u64,
     frontline_drawn: Option<DateTime<Utc>>,
 }

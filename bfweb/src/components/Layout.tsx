@@ -67,7 +67,7 @@ const COALITION_NAV: NavItem[] = [
   { to: '/briefing', icon: Briefing,   label: 'BRIEFING'     },
   { to: '/intel',    icon: ReconIntel, label: 'RECON INTEL'  },
   { to: '/hq',       icon: CommandCenter, label: 'THEATRE HQ' },
-  { to: '/ground',   icon: Armor,      label: 'GROUND COMMAND' },
+  { to: '/command',  icon: Armor,      label: 'COMMAND' },
 ]
 // Stats & people.
 const STATS_NAV: NavItem[] = [

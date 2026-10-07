@@ -48,7 +48,7 @@ for more details.
 mod chat;
 mod dispatch;
 mod picture;
-mod planner;
+pub(crate) mod planner;
 mod requests;
 mod strategy;
 mod view;
@@ -262,6 +262,9 @@ pub(crate) struct SideRt {
     pub(crate) gap: f64,
     pub(crate) humans: u32,
     pub(crate) escorts: Vec<PendingEscort>,
+    /// What a commander may launch, and when it was worked out
+    /// (`launch_menu`).
+    pub(crate) menu: Option<(DateTime<Utc>, Vec<planner::Cand>)>,
 }
 
 impl SideRt {
@@ -754,6 +757,126 @@ pub(crate) fn directive(ctx: &mut Context, side: Side, mut d: Directive) -> HqRe
     // Re-plan on the next tick rather than waiting out the interval.
     rt.last_think = None;
     reply(true, "directive accepted")
+}
+
+/// How long a commander's launch menu is reused.
+const MENU_SECS: i64 = 20;
+
+/// The operations a commander can launch for `side` right now: the HQ's own
+/// ranked candidates, best of each kind per target, at most `n`. They are
+/// the HQ's, so a commander can't conjure an operation the HQ has no means
+/// for, aim it somewhere the HQ can't see, or dodge its costs and standing
+/// limits. Empty when the server has no theatre HQ.
+pub(crate) fn launch_menu(ctx: &mut Context, side: Side, n: usize, now: DateTime<Utc>) -> Vec<planner::Cand> {
+    if let Some((at, m)) = ctx.hq.side(side).menu.as_ref() {
+        if now - *at < Duration::seconds(MENU_SECS) {
+            return m.iter().take(n).cloned().collect();
+        }
+    }
+    let Some((_, cfg)) = cfg(ctx) else { return vec![] };
+    let pic = picture::build(ctx, &cfg, side, now);
+    let saved = ctx.db.persisted.hq.side(side).clone();
+    let plan = match ctx.hq.side(side).plan.clone() {
+        Some(p) => p,
+        None => strategy::plan(
+            &cfg,
+            &pic,
+            None,
+            saved.directive.as_ref().map(|d| &d.directive),
+            saved.human.as_ref(),
+        ),
+    };
+    // Unweighted by the gap factor: what the HQ would do, not what it would
+    // leave to the players.
+    let ranked = planner::rank(ctx, &cfg, side, &pic, &plan, &saved.record, 1., now);
+    let mut seen: Vec<(OpKind, ObjectiveId)> = vec![];
+    let mut menu = vec![];
+    for c in ranked {
+        if c.request.is_some() || seen.contains(&(c.kind, c.anchor)) {
+            continue;
+        }
+        seen.push((c.kind, c.anchor));
+        menu.push(c);
+        if menu.len() >= 40 {
+            break;
+        }
+    }
+    ctx.hq.side(side).menu = Some((now, menu.clone()));
+    menu.into_iter().take(n).collect()
+}
+
+/// Is a launch of `kind` affordable and within the HQ's standing limits?
+pub(crate) fn launch_ready(ctx: &Context, side: Side, kind: OpKind, cost: i64) -> bool {
+    let Some((_, cfg)) = cfg(ctx) else { return false };
+    ctx.db.persisted.treasury(side) >= cost && planner::room(&cfg, ctx, side, kind) > 0
+}
+
+/// A commander launches one of the HQ's operations: `kind` on `objective`,
+/// from the menu, paid from the treasury exactly as the HQ would pay.
+pub(crate) fn commander_launch(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    side: Side,
+    kind: OpKind,
+    objective: ObjectiveId,
+    who: &str,
+    now: DateTime<Utc>,
+) -> Result<CompactString, CompactString> {
+    let Some((_, cfg)) = cfg(ctx) else {
+        return Err("this server has no theatre HQ".into());
+    };
+    // Fresh, not the cached menu: the picture may have moved on.
+    ctx.hq.side(side).menu = None;
+    let menu = launch_menu(ctx, side, usize::MAX, now);
+    let Some(c) = menu.into_iter().find(|c| c.kind == kind && (c.anchor == objective || c.target == Some(objective)))
+    else {
+        return Err(format_compact!("the HQ has no {} it can run there right now", kind.label()));
+    };
+    if planner::room(&cfg, ctx, side, kind) == 0 {
+        return Err(format_compact!("the HQ already has as many {} running as it may", kind.label()));
+    }
+    let treasury = ctx.db.persisted.treasury(side);
+    if treasury < c.cost {
+        return Err(format_compact!("that costs {} and the treasury has {treasury}", c.cost));
+    }
+    let detail = dispatch::launch(lua, ctx, perf, &cfg, side, &c, now)?;
+    ctx.hq.side(side).menu = None;
+    let text = format_compact!("{who} ordered {} on {}: {detail}", kind.label(), c.name);
+    ctx.hq.side(side).note(now, text.clone());
+    ctx.db.ephemeral.msgs().panel_to_side(15, false, side, format_compact!("COMMAND: {text}"));
+    Ok(text)
+}
+
+/// What one of the HQ's kinds of operation costs on this server (after
+/// `cost_scale`), for commander orders the HQ doesn't plan itself.
+pub(crate) fn cost_of(ctx: &Context, kind: OpKind) -> Option<i64> {
+    let (_, cfg) = cfg(ctx)?;
+    let c = &cfg.costs;
+    let raw = match kind {
+        OpKind::Cap => c.cap,
+        OpKind::Strike => c.strike,
+        OpKind::Sead => c.sead,
+        OpKind::Recon => c.recon,
+        OpKind::Artillery => c.artillery,
+        OpKind::MissileStrike => c.missile_strike,
+        OpKind::Ambush => c.ambush,
+        OpKind::Convoy => c.convoy,
+        OpKind::HeloSupply => c.helo_supply,
+        OpKind::HeloTroops => c.helo_troops,
+        OpKind::Reinforce => c.reinforce,
+        OpKind::Bomber => c.bomber,
+        OpKind::Awacs => c.awacs,
+        OpKind::Tanker => c.tanker,
+        OpKind::NavalStrike => c.naval_strike,
+        OpKind::AirRepair => c.air_repair,
+    };
+    Some(((raw as f64) * cfg.cost_scale.max(0.)).round() as i64)
+}
+
+/// The scale the HQ prices things at on this server (1 without an HQ).
+pub(crate) fn cost_scale(ctx: &Context) -> f64 {
+    cfg(ctx).map_or(1., |(_, c)| c.cost_scale.max(0.))
 }
 
 /// May `ucid` take command of the HQ? `None` is bfdb on an admin's behalf.

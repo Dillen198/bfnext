@@ -17,7 +17,7 @@ import type { MapLibreEvent, Map as MlMap } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { Aircraft, ChevronsLeft, Defend, Info, Pin, Plus, Shield, Strike, X } from '@icons'
 
-import { api, type CommandMe, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon } from '../api'
+import { api, type CommandMe, type CommandOrder, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { useInstance } from '../context/InstanceContext'
 import { useTheme } from '../context/ThemeContext'
@@ -32,6 +32,9 @@ import { installVehicleImages } from './groundwar/sprites'
 import { NEAR_ZOOM, reducedMotion, type Side } from './groundwar/theme'
 import { useGroundFeed } from './groundwar/useGroundFeed'
 import { createGroundwarMock } from './groundwarMock'
+import { createCommandMock } from './commandMock'
+import { AssetLines, AssetMarker, AssetPanel, EnemyAirMarker, LaunchPanel, LayerToggles } from './groundwar/command'
+import { ALL_LAYERS, MODE_TEXT, shown, useCommandFeed, useEnemyAir, type AssetMode, type Layers } from './groundwar/commandFeed'
 import { rankFor } from '../ranks'
 import './groundwar/groundwar.css'
 
@@ -98,6 +101,17 @@ export default function GroundWarPage(): ReactElement {
 
   const feed = useGroundFeed(sideParam, instance, mock)
   const pic = feed.pic
+  const cmdMock = useMemo(() => (mock ? createCommandMock() : null), [mock])
+  useEffect(() => {
+    if (!cmdMock) return
+    const iv = window.setInterval(() => cmdMock.step(2), 2000)
+    return () => window.clearInterval(iv)
+  }, [cmdMock])
+  const [layers, setLayersState] = useState<Layers>(() => loadPref('cm.layers', ALL_LAYERS))
+  const setLayers = (l: Layers) => { setLayersState(l); savePref('cm.layers', l) }
+  const cmdQ = useCommandFeed(sideParam, instance, cmdMock, !!pic?.enabled)
+  const cp = cmdQ.data ?? null
+  const enemyAir = useEnemyAir(!mock && layers.enemyAir && !!pic?.enabled)
   const { data: fronts = NO_FRONTS } = useQuery<Frontlines>({
     queryKey: ['frontline'],
     queryFn: () => (mock ? Promise.resolve(NO_FRONTS) : api.frontline()),
@@ -129,6 +143,10 @@ export default function GroundWarPage(): ReactElement {
   const [sel, setSel] = useState<number[]>([])
   const [selObjId, setSelObjId] = useState<number | null>(null)
   const [selEnemyId, setSelEnemyId] = useState<number | null>(null)
+  const [selAssetId, setSelAssetId] = useState<number | null>(null)
+  const [assetMode, setAssetMode] = useState<AssetMode>('none')
+  const [showLaunch, setShowLaunch] = useState(false)
+  const [busy, setBusy] = useState(false)
   const [mode, setMode] = useState<Mode>('none')
   const [groups, setGroups] = useState<Record<number, number[]>>(() => loadPref('gw.groups', {}))
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -148,6 +166,8 @@ export default function GroundWarPage(): ReactElement {
   const selForms = useMemo(() => (pic?.formations ?? []).filter((f) => selSet.has(f.id)), [pic, selSet])
   const selObj = pic?.objectives.find((o) => o.id === selObjId) ?? null
   const selEnemy = pic?.enemy.find((e) => e.id === selEnemyId) ?? null
+  const selAsset = cp?.assets.find((a) => a.id === selAssetId) ?? null
+  const canOrder = !!cp?.can_command || !!(mock && pic?.can_command)
   const groupOf = useMemo(() => {
     const m: Record<number, number> = {}
     for (const [k, ids] of Object.entries(groups)) for (const id of ids) m[id] = Number(k)
@@ -196,6 +216,81 @@ export default function GroundWarPage(): ReactElement {
     ))
     for (const r of replies) toast(r.text, r.ok)
     feed.refresh()
+  }
+
+  /** A command-map order: the engine checks it and says what happened. */
+  const order = async (o: CommandOrder, confirm?: string) => {
+    if (!canOrder) return viewOnly()
+    if (confirm && !window.confirm(confirm)) return
+    setBusy(true)
+    try {
+      const r = cmdMock ? cmdMock.order(o) : await api.command.order(o, sideParam)
+      toast(r.message, r.ok)
+    } catch (e) {
+      toast((e as Error).message, false)
+    } finally {
+      setBusy(false)
+      void cmdQ.refetch()
+      feed.refresh()
+    }
+  }
+  /** Carry out the armed command-map order at `at`. */
+  const applyAssetMode = (at: LatLon) => {
+    const a = selAsset
+    const m = assetMode
+    setAssetMode('none')
+    if (m === 'barrage') return void order({ barrage: { at } }, 'Every battery of ours in range fires on this point. Pay for a barrage from the treasury?')
+    if (m === 'fmove') {
+      if (!selIds.length) return toast('Select formations first.', false)
+      void Promise.all(selIds.map((id) => order({ move_formation: { formation: id, to: at } })))
+      return
+    }
+    if (!a) return toast('Select one of our assets first.', false)
+    if (m === 'move') return void order({ move: { group: a.id, to: at } })
+    if (m === 'fire') return void order({ fire: { group: a.id, at } })
+    if (m === 'station') return void order({ station: { group: a.id, at } })
+    if (m === 'sail') return void order({ sail: { group: a.id, to: at } })
+  }
+  /** Right-click with an asset selected: its main order at that point. */
+  const assetDefault = (at: LatLon): boolean => {
+    const a = selAsset
+    if (!a) return false
+    const v = a.orders.find((x) => x === 'station' || x === 'move' || x === 'sail' || x === 'fire')
+    if (!v) {
+      toast(`${a.name} runs itself: nothing to order.`, false)
+      return true
+    }
+    if (v === 'move') void order({ move: { group: a.id, to: at } })
+    if (v === 'station') void order({ station: { group: a.id, at } })
+    if (v === 'sail') void order({ sail: { group: a.id, to: at } })
+    if (v === 'fire') void order({ fire: { group: a.id, at } })
+    return true
+  }
+  const armAsset = (m: AssetMode) => {
+    if (!canOrder) return viewOnly()
+    if (m === 'fmove' && !selIds.length) return toast('Select formations first, then M and click the map.', false)
+    setMode('none')
+    setAssetMode((cur) => (cur === m ? 'none' : m))
+  }
+  const assetKey = (verb: 'move' | 'fire' | 'station' | 'rtb' | 'sail'): boolean => {
+    const a = selAsset
+    if (!a) return false
+    if (!a.orders.includes(verb)) {
+      toast(`${a.name} can't ${verb === 'rtb' ? 'return to base' : verb}.`, false)
+      return true
+    }
+    if (verb === 'rtb') void order({ rtb: { group: a.id } })
+    else armAsset(verb)
+    return true
+  }
+  const pickAsset = (e: MouseEvent, id: number) => {
+    if (inputRef.current?.wasDrag()) return
+    e.stopPropagation()
+    setSelAssetId(id)
+    setSel([])
+    setSelObjId(null)
+    setSelEnemyId(null)
+    setAssetMode('none')
   }
 
   const ownObjs = (p: GroundPicture) => p.objectives.filter((o) => o.owner === p.side)
@@ -263,6 +358,7 @@ export default function GroundWarPage(): ReactElement {
     setSel(ids)
     setSelObjId(null)
     setSelEnemyId(null)
+    setSelAssetId(null)
   }
   const pickFormation = (e: MouseEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
@@ -271,6 +367,7 @@ export default function GroundWarPage(): ReactElement {
     if (mode !== 'none') return applyMode(hoverObj.current)
     setSelObjId(null)
     setSelEnemyId(null)
+    setSelAssetId(null)
     if (e.shiftKey) setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
     else setSel([id])
   }
@@ -291,6 +388,7 @@ export default function GroundWarPage(): ReactElement {
     setSelObjId(id)
     setSel([])
     setSelEnemyId(null)
+    setSelAssetId(null)
   }
   const pickEnemy = (e: MouseEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
@@ -315,6 +413,8 @@ export default function GroundWarPage(): ReactElement {
     setSel([])
     setSelObjId(null)
     setSelEnemyId(null)
+    setSelAssetId(null)
+    setAssetMode('none')
   }
 
   const needSel = selIds.length ? null : 'Select formations first (click, Shift+drag or 1-9)'
@@ -348,12 +448,14 @@ export default function GroundWarPage(): ReactElement {
     pic, mode, selIds, help, follow, groups, pickFormation, pickKind, pickObjective, pickEnemy,
     applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
     selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
+    assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset,
   })
   useEffect(() => {
     live.current = {
       pic, mode, selIds, help, follow, groups, pickFormation, pickKind, pickObjective, pickEnemy,
       applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
       selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
+      assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset,
     }
   })
 
@@ -362,6 +464,7 @@ export default function GroundWarPage(): ReactElement {
   const onPickKind = useCallback((e: MouseEvent, id: number) => live.current.pickKind(e, id), [])
   const onPickObjective = useCallback((e: MouseEvent, id: number) => live.current.pickObjective(e, id), [])
   const onPickEnemy = useCallback((e: MouseEvent, id: number) => live.current.pickEnemy(e, id), [])
+  const onPickAsset = useCallback((e: MouseEvent, id: number) => live.current.pickAsset(e, id), [])
 
   const lastCursor = useRef('')
   const showHover = useCallback((x: number, y: number, obj: number | null) => {
@@ -407,17 +510,24 @@ export default function GroundWarPage(): ReactElement {
         lastCursor.current = ''
         setCursor(null)
       },
-      click: (obj) => {
+      click: (obj, at) => {
         const L = live.current
-        if (L.mode !== 'none') L.applyMode(obj)
+        if (L.assetMode !== 'none') L.applyAssetMode(at)
+        else if (L.mode !== 'none') L.applyMode(obj)
         else L.clearAll()
       },
-      context: (obj) => {
+      context: (obj, at) => {
         const L = live.current
+        if (L.assetMode !== 'none') return setAssetMode('none')
         if (L.mode !== 'none' && L.mode !== 'raise' && obj != null) return L.applyMode(obj)
         if (L.mode !== 'none') return setMode('none')
+        if (L.selAsset) return void L.assetDefault(at)
         if (!L.selIds.length) return
-        if (obj == null) return L.toast('Orders go to bases: right-click near one.', false)
+        // Away from any base, a right-click moves the selection to that point.
+        if (obj == null) {
+          L.armAsset('fmove')
+          return L.applyAssetMode(at)
+        }
         const r = L.resolve(obj)
         if (r && (r.verb === 'attack' || r.verb === 'defend')) L.orderTo(r.verb, obj)
       },
@@ -443,6 +553,7 @@ export default function GroundWarPage(): ReactElement {
       }
       if (e.key === 'Escape') {
         if (L.help) setHelp(false)
+        else if (L.assetMode !== 'none') setAssetMode('none')
         else if (L.mode !== 'none') setMode('none')
         else if (L.follow) setFollow(false)
         else L.clearAll()
@@ -474,6 +585,16 @@ export default function GroundWarPage(): ReactElement {
       if (e.ctrlKey || e.altKey) return
       const isButton = t?.tagName === 'BUTTON'
       switch (e.key.toLowerCase()) {
+        case 'm':
+          if (L.selAsset) L.assetKey(L.selAsset.orders.includes('sail') ? 'sail' : 'move')
+          else if (L.selIds.length) L.armAsset('fmove')
+          else L.toast('Select formations or one of our assets, then M and click the map.', false)
+          break
+        case 'g': if (!L.assetKey('fire')) L.toast('Select a battery to fire.', false); break
+        case 's': if (!L.assetKey('station')) L.toast('Select an AI flight to station.', false); break
+        case 'b': if (!L.assetKey('rtb')) L.toast('Select an AI flight to send home.', false); break
+        case 'v': L.armAsset('barrage'); break
+        case 'l': setShowLaunch((s) => !s); break
         case 'a': L.enterMode('attack'); break
         case 'd': L.enterMode('defend'); break
         case 'h': if (L.selIds.length) L.hold(); else L.toast('Select formations to hold.', false); break
@@ -532,6 +653,7 @@ export default function GroundWarPage(): ReactElement {
   const buttons: CmdButton[] = [
     { key: 'A', label: 'ATTACK', icon: Strike, tone: 'attack', active: mode === 'attack', disabled: selReason, run: () => enterMode('attack') },
     { key: 'D', label: 'DEFEND', icon: Defend, active: mode === 'defend', disabled: selReason, run: () => enterMode('defend') },
+    { key: 'M', label: 'MOVE', icon: Pin, active: assetMode === 'fmove', disabled: selReason, run: () => armAsset('fmove') },
     { key: 'H', label: 'HOLD', icon: Shield, disabled: selReason, run: hold },
     { key: 'W', label: 'WITHDRAW', icon: ChevronsLeft, tone: 'withdraw', disabled: selReason, run: withdraw },
     {
@@ -546,6 +668,7 @@ export default function GroundWarPage(): ReactElement {
     },
     { key: '␣', label: 'CENTRE', icon: Pin, disabled: selIds.length ? null : 'Nothing selected', run: () => centre(selIds) },
     { key: 'F', label: follow ? 'FOLLOWING' : 'FOLLOW ME', icon: Aircraft, active: follow, disabled: selfPlayer ? null : 'Your aircraft is not live in DCS', run: toggleFollow },
+    { key: 'L', label: 'COMMAND', icon: Strike, active: showLaunch, disabled: cp ? null : 'The command picture has not arrived', run: () => setShowLaunch((s) => !s) },
     { key: '?', label: 'CONTROLS', icon: Info, disabled: null, run: () => setHelp(true) },
   ]
 
@@ -597,6 +720,11 @@ export default function GroundWarPage(): ReactElement {
           />
         ))}
         {pic.battles.map((b) => <BattleLabel key={`b${b.id}`} b={b} onPick={onBattle} />)}
+        {cp && <AssetLines assets={cp.assets.filter((a) => shown(a, layers))} sel={selAsset} side={side} />}
+        {cp?.assets.filter((a) => shown(a, layers)).map((a) => (
+          <AssetMarker key={`a${a.id}`} a={a} side={side} selected={a.id === selAssetId} near={near} onPick={onPickAsset} />
+        ))}
+        {layers.enemyAir && enemyAir.map((t) => <EnemyAirMarker key={`h${t.id}`} t={t} side={side} />)}
       </Map>
 
       <div className="gw-vignette" />
@@ -630,6 +758,9 @@ export default function GroundWarPage(): ReactElement {
                 : notCommander ?? 'View only: link your Discord (-linkme in DCS chat) and take a slot this campaign to give orders.'}
           </div>
         )}
+        {assetMode !== 'none' && (
+          <div className="gw-modebar">{MODE_TEXT[assetMode]} · ESC TO CANCEL</div>
+        )}
         {mode !== 'none' && (
           <div className="gw-modebar">
             {mode === 'attack' ? 'ATTACK' : mode === 'defend' ? 'DEFEND' : 'RAISE'} · CLICK A BASE · ESC TO CANCEL
@@ -639,9 +770,19 @@ export default function GroundWarPage(): ReactElement {
       </div>
 
       <EventFeed events={pic.events} time={pic.time} onPick={onEvent} />
-      {single && (
+      {single && !selAsset && (
         <Drawer f={single} side={side} pic={pic} lockMins={Math.round(pic.player_lock_secs / 60)} onClose={clearAll} />
       )}
+      {selAsset && (
+        <AssetPanel a={selAsset} canCommand={canOrder} mode={assetMode} setMode={armAsset}
+          onRtb={() => void order({ rtb: { group: selAsset.id } })} onClose={clearAll} />
+      )}
+      {showLaunch && cp && (
+        <LaunchPanel cp={cp} selObj={selObj} side={side} canCommand={canOrder} busy={busy}
+          onOrder={(o, c) => void order(o, c)} onFocus={(p) => flyTo(p, 11)} onBarrage={() => armAsset('barrage')}
+          onClose={() => setShowLaunch(false)} />
+      )}
+      <LayerToggles layers={layers} set={setLayers} />
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
       <CommandBar
         pic={pic}
@@ -676,7 +817,7 @@ function Standby({ pic, reason, error, link }: { pic: GroundPicture | null; reas
     title = 'GAME SERVER NOT ANSWERING'
     body = 'bfdb is up, but the engine is not answering for the ground picture. It may be restarting; this page reconnects by itself.'
   } else if (error && link === 'offline') {
-    title = 'GROUND COMMAND UNAVAILABLE'
+    title = 'COMMAND UNAVAILABLE'
     body = error
   }
   return (

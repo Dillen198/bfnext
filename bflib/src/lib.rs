@@ -387,6 +387,9 @@ struct Context {
     /// Who commands each side, pushed by bfdb (`set-commanders`). None until
     /// the first push -- see `command`.
     commanders: Option<bfprotocols::command::Commanders>,
+    /// Each commander's recent command-map orders, for the rate limit
+    /// (`command::order`). `None` is a server admin through bfdb.
+    command_orders: FxHashMap<Option<Ucid>, std::collections::VecDeque<DateTime<Utc>>>,
     last_periodic_points: DateTime<Utc>,
     last_commander_tick: DateTime<Utc>,
     last_unit_position: usize,

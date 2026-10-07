@@ -1,5 +1,27 @@
 # Changelog — v2.0
 
+## October 7, 2026
+
+**Command** — see [Command](../advanced/command.md)
+- **GROUND COMMAND is now COMMAND**: every asset your side has in the field on
+  one live map (AI flights, convoys, deployed units, troops, batteries,
+  carriers, and the ground war), with the enemy aircraft and formations your
+  side can see.
+- Commanders order all of it: move formations or troops to any point,
+  station or recall AI flights, fire batteries, sail carriers, send convoys and
+  helicopter runs, and launch the Theatre HQ's operations. All of it is paid
+  from the side's treasury and checked by the server.
+- **Command is earned**: it unlocks at rank tier
+  {{cfg:command.commander_rank|4}} (Major by default). Admins can grant or
+  withdraw it. Commanders get a Blue or Red Commander role on Discord.
+
+**Ground war**
+- A formation carrying out a player's order is put into DCS, and so is one that
+  comes within reach of any enemy ground unit already in DCS.
+- Towed and emplaced guns (KS-19, ZU-23 emplacements, mortars) no longer join
+  formations: DCS can't move them.
+- The F10 attack arrows point at the target again.
+
 ## October 4, 2026
 
 **Theatre HQ** (where enabled) — see [Theatre HQ](../advanced/theatre-hq.md)

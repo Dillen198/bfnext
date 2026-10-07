@@ -15,10 +15,10 @@ export interface InputHooks {
   /** The cursor moved; `obj` is the base it snapped to, if any. */
   hover: (x: number, y: number, obj: number | null) => void
   leave: () => void
-  /** A left click on bare map (not a marker, not a drag). */
-  click: (obj: number | null) => void
-  /** A right click anywhere on the map. */
-  context: (obj: number | null) => void
+  /** A left click on bare map (not a marker, not a drag), and where. */
+  click: (obj: number | null, at: [number, number]) => void
+  /** A right click anywhere on the map, and where. */
+  context: (obj: number | null, at: [number, number]) => void
   box: (ids: number[], add: boolean) => void
 }
 
@@ -137,12 +137,16 @@ export function attachInput(map: MlMap, boxEl: HTMLDivElement, hooks: InputHooks
     down = null
     if (!wasDown || dragged || onMarker(e)) return
     const p = local(e)
-    hooks.click(snapObjective(map, hooks.pic(), p.x, p.y))
+    hooks.click(snapObjective(map, hooks.pic(), p.x, p.y), latLonAt(p.x, p.y))
   }
   const onContext = (e: MouseEvent) => {
     e.preventDefault()
     const p = local(e)
-    hooks.context(snapObjective(map, hooks.pic(), p.x, p.y))
+    hooks.context(snapObjective(map, hooks.pic(), p.x, p.y), latLonAt(p.x, p.y))
+  }
+  const latLonAt = (x: number, y: number): [number, number] => {
+    const ll = map.unproject([x, y])
+    return [ll.lat, ll.lng]
   }
   const onLeave = () => {
     last = null
