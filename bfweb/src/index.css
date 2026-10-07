@@ -299,6 +299,9 @@ body {
 .intel-sidebar-collapsed { width: 40px !important; }
 .intel-sidebar-collapsed .intel-panel-toggle { padding: 0; justify-content: center; }
 .intel-sidebar-collapsed .panel-toggle-label { display: none; }
+/* Everything but the toggle goes while folded; left in, it wrapped into
+   the 40px strip one word per line. */
+.intel-sidebar-collapsed > :not(.intel-panel-toggle) { display: none; }
 
 /* Briefing: folding the map collapses the grid to a single column so the
    tasking list uses the full width, not half of it. */
