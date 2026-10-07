@@ -685,6 +685,18 @@ body {
   flex-shrink: 0;
 }
 .sidebar-collapse-btn:hover { color: var(--accent-bright); }
+/* The links scroll; everything else in the sidebar (wiki, footer, collapse)
+   stays put at the bottom. With `overflow: hidden` on the sidebar and a nav
+   that only grew, a short window cut off the bottom -- collapse included. */
+.sidebar > * { flex-shrink: 0; }
+.sidebar > .sidebar-nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
 
 /* ── Mobile menu toggle (hidden on desktop) ── */
 .mobile-menu-btn {

@@ -563,7 +563,7 @@ export default function Layout() {
 
           {/* Nav section */}
           <div className="nav-group-label">Navigation</div>
-          <nav style={{ flex: 1 }}>
+          <nav className="sidebar-nav">
             {navGroups.map((group, gi) => (
               <React.Fragment key={gi}>
                 {gi > 0 && <div className="nav-divider" />}
