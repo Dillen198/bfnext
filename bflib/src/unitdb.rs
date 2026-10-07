@@ -384,3 +384,80 @@ pub fn artillery_range(cfg: Option<&ArtilleryCfg>, typ: &str) -> (f64, f64) {
     }
     (default_max, default_min)
 }
+
+/// Ground types DCS will not drive under any orders: emplaced and towed guns
+/// (the harvest marks most AAA among them "Static AAA"; the towed artillery
+/// carries no such mark) and fixed launchers. Listed in full so the answer
+/// doesn't depend on the harvest having run.
+const CANT_DRIVE: &[&str] = &[
+    // Static AAA
+    "Allies_Director",
+    "Flakscheinwerfer_37",
+    "KDO_Mod40",
+    "KS-19",
+    "M1_37mm",
+    "M45_Quadmount",
+    "QF_37_AA",
+    "S-60_Type59_Artillery",
+    "Type_3_80mm_AA",
+    "Type_88_75mm_AA",
+    "Type_96_25mm_AA",
+    "ZU-23 Closed Insurgent",
+    "ZU-23 Emplacement",
+    "ZU-23 Emplacement Closed",
+    "ZU-23 Insurgent",
+    "bofors40",
+    "flak18",
+    "flak30",
+    "flak36",
+    "flak37",
+    "flak38",
+    "flak41",
+    // Towed or fixed artillery and launchers
+    "2B11 mortar",
+    "L118_Unit",
+    "LeFH_18-40-105",
+    "M2A1-105",
+    "Pak40",
+    "SK_C_28_naval_gun",
+    "v1_launcher",
+];
+
+/// Can a ground unit of type `typ` drive at all? Ground formations, and
+/// anything else that orders a group to move, must not take one that can't:
+/// DCS leaves it where it stands, and the rest of its group with it.
+pub fn can_drive(typ: &str) -> bool {
+    if CANT_DRIVE.contains(&typ) {
+        return false;
+    }
+    match get().get(typ) {
+        Some(u) => {
+            let fixed_category = u.category.as_deref().map_or(false, |c| {
+                c.starts_with("Fortifications")
+                    || c.starts_with("Warehouses")
+                    || c.starts_with("Cargos")
+                    || c.starts_with("GroundObjects")
+                    || c.starts_with("Effects")
+            });
+            !fixed_category && !u.attributes.iter().any(|a| a == "Static AAA")
+        }
+        None => true,
+    }
+}
+
+#[cfg(test)]
+mod drive_tests {
+    use super::*;
+
+    #[test]
+    fn towed_and_emplaced_guns_dont_drive() {
+        assert!(!can_drive("KS-19"));
+        assert!(!can_drive("ZU-23 Emplacement"));
+        assert!(!can_drive("2B11 mortar"));
+        assert!(!can_drive("M2A1-105"));
+        assert!(can_drive("T-72B"));
+        assert!(can_drive("Ural-375 ZU-23"));
+        assert!(can_drive("ZSU-23-4 Shilka"));
+        assert!(can_drive("M-109"));
+    }
+}

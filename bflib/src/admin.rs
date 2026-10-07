@@ -258,6 +258,10 @@ pub enum AdminCommand {
         ucid: Option<Ucid>,
         cmd: bfprotocols::hq::HqCommand,
     },
+    /// Who commands each side (`crate::command`), from bfdb.
+    SetCommanders {
+        commanders: bfprotocols::command::Commanders,
+    },
     /// The ground war as one side sees it (`crate::groundwar::picture`).
     QueryGroundWar {
         side: Side,
@@ -3154,6 +3158,7 @@ impl AdminCommand {
                 | Self::CockpitMenu { .. }
                 | Self::CockpitMenuInvoke { .. }
                 | Self::SetServerInfo { .. }
+                | Self::SetCommanders { .. }
                 | Self::SetIntelMarks(_)
         )
     }
@@ -3664,6 +3669,10 @@ fn run_admin_command(
                     Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize the HQ reply: {e:?}"),
                 }
+            }
+            AdminCommand::SetCommanders { commanders } => {
+                crate::command::set(ctx, commanders);
+                rep.out.push(NetIdxValue::from("ok"));
             }
             AdminCommand::GroundCommand { ucid, cmd } => {
                 let reply = crate::groundwar::dashboard_command(lua, ctx, ucid, cmd);

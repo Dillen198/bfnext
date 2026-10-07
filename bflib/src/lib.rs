@@ -22,6 +22,7 @@ mod bg;
 mod carp;
 mod chatcmd;
 mod cockpit;
+mod command;
 mod commander;
 mod db;
 mod ewr;
@@ -383,6 +384,9 @@ struct Context {
     /// Surface weather from DCSServerBot, pushed in by bfdb via the
     /// `set-server-info` RPC. `None` until the first push.
     bot_weather: Option<BotWeather>,
+    /// Who commands each side, pushed by bfdb (`set-commanders`). None until
+    /// the first push -- see `command`.
+    commanders: Option<bfprotocols::command::Commanders>,
     last_periodic_points: DateTime<Utc>,
     last_commander_tick: DateTime<Utc>,
     last_unit_position: usize,

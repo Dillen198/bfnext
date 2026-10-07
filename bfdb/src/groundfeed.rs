@@ -111,6 +111,8 @@ struct Viewer {
     side: Side,
     ucid: Option<String>,
     god: bool,
+    /// May give orders (`crate::command`), as of when the viewer was resolved.
+    commander: bool,
 }
 
 async fn viewer(
@@ -128,13 +130,22 @@ async fn viewer(
         None => None,
     };
     match own {
-        Some(side) => Ok(Viewer { side, ucid: ucid.map(|u| u.to_string()), god: false }),
+        Some(side) => {
+            let Some(u) = ucid else { return Err("nocoalition") };
+            let commander = if session.is_admin {
+                crate::command::note_admin(u);
+                true
+            } else {
+                task::block_in_place(|| crate::command::may_command(db, inst, &u, side)).unwrap_or(false)
+            };
+            Ok(Viewer { side, ucid: Some(u.to_string()), god: false, commander })
+        }
         None if session.is_admin => {
             let side = match query.get("side").map(|s| s.to_ascii_lowercase()) {
                 Some(s) if s == "red" => Side::Red,
                 _ => Side::Blue,
             };
-            Ok(Viewer { side, ucid: None, god: true })
+            Ok(Viewer { side, ucid: None, god: true, commander: false })
         }
         None => Err("nocoalition"),
     }
@@ -165,7 +176,7 @@ fn frame(cache: &GroundCache, v: &Viewer) -> (serde_json::Value, Option<Instant>
                 }
             }
             if let Some(o) = p.as_object_mut() {
-                o.insert("can_command".into(), serde_json::json!(!v.god && v.ucid.is_some()));
+                o.insert("can_command".into(), serde_json::json!(!v.god && v.ucid.is_some() && v.commander));
                 o.insert("god_mode".into(), serde_json::json!(v.god));
             }
             (serde_json::json!({ "picture": p }), Some(f.at))
@@ -305,7 +316,7 @@ mod tests {
                 "players": [{"name": "a", "ucid": "u1"}, {"name": "b", "ucid": "u2"}]
             })),
         });
-        let v = Viewer { side: Side::Blue, ucid: Some("u2".into()), god: false };
+        let v = Viewer { side: Side::Blue, ucid: Some("u2".into()), god: false, commander: true };
         let (f, at) = frame(&c, &v);
         assert!(at.is_some());
         let players = f["picture"]["players"].as_array().unwrap();
@@ -313,8 +324,11 @@ mod tests {
         assert_eq!(players[1]["is_self"], true);
         assert!(players.iter().all(|p| p.get("ucid").is_none()));
         assert_eq!(f["picture"]["can_command"], true);
+        // A pilot on the side who isn't a commander watches.
+        let w = Viewer { side: Side::Blue, ucid: Some("u1".into()), god: false, commander: false };
+        assert_eq!(frame(&c, &w).0["picture"]["can_command"], false);
         // The other side has nothing yet.
-        let r = Viewer { side: Side::Red, ucid: None, god: true };
+        let r = Viewer { side: Side::Red, ucid: None, god: true, commander: false };
         assert_eq!(frame(&c, &r).0["reason"], "unavailable");
     }
 }

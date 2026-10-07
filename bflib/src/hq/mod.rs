@@ -760,7 +760,15 @@ pub(crate) fn directive(ctx: &mut Context, side: Side, mut d: Directive) -> HqRe
 pub(crate) fn may_command(ctx: &Context, cfg: &HqCfg, ucid: Option<&Ucid>) -> bool {
     match ucid {
         None => true,
-        Some(u) => ctx.db.ephemeral.cfg.admins.contains_key(u) || cfg.override_rule.check(u),
+        Some(u) => {
+            ctx.db.ephemeral.cfg.admins.contains_key(u)
+                || cfg.override_rule.check(u)
+                || ctx
+                    .db
+                    .player(u)
+                    .and_then(|p| crate::command::is_commander(ctx, u, p.side))
+                    .unwrap_or(false)
+        }
     }
 }
 

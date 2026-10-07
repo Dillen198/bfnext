@@ -54,6 +54,7 @@ mod geo;
 mod news;
 mod news_llm;
 mod hq_strategist;
+mod command;
 mod groundfeed;
 mod news_image;
 mod db;
@@ -1420,9 +1421,12 @@ async fn api_groundwar(
     )
     .await?;
     let mut v: serde_json::Value = serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
+    let can = c.commands(&db, &inst);
+    let status = c.command_status(&db, &inst);
     if let Some(o) = v.as_object_mut() {
-        o.insert("can_command".into(), serde_json::json!(!c.god_mode && c.ucid().is_some()));
+        o.insert("can_command".into(), serde_json::json!(can));
         o.insert("god_mode".into(), serde_json::json!(c.god_mode));
+        o.insert("commander".into(), status);
     }
     Ok(json_response(v.to_string()))
 }
@@ -1454,6 +1458,10 @@ async fn api_groundwar_command(
         )
         .into());
     };
+    if !c.commands(&db, &inst) {
+        let status = task::block_in_place(|| command::status_of(&db, &inst, ucid)).ok().flatten();
+        return Err(websec::forbidden(command::refusal(&inst, status.as_ref())).into());
+    }
     let cmd = serde_json::to_string(&body).map_err(anyhow::Error::from)?;
     let raw = call_engine_rpc_str_optional(
         &db,
@@ -1497,7 +1505,16 @@ async fn api_hq(
     let mut v: serde_json::Value = serde_json::from_str(&raw).map_err(anyhow::Error::from)?;
     if let Some(o) = v.as_object_mut() {
         let engine_says = o.get("can_command").and_then(|b| b.as_bool()).unwrap_or(false);
-        o.insert("can_command".into(), serde_json::json!(c.session.is_admin || engine_says));
+        let commander = !c.god_mode
+            && c.ucid().map_or(false, |u| {
+                task::block_in_place(|| command::is_commander(&db, &inst, u, c.side)).unwrap_or(false)
+            });
+        if c.session.is_admin {
+            if let Some(u) = c.ucid() {
+                command::note_admin(*u);
+            }
+        }
+        o.insert("can_command".into(), serde_json::json!(c.session.is_admin || engine_says || commander));
         o.insert("can_request".into(), serde_json::json!(!c.god_mode && c.ucid().is_some()));
         o.insert("god_mode".into(), serde_json::json!(c.god_mode));
     }
@@ -3814,6 +3831,8 @@ const WIKI_FACT_KEYS: &[&str] = &[
     "alcm_mission_range",
     "campaign_events",
     "smart_commander",
+    "ground_war",
+    "command",
     "factory",
     "carrier",
     "frontline",
@@ -4227,6 +4246,33 @@ struct Caller {
 impl Caller {
     fn ucid(&self) -> Option<&dcso3::net::Ucid> {
         self.ucid.as_ref()
+    }
+
+    /// May this caller give orders on `inst` (`command`)? A pilot on a
+    /// side who is a commander there, or any dashboard admin flying for one.
+    /// An admin looking in with `?side=` has no pilot to order as.
+    fn commands(&self, db: &StatsDb, inst: &InstanceState) -> bool {
+        if self.god_mode {
+            return false;
+        }
+        let Some(u) = self.ucid() else { return false };
+        if self.session.is_admin {
+            command::note_admin(*u);
+            return true;
+        }
+        task::block_in_place(|| command::may_command(db, inst, u, self.side)).unwrap_or_else(|e| {
+            log::warn!("[{}] commander check for {u}: {e:?}", inst.id);
+            false
+        })
+    }
+
+    /// This caller's commander standing on `inst`, for the dashboard.
+    fn command_status(&self, db: &StatsDb, inst: &InstanceState) -> serde_json::Value {
+        let Some(u) = self.ucid() else { return serde_json::Value::Null };
+        match task::block_in_place(|| command::status_of(db, inst, u)) {
+            Ok(s) => serde_json::to_value(s).unwrap_or(serde_json::Value::Null),
+            Err(_) => serde_json::Value::Null,
+        }
     }
 }
 
@@ -4878,6 +4924,95 @@ async fn api_admin_perf(
         Ok(serde_json::to_string(&json)?)
     })?;
     Ok(json_response(data))
+}
+
+/// GET /api/command/me — the caller's commander standing on this server:
+/// rank, score, what unlocks command and whether they have it. `can_command`
+/// is what the order endpoints will check.
+async fn api_command_me(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let cfg = command::command_cfg(&inst);
+    Ok(json_response(
+        serde_json::json!({
+            "can_command": c.commands(&db, &inst),
+            "is_admin": c.session.is_admin,
+            "god_mode": c.god_mode,
+            "side": format!("{:?}", c.side),
+            "require_commander": cfg.require_commander,
+            "commander_rank": cfg.commander_rank,
+            "commander_score": bfprotocols::cfg::rank_min_score(cfg.commander_rank),
+            "status": c.command_status(&db, &inst),
+        })
+        .to_string(),
+    ))
+}
+
+/// GET /api/admin/commanders — every pilot's commander standing on this
+/// server, highest score first, as `{instance, commander_rank,
+/// commander_score, require_commander, pilots: [CommanderStatus]}`. The
+/// Discord bot reads this to keep the Blue/Red Commander roles in step.
+async fn api_admin_commanders(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let cfg = command::command_cfg(&inst);
+    let roster = task::block_in_place(|| command::roster(&db, &inst))?;
+    Ok(json_response(
+        serde_json::json!({
+            "instance": inst.id.to_string(),
+            "require_commander": cfg.require_commander,
+            "commander_rank": cfg.commander_rank,
+            "commander_score": bfprotocols::cfg::rank_min_score(cfg.commander_rank),
+            "pilots": *roster,
+        })
+        .to_string(),
+    ))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct CommanderGrantBody {
+    ucid: std::string::String,
+    /// "granted", "revoked", or null to go back to what their rank says.
+    grant: Option<bfprotocols::command::CommanderGrant>,
+}
+
+/// POST /api/admin/commanders — grant or withdraw one pilot's commander
+/// access whatever their rank, or clear the override. Applies on every
+/// server; each engine hears about it straight away.
+async fn api_admin_commander_grant(
+    session_id: Option<Uuid>,
+    body: CommanderGrantBody,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let session = require_admin(session_id, db.clone()).await?;
+    let ucid: dcso3::net::Ucid = match body.ucid.trim().parse() {
+        Ok(u) => u,
+        Err(_) => return Err(websec::bad_request("not a ucid").into()),
+    };
+    let rec = body.grant.map(|grant| command::GrantRecord {
+        grant,
+        by: session.username.clone(),
+        at: chrono::Utc::now(),
+    });
+    task::block_in_place(|| db.set_commander_grant(&ucid, rec.as_ref()))?;
+    command::invalidate();
+    log::info!("ADMIN: {} set commander access for {ucid} to {:?}", session.username, body.grant);
+    let ids: Vec<InstanceId> = db.instances().all().iter().map(|c| Arc::from(c.id.as_str())).collect();
+    for id in ids {
+        let st = db.state(&id);
+        command::push(&db, &st).await;
+    }
+    let status = task::block_in_place(|| command::status_of(&db, &inst, &ucid))?;
+    Ok(json_response(serde_json::json!({ "ok": true, "status": status }).to_string()))
 }
 
 /// GET /api/admin/pilot-sides — every pilot's campaign coalition on this
@@ -7657,6 +7792,7 @@ async fn main() -> Result<()> {
             if cfg.base.is_some() && !cfg.is_range() {
                 tokio::spawn(tacmap_poller(db.clone(), inst.clone(), tac.clone()));
                 tokio::spawn(groundfeed::poller(db.clone(), inst.clone(), ground.clone()));
+                tokio::spawn(command::pusher(db.clone(), inst.clone()));
                 tokio::spawn(unitdb_refresher(db.clone(), inst.clone()));
                 tokio::spawn(news_generator(
                     db.clone(),
@@ -8421,6 +8557,31 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_groundwar_command);
 
+    let command_me_route = warp::path!("api" / "command" / "me")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_command_me);
+
+    let admin_commanders_route = warp::path!("api" / "admin" / "commanders")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_commanders);
+
+    let admin_commander_grant_route = warp::path!("api" / "admin" / "commanders")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<CommanderGrantBody>())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_commander_grant);
+
     let hq_command_route = warp::path!("api" / "hq" / "command")
         .and(warp::post())
         .and(extract_session_cookie())
@@ -8639,6 +8800,9 @@ async fn main() -> Result<()> {
             .or(intel_markup_delete_route)
             .or(groundwar_command_route)
             .or(hq_command_route)
+            .or(command_me_route)
+            .or(admin_commanders_route)
+            .or(admin_commander_grant_route)
             .boxed())
         .or(admin_bot_start
             .or(admin_bot_stop)

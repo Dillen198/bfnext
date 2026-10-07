@@ -6,6 +6,7 @@ import {
 import { api, connectLiveLogs, connectEngineLogs, connectGciTranscript, type GciCall, type LogLine, type PerfRow, type PerfTimelinePoint, type BotActionResult } from '../api'
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
+import CommandersPanel from '../components/CommandersPanel'
 import { useTableSort, SortTh } from '../components/SortableTh'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -1118,6 +1119,9 @@ export default function AdminPage() {
             <PerfPanel title="" icon={null} rows={perf?.api} time={perf?.time} available={perf?.available} />
           )}
         </div>
+
+        {/* ── Who commands: rank-earned or admin-granted ── */}
+        <CommandersPanel />
 
         {/* ── cfg overrides that drifted from the DCS unit db ── */}
         <StaleOverridePanel />

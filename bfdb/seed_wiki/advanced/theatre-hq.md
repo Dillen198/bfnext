@@ -134,8 +134,9 @@ Whatever they leave out, the HQ still decides.
   main effort, the priorities and the commander's intent you see in game. It
   is shown exactly what your side can see, nothing more. Its orders expire on
   their own, and if it is down the HQ simply carries on by its rules.
-- **A human commander.** Players the server names as commanders (and server
-  admins) can take command from the dashboard's THEATRE HQ page or from chat:
+- **A human commander.** Commanders (pilots who have reached the server's
+  commander rank, or been made one by an admin) and admins can take command
+  from the dashboard's THEATRE HQ page or from chat:
 
 | Command | Effect |
 |---|---|

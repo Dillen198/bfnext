@@ -116,6 +116,10 @@ pub(crate) fn apply(
     if !cfg.command_rule.check(&ucid) {
         return Err("you are not cleared to command ground forces on this server".into());
     }
+    // Status is for everyone; orders are for commanders.
+    if !matches!(kind, CmdKind::Status) {
+        crate::command::may_order(ctx, &ucid, side)?;
+    }
     let cooldown = Duration::seconds(cfg.player_order_cooldown_secs as i64);
     let cooling = ctx
         .groundwar

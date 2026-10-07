@@ -1,5 +1,6 @@
 pub mod api;
 pub mod cfg;
+pub mod command;
 pub mod db;
 pub mod frontline;
 pub mod groundwar;

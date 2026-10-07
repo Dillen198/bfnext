@@ -70,6 +70,7 @@ pub struct Rpcs {
     _query_hq: Proc,
     _hq_directive: Proc,
     _hq_command: Proc,
+    _set_commanders: Proc,
     _ground_command: Proc,
     _query_unitdb: Proc,
     _query_gci: Proc,
@@ -892,6 +893,26 @@ impl Rpcs {
             cmd: Chars = Value::Null; "JSON HqCommand"
         )?;
         let _q = Arc::clone(&q);
+        let set_commanders = define_rpc!(
+            publisher,
+            base.append("set-commanders"),
+            "Tell the engine who commands each side (JSON Commanders: blue, red ucid lists), as bfdb works it out from rank and admin grants",
+            |mut c: RpcCall, commanders: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let commanders = match serde_json::from_str::<bfprotocols::command::Commanders>(&commanders) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("bad commanders: {e}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::SetCommanders { commanders }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            commanders: Chars = Value::Null; "JSON Commanders"
+        )?;
+        let _q = Arc::clone(&q);
         let query_ground_war = define_rpc!(
             publisher,
             base.append("query-ground-war"),
@@ -1453,6 +1474,7 @@ impl Rpcs {
             _query_hq: query_hq,
             _hq_directive: hq_directive,
             _hq_command: hq_command,
+            _set_commanders: set_commanders,
             _ground_command: ground_command,
             _query_unitdb: query_unitdb,
             _query_gci: query_gci,

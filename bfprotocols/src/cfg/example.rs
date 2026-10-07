@@ -2481,6 +2481,7 @@ impl Default for Cfg {
             emergency_repair: None,
             population_scaling: None,
             economy: EconomyCfg::default(),
+            command: CommandCfg::default(),
             ground_vehicle_cargo: FxHashMap::default(),
             smart_commander: Some(SmartCommanderCfg {
                 tick_period_secs: 60,

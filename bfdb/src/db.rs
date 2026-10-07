@@ -965,6 +965,10 @@ pub(crate) struct StatsDbInner {
     news_image_count: Tree<(std::string::String, std::string::String), u32>,
     // bfwiki content, keyed by page slug (e.g. "gameplay/objectives")
     wiki_pages: Tree<std::string::String, WikiPage>,
+    /// Admins' commander overrides, keyed by ucid. The value is a JSON
+    /// `command::GrantRecord`, not bincode, so the record can grow without
+    /// breaking the tree (see the bincode schema notes).
+    commander_grants: Tree<std::string::String, std::string::String>,
     // bfwiki uploaded images (screenshots etc.), keyed by generated Uuid
     wiki_images: Tree<Uuid, WikiImage>,
     // Recon intel (TARPS) captures, keyed (RoundId, capture Uuid). Per-round,
@@ -1298,6 +1302,7 @@ impl StatsDb {
             news_image_data: Tree::open(&db, "news_image_data")?,
             news_image_count: Tree::open(&db, "news_image_count")?,
             wiki_pages: Tree::open(&db, "wiki_pages")?,
+            commander_grants: Tree::open(&db, "commander_grants")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
             intel_captures: Tree::open(&db, "intel_captures")?,
             intel_images: Tree::open(&db, "intel_images")?,
@@ -3047,6 +3052,36 @@ impl StatsDb {
 
     pub(crate) fn wiki_get_page(&self, slug: &str) -> Result<Option<WikiPage>> {
         self.wiki_pages.get(&slug.to_string())
+    }
+
+    /// Every admin commander override, by pilot. A record that no longer
+    /// parses is skipped (and logged), not fatal.
+    pub(crate) fn commander_grants(&self) -> Result<HashMap<Ucid, crate::command::GrantRecord>> {
+        let mut out = HashMap::new();
+        for r in self.commander_grants.iter() {
+            let (k, v) = r?;
+            match (k.parse::<Ucid>(), serde_json::from_str::<crate::command::GrantRecord>(&v)) {
+                (Ok(u), Ok(g)) => {
+                    out.insert(u, g);
+                }
+                _ => log::warn!("commander_grants: skipping unreadable record for {k}"),
+            }
+        }
+        Ok(out)
+    }
+
+    /// Set (Some) or clear (None) an admin's override for one pilot.
+    pub(crate) fn set_commander_grant(&self, ucid: &Ucid, rec: Option<&crate::command::GrantRecord>) -> Result<()> {
+        let key = ucid.to_string();
+        match rec {
+            Some(r) => {
+                self.commander_grants.insert(&key, &serde_json::to_string(r)?)?;
+            }
+            None => {
+                self.commander_grants.remove(&key)?;
+            }
+        }
+        Ok(())
     }
 
     /// All pages, sorted by (section, order) -- the order bfwiki's sidebar

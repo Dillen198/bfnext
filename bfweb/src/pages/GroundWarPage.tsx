@@ -17,7 +17,7 @@ import type { MapLibreEvent, Map as MlMap } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { Aircraft, ChevronsLeft, Defend, Info, Pin, Plus, Shield, Strike, X } from '@icons'
 
-import { api, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon } from '../api'
+import { api, type CommandMe, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { useInstance } from '../context/InstanceContext'
 import { useTheme } from '../context/ThemeContext'
@@ -32,6 +32,7 @@ import { installVehicleImages } from './groundwar/sprites'
 import { NEAR_ZOOM, reducedMotion, type Side } from './groundwar/theme'
 import { useGroundFeed } from './groundwar/useGroundFeed'
 import { createGroundwarMock } from './groundwarMock'
+import { rankFor } from '../ranks'
 import './groundwar/groundwar.css'
 
 type Mode = 'none' | 'attack' | 'defend' | 'raise'
@@ -103,6 +104,15 @@ export default function GroundWarPage(): ReactElement {
     refetchInterval: 60_000,
   })
   const side: Side = pic?.side ?? 'Blue'
+  // What stands between this viewer and command: rank, or an admin's say-so.
+  const { data: me } = useQuery<CommandMe>({
+    queryKey: ['command-me', instance],
+    queryFn: api.command.me,
+    enabled: !mock && !!pic && !pic.can_command && !pic.god_mode,
+    staleTime: 60_000,
+    retry: false,
+  })
+  const notCommander = notCommanderText(me)
 
   // View preferences, per browser.
   const [look, setLookState] = useState<MapLook>(() => loadPref('gw.look', 'sat'))
@@ -170,12 +180,12 @@ export default function GroundWarPage(): ReactElement {
 
   const lockReason = !pic || pic.can_command
     ? null
-    : pic.god_mode ? 'ADMIN VIEW · ORDERS NEED A PILOT ON A SIDE' : 'VIEW ONLY'
+    : pic.god_mode ? 'ADMIN VIEW · ORDERS NEED A PILOT ON A SIDE' : notCommander ? 'VIEW ONLY · COMMANDERS GIVE ORDERS' : 'VIEW ONLY'
 
   const viewOnly = () =>
     toast(pic?.god_mode
       ? 'Admin view: you can watch either side, but orders need a pilot registered on one.'
-      : 'View only: link your Discord (-linkme in DCS chat) and take a slot this campaign to give orders.', false)
+      : notCommander ?? 'View only: link your Discord (-linkme in DCS chat) and take a slot this campaign to give orders.', false)
   const issue = async (cmds: GroundCommand[]) => {
     if (!pic || !cmds.length) return
     if (!pic.can_command) return viewOnly()
@@ -512,7 +522,11 @@ export default function GroundWarPage(): ReactElement {
   }
 
   // ── Command card ───────────────────────────────────────────────────────
-  const noCmd = pic.can_command ? null : pic.god_mode ? 'Admin view: orders need a pilot on a side' : 'View only: link Discord and fly this campaign to command'
+  const noCmd = pic.can_command
+    ? null
+    : pic.god_mode
+      ? 'Admin view: orders need a pilot on a side'
+      : notCommander ? 'Commanders give orders' : 'View only: link Discord and fly this campaign to command'
   const selReason = noCmd ?? needSel
   const anyRaisable = ownObjs(pic).some((o) => (o.can_raise ?? 0) > 0)
   const buttons: CmdButton[] = [
@@ -613,7 +627,7 @@ export default function GroundWarPage(): ReactElement {
               ? 'The game server stopped answering. This is the last picture it sent.'
               : pic.god_mode
                 ? `Admin view of ${side}: you can watch either side, but orders need a pilot registered on one.`
-                : 'View only: link your Discord (-linkme in DCS chat) and take a slot this campaign to give orders.'}
+                : notCommander ?? 'View only: link your Discord (-linkme in DCS chat) and take a slot this campaign to give orders.'}
           </div>
         )}
         {mode !== 'none' && (
@@ -674,4 +688,18 @@ function Standby({ pic, reason, error, link }: { pic: GroundPicture | null; reas
       </div>
     </div>
   )
+}
+
+/** Why a pilot on a side can't give orders, from /api/command/me: what rank
+ *  unlocks command and how far off it is. Null when it isn't rank (not linked,
+ *  or the server doesn't require commanders). */
+function notCommanderText(me: CommandMe | undefined): string | null {
+  if (!me || me.can_command || !me.require_commander) return null
+  const st = me.status
+  if (st?.grant === 'revoked') return 'An admin has withdrawn your commander access on this server.'
+  const need = rankFor(me.commander_score, me.side).title
+  if (!st) return `Commanders give orders here. Command unlocks at ${need} (campaign score ${me.commander_score}).`
+  const now = rankFor(st.score, me.side).title
+  return `Commanders give orders here. Command unlocks at ${need} (campaign score ${me.commander_score}); `
+    + `you are ${now} with ${Math.round(st.score)}. An admin can also grant it.`
 }

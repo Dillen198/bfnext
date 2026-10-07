@@ -422,6 +422,48 @@ export interface GroundPicture {
   can_command: boolean
   /** Added by bfdb: an admin looking in at a side with ?side=. */
   god_mode: boolean
+  /** Added by bfdb (GET /api/groundwar only): the viewer's commander standing. */
+  commander?: CommanderStatus | null
+}
+
+/** One pilot's commander standing on a server (`bfprotocols::command`). */
+export interface CommanderStatus {
+  ucid: string
+  name: string
+  side: 'Blue' | 'Red' | null
+  score: number
+  tier: number
+  /** The tier that unlocks command, and the score it starts at. */
+  commander_rank: number
+  commander_score: number
+  /** An admin's override. */
+  grant: 'granted' | 'revoked' | null
+  grant_by: string | null
+  grant_at: string | null
+  /** A dashboard admin: commands whatever their rank. */
+  admin?: boolean
+  commander: boolean
+}
+
+/** GET /api/command/me */
+export interface CommandMe {
+  can_command: boolean
+  is_admin: boolean
+  god_mode: boolean
+  side: 'Blue' | 'Red'
+  require_commander: boolean
+  commander_rank: number
+  commander_score: number
+  status: CommanderStatus | null
+}
+
+/** GET /api/admin/commanders */
+export interface CommanderRoster {
+  instance: string
+  require_commander: boolean
+  commander_rank: number
+  commander_score: number
+  pilots: CommanderStatus[]
 }
 
 /** One frame of /ws/groundwar. */
@@ -1851,6 +1893,14 @@ export const api = {
     get<SituationReport>(side ? `/situation?side=${side}` : '/situation'),
   // Coalition-locked like `situation`; orders are checked again by the engine
   // against the side the caller's own pilot is on.
+  /** Commander access: earned by rank, or granted by an admin. */
+  command: {
+    me: () => get<CommandMe>('/command/me'),
+    roster: () => get<CommanderRoster>('/admin/commanders'),
+    /** grant = null goes back to what the pilot's rank says. */
+    setGrant: (ucid: string, grant: 'granted' | 'revoked' | null) =>
+      post<{ ok: boolean; status: CommanderStatus | null }>('/admin/commanders', { ucid, grant }),
+  },
   hq: {
     view: (side?: 'Blue' | 'Red') => get<HqView>(side ? `/hq?side=${side}` : '/hq'),
     command: (cmd: HqCommand, side?: 'Blue' | 'Red') =>

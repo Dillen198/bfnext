@@ -207,10 +207,14 @@ fn racetrack_quad(center: Vector2, heading_deg: f64, half_len: f64, half_wid: f6
 
 /// Compute a start and end point for an arrow that represents a convoy's
 /// direction of travel, centred on `pos` with a fixed length of `len_m`.
-fn direction_arrow(pos: Vector2, heading_deg: f64, len_m: f64) -> (Vector2, Vector2) {
-    let hdg = heading_deg.to_radians();
-    let dir = Vector2::new(hdg.sin(), hdg.cos());
-    (pos - dir * (len_m * 0.5), pos + dir * (len_m * 0.5))
+/// An arrow `len_m` long centred on `pos`, pointing from `from` toward `to`,
+/// as (start, end) for `ArrowSpec`. DCS draws the head at `start`, so that is
+/// the forward end.
+fn direction_arrow(pos: Vector2, from: Vector2, to: Vector2, len_m: f64) -> (Vector2, Vector2) {
+    let d = to - from;
+    let n = d.norm();
+    let dir = if n > 1. { d / n } else { Vector2::new(1., 0.) };
+    (pos + dir * (len_m * 0.5), pos - dir * (len_m * 0.5))
 }
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -416,7 +420,7 @@ impl SeaRouteMarks {
             None,
         );
 
-        let (a_start, a_end) = direction_arrow(midpoint, 0., 5_000.);
+        let (a_start, a_end) = direction_arrow(midpoint, origin, destination, 5_000.);
         let arrow = MarkId::new();
         msgs.arrow_to(
             sf,

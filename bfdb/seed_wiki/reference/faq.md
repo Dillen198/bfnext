@@ -87,6 +87,14 @@ low on fuel and ammunition and the AI pulled it back to resupply. Keep the road
 to a friendly base with supply open behind it. See
 [Ground War](../advanced/ground-war.md).
 
+### Q: How do I become a commander?
+**A**: Earn it. Command unlocks at rank tier {{cfg:command.commander_rank|4}}
+(Major, a campaign score of 50 at the default), the same score the leaderboard
+ranks you by; captures, logistics and kills all count. An admin can also make
+you one. Commanders give the ground war's orders, can take over the Theatre
+HQ, and get the Blue or Red Commander role on Discord. The GROUND COMMAND page
+tells you how far off you are.
+
 ### Q: Who decides what the AI does?
 **A**: On servers running it, each side's [Theatre HQ](../advanced/theatre-hq.md):
 posture, main effort, air packages, fires, logistics. Ask it for support from

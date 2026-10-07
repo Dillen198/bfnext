@@ -129,6 +129,14 @@ rolled up overnight.
 
 ## Commanding a formation yourself
 
+**Orders are for commanders.** You become one by rank: command unlocks at
+rank tier {{cfg:command.commander_rank|4}} (Major, a campaign score of 50 at
+the default), the same score and ranks the leaderboard shows. An admin can
+also make you a commander, or take it away. Anyone on your side can watch the
+ground war and read the status report; only commanders can give orders, raise
+formations or take over the HQ. Commanders get the **Blue Commander** or
+**Red Commander** role on Discord.
+
 The dashboard's **GROUND COMMAND** page is the battlefield your coalition
 sees, live: your formations and every vehicle in them, enemies where you have
 spotted them, battles, and your side's pilots in the air. Your own aircraft
@@ -149,7 +157,12 @@ leave it open.
 Your order puts the formation under your command for
 {{cfg:ground_war.player_order_lock_secs|3600}} seconds. The AI won't touch it
 until then, or until you hand it back. Your whole side is told who ordered
-what.
+what. While your order stands the formation is put into DCS, so you can see it
+on the ground and fly over it.
+
+Formations are made only of vehicles that can drive. Emplaced and towed guns
+(a KS-19, a ZU-23 emplacement, a mortar) stay at their base: DCS won't move
+them, whatever they are told.
 
 Each formation has a pin on your side's F10 map showing its orders and
 strength, with an arrow toward the base it is attacking. The enemy doesn't

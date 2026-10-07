@@ -2576,6 +2576,13 @@ class FowlEngine(Plugin):
         Now a pair's rosters are merged first: a member keeps a role if ANY
         server using it backs them.
         """
+        # The coalition pair mirrors registrations; the commander pair
+        # (blue_commander / red_commander) mirrors who bfdb says commands --
+        # rank or an admin's grant. Same machinery, so the same guards.
+        for kind in ROLE_KINDS:
+            await self._sync_role_kind(kind)
+
+    async def _sync_role_kind(self, kind: dict):
         groups: dict = {}
         for server in self.bot.servers.values():
             try:
@@ -2592,14 +2599,14 @@ class FowlEngine(Plugin):
                                     f"FowlEngine: {server.name} is a training range -- "
                                     f"ignoring coalition_roles (set it to null in its section)")
                     continue
-                roles = self._coalition_role_pair(server, cr)
+                roles = self._coalition_role_pair(server, cr, kind["keys"])
                 if not roles:
                     continue
                 key = tuple(sorted((side, r.id) for side, r in roles.items()))
                 g = groups.setdefault(key, {"roles": roles, "cr": cr, "servers": [],
                                             "sides": {}, "complete": True})
                 g["servers"].append(server.name)
-                sides = await self._fetch_pilot_sides(server, config)
+                sides = await kind["fetch"](self, server, config)
                 if sides is None:
                     # One unreadable roster makes revoking for the whole pair
                     # unsafe: its pilots would look unregistered.
@@ -2608,23 +2615,23 @@ class FowlEngine(Plugin):
                 for ucid, side in sides.items():
                     g["sides"].setdefault(ucid, set()).add(side)
             except Exception as ex:
-                self.log.error(f"FowlEngine: coalition role sync for {server.name}: {ex}")
+                self.log.error(f"FowlEngine: {kind['label']} role sync for {server.name}: {ex}")
         for g in groups.values():
             if len(g["servers"]) > 1:
                 self._warn_once(
-                    ",".join(g["servers"]), 'coalition_roles_shared',
-                    f"FowlEngine: {', '.join(g['servers'])} share one pair of coalition roles; "
+                    ",".join(g["servers"]), f'{kind["label"]}_roles_shared',
+                    f"FowlEngine: {', '.join(g['servers'])} share one pair of {kind['label']} roles; "
                     f"syncing them as one (a pilot keeps a role if any of them backs it). "
-                    f"Give each server its own pair if the briefing channels should be per server.")
+                    f"Give each server its own pair if the roles should be per server.")
             try:
-                await self._apply_coalition_roles(g)
+                await self._apply_coalition_roles(g, kind)
             except Exception as ex:
-                self.log.error(f"FowlEngine: coalition role sync for "
+                self.log.error(f"FowlEngine: {kind['label']} role sync for "
                                f"{', '.join(g['servers'])}: {ex}")
 
-    def _coalition_role_pair(self, server, cr: dict) -> dict:
+    def _coalition_role_pair(self, server, cr: dict, keys=(("Blue", "blue"), ("Red", "red"))) -> dict:
         roles = {}
-        for side, key in (("Blue", "blue"), ("Red", "red")):
+        for side, key in keys:
             spec = cr.get(key)
             if not spec:
                 continue
@@ -2634,7 +2641,7 @@ class FowlEngine(Plugin):
                     roles[side] = role
                     break
             else:
-                self.log.warning(f"FowlEngine: coalition role {spec!r} ({side}) not found "
+                self.log.warning(f"FowlEngine: role {spec!r} ({key}) not found "
                                  f"in any guild -- sync for {server.name} is incomplete.")
         return roles
 
@@ -2659,7 +2666,33 @@ class FowlEngine(Plugin):
         return {p["ucid"]: p["side"] for p in (data.get("pilots") or [])
                 if p.get("ucid") and p.get("side") in ("Blue", "Red")}
 
-    async def _apply_coalition_roles(self, g: dict):
+    async def _fetch_commander_sides(self, server, config: dict):
+        """ucid -> "Blue"/"Red" for this server's commanders (earned by rank
+        or granted by an admin, as bfdb works it out), or None when bfdb could
+        not give a usable answer."""
+        api_url = config.get("api_url", "http://localhost:8880")
+        username = config.get("admin_username", "")
+        password = config.get("admin_password", "")
+        if not username or not password:
+            return None
+        status, data = await bfdb_get_cached(
+            api_url, username, password,
+            srv_path("/api/admin/commanders", server.name))
+        if status == 404:
+            # A bfdb from before commander access: nothing to mirror yet.
+            self._warn_once(server.name, 'commander_roles_404',
+                            f"FowlEngine: {server.name}'s bfdb has no /api/admin/commanders "
+                            f"yet -- commander roles wait for a bfdb update.")
+            return None
+        if status != 200 or not isinstance(data, dict):
+            self.log.warning(f"FowlEngine: /api/admin/commanders -> {status} for {server.name}")
+            return None
+        return {p["ucid"]: p["side"] for p in (data.get("pilots") or [])
+                if p.get("commander") and p.get("ucid") and p.get("side") in ("Blue", "Red")}
+
+    async def _apply_coalition_roles(self, g: dict, kind: dict = None):
+        kind = kind or ROLE_KINDS[0]
+        label = kind["label"]
         roles, cr, sides = g["roles"], g["cr"], g["sides"]
         name = ", ".join(g["servers"])
         # Discord member id -> (member, sides the engine says they fly on any
@@ -2685,12 +2718,12 @@ class FowlEngine(Plugin):
                 target = roles[side]
                 try:
                     if target not in member.roles:
-                        await member.add_roles(target, reason="Fowl Engine: registered coalition")
+                        await member.add_roles(target, reason=f"Fowl Engine: {kind['granted']}")
                         granted += 1
                 except discord.Forbidden:
                     self.log.error(
                         f"FowlEngine: cannot manage {target.name} -- the bot's own role must sit "
-                        f"ABOVE the coalition roles in the guild's role list, and it needs "
+                        f"ABOVE the {label} roles in the guild's role list, and it needs "
                         f"Manage Roles.")
                     return
                 except Exception as ex:
@@ -2701,7 +2734,7 @@ class FowlEngine(Plugin):
                 other = roles.get("Red" if "Blue" in member_sides else "Blue")
                 if other is not None and other in member.roles:
                     try:
-                        await member.remove_roles(other, reason="Fowl Engine: switched coalition")
+                        await member.remove_roles(other, reason=f"Fowl Engine: {label}, switched coalition")
                         revoked += 1
                     except Exception as ex:
                         self.log.debug(f"FowlEngine: role update for {member} failed: {ex}")
@@ -2718,7 +2751,9 @@ class FowlEngine(Plugin):
         # that has not started -- not "nobody is registered", and acting on it
         # would clear the coalition roles for the whole guild. The cap covers
         # the partial version of the same failure.
-        if cr.get("revoke_when_unregistered", True) and sides and g["complete"]:
+        # An empty coalition roster means bfdb has no data; an empty commander
+        # roster that bfdb answered for is real (nobody commands yet).
+        if cr.get("revoke_when_unregistered", True) and (sides or kind["empty_ok"]) and g["complete"]:
             holders = sum(len(r.members) for r in roles.values())
             cap = max(REVOKE_MIN_PER_TICK, int(holders * REVOKE_MAX_FRACTION))
             hit_cap = False
@@ -2732,7 +2767,7 @@ class FowlEngine(Plugin):
                         break
                     try:
                         await member.remove_roles(
-                            role, reason="Fowl Engine: no matching coalition registration")
+                            role, reason=f"Fowl Engine: {kind['revoked']}")
                         revoked += 1
                     except discord.Forbidden:
                         self.log.error(f"FowlEngine: cannot remove {role.name} from {member}")
@@ -2743,17 +2778,17 @@ class FowlEngine(Plugin):
                     break
             if hit_cap:
                 self.log.error(
-                    f"FowlEngine: coalition role sync for {name} wanted to revoke more "
+                    f"FowlEngine: {label} role sync for {name} wanted to revoke more "
                     f"than {cap} of {holders} role holders in one pass and stopped. That is "
                     f"almost always bfdb answering with a stale or partial roster, not that "
-                    f"many people genuinely unregistering -- check /api/admin/pilot-sides "
+                    f"many people genuinely losing the role -- check {kind['endpoint']} "
                     f"before assuming the roles are wrong.")
         elif cr.get("revoke_when_unregistered", True):
             self.log.warning(
-                f"FowlEngine: no complete pilot-sides roster for {name}; skipping "
-                f"revocation rather than stripping coalition roles.")
+                f"FowlEngine: no complete {kind['endpoint']} roster for {name}; skipping "
+                f"revocation rather than stripping {label} roles.")
         if granted or revoked:
-            self.log.info(f"FowlEngine: coalition roles for {name} -- "
+            self.log.info(f"FowlEngine: {label} roles for {name} -- "
                           f"{granted} granted, {revoked} revoked")
 
     @sync_coalition_roles.before_loop
@@ -4372,3 +4407,18 @@ class FowlEngine(Plugin):
 
 async def setup(bot: DCSServerBot):
     await bot.add_cog(FowlEngine(bot))
+
+
+# The Discord role pairs the plugin mirrors from bfdb: the coalition each pilot
+# is registered to, and (when blue_commander / red_commander are configured)
+# who commands each side.
+ROLE_KINDS = [
+    {"label": "coalition", "keys": (("Blue", "blue"), ("Red", "red")),
+     "fetch": FowlEngine._fetch_pilot_sides, "endpoint": "/api/admin/pilot-sides",
+     "granted": "registered coalition", "revoked": "no matching coalition registration",
+     "empty_ok": False},
+    {"label": "commander", "keys": (("Blue", "blue_commander"), ("Red", "red_commander")),
+     "fetch": FowlEngine._fetch_commander_sides, "endpoint": "/api/admin/commanders",
+     "granted": "commander of their coalition", "revoked": "no longer a commander",
+     "empty_ok": True},
+]

@@ -36,6 +36,7 @@ use std::{
 };
 
 mod balance;
+mod command;
 mod economy;
 mod example;
 mod ground_war;
@@ -45,6 +46,7 @@ pub use hq::{EscortPolicy, HqAirCfg, HqAirTemplate, HqCfg, HqCostsCfg, HqPackage
 
 pub use balance::{fmt_mult, EmergencyRepairCfg, PopulationScalingCfg};
 pub use economy::{split_by_weight, EconomyCfg};
+pub use command::{rank_min_score, rank_tier, CommandCfg, RANK_MIN_SCORE};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default, schemars::JsonSchema)]
 pub struct Vehicle(pub String);
@@ -4198,6 +4200,10 @@ pub struct Cfg {
     /// commander and the players. See `GroundWarCfg`. Absent = off.
     #[serde(default)]
     pub ground_war: Option<GroundWarCfg>,
+    /// Who may command: commander access earned by rank, or granted by an
+    /// admin (`CommandCfg`). On with defaults when absent.
+    #[serde(default)]
+    pub command: CommandCfg,
 }
 
 /// See `Cfg::modern_war`. Each part is independent; leave one out to turn it

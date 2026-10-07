@@ -962,6 +962,12 @@ impl Db {
             if g.kind != Some(GroupCategory::Ground) {
                 continue;
             }
+            // Emplaced and towed guns (a KS-19, a ZU-23 emplacement, a
+            // mortar) stay put whatever they are told, and hold their whole
+            // group with them.
+            if !self.group_can_drive(gid) {
+                continue;
+            }
             let (alive, total) = self.group_health(gid)?;
             // A group that has lost half its vehicles stays to be rebuilt.
             if alive == 0 || alive * 2 < total {
@@ -1782,35 +1788,8 @@ impl Db {
             .remove_cow(&id)
             .ok_or_else(|| anyhow!("no such formation {id}"))?;
         let rehome = at != f.home;
-        let spawn_now = self
-            .persisted
-            .objectives
-            .get(&at)
-            .map_or(false, |o| o.owner == f.side && o.spawned);
         for gid in &f.groups {
-            let Some(g) = self.persisted.groups.get(gid) else { continue };
-            let name = g.name.clone();
-            let was_live = rt.live.remove(gid);
-            if was_live {
-                self.ephemeral.push_despawn(*gid, Despawn::GroupByName(name.to_string()));
-            }
-            self.attach_to_objective(*gid, f.side, at, rehome)?;
-            let Some(g) = self.persisted.groups.get(gid) else { continue };
-            let uids: SmallVec<[UnitId; 16]> = g.units.into_iter().copied().collect();
-            let mut alive = false;
-            for uid in uids {
-                let u = unit_mut!(self, uid)?;
-                u.pos = u.spawn_pos;
-                u.heading = u.spawn_heading;
-                u.position = u.spawn_position;
-                alive |= !u.dead;
-            }
-            if alive && spawn_now {
-                // After the despawn above has gone through, or DCS keeps the
-                // old group where it stood.
-                let at_ts = now + Duration::seconds(if was_live { 10 } else { 1 });
-                self.ephemeral.delayspawnq.entry(at_ts).or_default().push(*gid);
-            }
+            self.rehome_group(rt, *gid, f.side, at, rehome, now)?;
         }
         if let Err(e) = self.update_objective_status(&at, now) {
             warn!("ground war: status of {at} after {} rejoined: {e:?}", f.name);
@@ -1819,6 +1798,91 @@ impl Db {
         self.ephemeral.dirty();
         info!("ground war: {:?} {} rejoined the garrison at {at}", f.side, f.name);
         Ok(())
+    }
+
+    /// Put one of a formation's groups back in `at`'s garrison: out of DCS
+    /// if it was live, back at its post, and spawned there again if the
+    /// base is spawned. `rehome` moves it to a base that isn't its own.
+    fn rehome_group(
+        &mut self,
+        rt: &mut FormationRt,
+        gid: GroupId,
+        side: Side,
+        at: ObjectiveId,
+        rehome: bool,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let Some(g) = self.persisted.groups.get(&gid) else { return Ok(()) };
+        let name = g.name.clone();
+        rt.spawnq.retain(|(_, g)| *g != gid);
+        let was_live = rt.live.remove(&gid);
+        if was_live {
+            self.ephemeral.push_despawn(gid, Despawn::GroupByName(name.to_string()));
+        }
+        self.attach_to_objective(gid, side, at, rehome)?;
+        let Some(g) = self.persisted.groups.get(&gid) else { return Ok(()) };
+        let uids: SmallVec<[UnitId; 16]> = g.units.into_iter().copied().collect();
+        let mut alive = false;
+        for uid in uids {
+            let u = unit_mut!(self, uid)?;
+            u.pos = u.spawn_pos;
+            u.heading = u.spawn_heading;
+            u.position = u.spawn_position;
+            alive |= !u.dead;
+        }
+        let spawn_now = self
+            .persisted
+            .objectives
+            .get(&at)
+            .map_or(false, |o| o.owner == side && o.spawned);
+        if alive && spawn_now {
+            // After the despawn above has gone through, or DCS keeps the old
+            // group where it stood.
+            let at_ts = now + Duration::seconds(if was_live { 10 } else { 1 });
+            self.ephemeral.delayspawnq.entry(at_ts).or_default().push(gid);
+        }
+        Ok(())
+    }
+
+    /// Every unit in `gid` can drive (`crate::unitdb::can_drive`).
+    fn group_can_drive(&self, gid: &GroupId) -> bool {
+        self.persisted.groups.get(gid).map_or(true, |g| {
+            g.units
+                .into_iter()
+                .filter_map(|u| self.persisted.units.get(u))
+                .all(|u| crate::unitdb::can_drive(&u.typ.0))
+        })
+    }
+
+    /// Send home any group a formation can't take with it. Formations raised
+    /// before towed and emplaced guns were kept out of them could carry a
+    /// KS-19 battery that sat at the gate in DCS while the map moved it on.
+    /// A formation left with nothing that drives is stood down quietly -- it
+    /// wasn't destroyed.
+    fn shed_immobile(&mut self, rt: &mut FormationRt, now: DateTime<Utc>) {
+        let stuck: SmallVec<[(FormationId, GroupId); 8]> = self
+            .formations()
+            .flat_map(|f| f.groups.iter().map(move |g| (f.id, *g)))
+            .filter(|(_, g)| !self.group_can_drive(g))
+            .collect();
+        for (id, gid) in stuck {
+            let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
+            f.groups.retain(|g| *g != gid);
+            let (side, home, name, empty) = (f.side, f.home, f.name.clone(), f.groups.is_empty());
+            if let Err(e) = self.rehome_group(rt, gid, side, home, false, now) {
+                warn!("ground war: sending {gid} of {name} home: {e:?}");
+            }
+            info!("ground war: {side:?} {name} left group {gid} at {home}: it can't drive");
+            if empty {
+                self.persisted.formations.remove_cow(&id);
+                self.forget_formation(rt, id);
+                info!("ground war: {side:?} {name} stood down: nothing left in it can drive");
+            }
+            if let Err(e) = self.update_objective_status(&home, now) {
+                warn!("ground war: status of {home} after {name} left a group: {e:?}");
+            }
+            self.ephemeral.dirty();
+        }
     }
 
     fn forget_formation(&mut self, rt: &mut FormationRt, id: FormationId) {
@@ -2871,17 +2935,20 @@ impl Db {
                     return None;
                 }
                 let dir = d / n;
-                let start = pos + dir * 800.;
-                let end = pos + dir * (n - 1_500.).min(10_000.);
+                let tail = pos + dir * 800.;
+                let head = pos + dir * (n - 1_500.).min(10_000.);
                 let v3 = |p: Vector2| LuaVec3(Vector3::new(p.x, 0., p.y));
                 let col = crate::mapcolor::side_color(side, 0.85);
                 let id = MarkId::new();
                 self.ephemeral.msgs().arrow_to(
                     SideFilter::from(side),
                     id,
+                    // DCS draws an arrow's head at `start` (the supply
+                    // arrows in markup.rs do the same), so the head -- the
+                    // end toward the target -- goes there.
                     ArrowSpec {
-                        start: v3(start),
-                        end: v3(end),
+                        start: v3(head),
+                        end: v3(tail),
                         color: col,
                         fill_color: crate::mapcolor::side_color(side, 0.35),
                         line_type: LineType::Solid,
@@ -2916,6 +2983,7 @@ impl Db {
         self.sync_live(rt, lua, now);
         // Before cleanup, which takes a wiped-out formation's groups away.
         self.wreck_fires(rt, &cfg, lua, now);
+        self.shed_immobile(rt, now);
         self.cleanup(rt, &cfg, now);
         self.advance_on_map(rt, &cfg, dt);
         self.unstick_live(rt, lua, now);
