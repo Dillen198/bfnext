@@ -4513,10 +4513,11 @@ async def setup(bot: DCSServerBot):
 
 # The Discord roles the plugin mirrors from bfdb: the coalition each pilot is
 # registered to (a Blue/Red pair per server), and -- when `commander` is
-# configured -- one Commander role for whoever commands on any server. Every
-# server names the same Commander role, so they are synced as one: a member
-# keeps it while any server backs them, and their side stays the coalition
-# role's business (it follows a side switch on its own).
+# configured -- a Commander role for whoever commands on that server (one role
+# per server is the recommended setup; servers that name the same role are
+# synced as one, so it can also be a single Discord-wide role). Which side a
+# commander commands stays the coalition role's business: it follows a side
+# switch on its own.
 ROLE_KINDS = [
     {"label": "coalition", "keys": (("Blue", "blue"), ("Red", "red")),
      "fetch": FowlEngine._fetch_pilot_sides, "endpoint": "/api/admin/pilot-sides",

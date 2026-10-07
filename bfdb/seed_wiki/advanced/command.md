@@ -15,7 +15,7 @@ commander, or take it away.
 
 Rank is campaign-wide, so it counts on every server, for whichever side you
 are flying for there. Switch sides and you command your new side. On
-Discord, commanders get the **Commander** role; your Blue or Red role still
+Discord, commanders get that server's **Commander** role; your Blue or Red role still
 shows your side, server by server, and follows you when you switch.
 
 The page tells you where you stand: what unlocks command, and how far off you

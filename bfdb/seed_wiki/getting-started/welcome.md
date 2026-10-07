@@ -33,7 +33,7 @@ Unlike traditional DCS missions that reset after each flight:
 - Team-based objectives reward cooperation
 
 ### Commander System
-Some servers run a dedicated **Commander** role — a player who allocates points, assigns objectives, and directs coalition strategy at a higher level than individual sorties. Check your server's rules/Discord to see if this role is active and how to take it.
+Pilots who reach the server's commander rank (Major by default), or whom an admin appoints, become **commanders**: they order the side's ground formations, AI flights, batteries, convoys and the Theatre HQ from the dashboard's COMMAND page, and get the server's Commander role on Discord. See [Command](../advanced/command.md).
 
 ## Next Steps
 
