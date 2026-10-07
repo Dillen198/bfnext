@@ -3220,9 +3220,42 @@ fn audit_who(ctx: &Context, caller: &Caller) -> std::string::String {
     }
 }
 
+/// The first few dozen characters of a command's Debug form, for a log line,
+/// without formatting the rest of a large one.
+fn short_debug(cmd: &AdminCommand) -> std::string::String {
+    struct Capped(std::string::String);
+    impl std::fmt::Write for Capped {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            let room = 60usize.saturating_sub(self.0.len());
+            if room == 0 {
+                return Err(std::fmt::Error);
+            }
+            self.0.push_str(&s[..s.len().min(room)]);
+            Ok(())
+        }
+    }
+    let mut w = Capped(std::string::String::new());
+    let _ = std::fmt::Write::write_fmt(&mut w, format_args!("{cmd:?}"));
+    w.0
+}
+
+/// When the last "commands are backing up" line was logged (unix seconds).
+static BACKLOG_SAID: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
 pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<AdminResult> {
     while let Some((cmd, ch)) = ctx.external_admin_commands.pop() {
         ctx.admin_commands.push((Caller::External(ch), cmd));
+    }
+    // More waiting than one tick takes means bfdb's queries are waiting
+    // seconds for an answer -- and timing out. Say so, once a minute.
+    let waiting = ctx.admin_commands.len();
+    if waiting > ADMIN_COMMANDS_PER_TICK {
+        let now = Utc::now().timestamp();
+        let said = BACKLOG_SAID.load(std::sync::atomic::Ordering::Relaxed);
+        if now - said >= 60 {
+            BACKLOG_SAID.store(now, std::sync::atomic::Ordering::Relaxed);
+            warn!("admin commands backing up: {waiting} waiting, {ADMIN_COMMANDS_PER_TICK} run per tick");
+        }
     }
     let n = ctx.admin_commands.len().min(ADMIN_COMMANDS_PER_TICK);
     let batch: SmallVec<[(Caller, AdminCommand); ADMIN_COMMANDS_PER_TICK]> =
@@ -3236,6 +3269,8 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
             info!(target: AUDIT_TARGET, "[ADMIN-AUDIT] {who} is running {what}");
         }
         let mut rep = Replies::default();
+        let label = short_debug(&cmd);
+        let started = std::time::Instant::now();
         // Per command, so one failure can't abort the batch: a `?` in here
         // used to drop every command queued behind it, and an RPC caller in
         // that batch never got an answer at all.
@@ -3246,6 +3281,12 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 AdminResult::Continue
             }
         };
+        // Everything here runs inside one DCS frame, so a slow query stalls
+        // the server and every RPC queued behind it.
+        let took = started.elapsed();
+        if took > std::time::Duration::from_millis(250) {
+            warn!("admin command took {} ms: {label}", took.as_millis());
+        }
         if let Some((who, what)) = audit {
             info!(
                 target: AUDIT_TARGET,

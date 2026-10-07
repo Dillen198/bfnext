@@ -1499,6 +1499,25 @@ impl Db {
         self.formations().any(|f| f.side != side && dist(f.pos, pos) <= r)
     }
 
+    /// Is any enemy ground unit that is in DCS right now within `r` of `pos`
+    /// -- a garrison, a SAM site, troops, a convoy? A live formation that
+    /// close is shooting at it, and DCS halts ground units to fire.
+    fn enemy_live_ground_near(&self, side: Side, pos: Vector2, r: f64) -> bool {
+        self.ephemeral.object_id_by_uid.keys().any(|uid| {
+            self.persisted.units.get(uid).map_or(false, |u| {
+                !u.dead
+                    && u.side != side
+                    && u.side != Side::Neutral
+                    && dist(u.pos, pos) <= r
+                    && self
+                        .persisted
+                        .groups
+                        .get(&u.group)
+                        .map_or(false, |g| g.kind == Some(GroupCategory::Ground))
+            })
+        })
+    }
+
     /// In contact with the enemy: an enemy formation, or the objective it is
     /// attacking, within `ENGAGED_M`.
     pub fn formation_engaged(&self, f: &Formation) -> bool {
@@ -1529,8 +1548,10 @@ impl Db {
             .collect();
         for id in ids {
             let f = self.persisted.formations.get(&id).unwrap();
-            let (pos, engaged, dest, side, name) =
-                (f.pos, self.engaged(f), f.destination(), f.side, f.name.clone());
+            // Fighting is not being stuck: DCS stops ground units to shoot,
+            // at an enemy formation or at any enemy unit in DCS in reach.
+            let engaged = self.engaged(f) || self.enemy_live_ground_near(f.side, f.pos, ENGAGED_M);
+            let (pos, dest, side, name) = (f.pos, f.destination(), f.side, f.name.clone());
             let e = rt.stall.entry(id).or_insert((pos, now, 0));
             if dist(pos, e.0) >= STALL_MOVE_M || engaged {
                 e.0 = pos;

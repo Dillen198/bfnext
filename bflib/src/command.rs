@@ -188,7 +188,8 @@ fn station_args(kind: &ActionKind, args: WithPosAndGroup<()>) -> Option<(ActionK
 }
 
 /// One group as an asset: its units where DCS has them (live) or where the
-/// engine last placed them.
+/// engine last placed them. `read_live` false skips asking DCS, for groups
+/// that never move (a base's battery): the query runs inside the DCS frame.
 fn asset_of(
     ctx: &Context,
     lua: MizLua,
@@ -197,6 +198,7 @@ fn asset_of(
     kind: AssetKind,
     role: &str,
     orders: Vec<Verb>,
+    read_live: bool,
 ) -> Option<Asset> {
     let g = ctx.db.persisted.groups.get(&gid)?;
     let mut units: Vec<AssetUnit> = vec![];
@@ -208,10 +210,12 @@ fn asset_of(
         if u.dead {
             continue;
         }
+        let spawned = ctx.db.ephemeral.get_object_id_by_uid(uid).is_some();
         let read = ctx
             .db
             .ephemeral
             .get_object_id_by_uid(uid)
+            .filter(|_| read_live)
             .and_then(|oid| Unit::get_instance(lua, oid).ok())
             .and_then(|unit| {
                 let pos = unit.get_position().ok()?;
@@ -223,7 +227,10 @@ fn asset_of(
                 live = true;
                 r
             }
-            None => (u.pos, u.position.p.y, u.heading.to_degrees(), 0.),
+            None => {
+                live |= spawned;
+                (u.pos, u.position.p.y, u.heading.to_degrees(), 0.)
+            }
         };
         units.push(AssetUnit {
             typ: u.typ.0.to_string(),
@@ -271,13 +278,13 @@ pub(crate) fn picture(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<
             let DeployKind::Action { spec, .. } = &g.origin else { continue };
             let (role, station) = air_role(&spec.kind);
             let orders = if station { vec![Verb::Station, Verb::Rtb] } else { vec![Verb::Rtb] };
-            if let Some(a) = asset_of(ctx, lua, coord, g.id, AssetKind::Air, role, orders) {
+            if let Some(a) = asset_of(ctx, lua, coord, g.id, AssetKind::Air, role, orders, true) {
                 assets.push(a);
             }
         }
         // Supply convoys.
         for c in ctx.db.convoys_for_side(side) {
-            if let Some(mut a) = asset_of(ctx, lua, coord, c.group_id, AssetKind::Convoy, "Supply convoy", vec![]) {
+            if let Some(mut a) = asset_of(ctx, lua, coord, c.group_id, AssetKind::Convoy, "Supply convoy", vec![], true) {
                 if let Some(o) = ctx.db.persisted.objectives.get(&c.destination) {
                     a.dest = Some(to_ll(coord, o.pos(), 0.));
                     a.base = Some(o.name.to_string());
@@ -309,7 +316,7 @@ pub(crate) fn picture(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<
             if range.is_some() {
                 orders.push(Verb::Fire);
             }
-            if let Some(mut a) = asset_of(ctx, lua, coord, g.id, kind, &role, orders) {
+            if let Some(mut a) = asset_of(ctx, lua, coord, g.id, kind, &role, orders, true) {
                 a.range_m = range;
                 assets.push(a);
             }
@@ -322,7 +329,7 @@ pub(crate) fn picture(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<
             let Some(groups) = o.groups().get(&side) else { continue };
             if let bfprotocols::db::objective::ObjectiveKind::CarrierGroup { .. } = o.kind() {
                 if let Some(gid) = groups.into_iter().next() {
-                    if let Some(mut a) = asset_of(ctx, lua, coord, *gid, AssetKind::Naval, "Carrier group", vec![Verb::Sail]) {
+                    if let Some(mut a) = asset_of(ctx, lua, coord, *gid, AssetKind::Naval, "Carrier group", vec![Verb::Sail], true) {
                         a.name = o.name.to_string();
                         a.base = Some(o.name.to_string());
                         assets.push(a);
@@ -332,7 +339,7 @@ pub(crate) fn picture(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<
             }
             for gid in groups {
                 let Some(range) = ctx.db.battery_range(gid) else { continue };
-                if let Some(mut a) = asset_of(ctx, lua, coord, *gid, AssetKind::Artillery, "Artillery", vec![Verb::Fire]) {
+                if let Some(mut a) = asset_of(ctx, lua, coord, *gid, AssetKind::Artillery, "Artillery", vec![Verb::Fire], false) {
                     a.range_m = Some(range);
                     a.base = Some(o.name.to_string());
                     assets.push(a);
@@ -340,7 +347,7 @@ pub(crate) fn picture(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<
             }
         }
     }
-    let menu = crate::hq::launch_menu(ctx, side, 24, now);
+    let menu = crate::hq::launch_menu_cached(ctx, side, 24, now);
     let launch = menu
         .iter()
         .map(|c| LaunchOption {

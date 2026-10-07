@@ -4928,7 +4928,7 @@ async fn api_admin_perf(
 
 /// One engine call per side per this long, however many commanders are
 /// watching: the picture reads every own unit's position out of DCS.
-const COMMAND_PICTURE_TTL: std::time::Duration = std::time::Duration::from_millis(1500);
+const COMMAND_PICTURE_TTL: std::time::Duration = std::time::Duration::from_millis(3000);
 
 static COMMAND_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Arc<std::string::String>>> =
     std::sync::LazyLock::new(websec::CacheMap::new);

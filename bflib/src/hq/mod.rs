@@ -265,6 +265,9 @@ pub(crate) struct SideRt {
     /// What a commander may launch, and when it was worked out
     /// (`launch_menu`).
     pub(crate) menu: Option<(DateTime<Utc>, Vec<planner::Cand>)>,
+    /// When a command map last asked for the menu: it is only kept fresh
+    /// while someone is looking.
+    pub(crate) menu_wanted: Option<DateTime<Utc>>,
 }
 
 impl SideRt {
@@ -364,6 +367,17 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Da
         }
         ctx.hq.side(side).last_think = Some(now);
         think(lua, ctx, perf, &sc, &cfg, side, empty, now);
+    }
+    // At most one side's command-map menu per tick, and only while a map is
+    // open: it is a full planning pass.
+    for side in cfg.sides.iter().copied().filter(|s| *s != Side::Neutral) {
+        let rt = ctx.hq.side(side);
+        let wanted = rt.menu_wanted.map_or(false, |t| now - t < Duration::seconds(MENU_WANTED_SECS));
+        let stale = rt.menu.as_ref().map_or(true, |(t, _)| now - *t >= Duration::seconds(MENU_SECS));
+        if wanted && stale {
+            let _ = launch_menu(ctx, side, 0, now);
+            break;
+        }
     }
 }
 
@@ -759,8 +773,20 @@ pub(crate) fn directive(ctx: &mut Context, side: Side, mut d: Directive) -> HqRe
     reply(true, "directive accepted")
 }
 
-/// How long a commander's launch menu is reused.
-const MENU_SECS: i64 = 20;
+/// How long a commander's launch menu is reused. Working it out is the HQ's
+/// whole planning pass, so it is refreshed on the HQ's tick while a command
+/// map is open (`menu_wanted`), never inside the map's own query.
+const MENU_SECS: i64 = 45;
+/// How long after the last look the menu stops being refreshed.
+const MENU_WANTED_SECS: i64 = 120;
+
+/// The launch menu as last worked out, without working it out again: what the
+/// command map shows. Asking keeps it fresh for a while (`tick`).
+pub(crate) fn launch_menu_cached(ctx: &mut Context, side: Side, n: usize, now: DateTime<Utc>) -> Vec<planner::Cand> {
+    let rt = ctx.hq.side(side);
+    rt.menu_wanted = Some(now);
+    rt.menu.as_ref().map(|(_, m)| m.iter().take(n).cloned().collect()).unwrap_or_default()
+}
 
 /// The operations a commander can launch for `side` right now: the HQ's own
 /// ranked candidates, best of each kind per target, at most `n`. They are
@@ -842,10 +868,9 @@ pub(crate) fn commander_launch(
     }
     let detail = dispatch::launch(lua, ctx, perf, &cfg, side, &c, now)?;
     ctx.hq.side(side).menu = None;
-    let text = format_compact!("{who} ordered {} on {}: {detail}", kind.label(), c.name);
-    ctx.hq.side(side).note(now, text.clone());
-    ctx.db.ephemeral.msgs().panel_to_side(15, false, side, format_compact!("COMMAND: {text}"));
-    Ok(text)
+    ctx.hq.side(side).note(now, format_compact!("{who} ordered {} on {}: {detail}", kind.label(), c.name));
+    // `command::order` tells the side who ordered it.
+    Ok(format_compact!("{} on {}: {detail}", kind.label(), c.name))
 }
 
 /// What one of the HQ's kinds of operation costs on this server (after

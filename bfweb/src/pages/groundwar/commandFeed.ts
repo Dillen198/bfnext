@@ -8,12 +8,12 @@ import type { Side } from './theme'
 
 // ── Feeds ────────────────────────────────────────────────────────────────
 
-/** Our side's assets, every 2 s (bfdb shares one engine read between viewers). */
+/** Our side's assets, every 3 s (bfdb shares one engine read between viewers). */
 export function useCommandFeed(side: Side | undefined, instance: string | undefined, mock: CommandMock | null, enabled: boolean) {
   return useQuery<CommandPicture>({
     queryKey: ['command', instance, side ?? '', mock ? 'mock' : ''],
     queryFn: () => (mock ? Promise.resolve(mock.picture()) : api.command.picture(side)),
-    refetchInterval: 2000,
+    refetchInterval: 3000,
     enabled,
     retry: false,
   })

@@ -461,3 +461,46 @@ mod drive_tests {
         assert!(can_drive("M-109"));
     }
 }
+
+/// Does a ground unit of type `typ` give fire support -- a gun, howitzer,
+/// mortar or rocket launcher that can be sent a fire mission? `artillery`
+/// is the type listed in `ArtilleryCfg::units`; `tags` its campaign tags.
+///
+/// Not a SAM: the campaign tags a SAM's launchers `Launcher` too, so a Tor or
+/// a Buk site used to count as a battery (offered Fire on the command map,
+/// and tasked with fire missions DCS then ignored). DCS's own "Indirect
+/// fire" / "Air Defence" attributes decide when the harvest has them.
+pub fn fires_indirect(typ: &str, tags: enumflags2::BitFlags<bfprotocols::cfg::UnitTag>, artillery: bool) -> bool {
+    use bfprotocols::cfg::UnitTag;
+    if artillery {
+        return true;
+    }
+    if let Some(u) = get().get(typ) {
+        let has = |a: &str| u.attributes.iter().any(|x| x == a);
+        if has("Indirect fire") {
+            return true;
+        }
+        if has("Air Defence") || has("SAM related") || has("AA_flak") {
+            return false;
+        }
+    }
+    tags.contains(UnitTag::Artillery)
+        || (tags.contains(UnitTag::Launcher) && !tags.contains(UnitTag::SAM) && !tags.contains(UnitTag::AAA))
+}
+
+#[cfg(test)]
+mod fires_tests {
+    use super::*;
+    use bfprotocols::cfg::UnitTag;
+
+    #[test]
+    fn a_sam_launcher_is_not_a_battery() {
+        // No harvest in a test: the campaign tags decide.
+        assert!(!fires_indirect("Tor 9A331", UnitTag::SAM | UnitTag::Launcher, false));
+        assert!(!fires_indirect("ZSU-23-4 Shilka", UnitTag::AAA.into(), false));
+        assert!(fires_indirect("M-109", UnitTag::Artillery.into(), false));
+        assert!(fires_indirect("Grad-URAL", UnitTag::Launcher.into(), false));
+        // Listed in the artillery config: a battery whatever its tags.
+        assert!(fires_indirect("Tor 9A331", UnitTag::SAM | UnitTag::Launcher, true));
+    }
+}

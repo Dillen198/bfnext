@@ -4154,8 +4154,16 @@ impl Db {
             .units
             .into_iter()
             .filter_map(|uid| self.persisted.units.get(uid))
-            .filter(|u| !u.dead && (u.tags.contains(UnitTag::Artillery) || u.tags.contains(UnitTag::Launcher)))
-            .map(|u| crate::unitdb::artillery_range(self.ephemeral.cfg.artillery.as_ref(), &u.typ.0).1)
+            .filter(|u| {
+                !u.dead
+                    && crate::unitdb::fires_indirect(
+                        &u.typ.0,
+                        u.tags.0,
+                        self.ephemeral.cfg.artillery.as_ref().map_or(false, |c| c.units.contains_key(u.typ.0.as_str())),
+                    )
+            })
+            // (max, min): the reach is the first.
+            .map(|u| crate::unitdb::artillery_range(self.ephemeral.cfg.artillery.as_ref(), &u.typ.0).0)
             .filter(|max| *max > 0.)
             .reduce(f64::max)
     }
@@ -4256,8 +4264,11 @@ impl Db {
                     .filter_map(|uid| self.persisted.units.get(uid))
                     .filter(|u| {
                         !u.dead
-                            && (u.tags.0.contains(UnitTag::Artillery)
-                                || u.tags.0.contains(UnitTag::Launcher))
+                            && crate::unitdb::fires_indirect(
+                                u.typ.as_str(),
+                                u.tags.0,
+                                cfg.units.contains_key(u.typ.as_str()),
+                            )
                     })
                     .map(|u| crate::unitdb::artillery_range(Some(&cfg), u.typ.as_str()))
                     .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
