@@ -305,3 +305,48 @@ export function LaunchPanel({ cp, selObj, side, canCommand, busy, onOrder, onFoc
     </aside>
   )
 }
+
+// ── Orders to a base ─────────────────────────────────────────────────────
+
+/** Beside a selected base in the command bar: what can be sent to it. */
+export function BaseOrders({ obj, side, cp, canCommand, busy, onOrder }: {
+  obj: GroundObjective
+  side: Side
+  cp: CommandPicture | null
+  canCommand: boolean
+  busy: boolean
+  onOrder: (o: CommandOrder, confirm?: string) => void
+}): ReactElement {
+  if (!cp) {
+    return <div className="cm-bord"><div className="cm-bord-note">Orders to bases need the server update that adds the command map.</div></div>
+  }
+  const ours = obj.owner === side
+  const ops = cp.launch.filter((l) => l.objective === obj.id)
+  const off = !canCommand || busy
+  return (
+    <div className="cm-bord">
+      <div className="cm-bord-title">ORDERS · TREASURY {cp.treasury.toLocaleString()}</div>
+      <div className="cm-orders">
+        {ours && (
+          <>
+            <button disabled={off} title="A supply convoy by road"
+              onClick={() => onOrder({ convoy: { to: obj.id } }, `Send a supply convoy to ${obj.name}?`)}>CONVOY</button>
+            <button disabled={off} title="A helicopter supply run"
+              onClick={() => onOrder({ helo_supply: { to: obj.id } }, `Send a helicopter supply run to ${obj.name}?`)}>HELO SUPPLY</button>
+          </>
+        )}
+        <button disabled={off} title="Helicopters put troops down there"
+          onClick={() => onOrder({ helo_troops: { to: obj.id } }, `Send helicopter troops to ${obj.name}?`)}>HELO TROOPS</button>
+        {ops.map((l) => (
+          <button key={l.kind} disabled={off || !l.ready} className="cm-op-btn"
+            title={`${l.why}${l.ready ? '' : ' (not enough in the treasury, or the HQ is at its limit)'}`}
+            onClick={() => onOrder({ launch: { kind: l.kind, objective: l.objective } },
+              `Launch ${OP_LABEL[l.kind] ?? l.kind} on ${l.objective_name} for ${l.cost.toLocaleString()} treasury points?`)}>
+            {OP_LABEL[l.kind] ?? l.kind.toUpperCase()} <span>{l.cost.toLocaleString()}</span>
+          </button>
+        ))}
+      </div>
+      {!canCommand && <div className="cm-bord-note">Commanders give orders.</div>}
+    </div>
+  )
+}

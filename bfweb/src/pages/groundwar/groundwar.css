@@ -557,7 +557,7 @@
 .gw-ocard-body { margin-top: 8px; }
 .gw-ocard-line { margin-top: 5px; font-size: 11px; line-height: 1.4; color: var(--gw-ink-2); }
 
-.gw-card-grid { position: relative; display: grid; grid-template-columns: repeat(3, 60px); grid-auto-rows: 56px; gap: 4px; flex-shrink: 0; align-content: end; }
+.gw-card-grid { position: relative; display: grid; grid-template-columns: repeat(4, 56px); grid-auto-rows: 50px; gap: 4px; flex-shrink: 0; align-content: end; }
 .gw-cmd {
   position: relative;
   display: flex;
@@ -758,6 +758,8 @@
 .cm-tag.hostile b { color: #ffc1b8; }
 .cm-hostile { position: relative; width: 24px; height: 24px; display: grid; place-items: center; }
 .cm-hostile .cm-ico { filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8)); }
+.gw-far .cm-tag { display: none; }
+.gw-far .cm-asset.sel .cm-tag { display: block; }
 .cm-unit { width: 6px; height: 9px; border: 1px solid rgba(0, 0, 0, 0.85); border-radius: 1px; pointer-events: none; }
 
 .cm-layers {
@@ -851,3 +853,19 @@
   .cm-launch { left: 8px; right: 8px; width: auto; }
   .cm-layers { top: auto; bottom: calc(var(--gw-bar-h) + 16px); flex-direction: row; right: 8px; }
 }
+
+/* Orders beside a selected base in the command bar. */
+.gw-obase { display: flex; gap: 12px; align-items: stretch; min-width: 0; }
+.cm-bord {
+  min-width: 0;
+  max-width: 460px;
+  padding: 8px 10px;
+  border: 1px solid var(--gw-line);
+  background: rgba(230, 225, 207, 0.03);
+}
+.cm-bord-title { font: 700 8.5px var(--font-mono); letter-spacing: 0.18em; color: var(--gw-dim); }
+.cm-bord-note { margin-top: 6px; font-size: 11px; color: #b9bca9; }
+.cm-bord .cm-orders { margin-top: 6px; }
+.cm-op-btn span { color: var(--gw-pencil); margin-left: 4px; }
+.cm-orders button.cm-op-btn:disabled span { color: inherit; }
+@media (max-width: 720px) { .gw-obase { flex-direction: column; } .cm-bord { max-width: none; } }

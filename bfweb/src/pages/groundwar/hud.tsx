@@ -277,7 +277,7 @@ function FormationCard({ f, side, group, onPick, compact }: { f: GroundFormation
 }
 
 export function CommandBar({
-  pic, side, selected, selObj, selEnemy, groups, buttons, locked, onSelect, onFocusObj,
+  pic, side, selected, selObj, selEnemy, groups, buttons, locked, onSelect, onFocusObj, baseExtra,
 }: {
   pic: GroundPicture
   side: Side
@@ -289,6 +289,8 @@ export function CommandBar({
   locked: string | null
   onSelect: (id: number, add: boolean) => void
   onFocusObj: (o: GroundObjective) => void
+  /** Shown beside a selected base's card: the orders that go to it. */
+  baseExtra?: ReactNode
 }): ReactElement {
   const groupOf = (id: number): number | null => {
     for (const [k, ids] of Object.entries(groups)) if (ids.includes(id)) return Number(k)
@@ -312,6 +314,7 @@ export function CommandBar({
     body = (
       <>
         <div className="gw-bar-title">BASE</div>
+        <div className="gw-obase">
         <div className="gw-ocard" style={{ ['--oc' as string]: SIDE_COLOR[selObj.owner] }}>
           <div className="gw-ocard-head" onClick={() => onFocusObj(selObj)}>
             <Icon size={22} strokeWidth={1.6} />
@@ -336,6 +339,8 @@ export function CommandBar({
               </div>
             </div>
           )}
+        </div>
+        {baseExtra}
         </div>
       </>
     )

@@ -33,7 +33,8 @@ import { NEAR_ZOOM, reducedMotion, type Side } from './groundwar/theme'
 import { useGroundFeed } from './groundwar/useGroundFeed'
 import { createGroundwarMock } from './groundwarMock'
 import { createCommandMock } from './commandMock'
-import { AssetLines, AssetMarker, AssetPanel, EnemyAirMarker, LaunchPanel, LayerToggles } from './groundwar/command'
+import { visibleNames } from './groundwar/declutter'
+import { AssetLines, AssetMarker, AssetPanel, BaseOrders, EnemyAirMarker, LaunchPanel, LayerToggles } from './groundwar/command'
 import { ALL_LAYERS, MODE_TEXT, shown, useCommandFeed, useEnemyAir, type AssetMode, type Layers } from './groundwar/commandFeed'
 import { rankFor } from '../ranks'
 import './groundwar/groundwar.css'
@@ -41,6 +42,8 @@ import './groundwar/groundwar.css'
 type Mode = 'none' | 'attack' | 'defend' | 'raise'
 
 const NO_FRONTS: Frontlines = { mid: [], blue: [], red: [] }
+/** Below this zoom only the selected asset keeps its tag. */
+const FAR_ZOOM = 8.5
 let toastSeq = 0
 
 function loadPref<T>(key: string, fallback: T): T {
@@ -140,6 +143,8 @@ export default function GroundWarPage(): ReactElement {
   const [follow, setFollow] = useState(false)
   const [help, setHelp] = useState(false)
   const [near, setNear] = useState(false)
+  // Zoomed out far enough that asset tags would only clutter.
+  const [far, setFar] = useState(false)
   const [sel, setSel] = useState<number[]>([])
   const [selObjId, setSelObjId] = useState<number | null>(null)
   const [selEnemyId, setSelEnemyId] = useState<number | null>(null)
@@ -147,6 +152,8 @@ export default function GroundWarPage(): ReactElement {
   const [assetMode, setAssetMode] = useState<AssetMode>('none')
   const [showLaunch, setShowLaunch] = useState(false)
   const [busy, setBusy] = useState(false)
+  // Base names that fit on screen right now (`declutter`); null = all.
+  const [names, setNames] = useState<Set<number> | null>(null)
   const [mode, setMode] = useState<Mode>('none')
   const [groups, setGroups] = useState<Record<number, number[]>>(() => loadPref('gw.groups', {}))
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -448,16 +455,32 @@ export default function GroundWarPage(): ReactElement {
     pic, mode, selIds, help, follow, groups, pickFormation, pickKind, pickObjective, pickEnemy,
     applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
     selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
-    assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset,
+    assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset, selObjId,
   })
   useEffect(() => {
     live.current = {
       pic, mode, selIds, help, follow, groups, pickFormation, pickKind, pickObjective, pickEnemy,
       applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
       selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
-      assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset,
+      assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset, selObjId,
     }
   })
+
+  // Re-place the base names whenever the view, the bases or the selection change.
+  const declutter = useCallback(() => {
+    const map = mapRef.current?.getMap()
+    const L = live.current
+    if (!map || !L.pic) return
+    const el = map.getContainer()
+    const w = el.clientWidth
+    const h = el.clientHeight
+    setNames(visibleNames(L.pic.objectives, (o) => {
+      const p = map.project([o.pos[1], o.pos[0]])
+      return p.x < -60 || p.y < -60 || p.x > w + 60 || p.y > h + 60 ? null : { x: p.x, y: p.y }
+    }, L.pic.side, L.selObjId))
+  }, [])
+  const objKey = (pic?.objectives ?? []).map((o) => `${o.id}${o.owner[0]}${o.being_captured ? 'c' : ''}`).join()
+  useEffect(() => { declutter() }, [declutter, objKey, selObjId])
 
   // Stable handlers, so a new picture doesn't re-render every marker.
   const onPickFormation = useCallback((e: MouseEvent, id: number) => live.current.pickFormation(e, id), [])
@@ -499,6 +522,8 @@ export default function GroundWarPage(): ReactElement {
     unhookImages.current?.()
     unhookImages.current = installVehicleImages(map)
     engine.attach(map)
+    map.on('moveend', declutter)
+    declutter()
     inputRef.current?.detach()
     if (!boxRef.current) return
     inputRef.current = attachInput(map, boxRef.current, {
@@ -537,7 +562,10 @@ export default function GroundWarPage(): ReactElement {
       },
     })
   }
-  const onZoom = (e: ViewStateChangeEvent) => setNear(e.viewState.zoom >= NEAR_ZOOM)
+  const onZoom = (e: ViewStateChangeEvent) => {
+    setNear(e.viewState.zoom >= NEAR_ZOOM)
+    setFar(e.viewState.zoom < FAR_ZOOM)
+  }
 
   // ── Hotkeys ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -668,7 +696,7 @@ export default function GroundWarPage(): ReactElement {
     },
     { key: '␣', label: 'CENTRE', icon: Pin, disabled: selIds.length ? null : 'Nothing selected', run: () => centre(selIds) },
     { key: 'F', label: follow ? 'FOLLOWING' : 'FOLLOW ME', icon: Aircraft, active: follow, disabled: selfPlayer ? null : 'Your aircraft is not live in DCS', run: toggleFollow },
-    { key: 'L', label: 'COMMAND', icon: Strike, active: showLaunch, disabled: cp ? null : 'The command picture has not arrived', run: () => setShowLaunch((s) => !s) },
+    { key: 'L', label: 'COMMAND', icon: Strike, active: showLaunch, disabled: cp ? null : cmdQ.isError ? "This server's engine predates the command map" : 'The command picture has not arrived', run: () => setShowLaunch((s) => !s) },
     { key: '?', label: 'CONTROLS', icon: Info, disabled: null, run: () => setHelp(true) },
   ]
 
@@ -680,7 +708,7 @@ export default function GroundWarPage(): ReactElement {
   const onBattle = (b: GroundBattle) => (mode !== 'none' ? applyMode(hoverObj.current) : flyTo(b.pos, 12.5))
 
   return (
-    <div className={`gw-root gw-mode-${mode}${near ? ' gw-near' : ''}`} style={{ ['--own' as string]: side === 'Blue' ? '#4a8fd4' : '#cc4444' }}>
+    <div className={`gw-root gw-mode-${mode}${near ? ' gw-near' : ''}${far ? ' gw-far' : ''}`} style={{ ['--own' as string]: side === 'Blue' ? '#4a8fd4' : '#cc4444' }}>
       <Map
         ref={mapRef}
         mapStyle={mapStyle}
@@ -699,7 +727,7 @@ export default function GroundWarPage(): ReactElement {
       >
         <BattlefieldLayers formations={pic.formations} fronts={fronts} selected={selSet} side={side} territory={territory} />
         {pic.objectives.map((o) => (
-          <ObjectiveMarker key={`o${o.id}`} o={o} side={side} selected={o.id === selObjId} onPick={onPickObjective} />
+          <ObjectiveMarker key={`o${o.id}`} o={o} side={side} selected={o.id === selObjId} showName={!names || names.has(o.id)} onPick={onPickObjective} />
         ))}
         {pic.formations.map((f) => (
           <DestMarker key={`d${f.id}`} f={f} side={side} selected={selSet.has(f.id)} />
@@ -758,6 +786,11 @@ export default function GroundWarPage(): ReactElement {
                 : notCommander ?? 'View only: link your Discord (-linkme in DCS chat) and take a slot this campaign to give orders.'}
           </div>
         )}
+        {!mock && cmdQ.isError && (
+          <div className="gw-banner">
+            Our aircraft, convoys and batteries aren't on this map yet: this server's engine and bfdb need the update that adds the command map.
+          </div>
+        )}
         {assetMode !== 'none' && (
           <div className="gw-modebar">{MODE_TEXT[assetMode]} · ESC TO CANCEL</div>
         )}
@@ -795,6 +828,9 @@ export default function GroundWarPage(): ReactElement {
         locked={lockReason}
         onSelect={(id) => { selectOnly([id]); const f = pic.formations.find((x) => x.id === id); if (f) flyTo(f.pos) }}
         onFocusObj={(o) => flyTo(o.pos)}
+        baseExtra={selObj && (
+          <BaseOrders obj={selObj} side={side} cp={cp} canCommand={canOrder} busy={busy} onOrder={(o, c) => void order(o, c)} />
+        )}
       />
       {help && <HelpOverlay onClose={() => setHelp(false)} canCommand={pic.can_command} />}
     </div>

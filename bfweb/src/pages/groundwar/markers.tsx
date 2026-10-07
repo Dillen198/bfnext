@@ -6,6 +6,7 @@ import { Marker } from 'react-map-gl/maplibre'
 import { Defend, Objective as ObjIcon } from '@icons'
 import type { GroundBattle, GroundEnemyContact, GroundFormation, GroundObjective } from '../../api'
 import { fmtAge, offset } from './geo'
+import { displayName } from './declutter'
 import { OBJ_ICON, natoSymbol, shortName } from './sprites'
 import { ATTACK, ICON, PENCIL, SIDE_COLOR, WITHDRAW, other, type Side } from './theme'
 
@@ -143,10 +144,12 @@ interface OProps {
   o: GroundObjective
   side: Side
   selected: boolean
+  /** False when the name would land on another base's (`declutter`). */
+  showName: boolean
   onPick: (e: MouseEvent, id: number) => void
 }
 
-function ObjectiveMarkerImpl({ o, side, selected, onPick }: OProps): ReactElement {
+function ObjectiveMarkerImpl({ o, side, selected, showName, onPick }: OProps): ReactElement {
   const Icon = OBJ_ICON[o.kind] ?? ObjIcon
   const ours = o.owner === side
   const col = SIDE_COLOR[o.owner]
@@ -163,7 +166,7 @@ function ObjectiveMarkerImpl({ o, side, selected, onPick }: OProps): ReactElemen
           {o.threatened && <span className="gw-obj-threat">!</span>}
           {ours && (o.can_raise ?? 0) > 0 && <span className="gw-obj-raise">+{o.can_raise}</span>}
         </div>
-        <div className="gw-obj-name">{o.name.toUpperCase()}</div>
+        {showName && <div className="gw-obj-name">{displayName(o.name)}</div>}
         {ours && (o.supply != null || o.garrison != null) && (
           <div className="gw-obj-bars">
             {o.supply != null && (
@@ -183,7 +186,7 @@ function ObjectiveMarkerImpl({ o, side, selected, onPick }: OProps): ReactElemen
   )
 }
 const oKey = (p: OProps) =>
-  `${p.o.id}|${p.o.owner}|${p.o.being_captured}|${p.o.threatened}|${p.o.can_raise}|${p.o.supply}|${p.o.garrison}|${p.o.name}|${p.o.kind}|${p.selected}|${p.side}`
+  `${p.o.id}|${p.o.owner}|${p.o.being_captured}|${p.o.threatened}|${p.o.can_raise}|${p.o.supply}|${p.o.garrison}|${p.o.name}|${p.o.kind}|${p.selected}|${p.showName}|${p.side}`
 export const ObjectiveMarker = memo(ObjectiveMarkerImpl, (a, b) => oKey(a) === oKey(b) && a.onPick === b.onPick)
 
 // ── Battles ──────────────────────────────────────────────────────────────
