@@ -70,7 +70,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use bfprotocols::{
-    cfg::{GroundCombatCfg, GroundWarCfg},
+    cfg::{GroundCombatCfg, GroundWarCfg, UnitTag},
     db::{
         group::{GroupId, UnitId},
         objective::{ObjectiveId, ObjectiveKind},
@@ -91,6 +91,8 @@ use dcso3::{
     land::{Land, RoadType, SurfaceType},
     net::Ucid,
     trigger::{ArrowSpec, LineType, MarkId, SideFilter},
+    object::DcsObject,
+    unit::Unit,
     LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
 };
 use enumflags2::BitFlags;
@@ -600,7 +602,13 @@ fn dcs_route<'lua>(
         VehicleFormation::OnRoad
     };
     let speed = if off_road && !deployed { speed_mps * 0.5 } else { speed_mps };
-    let mut route = vec![ground_point(land, from, VehicleFormation::OffRoad, speed, Task::ComboTask(vec![]))];
+    let mut start = ground_point(land, from, VehicleFormation::OffRoad, speed, Task::ComboTask(vec![]));
+    // As the supply convoys' routes, which DCS does drive: the start point
+    // is now, at this speed.
+    start.eta = Some(dcso3::Time(0.));
+    start.eta_locked = Some(true);
+    start.speed_locked = Some(true);
+    let mut route = vec![start];
     if path.is_empty() {
         return route;
     }
@@ -1436,6 +1444,7 @@ impl Db {
     /// Read where the live formations' units are from DCS, a slice per tick,
     /// and move each live formation's position to the centre of its units.
     fn sync_live(&mut self, rt: &mut FormationRt, lua: MizLua, now: DateTime<Utc>) {
+        self.register_unannounced(rt, lua);
         let uids: Vec<UnitId> = self
             .formations()
             .flat_map(|f| f.groups.iter())
@@ -1511,6 +1520,90 @@ impl Db {
         }
     }
 
+    /// A unit is only tracked once its DCS birth event has tied it to its
+    /// DCS object; one whose event never arrived was skipped by the position
+    /// sync without a word, so its formation stood still on the map (and
+    /// went "stuck" and was halted for real) while it drove in DCS. Look
+    /// those up by name instead, a few a tick.
+    fn register_unannounced(&mut self, rt: &FormationRt, lua: MizLua) {
+        let missing: SmallVec<[(UnitId, String); 8]> = self
+            .formations()
+            .flat_map(|f| f.groups.iter())
+            .filter(|g| rt.live.contains(g))
+            .filter_map(|g| self.persisted.groups.get(g))
+            .flat_map(|g| g.units.into_iter().copied())
+            .filter(|u| !self.ephemeral.object_id_by_uid.contains_key(u))
+            .filter_map(|u| self.persisted.units.get(&u).filter(|su| !su.dead).map(|su| (u, su.name.clone())))
+            .take(8)
+            .collect();
+        let mut found = 0;
+        for (uid, name) in missing {
+            let Ok(unit) = Unit::get_by_name(lua, name.as_str()) else { continue };
+            let Ok(oid) = unit.object_id() else { continue };
+            self.ephemeral.uid_by_object_id.insert(oid.clone(), uid);
+            self.ephemeral.object_id_by_uid.insert(uid, oid);
+            self.ephemeral.units_potentially_close_to_enemies.insert(uid);
+            if self.persisted.units.get(&uid).map_or(false, |u| u.tags.contains(UnitTag::Driveable)) {
+                self.ephemeral.units_able_to_move.insert(uid);
+            }
+            found += 1;
+        }
+        if found > 0 {
+            warn!("ground war: {found} live formation unit(s) had no DCS birth event; found them by name");
+        }
+    }
+
+    /// What DCS itself says about a live formation that isn't moving: is the
+    /// group there, does it have a task, is the lead vehicle moving, and is
+    /// it where we think it is. One line, for the log.
+    fn dcs_report(&self, rt: &FormationRt, lua: MizLua, f: &Formation) -> CompactString {
+        use std::fmt::Write;
+        let mut out = CompactString::default();
+        for gid in f.groups.iter().filter(|g| rt.live.contains(g)).take(2) {
+            let Some(g) = self.persisted.groups.get(gid) else { continue };
+            let tracked = g.units.into_iter().filter(|u| self.ephemeral.object_id_by_uid.contains_key(u)).count();
+            let alive = g.units.into_iter().filter(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead)).count();
+            let _ = write!(out, "[{}: {tracked}/{alive} tracked", g.name);
+            match Group::get_by_name(lua, g.name.as_str()) {
+                Err(_) => {
+                    let _ = write!(out, ", NOT IN DCS]");
+                    continue;
+                }
+                Ok(dg) => {
+                    let size = dg.get_size().unwrap_or(-1);
+                    let task = dg.get_controller().and_then(|c| c.has_task()).map_or("?", |t| if t { "yes" } else { "NO" });
+                    let _ = write!(out, ", dcs size {size}, task {task}");
+                    let lead = dg.get_units().ok().and_then(|us| us.into_iter().filter_map(|u| u.ok()).next());
+                    if let Some(u) = lead {
+                        let speed = u.get_velocity().map(|v| v.0.norm()).unwrap_or(-1.);
+                        let at = u.get_point().map(|p| Vector2::new(p.0.x, p.0.z)).ok();
+                        let ours = u
+                            .get_name()
+                            .ok()
+                            .and_then(|n| self.persisted.units_by_name.get(n.as_str()).copied())
+                            .and_then(|uid| self.persisted.units.get(&uid))
+                            .map(|su| su.pos);
+                        let drift = match (at, ours) {
+                            (Some(a), Some(o)) => format_compact!("{:.0} m", dist(a, o)),
+                            _ => "?".into(),
+                        };
+                        let to_next = match (at, f.path.first()) {
+                            (Some(a), Some(n)) => format_compact!("{:.0} m", dist(a, *n)),
+                            _ => "-".into(),
+                        };
+                        let _ = write!(
+                            out,
+                            ", lead {:.1} m/s, ours vs DCS {drift}, next waypoint {to_next}",
+                            speed
+                        );
+                    }
+                    let _ = write!(out, "]");
+                }
+            }
+        }
+        out
+    }
+
     /// Positions of `side`'s enemies on the ground: formations and the
     /// objectives they hold.
     fn enemy_formations_near(&self, side: Side, pos: Vector2, r: f64) -> bool {
@@ -1583,6 +1676,17 @@ impl Db {
             e.1 = now;
             e.2 += 1;
             let attempt = e.2;
+            {
+                let f = self.persisted.formations.get(&id).unwrap();
+                let report = self.dcs_report(rt, lua, f);
+                warn!(
+                    "ground war: {name} has not moved in {} min ({:?}, {:?}, {} route points): {report}",
+                    STALL_SECS / 60,
+                    f.order,
+                    f.deployment,
+                    f.path.len()
+                );
+            }
             let Some(dest) = dest else { continue };
             let replanned = match attempt {
                 1 => self.plan_path(lua, pos, dest).ok(),
