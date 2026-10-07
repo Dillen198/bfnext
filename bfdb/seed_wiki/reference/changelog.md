@@ -13,7 +13,7 @@
   from the side's treasury and checked by the server.
 - **Command is earned**: it unlocks at rank tier
   {{cfg:command.commander_rank|4}} (Major by default). Admins can grant or
-  withdraw it. Commanders get a Blue or Red Commander role on Discord.
+  withdraw it. Commanders get the Commander role on Discord.
 
 **Ground war**
 - A formation carrying out a player's order is put into DCS, and so is one that

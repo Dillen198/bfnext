@@ -606,12 +606,14 @@ DEFAULT:
     manage: true
     blue: 123456789012345678      # role id, or "Blue Coalition"
     red: 123456789012345678       # role id, or "Red Coalition"
-    # Optional: commander roles. Given to the pilots who command each side on
-    # this server -- earned by rank (the engine config's command.commander_rank)
-    # or granted by an admin on the dashboard -- and taken away when they lose
-    # it or switch sides. Leave out to not manage them.
-    blue_commander: 123456789012345678   # role id, or "Blue Commander"
-    red_commander: 123456789012345678    # role id, or "Red Commander"
+    # Optional: ONE Commander role for the whole Discord. Given to every pilot
+    # who commands on any server -- earned by rank (the engine config's
+    # command.commander_rank) or granted by an admin on the dashboard or with
+    # /fe_commander -- and taken away when they no longer command anywhere.
+    # Their side is what the blue/red role above says, per server. Put the
+    # SAME role in every server's section (or in DEFAULT). Leave out to not
+    # manage it.
+    commander: 123456789012345678        # role id, or "Commander"
     # Take the role away from anyone the engine does not back -- someone who
     # never registered, or who was handed the role by hand. Leave this ON: it
     # is the half that actually closes the hole, since otherwise a stray role

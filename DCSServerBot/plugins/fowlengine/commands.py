@@ -2576,9 +2576,9 @@ class FowlEngine(Plugin):
         Now a pair's rosters are merged first: a member keeps a role if ANY
         server using it backs them.
         """
-        # The coalition pair mirrors registrations; the commander pair
-        # (blue_commander / red_commander) mirrors who bfdb says commands --
-        # rank or an admin's grant. Same machinery, so the same guards.
+        # The coalition pair mirrors registrations; the one Commander role
+        # (`commander`) mirrors who bfdb says commands -- rank or an admin's
+        # grant -- on any server. Same machinery, so the same guards.
         for kind in ROLE_KINDS:
             await self._sync_role_kind(kind)
 
@@ -2617,7 +2617,7 @@ class FowlEngine(Plugin):
             except Exception as ex:
                 self.log.error(f"FowlEngine: {kind['label']} role sync for {server.name}: {ex}")
         for g in groups.values():
-            if len(g["servers"]) > 1:
+            if len(g["servers"]) > 1 and not kind.get("shared"):
                 self._warn_once(
                     ",".join(g["servers"]), f'{kind["label"]}_roles_shared',
                     f"FowlEngine: {', '.join(g['servers'])} share one pair of {kind['label']} roles; "
@@ -2687,7 +2687,9 @@ class FowlEngine(Plugin):
         if status != 200 or not isinstance(data, dict):
             self.log.warning(f"FowlEngine: /api/admin/commanders -> {status} for {server.name}")
             return None
-        return {p["ucid"]: p["side"] for p in (data.get("pilots") or [])
+        # One role for every commander, whatever their side: the coalition
+        # role already says which side that is, server by server.
+        return {p["ucid"]: "Commander" for p in (data.get("pilots") or [])
                 if p.get("commander") and p.get("ucid") and p.get("side") in ("Blue", "Red")}
 
     async def _apply_coalition_roles(self, g: dict, kind: dict = None):
@@ -4509,18 +4511,21 @@ async def setup(bot: DCSServerBot):
     await bot.add_cog(FowlEngine(bot))
 
 
-# The Discord role pairs the plugin mirrors from bfdb: the coalition each pilot
-# is registered to, and (when blue_commander / red_commander are configured)
-# who commands each side.
+# The Discord roles the plugin mirrors from bfdb: the coalition each pilot is
+# registered to (a Blue/Red pair per server), and -- when `commander` is
+# configured -- one Commander role for whoever commands on any server. Every
+# server names the same Commander role, so they are synced as one: a member
+# keeps it while any server backs them, and their side stays the coalition
+# role's business (it follows a side switch on its own).
 ROLE_KINDS = [
     {"label": "coalition", "keys": (("Blue", "blue"), ("Red", "red")),
      "fetch": FowlEngine._fetch_pilot_sides, "endpoint": "/api/admin/pilot-sides",
      "granted": "registered coalition", "revoked": "no matching coalition registration",
      "empty_ok": False},
-    {"label": "commander", "keys": (("Blue", "blue_commander"), ("Red", "red_commander")),
+    {"label": "commander", "keys": (("Commander", "commander"),),
      "fetch": FowlEngine._fetch_commander_sides, "endpoint": "/api/admin/commanders",
-     "granted": "commander of their coalition", "revoked": "no longer a commander",
-     "empty_ok": True},
+     "granted": "commander", "revoked": "no longer a commander on any server",
+     "empty_ok": True, "shared": True},
 ]
 
 # The rank ladder's titles by tier (NATO service), as the dashboard and the

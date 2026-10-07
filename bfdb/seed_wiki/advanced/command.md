@@ -11,8 +11,12 @@ Command is earned. It unlocks at rank tier
 {{cfg:command.commander_rank|4}} (Major, a campaign score of 50 at the
 default): the same score and ranks the leaderboard shows, so captures,
 logistics and kills all count toward it. An admin can also make you a
-commander, or take it away. Commanders get the **Blue Commander** or **Red
-Commander** role on Discord.
+commander, or take it away.
+
+Rank is campaign-wide, so it counts on every server, for whichever side you
+are flying for there. Switch sides and you command your new side. On
+Discord, commanders get the **Commander** role; your Blue or Red role still
+shows your side, server by server, and follows you when you switch.
 
 The page tells you where you stand: what unlocks command, and how far off you
 are.

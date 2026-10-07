@@ -10,7 +10,7 @@
 //! orders itself and pushes the roster to the engine (`set-commanders`) once
 //! a minute and whenever an admin changes it, so the F10 menu and chat orders
 //! in game follow the same rule. The Discord bot reads the roster to keep the
-//! "Blue Commander" / "Red Commander" roles in step.
+//! Discord "Commander" role in step.
 
 use crate::db::{Aggregates, InstanceState, StatsDb};
 use crate::instance::InstanceId;

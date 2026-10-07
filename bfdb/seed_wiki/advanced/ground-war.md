@@ -134,8 +134,8 @@ rank tier {{cfg:command.commander_rank|4}} (Major, a campaign score of 50 at
 the default), the same score and ranks the leaderboard shows. An admin can
 also make you a commander, or take it away. Anyone on your side can watch the
 ground war and read the status report; only commanders can give orders, raise
-formations or take over the HQ. Commanders get the **Blue Commander** or
-**Red Commander** role on Discord.
+formations or take over the HQ. Commanders get the **Commander** role on Discord
+(your Blue or Red role still shows your side, server by server).
 
 The dashboard's **COMMAND** page ([Command](./command.md)) is the battlefield your coalition
 sees, live: your formations and every vehicle in them, enemies where you have

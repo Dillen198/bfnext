@@ -5055,7 +5055,7 @@ async fn api_command_me(
 /// GET /api/admin/commanders — every pilot's commander standing on this
 /// server, highest score first, as `{instance, commander_rank,
 /// commander_score, require_commander, pilots: [CommanderStatus]}`. The
-/// Discord bot reads this to keep the Blue/Red Commander roles in step.
+/// Discord bot reads this to keep the Commander role in step.
 async fn api_admin_commanders(
     session_id: Option<Uuid>,
     db: StatsDb,

@@ -1,7 +1,7 @@
 // Admin: who commands on this server. Rank earns command (the engine
 // config's `command.commander_rank`); an admin can grant it to anyone or take
 // it from anyone. A change applies on every server straight away, and the
-// Discord bot moves the Blue/Red Commander roles on its next pass.
+// Discord bot moves the Commander role on its next pass.
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, type CommanderStatus } from '../api'
