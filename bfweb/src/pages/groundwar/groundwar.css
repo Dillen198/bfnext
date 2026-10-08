@@ -885,3 +885,8 @@
   cursor: help;
   order: 1;
 }
+
+/* The catalogue order waiting for its target. */
+.cm-op.armed .cm-op-where { outline: 1px solid var(--gw-warn); outline-offset: -1px; }
+.cm-op.armed .cm-op-go { background: var(--gw-warn); }
+.cm-op-where:disabled { cursor: not-allowed; }

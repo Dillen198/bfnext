@@ -1431,6 +1431,22 @@ impl Db {
         speed_mps: f64,
         tags: BitFlags<UnitTag>,
     ) -> Result<GroupId> {
+        self.queue_drive(spctx, idx, side, DeployKind::Objective { origin }, template, plan, speed_mps, tags)
+    }
+
+    /// `queue_drive_from_objective` for a group of any origin: a commander's
+    /// deployment that has to drive to where it was ordered.
+    pub(crate) fn queue_drive(
+        &mut self,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        side: Side,
+        origin: DeployKind,
+        template: &str,
+        plan: &DrivePlan,
+        speed_mps: f64,
+        tags: BitFlags<UnitTag>,
+    ) -> Result<GroupId> {
         let from = plan
             .points
             .first()
@@ -1453,7 +1469,7 @@ impl Db {
                 group_heading: dir.y.atan2(dir.x),
             },
             template,
-            DeployKind::Objective { origin },
+            origin,
             tags,
         )?;
         self.ephemeral.queued_drives.insert(

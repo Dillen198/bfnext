@@ -2,6 +2,16 @@
 
 ## October 7, 2026
 
+**Command: the full order catalogue**
+- Everything your side can do is on the COMMAND panel, at the place you pick:
+  air operations, bombers, missile strikes, deployments by road, convoy
+  ambushes, reinforcements, naval strikes, hunter groups, transfers. See
+  [Command](../advanced/command.md#the-order-catalogue).
+- **Naval strikes actually fire**: the ships carrying cruise missiles launch
+  them in DCS (before, no ship ever fired).
+- **The ground war happens in DCS**: moving and fighting formations are real
+  DCS groups; nothing advances or fights off the map.
+
 **A harder, less predictable enemy**
 - **Bases defend themselves**: garrisons drive out to meet enemy vehicles, call
   in a quick reaction force if they stay, and patrol inside the base. See

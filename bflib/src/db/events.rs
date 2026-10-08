@@ -824,7 +824,11 @@ impl EventScheduler {
         all_owned: &[(ObjectiveId, Side, Vector2, dcso3::String, u8)],
         _messages: &mut Vec<CompactString>,
         _effects: &mut Vec<EventEffect>,
+        near: Option<Vector2>,
     ) -> bool {
+        // A commander's ambush goes after the convoy they pointed at: the
+        // nearest within this of the point, not a random one.
+        const NEAR_M: f64 = 20_000.;
         let mut rng = rand::thread_rng();
 
         let target_side = match ambush_side {
@@ -848,6 +852,7 @@ impl EventScheduler {
             .active_convoys
             .values()
             .filter(|c| c.side == target_side)
+            .filter(|c| near.map_or(true, |p| (p - c.last_pos).norm() <= NEAR_M))
             .collect();
         for (i, convoy) in convoys.iter().enumerate() {
             let Some(dest) = db.persisted.objectives.get(&convoy.destination).map(|o| o.pos())
@@ -860,7 +865,20 @@ impl EventScheduler {
             }
         }
         if options.is_empty() { return false; }
-        let (i, source_objective, spawn_pos, drive_m) = options[rng.r#gen_range(0..options.len())];
+        let pick = match near {
+            Some(p) => options
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| {
+                    let da = (p - convoys[a.0].last_pos).norm();
+                    let db = (p - convoys[b.0].last_pos).norm();
+                    da.total_cmp(&db)
+                })
+                .map(|(k, _)| k)
+                .unwrap_or(0),
+            None => rng.r#gen_range(0..options.len()),
+        };
+        let (i, source_objective, spawn_pos, drive_m) = options[pick];
         let convoy = convoys[i];
 
         let convoy_group_id = convoy.group_id;

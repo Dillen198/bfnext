@@ -2,7 +2,7 @@
 // (kept apart from `command.tsx` so that file only exports components).
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, connectTacmap, type AirTrack, type Asset, type CommandPicture, type TacPicture } from '../../api'
+import { api, connectTacmap, type AirTrack, type Asset, type CommandPicture, type OrderTarget, type TacPicture } from '../../api'
 import type { CommandMock } from '../commandMock'
 import type { Side } from './theme'
 
@@ -59,3 +59,12 @@ export const MODE_TEXT: Record<AssetMode, string> = {
   fmove: 'MOVE FORMATIONS · CLICK THE MAP',
 }
 
+/** How the map asks for an order's target, for the mode bar. */
+export const TARGET_TEXT: Record<OrderTarget, string> = {
+  land: 'CLICK A POINT ON LAND',
+  point: 'CLICK A POINT',
+  sea: 'CLICK A POINT AT SEA',
+  own_base: 'CLICK ONE OF OUR BASES',
+  enemy_base: 'CLICK AN ENEMY BASE',
+  transfer: 'CLICK THE BASE TO SEND FROM, THEN THE BASE TO SEND TO',
+}

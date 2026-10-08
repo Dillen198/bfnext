@@ -46,7 +46,7 @@ pub use hq::{EscortPolicy, HqAirCfg, HqAirTemplate, HqCfg, HqCostsCfg, HqPackage
 
 pub use balance::{fmt_mult, EmergencyRepairCfg, PopulationScalingCfg};
 pub use economy::{split_by_weight, EconomyCfg};
-pub use command::{rank_min_score, rank_tier, CommandCfg, RANK_MIN_SCORE};
+pub use command::{rank_min_score, rank_tier, CommandCfg, HuntersCfg, RANK_MIN_SCORE};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default, schemars::JsonSchema)]
 pub struct Vehicle(pub String);

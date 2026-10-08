@@ -518,6 +518,24 @@ export interface CommandPicture {
   commander?: CommanderStatus | null
   /** Set when the engine missed the last refreshes: how old this picture is. */
   stale_secs?: number
+  /** Everything this side can order at a place of the commander's choosing. */
+  orders?: OrderOption[]
+}
+
+/** What an order is aimed at: how the map asks for it. */
+export type OrderTarget = 'land' | 'point' | 'sea' | 'own_base' | 'enemy_base' | 'transfer'
+
+/** One entry of the order catalogue. */
+export interface OrderOption {
+  /** "action:<name>", "deploy:<name>", "op:ambush", "op:missile", "op:hunt". */
+  key: string
+  label: string
+  category: string
+  target: OrderTarget
+  cost: number
+  detail: string
+  /** Empty when it can be ordered now. */
+  why_not: string
 }
 
 /** POST /api/command/order (externally tagged, as the engine parses it). */
@@ -533,6 +551,7 @@ export type CommandOrder =
   | { helo_supply: { to: number } }
   | { helo_troops: { to: number } }
   | { launch: { kind: HqOpKind; objective: number } }
+  | { order: { key: string; at?: LatLon; objective?: number; to_objective?: number } }
 
 export interface CommandReply {
   ok: boolean

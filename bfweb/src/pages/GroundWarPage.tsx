@@ -17,7 +17,7 @@ import type { MapLibreEvent, Map as MlMap } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { Aircraft, ChevronsLeft, Defend, Info, Pin, Plus, Shield, Strike, X } from '@icons'
 
-import { api, type CommandMe, type CommandOrder, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon } from '../api'
+import { api, type CommandMe, type CommandOrder, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon, type OrderOption } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { useInstance } from '../context/InstanceContext'
 import { useTheme } from '../context/ThemeContext'
@@ -35,7 +35,7 @@ import { createGroundwarMock } from './groundwarMock'
 import { createCommandMock } from './commandMock'
 import { visibleNames } from './groundwar/declutter'
 import { AssetLines, AssetMarker, AssetPanel, BaseOrders, EnemyAirMarker, LaunchPanel, LayerToggles, type AssetNote } from './groundwar/command'
-import { ALL_LAYERS, MODE_TEXT, shown, useCommandFeed, useEnemyAir, type AssetMode, type Layers } from './groundwar/commandFeed'
+import { ALL_LAYERS, MODE_TEXT, TARGET_TEXT, shown, useCommandFeed, useEnemyAir, type AssetMode, type Layers } from './groundwar/commandFeed'
 import { rankFor } from '../ranks'
 import './groundwar/groundwar.css'
 
@@ -163,6 +163,8 @@ export default function GroundWarPage(): ReactElement {
   const [selAssetId, setSelAssetId] = useState<number | null>(null)
   const [assetMode, setAssetMode] = useState<AssetMode>('none')
   const [showLaunch, setShowLaunch] = useState(false)
+  /** A catalogue order waiting for its target (and, for a transfer, the base it is from). */
+  const [pending, setPending] = useState<{ opt: OrderOption; from?: number } | null>(null)
   const [busy, setBusy] = useState(false)
   // Base names that fit on screen right now (`declutter`); null = all.
   const [names, setNames] = useState<Set<number> | null>(null)
@@ -252,6 +254,31 @@ export default function GroundWarPage(): ReactElement {
       void cmdQ.refetch()
       feed.refresh()
     }
+  }
+  const armOrder = (o: OrderOption) => {
+    setAssetMode('none')
+    setMode('none')
+    setPending((cur) => (cur?.opt.key === o.key ? null : { opt: o }))
+  }
+  /** Aim the armed catalogue order: a point, a base, or two bases. */
+  const applyOrder = (obj: number | null, at: LatLon) => {
+    const p = pending
+    if (!p) return
+    const o = p.opt
+    const name = (id: number) => pic?.objectives.find((x) => x.id === id)?.name ?? 'that base'
+    const ask = (where: string) => `${o.label} ${where} for ${o.cost.toLocaleString()} treasury points?`
+    if (o.target === 'land' || o.target === 'point' || o.target === 'sea') {
+      setPending(null)
+      return void order({ order: { key: o.key, at } }, ask('here'))
+    }
+    if (obj == null) return toast(`${TARGET_TEXT[o.target].toLowerCase()}`, false)
+    if (o.target === 'transfer') {
+      if (p.from == null) return setPending({ opt: o, from: obj })
+      setPending(null)
+      return void order({ order: { key: o.key, objective: p.from, to_objective: obj } }, ask(`from ${name(p.from)} to ${name(obj)}`))
+    }
+    setPending(null)
+    return void order({ order: { key: o.key, objective: obj } }, ask(`at ${name(obj)}`))
   }
   /** Carry out the armed command-map order at `at`. */
   const applyAssetMode = (at: LatLon) => {
@@ -468,6 +495,7 @@ export default function GroundWarPage(): ReactElement {
     applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
     selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
     assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset, selObjId,
+    pending, applyOrder,
   })
   useEffect(() => {
     live.current = {
@@ -475,6 +503,7 @@ export default function GroundWarPage(): ReactElement {
       applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
       selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
       assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset, selObjId,
+      pending, applyOrder,
     }
   })
 
@@ -549,12 +578,14 @@ export default function GroundWarPage(): ReactElement {
       },
       click: (obj, at) => {
         const L = live.current
-        if (L.assetMode !== 'none') L.applyAssetMode(at)
+        if (L.pending) L.applyOrder(obj, at)
+        else if (L.assetMode !== 'none') L.applyAssetMode(at)
         else if (L.mode !== 'none') L.applyMode(obj)
         else L.clearAll()
       },
       context: (obj, at) => {
         const L = live.current
+        if (L.pending) return setPending(null)
         if (L.assetMode !== 'none') return setAssetMode('none')
         if (L.mode !== 'none' && L.mode !== 'raise' && obj != null) return L.applyMode(obj)
         if (L.mode !== 'none') return setMode('none')
@@ -593,6 +624,7 @@ export default function GroundWarPage(): ReactElement {
       }
       if (e.key === 'Escape') {
         if (L.help) setHelp(false)
+        else if (L.pending) setPending(null)
         else if (L.assetMode !== 'none') setAssetMode('none')
         else if (L.mode !== 'none') setMode('none')
         else if (L.follow) setFollow(false)
@@ -801,6 +833,11 @@ export default function GroundWarPage(): ReactElement {
         {assetMode !== 'none' && (
           <div className="gw-modebar">{MODE_TEXT[assetMode]} · ESC TO CANCEL</div>
         )}
+        {pending && (
+          <div className="gw-modebar">
+            {pending.opt.label.toUpperCase()} · {pending.from != null ? 'NOW CLICK THE BASE TO SEND TO' : TARGET_TEXT[pending.opt.target]} · ESC TO CANCEL
+          </div>
+        )}
         {mode !== 'none' && (
           <div className="gw-modebar">
             {mode === 'attack' ? 'ATTACK' : mode === 'defend' ? 'DEFEND' : 'RAISE'} · CLICK A BASE · ESC TO CANCEL
@@ -819,6 +856,7 @@ export default function GroundWarPage(): ReactElement {
       )}
       {showLaunch && cp && (
         <LaunchPanel cp={cp} selObj={selObj} side={side} canCommand={canOrder} busy={busy}
+          armed={pending?.opt.key ?? null} onArm={armOrder}
           onOrder={(o, c) => void order(o, c)} onFocus={(p) => flyTo(p, 11)} onBarrage={() => armAsset('barrage')}
           onClose={() => setShowLaunch(false)} />
       )}

@@ -14,9 +14,9 @@ import type { Feature, FeatureCollection } from 'geojson'
 import { X } from '@icons'
 import {
   type AirTrack, type Asset, type AssetVerb, type CommandOrder, type CommandPicture,
-  type GroundObjective, type HqOpKind, type LatLon,
+  type GroundObjective, type HqOpKind, type LatLon, type OrderOption,
 } from '../../api'
-import type { AssetMode, Layers } from './commandFeed'
+import { TARGET_TEXT, type AssetMode, type Layers } from './commandFeed'
 import { offset } from './geo'
 import { playerSvg } from './sprites'
 import { PENCIL, SIDE_BRIGHT, SIDE_COLOR, other, type Side } from './theme'
@@ -249,12 +249,66 @@ const OP_LABEL: Partial<Record<HqOpKind, string>> = {
   bomber: 'BOMBER', awacs: 'AWACS', tanker: 'TANKER', naval_strike: 'NAVAL STRIKE', air_repair: 'AIR REPAIR',
 }
 
-export function LaunchPanel({ cp, selObj, side, canCommand, busy, onOrder, onFocus, onBarrage, onClose }: {
+const CATEGORY_ORDER = ['Air', 'Fires', 'Ground', 'Naval', 'Logistics', 'Intel']
+
+/** The order catalogue: everything this side can order, grouped. */
+function OrderCatalog({ orders, armed, canCommand, busy, onArm }: {
+  orders: OrderOption[]
+  armed: string | null
+  canCommand: boolean
+  busy: boolean
+  onArm: (o: OrderOption) => void
+}): ReactElement {
+  const groups = useMemo(() => {
+    const by = new Map<string, OrderOption[]>()
+    for (const o of orders) {
+      const k = o.category || 'Other'
+      by.set(k, [...(by.get(k) ?? []), o])
+    }
+    const rank = (k: string) => {
+      const i = CATEGORY_ORDER.indexOf(k)
+      return i < 0 ? CATEGORY_ORDER.length : i
+    }
+    return [...by.entries()].sort((a, b) => rank(a[0]) - rank(b[0]) || a[0].localeCompare(b[0]))
+  }, [orders])
+  if (orders.length === 0) return <p className="gw-drawer-note">This side has nothing to order on this server.</p>
+  return (
+    <>
+      {groups.map(([cat, list]) => (
+        <div key={cat}>
+          <h3>{cat.toUpperCase()}</h3>
+          <div className="cm-ops">
+            {list.map((o) => {
+              const off = !!o.why_not
+              return (
+                <div key={o.key} className={`cm-op${off ? ' off' : ''}${armed === o.key ? ' armed' : ''}`}>
+                  <button className="cm-op-where" disabled={!canCommand || busy || off} onClick={() => onArm(o)}
+                    title={off ? o.why_not : `${o.detail}. ${TARGET_TEXT[o.target].toLowerCase()}.`}>
+                    <b>{o.label.toUpperCase()}</b>
+                    <span>{off ? o.why_not : o.detail}</span>
+                  </button>
+                  <button className="cm-op-go" disabled={!canCommand || busy || off} onClick={() => onArm(o)}
+                    title={off ? o.why_not : `${o.cost.toLocaleString()} from the treasury`}>
+                    {o.cost.toLocaleString()}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </>
+  )
+}
+
+export function LaunchPanel({ cp, selObj, side, canCommand, busy, armed, onArm, onOrder, onFocus, onBarrage, onClose }: {
   cp: CommandPicture
   selObj: GroundObjective | null
   side: Side
   canCommand: boolean
   busy: boolean
+  armed: string | null
+  onArm: (o: OrderOption) => void
   onOrder: (o: CommandOrder, confirm?: string) => void
   onFocus: (p: LatLon) => void
   onBarrage: () => void
@@ -272,6 +326,8 @@ export function LaunchPanel({ cp, selObj, side, canCommand, busy, onOrder, onFoc
       <div className="cm-orders">
         <button disabled={!canCommand || busy} onClick={onBarrage} title="Every battery of ours in range fires on a point (V)"><kbd>V</kbd> BARRAGE</button>
       </div>
+
+      <OrderCatalog orders={cp.orders ?? []} armed={armed} canCommand={canCommand} busy={busy} onArm={onArm} />
 
       <h3>LOGISTICS{selObj ? ` · ${selObj.name.toUpperCase()}` : ''}</h3>
       {!selObj ? (

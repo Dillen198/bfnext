@@ -586,6 +586,7 @@ pub fn tick_events(
                     &candidates,
                     &mut messages,
                     &mut effects,
+                    None,
                 ),
                 CommanderAction::DispatchCap => scheduler.spawn_commander_cap(
                     db,

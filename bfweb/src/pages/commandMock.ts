@@ -2,7 +2,7 @@
 // same corner of Georgia as `groundwarMock`, so the command layer can be
 // built and checked with `?mock` and no server. Assets move: the tanker
 // orbits, the convoy drives, ordered units go where they are sent.
-import type { Asset, AssetUnit, CommandOrder, CommandPicture, CommandReply, LatLon, LaunchOption } from '../api'
+import type { Asset, AssetUnit, CommandOrder, CommandPicture, CommandReply, LatLon, LaunchOption, OrderOption } from '../api'
 
 export interface CommandMock {
   picture(): CommandPicture
@@ -69,6 +69,17 @@ export function createCommandMock(): CommandMock {
   add({ id: 508, name: 'CVN-74 group', kind: 'naval', role: 'Carrier group', typ: 'Stennis', pos: cvn, heading: 300, alt_m: 0, speed_kts: 18, task: null, dest: null, base: 'CVN-74 group', range_m: null, orders: ['sail'] },
     [unit('Stennis', cvn, 300, 0, 18), unit('TICONDEROG', offset(cvn, 1.5, 0.8), 300, 0, 18)], 0.005)
 
+  const orders: OrderOption[] = [
+    { key: 'action:E-3A AWACS', label: 'E-3A AWACS', category: 'Air', target: 'point', cost: 100, detail: 'an AWACS flies out and orbits over the point', why_not: '' },
+    { key: 'action:KC-135 Boom', label: 'KC-135 Boom', category: 'Air', target: 'point', cost: 50, detail: 'a tanker flies out and holds over the point', why_not: '' },
+    { key: 'action:B-1B Attack', label: 'B-1B Attack', category: 'Air', target: 'point', cost: 100, detail: 'heavy bombers on the JTAC target nearest the point', why_not: '' },
+    { key: 'op:missile', label: 'Missile strike', category: 'Fires', target: 'point', cost: 225, detail: 'our deployed missile launchers in range fire on the point', why_not: 'we have no missile launchers deployed' },
+    { key: 'deploy:Artillery / M109', label: 'M109', category: 'Artillery', target: 'land', cost: 80, detail: 'drives out from our nearest base, by road, to the point (within 25 km of a base)', why_not: '' },
+    { key: 'op:ambush', label: 'Ambush convoy', category: 'Ground', target: 'point', cost: 100, detail: 'a force drives out from our nearest base to cut off the enemy convoy nearest the point', why_not: '' },
+    { key: 'action:Reinforcements', label: 'Reinforcements', category: 'Ground', target: 'own_base', cost: 75, detail: "a transporter convoy rebuilds the base's lost units", why_not: '' },
+    { key: 'action:Naval Strike', label: 'Naval Strike', category: 'Naval', target: 'enemy_base', cost: 50, detail: 'our ships launch cruise missiles at the base', why_not: '' },
+    { key: 'op:hunt', label: 'Surface action group', category: 'Naval', target: 'sea', cost: 300, detail: 'USS_Arleigh_Burke_IIa sail out and attack the enemy ships they find there', why_not: '' },
+  ]
   const launch: LaunchOption[] = [
     { kind: 'strike', objective: 8, objective_name: 'Borjomi', pos: [41.842, 43.387], cost: 520, why: 'enemy factory feeding the Khashuri front', ready: true },
     { kind: 'sead', objective: 12, objective_name: 'Java', pos: [42.398, 43.928], cost: 300, why: 'SA-11 covering the northern approach', ready: true },
@@ -95,6 +106,7 @@ export function createCommandMock(): CommandMock {
         assets: sims.map((s) => structuredClone(s.a)),
         launch: launch.map((l) => ({ ...l, ready: l.ready && l.cost <= treasury })),
         hq: true,
+        orders: orders.map((o) => ({ ...o, why_not: o.why_not || (o.cost > treasury ? `the treasury has ${treasury} of ${o.cost}` : '') })),
         can_command: true,
         god_mode: false,
         commander: null,
@@ -168,6 +180,12 @@ export function createCommandMock(): CommandMock {
         if (dist_km(s.a.pos, o.fire.at) * 1000 > (s.a.range_m ?? 0)) return { ok: false, message: `${s.a.name} can't reach that` }
         if (!pay(120)) return { ok: false, message: 'the treasury can’t pay for that' }
         return { ok: true, message: `${s.a.name} firing (120 from the treasury)` }
+      }
+      if ('order' in o) {
+        const opt = orders.find((x) => x.key === o.order.key)
+        if (!opt) return { ok: false, message: 'no such order' }
+        if (!pay(opt.cost)) return { ok: false, message: 'the treasury can’t pay for that' }
+        return { ok: true, message: `${opt.label} ordered (${opt.cost} from the treasury)` }
       }
       if ('barrage' in o) return pay(120) ? { ok: true, message: 'barrage on the marked point (120 from the treasury)' } : { ok: false, message: 'the treasury can’t pay for that' }
       if ('move_formation' in o) return { ok: true, message: 'formation moving to the marked position' }

@@ -134,6 +134,9 @@ use dcso3::{
 
 /// At most this many orders per commander per minute, and this long between
 /// two of them.
+mod orders;
+pub(crate) use orders::{tick_hunters, Hunters};
+
 const ORDERS_PER_MIN: usize = 20;
 const ORDER_GAP_MS: i64 = 1500;
 const MS_TO_KTS: f64 = 1.943_844;
@@ -347,6 +350,7 @@ pub(crate) fn picture(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<
             }
         }
     }
+    assets.extend(orders::hunter_assets(lua, ctx, side, coord));
     let menu = crate::hq::launch_menu_cached(ctx, side, 24, now);
     let launch = menu
         .iter()
@@ -367,6 +371,7 @@ pub(crate) fn picture(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<
         assets,
         launch,
         hq: crate::hq::cfg(ctx).is_some(),
+        orders: orders::catalog(ctx, side),
     }
 }
 
@@ -592,12 +597,15 @@ fn order_inner(
             Ok(format_compact!("{} returning to base", group_name(ctx, &gid)))
         }
         CommandOrder::Sail { group, to } => {
-            let gid = own_group(ctx, side, group)?;
             let pos = from_ll(lua, to)?;
             let land = Land::singleton(lua).map_err(|e| format_compact!("{e}"))?;
             if !matches!(land.get_surface_type(LuaVec2(pos)), Ok(SurfaceType::Water)) {
-                return Err("a carrier needs deep water".into());
+                return Err("ships need deep water".into());
             }
+            if group < 0 {
+                return orders::retask_hunter(lua, ctx, side, (-group) as u32, pos);
+            }
+            let gid = own_group(ctx, side, group)?;
             run_action(
                 lua,
                 ctx,
@@ -644,6 +652,9 @@ fn order_inner(
         CommandOrder::Launch { kind, objective } => {
             // Paid, tracked and announced by the HQ itself.
             crate::hq::commander_launch(lua, ctx, perf, side, kind, ObjectiveId::from(objective), &who, now)
+        }
+        CommandOrder::Order { key, at, objective, to_objective } => {
+            orders::order(lua, ctx, perf, side, &key, at, objective, to_objective, now)
         }
     }
 }

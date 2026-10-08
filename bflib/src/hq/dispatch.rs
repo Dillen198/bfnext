@@ -160,7 +160,7 @@ fn launch_inner(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, cfg: &HqCf
                 .ok_or_else(|| CompactString::from("campaign events are off"))?;
             let cands = ctx.event_scheduler.build_candidates(&ctx.db);
             let (mut msgs, mut effects) = (vec![], vec![]);
-            let ok = ctx.event_scheduler.spawn_convoy_ambush(&ctx.db, &ecfg, now, side, &cands, &mut msgs, &mut effects);
+            let ok = ctx.event_scheduler.spawn_convoy_ambush(&ctx.db, &ecfg, now, side, &cands, &mut msgs, &mut effects, None);
             ctx.event_scheduler.pending_effects.extend(effects);
             for m in msgs {
                 ctx.db.ephemeral.msgs().panel_to_all(15, false, m);

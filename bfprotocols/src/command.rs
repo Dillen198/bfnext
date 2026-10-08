@@ -177,6 +177,48 @@ pub struct CommandPicture {
     pub launch: Vec<LaunchOption>,
     /// The server runs a theatre HQ, so `launch` means something.
     pub hq: bool,
+    /// Everything this side can order at a place of the commander's
+    /// choosing (`CommandOrder::Order`): its configured actions,
+    /// deployments by road, and the operations that aren't actions.
+    #[serde(default)]
+    pub orders: Vec<OrderOption>,
+}
+
+/// What an order is aimed at, which decides how the map asks for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderTarget {
+    /// A point on land.
+    Land,
+    /// A point anywhere (air operations).
+    Point,
+    /// A point at sea.
+    Sea,
+    /// One of our bases.
+    OwnBase,
+    /// An enemy base we know of.
+    EnemyBase,
+    /// From one of our bases to another.
+    Transfer,
+}
+
+/// One entry of the order catalogue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderOption {
+    /// What `CommandOrder::Order` names: "action:<name>", "deploy:<name>",
+    /// "op:ambush", "op:missile", "op:hunt".
+    pub key: String,
+    pub label: String,
+    /// "Air", "Fires", "Ground", "Naval", "Logistics", "Intel".
+    pub category: String,
+    pub target: OrderTarget,
+    /// Treasury points.
+    pub cost: i64,
+    /// What it does, in a line.
+    pub detail: String,
+    /// Empty when it can be ordered now; otherwise why not.
+    #[serde(default)]
+    pub why_not: String,
 }
 
 /// An order from the command map. Externally tagged on purpose: an
@@ -207,6 +249,18 @@ pub enum CommandOrder {
     HeloTroops { to: i64 },
     /// One of the HQ's operations, paid from the treasury.
     Launch { kind: crate::hq::OpKind, objective: i64 },
+    /// Anything from the order catalogue (`CommandPicture::orders`), at the
+    /// commander's choice of place: `at` for a point, `objective` for a
+    /// base, `objective` -> `to_objective` for a transfer.
+    Order {
+        key: String,
+        #[serde(default)]
+        at: Option<LatLon>,
+        #[serde(default)]
+        objective: Option<i64>,
+        #[serde(default)]
+        to_objective: Option<i64>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

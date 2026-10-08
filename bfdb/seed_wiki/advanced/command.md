@@ -61,6 +61,37 @@ with its price. Click one to launch it.
 
 Press **?** on the page for every key.
 
+## The order catalogue
+
+The **COMMAND** panel (**L**) lists everything your side can order on this
+server, grouped by Air, Fires, Ground, Naval, Logistics and Intel, each with
+its price. Pick one, then click where it goes: a point, a point at sea, one of
+your bases, an enemy base, or two bases for a transfer. Greyed entries say why
+they can't be ordered right now.
+
+Everything happens in DCS. Nothing is decided on the map instead:
+
+- **Air**: AWACS, tankers, fighters, attack and SEAD flights take off from a
+  friendly airfield (one must be within 250 km of the point) and fly there.
+  **Bombers** go after the target a JTAC of yours is lasing nearest the point.
+- **Fires**: every battery in range fires (**Barrage**); deployed missile
+  launchers fire a **missile strike**; ALCM bombers launch cruise missiles.
+- **Ground**: new units (**deployments**) are put together at your nearest
+  base within {{cfg:command.deploy_range_m|25000}} m and **drive there by road**:
+  a convoy the enemy can find and kill on the way. **Ambush convoy** sends a
+  force out from your nearest base to cut off the enemy convoy nearest the
+  point. **Reinforcements** rebuild a base's lost units by transporter convoy.
+- **Naval**: a **naval strike** has your ships launch their own cruise
+  missiles at an enemy base: only ships that carry them can (a Ticonderoga or
+  an Arleigh Burke). A **hunter group** (Red: a Type 093 submarine; Blue: an
+  Arleigh Burke surface action group, since DCS has no modern Western
+  submarine) sails out from your nearest naval base or carrier group to the
+  point and attacks the enemy ships it finds with its own anti-ship missiles.
+  It shows on your map; **Sail** sends it elsewhere. It heads home after
+  about 90 minutes.
+- **Logistics**: repair flights, base-to-base transfers, carrier repair and
+  respawn.
+
 ## What it costs, and what you can't do
 
 Commanding spends the side's treasury, not your points, and the server checks
