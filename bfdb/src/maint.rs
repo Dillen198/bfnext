@@ -196,8 +196,24 @@ fn prune_backups(dir: &Path, keep: usize) {
     }
 }
 
-/// Take a backup every `cfg.every`, the first one an interval after start (a
-/// restart loop must not turn into a backup loop).
+/// Take a backup every `cfg.every`. The first is due `cfg.every` after the
+/// newest backup on disk -- not after this start: a server restarted more
+/// often than the interval (daily deploys) used to never take one at all
+/// (vs1 had none when its database was damaged, Oct 8). Never sooner than
+/// FIRST_BACKUP_DELAY after start, so a restart loop isn't a backup loop.
+const FIRST_BACKUP_DELAY: Duration = Duration::from_secs(15 * 60);
+
+fn first_backup_in(cfg: &BackupCfg) -> Duration {
+    let age = list_backups(&cfg.dir)
+        .last()
+        .and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
+        .and_then(|t| t.elapsed().ok());
+    match age {
+        Some(age) => cfg.every.saturating_sub(age).max(FIRST_BACKUP_DELAY),
+        None => FIRST_BACKUP_DELAY,
+    }
+}
+
 pub(crate) fn spawn_backups(db: StatsDb, cfg: BackupCfg) {
     tokio::spawn(async move {
         log::info!(
@@ -206,7 +222,9 @@ pub(crate) fn spawn_backups(db: StatsDb, cfg: BackupCfg) {
             cfg.dir.display(),
             cfg.keep
         );
-        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + cfg.every, cfg.every);
+        let first = first_backup_in(&cfg);
+        log::info!("database backups: the next one in {} min", first.as_secs() / 60);
+        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + first, cfg.every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
