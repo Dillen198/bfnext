@@ -1,6 +1,6 @@
 [package]
 name = "bfmanager"
-version = "0.2.15"
+version = "0.2.16"
 description = "Fowl Engine Manager -- installs, supervises and updates a Vector Strike server box"
 authors = ["Dillen Weerasinghe"]
 license = "UNLICENSED"
