@@ -114,10 +114,16 @@ if ($DryRun) { Say "dry run -- nothing published" "Yellow"; return }
 
 $commit = (git -C $repoRoot rev-parse HEAD).Trim()
 if (-not $Notes) { $Notes = "Fowl Engine Manager $version`n`nBuilt from $($commit.Substring(0,12))." }
+# The notes go through a file: Windows PowerShell 5.1 passes a native
+# argument's embedded double quotes unescaped, so notes like `the "Check"
+# button` split into several arguments and gh takes the pieces for asset
+# files ("no matches found for `a`").
+$notesFile = Join-Path $OutDir "release-notes.md"
+[System.IO.File]::WriteAllText($notesFile, $Notes, (New-Object System.Text.UTF8Encoding $false))
 # --target: without it gh tags the repo's DEFAULT branch (main), not the
 # commit this was built from. That commit has to be on the remote.
 $ghArgs = @("release", "create", $tag, $out.FullName, (Join-Path $OutDir $sig.Name), "--repo", $Repo,
-            "--target", $commit, "--title", "Fowl Engine Manager $version", "--notes", $Notes)
+            "--target", $commit, "--title", "Fowl Engine Manager $version", "--notes-file", $notesFile)
 if ($Channel -eq "beta") { $ghArgs += "--prerelease" }
 gh @ghArgs
 if ($LASTEXITCODE) { throw "gh release create failed" }
