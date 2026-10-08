@@ -59,6 +59,11 @@ The **BACKUP** tab writes one `FowlEngine-backup-<pc>-<date>.zip`:
 - bfdb's home if it is somewhere else, and other folders the bot's config points at (offered;
   folders over 1 GB start unticked);
 - this app's `manager.json`;
+- the SRS server program folder (from `nodes.yaml` `extensions.SRS.installation`), restored to the
+  same place, so no SRS installer is needed;
+- netidx: `netidx.exe` only, out of `.cargo\bin` or wherever it is on PATH (the restore puts that
+  folder on the machine PATH), and the client config (`%APPDATA%\netidx`, `~\.config\netidx`,
+  `C:\netidx`). `netidx-resolver.json` is already in the DCS server folder;
 - the bot's PostgreSQL database (`pg_dump -Fc`, password from `config\.secret\database.pkl`).
 
 By default it stops DCSServerBot while copying, so procman shuts bfdb down cleanly, and starts

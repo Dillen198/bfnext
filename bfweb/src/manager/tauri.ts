@@ -247,7 +247,7 @@ export interface PublicKeyInfo {
 
 // ── BACKUP & RESTORE (backup.rs) ────────────────────────────────────────────
 
-export type RootKind = 'bot' | 'instance' | 'bfdb' | 'extra'
+export type RootKind = 'bot' | 'instance' | 'bfdb' | 'extra' | 'program' | 'netidx'
 
 export interface BackupRoot {
   id: string

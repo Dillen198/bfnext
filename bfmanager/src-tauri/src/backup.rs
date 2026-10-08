@@ -39,7 +39,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub const MANIFEST: &str = "fowl-backup.json";
-const FORMAT: u32 = 1;
+/// 2: Program and Netidx roots, `only` (a 0.2.16 restore would choke on them).
+const FORMAT: u32 = 2;
 const ZIP_PREFIX: &str = "FowlEngine-backup-";
 /// Extra folders bigger than this start unticked (whisper models, etc.).
 const EXTRA_DEFAULT_MAX: u64 = 1024 * 1024 * 1024;
@@ -55,6 +56,10 @@ pub enum Kind {
     Instance,
     Bfdb,
     Extra,
+    /// An installed program copied whole, Program Files or not (SRS).
+    Program,
+    /// netidx: netidx.exe (runs the resolver) and its client config.
+    Netidx,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +79,10 @@ pub struct Root {
     pub include: bool,
     #[serde(default)]
     pub note: Option<String>,
+    /// Only these files (lowercase names) directly in the folder, nothing
+    /// below it; empty = the whole folder. netidx.exe out of .cargo\bin.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub only: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -291,6 +300,8 @@ fn root_id(kind: Kind, path: &Path) -> String {
         Kind::Instance => "instance",
         Kind::Bfdb => "bfdb",
         Kind::Extra => "extra",
+        Kind::Program => "program",
+        Kind::Netidx => "netidx",
     };
     format!("{k}-{}-{}", slug(&name), short_hash(&path.display().to_string()))
 }
@@ -337,7 +348,7 @@ pub fn excluded(kind: Kind, rel: &str, is_dir: bool) -> bool {
             }
             false
         }
-        Kind::Bfdb | Kind::Extra => false,
+        Kind::Bfdb | Kind::Extra | Kind::Program | Kind::Netidx => false,
     }
 }
 
@@ -349,6 +360,22 @@ pub struct FileEntry {
 }
 
 /// Every file of a root, links not followed (they are reported).
+pub fn walk_root(r: &Root, out: &mut Vec<FileEntry>, links: &mut Vec<String>) {
+    let root = Path::new(&r.path);
+    if r.only.is_empty() {
+        return walk(root, r.kind, out, links);
+    }
+    for name in &r.only {
+        let p = root.join(name);
+        if let Ok(meta) = std::fs::metadata(&p) {
+            if meta.is_file() {
+                let rel = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| name.clone());
+                out.push(FileEntry { abs: p, rel, size: meta.len() });
+            }
+        }
+    }
+}
+
 pub fn walk(root: &Path, kind: Kind, out: &mut Vec<FileEntry>, links: &mut Vec<String>) {
     fn go(dir: &Path, prefix: &str, kind: Kind, out: &mut Vec<FileEntry>, links: &mut Vec<String>) {
         let Ok(rd) = std::fs::read_dir(dir) else { return };
@@ -376,7 +403,7 @@ pub fn walk(root: &Path, kind: Kind, out: &mut Vec<FileEntry>, links: &mut Vec<S
 fn measure(root: &mut Root) -> Vec<String> {
     let mut files = Vec::new();
     let mut links = Vec::new();
-    walk(Path::new(&root.path), root.kind, &mut files, &mut links);
+    walk_root(root, &mut files, &mut links);
     root.files = files.len() as u64;
     root.bytes = files.iter().map(|f| f.size).sum();
     links
@@ -625,22 +652,100 @@ fn is_local_host(h: &str) -> bool {
 
 // ---- Python ---------------------------------------------------------------------------
 
+const MACHINE_ENV: &str = r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment";
+
+/// The machine PATH as the registry holds it now (a winget install or a
+/// restore may just have changed it): (value type, raw value).
+fn machine_path_raw() -> Option<(String, String)> {
+    let out = hidden("reg.exe").args(["query", MACHINE_ENV, "/v", "Path"]).output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    text.lines().find_map(|l| {
+        let l = l.trim_start();
+        if !l.to_ascii_lowercase().starts_with("path ") {
+            return None;
+        }
+        for t in ["REG_EXPAND_SZ", "REG_SZ"] {
+            if let Some(v) = l.split_once(t).map(|x| x.1) {
+                return Some((t.to_string(), v.trim().to_string()));
+            }
+        }
+        None
+    })
+}
+
+/// This process's PATH plus the machine PATH from the registry.
+fn path_dirs() -> Vec<String> {
+    let mut paths: Vec<String> = std::env::var("PATH").unwrap_or_default().split(';').map(String::from).collect();
+    if let Some((_, v)) = machine_path_raw() {
+        paths.extend(v.split(';').map(String::from));
+    }
+    paths.into_iter().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
+}
+
+/// The folder holding netidx.exe: the bot user's .cargo\bin (where
+/// `cargo install netidx-tools` puts it), else anywhere on PATH.
+pub fn find_netidx(profile: Option<&Path>) -> Option<PathBuf> {
+    let mut cands: Vec<PathBuf> = Vec::new();
+    if let Some(p) = profile {
+        cands.push(p.join(".cargo").join("bin"));
+    }
+    cands.extend(path_dirs().into_iter().map(PathBuf::from));
+    cands.into_iter().find(|d| d.join("netidx.exe").is_file())
+}
+
+/// Folders netidx reads client.json from (netidx's Config::load_default):
+/// %NETIDX_CFG%, %APPDATA%\netidx, ~\.config\netidx, C:\netidx -- the ones
+/// that exist, for the bot's user.
+pub fn netidx_config_dirs(profile: Option<&Path>) -> Vec<PathBuf> {
+    let mut c: Vec<PathBuf> = Vec::new();
+    if let Some(f) = std::env::var_os("NETIDX_CFG").map(PathBuf::from) {
+        if let Some(d) = f.parent() {
+            c.push(d.to_path_buf());
+        }
+    }
+    if let Some(p) = profile {
+        c.push(p.join("AppData").join("Roaming").join("netidx"));
+        c.push(p.join(".config").join("netidx"));
+    }
+    c.push(PathBuf::from(format!("{}\\netidx", system_drive())));
+    let mut out: Vec<PathBuf> = Vec::new();
+    for d in c {
+        if d.is_dir() && !out.iter().any(|o| lower(&disp(o)) == lower(&disp(&d))) {
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// Put `dir` on the machine PATH if it isn't there, so procman (in the bot's
+/// session) finds netidx.exe. Refuses to write a PATH it couldn't read
+/// properly rather than risk clobbering it.
+fn ensure_on_machine_path(dir: &Path) -> Result<bool> {
+    // the round-trip test must not edit the dev box's real PATH
+    if cfg!(test) {
+        return Ok(false);
+    }
+    let d = disp(dir);
+    let (ty, cur) = machine_path_raw().ok_or_else(|| anyhow!("couldn't read the machine PATH"))?;
+    if !cur.to_ascii_lowercase().contains("system32") {
+        bail!("the machine PATH read back looks wrong -- not touching it");
+    }
+    if cur.split(';').any(|p| lower(p.trim()) == lower(&d)) {
+        return Ok(false);
+    }
+    let new = format!("{};{d}", cur.trim_end_matches(';'));
+    let out = hidden("reg.exe").args(["add", MACHINE_ENV, "/v", "Path", "/t", &ty, "/d", &new, "/f"]).output()?;
+    if !out.status.success() {
+        bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
+    }
+    Ok(true)
+}
+
 /// A real python.exe (not the Store alias) on PATH or in the usual places,
 /// with its version.
 pub fn find_python() -> Option<(PathBuf, String)> {
     let mut cands: Vec<PathBuf> = Vec::new();
-    let mut paths: Vec<String> = std::env::var("PATH").unwrap_or_default().split(';').map(String::from).collect();
-    // the machine PATH as it is now (a winget install just changed it)
-    if let Ok(out) = hidden("reg.exe")
-        .args(["query", r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment", "/v", "Path"])
-        .output()
-    {
-        let text = String::from_utf8_lossy(&out.stdout).to_string();
-        if let Some(v) = text.lines().find_map(|l| l.split("REG_EXPAND_SZ").nth(1).or_else(|| l.split("REG_SZ").nth(1))) {
-            paths.extend(v.trim().split(';').map(String::from));
-        }
-    }
-    for p in paths {
+    for p in path_dirs() {
         let p = p.trim();
         if p.is_empty() || p.to_lowercase().contains("windowsapps") {
             continue;
@@ -814,6 +919,7 @@ pub fn backup_plan() -> Result<BackupPlan> {
         bytes: 0,
         include: true,
         note: Some("without its Python venv (run.cmd builds it again), caches and logs".into()),
+        only: vec![],
     });
 
     // DCS server instances
@@ -831,7 +937,23 @@ pub fn backup_plan() -> Result<BackupPlan> {
                 programs.push(Program { what: "DCS World Server".into(), path: p.into() });
             }
             if let Some(p) = str_at(&node, &["extensions", "SRS", "installation"]) {
-                programs.push(Program { what: "DCS-SimpleRadio Standalone".into(), path: p.into() });
+                // small, and copying it keeps the exact version + its server
+                // settings: restored to the same place, no installer needed
+                if Path::new(p).is_dir() {
+                    roots.push(Root {
+                        id: root_id(Kind::Program, Path::new(p)),
+                        kind: Kind::Program,
+                        label: "SRS server (DCS-SimpleRadio Standalone, the whole program folder)".into(),
+                        path: p.into(),
+                        files: 0,
+                        bytes: 0,
+                        include: true,
+                        note: Some("restored to the same folder -- no SRS installer needed".into()),
+                        only: vec![],
+                    });
+                } else {
+                    programs.push(Program { what: "DCS-SimpleRadio Standalone".into(), path: p.into() });
+                }
             }
         }
     }
@@ -871,6 +993,42 @@ pub fn backup_plan() -> Result<BackupPlan> {
             bytes: 0,
             include: true,
             note: Some("without tracks, screenshots, shader caches and DCS logs".into()),
+            only: vec![],
+        });
+    }
+
+    // netidx: the tool procman runs the resolver with, and the client config
+    // bflib (in DCS) and bfdb find the resolver through
+    if let Some(dir) = find_netidx(profile.as_deref()) {
+        roots.push(Root {
+            id: root_id(Kind::Netidx, &dir),
+            kind: Kind::Netidx,
+            label: "netidx tools (netidx.exe -- runs the resolver the live map and stats use)".into(),
+            path: disp(&dir),
+            files: 0,
+            bytes: 0,
+            include: true,
+            note: Some("only netidx.exe from this folder; the restore puts the folder on PATH".into()),
+            only: vec!["netidx.exe".into()],
+        });
+    } else {
+        warnings.push("netidx.exe was not found on PATH or in .cargo\\bin -- the live map and stats need it (cargo install netidx-tools)".into());
+    }
+    for dir in netidx_config_dirs(profile.as_deref()) {
+        let d = disp(&dir);
+        if roots.iter().any(|r| r.only.is_empty() && is_under(&d, &r.path)) {
+            continue;
+        }
+        roots.push(Root {
+            id: root_id(Kind::Netidx, &dir),
+            kind: Kind::Netidx,
+            label: "netidx client config (where bflib and bfdb find the resolver)".into(),
+            path: d,
+            files: 0,
+            bytes: 0,
+            include: true,
+            note: None,
+            only: vec![],
         });
     }
 
@@ -896,6 +1054,7 @@ pub fn backup_plan() -> Result<BackupPlan> {
                                 bytes: 0,
                                 include: true,
                                 note: None,
+                                only: vec![],
                             });
                         }
                     }
@@ -914,6 +1073,9 @@ pub fn backup_plan() -> Result<BackupPlan> {
     // other folders the config points at
     let mut extras: Vec<String> = Vec::new();
     for p in referenced {
+        if roots.iter().any(|r| r.only.is_empty() && is_under(&p, &r.path)) {
+            continue;
+        }
         let path = PathBuf::from(&p);
         let folder = if path.is_dir() {
             path
@@ -962,6 +1124,7 @@ pub fn backup_plan() -> Result<BackupPlan> {
             bytes: 0,
             include: true,
             note: None,
+            only: vec![],
         });
     }
 
@@ -1102,6 +1265,7 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
             bytes: 0,
             include: true,
             note: None,
+            only: vec![],
         };
         measure(&mut r);
         roots.push(r);
@@ -1184,7 +1348,7 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
             phase(&format!("Copying {} ({})", r.label, r.path));
             let mut files = Vec::new();
             let mut links = Vec::new();
-            walk(Path::new(&r.path), r.kind, &mut files, &mut links);
+            walk_root(&r, &mut files, &mut links);
             let (mut n, mut bytes) = (0u64, 0u64);
             for fe in files {
                 cancelled()?;
@@ -1495,7 +1659,11 @@ pub fn inspect(zip: &str) -> Result<RestorePreview> {
             kind: r.kind,
             label: r.label.clone(),
             from: r.path.clone(),
-            exists: non_empty_dir(Path::new(&to)),
+            exists: if r.only.is_empty() {
+                non_empty_dir(Path::new(&to))
+            } else {
+                r.only.iter().any(|f| Path::new(&to).join(f).is_file())
+            },
             to,
             files: r.files,
             bytes: r.bytes,
@@ -1533,8 +1701,9 @@ pub fn inspect(zip: &str) -> Result<RestorePreview> {
             install: Some("postgres".into()),
         });
     }
+    let carried = |p: &str| m.roots.iter().any(|r| r.only.is_empty() && is_under(p, &r.path));
     for p in &m.programs {
-        if p.what == "referenced by the bot's config" {
+        if p.what == "referenced by the bot's config" || carried(&p.path) {
             continue;
         }
         let ok = Path::new(&p.path).exists();
@@ -1548,13 +1717,27 @@ pub fn inspect(zip: &str) -> Result<RestorePreview> {
     let missing: Vec<&Program> = m
         .programs
         .iter()
-        .filter(|p| p.what == "referenced by the bot's config" && !Path::new(&p.path).exists())
+        .filter(|p| p.what == "referenced by the bot's config" && !Path::new(&p.path).exists() && !carried(&p.path))
         .collect();
     if !missing.is_empty() {
         checks.push(Check {
             what: "Other programs the bot's config uses".into(),
             ok: false,
             detail: missing.iter().map(|p| p.path.clone()).collect::<Vec<_>>().join("\n"),
+            install: None,
+        });
+    }
+
+    let has_netidx = m.roots.iter().any(|r| r.kind == Kind::Netidx && !r.only.is_empty());
+    if !has_netidx {
+        let found = find_netidx(profile_now.as_deref().map(Path::new));
+        checks.push(Check {
+            what: "netidx (the resolver behind the live map and stats)".into(),
+            ok: found.is_some(),
+            detail: match found {
+                Some(d) => format!("netidx.exe in {}", disp(&d)),
+                None => "not in this backup and not on this PC -- install it: cargo install netidx-tools".into(),
+            },
             install: None,
         });
     }
@@ -1828,7 +2011,18 @@ fn run_restore(opts: RestoreOptions) -> Result<String> {
         cancelled()?;
         phase(&format!("Restoring {} → {}", r.label, disp(to)));
         let inside_restored = restored.iter().any(|p| is_under(&disp(to), &disp(p)));
-        if !inside_restored && non_empty_dir(to) {
+        if !r.only.is_empty() {
+            // a few files out of a shared folder (.cargo\bin): keep the
+            // folder, set aside only the files about to be replaced
+            for name in &r.only {
+                let cur = to.join(name);
+                if cur.is_file() {
+                    let aside = PathBuf::from(format!("{}.before-restore-{stamp}", disp(&cur)));
+                    std::fs::rename(&cur, &aside).with_context(|| format!("moving {} aside (is it running?)", disp(&cur)))?;
+                    note(format!("  the existing {} was moved to {}", name, disp(&aside)));
+                }
+            }
+        } else if !inside_restored && non_empty_dir(to) {
             let aside = PathBuf::from(format!("{}.before-restore-{stamp}", disp(to)));
             std::fs::rename(to, &aside).with_context(|| {
                 format!("moving the existing {} aside (is something still using it? close DCS, the bot and any Explorer window in it)", disp(to))
@@ -1860,7 +2054,19 @@ fn run_restore(opts: RestoreOptions) -> Result<String> {
             n += 1;
         }
         note(format!("  {n} files"));
-        restored.push(to.clone());
+        if r.kind == Kind::Netidx && r.only.iter().any(|f| f == "netidx.exe") {
+            match ensure_on_machine_path(to) {
+                Ok(true) => note(format!("  added {} to the machine PATH (procman runs `netidx` from PATH)", disp(to))),
+                Ok(false) => note("  already on PATH".into()),
+                Err(e) => {
+                    warn(format!("could not put {} on PATH: {e:#}", disp(to)));
+                    next_step(format!("Add {} to the system PATH so the bot can start the netidx resolver.", disp(to)));
+                }
+            }
+        }
+        if r.only.is_empty() {
+            restored.push(to.clone());
+        }
         let to_s = disp(to);
         if lower(&to_s) != lower(&r.path) {
             pairs.push((r.path.clone(), to_s));
@@ -1987,7 +2193,9 @@ fn run_restore(opts: RestoreOptions) -> Result<String> {
             .into(),
     );
     for p in &m.programs {
-        if p.what != "referenced by the bot's config" && !Path::new(&p.path).exists() {
+        if p.what != "referenced by the bot's config" && !Path::new(&p.path).exists()
+            && !m.roots.iter().any(|r| r.only.is_empty() && is_under(&p.path, &r.path))
+        {
             next_step(format!("Install {} at {} (not in the backup).", p.what, p.path));
         }
     }
@@ -2196,9 +2404,15 @@ mod tests {
         w(bot.join("plugins").join("p.py"), "");
         w(bot.join("logs").join("bot.log"), "skip me");
         w(bot.join("config").join(".secret").join("database.pkl"), "secret");
+        let srs = base.join("Program Files").join("SRS");
+        w(srs.join("SR-Server.exe"), "srs");
+        w(srs.join("server.cfg"), "[Server Settings]");
+        w(old_user.join(".cargo").join("bin").join("netidx.exe"), "netidx");
+        w(old_user.join(".cargo").join("bin").join("cargo.exe"), "not mine");
+        w(old_user.join("AppData").join("Roaming").join("netidx").join("client.json"), "{\"addrs\":[]}");
         w(bot.join("config").join("nodes.yaml"), &format!(
-            "OLDPC:\n  instances:\n    DCS.test:\n      home: {}\n      missions_dir: \"{}\"\n",
-            disp(&home), disp(&home.join("Missions")).replace('\\', "\\\\")));
+            "OLDPC:\n  extensions:\n    SRS:\n      installation: {}\n  instances:\n    DCS.test:\n      home: {}\n      missions_dir: \"{}\"\n",
+            disp(&srs), disp(&home), disp(&home.join("Missions")).replace('\\', "\\\\")));
         w(home.join("Config").join("serverSettings.lua"), &format!("missionList = {{ \"{}\" }}", disp(&home.join("Missions").join("a.miz")).replace('\\', "\\\\")));
         w(home.join("Missions").join("a.miz"), "MIZ");
         w(home.join("vs_save"), "campaign state");
@@ -2223,7 +2437,9 @@ mod tests {
         };
         let plan = backup_plan().unwrap();
         // nodes.yaml is keyed OLDPC; this PC's name differs, so the first node is used
-        assert_eq!(plan.roots.len(), 2, "{:?}", plan.roots.iter().map(|r| &r.path).collect::<Vec<_>>());
+        let kinds: Vec<Kind> = plan.roots.iter().map(|r| r.kind).collect();
+        assert_eq!(kinds, vec![Kind::Bot, Kind::Program, Kind::Instance, Kind::Netidx, Kind::Netidx],
+                   "{:?}", plan.roots.iter().map(|r| &r.path).collect::<Vec<_>>());
         start_backup(BackupOptions {
             dest_dir: disp(&base.join("out")),
             roots: plan.roots.iter().map(|r| r.id.clone()).collect(),
@@ -2244,9 +2460,16 @@ mod tests {
         assert!(names.iter().any(|n| n.ends_with("/.secret/database.pkl")));
         assert!(names.iter().any(|n| n.ends_with("/Logs/stats.jsonl")));
         assert!(!names.iter().any(|n| n.contains("dcs.log") || n.contains("Tracks") || n.contains("bot.log")), "{names:?}");
+        assert!(names.iter().any(|n| n.ends_with("/SR-Server.exe")));
+        assert!(names.iter().any(|n| n.ends_with("/netidx.exe")));
+        assert!(names.iter().any(|n| n.starts_with("roots/netidx-netidx-") && n.ends_with("/client.json")), "{names:?}");
+        assert!(!names.iter().any(|n| n.ends_with("/cargo.exe")), "only netidx.exe out of .cargo\\bin");
 
         // fresh Windows: everything gone, another user
         std::fs::remove_dir_all(&bot).unwrap();
+        std::fs::remove_dir_all(&srs).unwrap();
+        // the new user already has Rust: their .cargo\bin must survive
+        w(new_user.join(".cargo").join("bin").join("rustc.exe"), "theirs");
         std::fs::remove_dir_all(&old_user).unwrap();
         std::fs::remove_dir_all(&data).unwrap();
         std::env::set_var("USERPROFILE", &new_user);
@@ -2267,6 +2490,10 @@ mod tests {
         let j = wait();
         assert!(j.error.is_none(), "{j:?}");
         assert_eq!(std::fs::read_to_string(new_home.join("vs_save")).unwrap(), "campaign state");
+        assert!(srs.join("SR-Server.exe").is_file(), "SRS back where it was");
+        let cbin = new_user.join(".cargo").join("bin");
+        assert!(cbin.join("netidx.exe").is_file() && cbin.join("rustc.exe").is_file(), "netidx added, rustc kept");
+        assert!(new_user.join("AppData").join("Roaming").join("netidx").join("client.json").is_file());
         let nodes = std::fs::read_to_string(bot.join("config").join("nodes.yaml")).unwrap();
         assert!(nodes.contains("newuser") && !nodes.contains("olduser"), "{nodes}");
         let lua = std::fs::read_to_string(new_home.join("Config").join("serverSettings.lua")).unwrap();
