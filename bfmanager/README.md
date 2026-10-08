@@ -42,11 +42,43 @@ Windows boot
 | `src-tauri/src/winsvc.rs` | install/control the service, "Log on as a service", elevation |
 | `src-tauri/src/update.rs` | GitHub releases, minisign verification, running the installer |
 | `src-tauri/src/bot.rs` | finding DCSServerBot, plugin sync with backups, the bot's OPS API address |
+| `src-tauri/src/backup.rs` | whole-box backup to one zip, and restore onto a fresh Windows |
 | `src-tauri/src/lib.rs` | the desktop app's commands |
 | `src-tauri/nsis/hooks.nsh` | installer: stop the service before copying files, start it after; keep it on `/UPDATE` |
 | `../bfweb/src/manager/` | the UI. It is built from bfweb, so it shares React, the design and the OPS page |
 | `scripts/stage-bot.mjs` | copies the bot plugin and extensions into the bundle (never `fowlengine.yaml`) |
 | `release.ps1` | build, sign and publish `manager-v<version>` |
+
+## Backup and restore (moving PC, reinstalling Windows)
+
+The **BACKUP** tab writes one `FowlEngine-backup-<pc>-<date>.zip`:
+
+- the DCSServerBot folder with `config\` and `config\.secret` (the venv, caches and logs stay out);
+- every `Saved Games\DCS.*` instance: Config, Missions, Scripts, Mods, the campaign saves, the bfdb
+  database (`bfdb\`) and `Logs\stats*` (no tracks, screenshots, shader caches or DCS logs);
+- bfdb's home if it is somewhere else, and other folders the bot's config points at (offered;
+  folders over 1 GB start unticked);
+- this app's `manager.json`;
+- the bot's PostgreSQL database (`pg_dump -Fc`, password from `config\.secret\database.pkl`).
+
+By default it stops DCSServerBot while copying, so procman shuts bfdb down cleanly, and starts
+it again afterwards. DCS keeps running. The zip holds the Discord token and passwords: keep it private.
+
+**Restore** (same tab, or the button on Setup for a fresh box) shows what is missing on this PC
+(Python, PostgreSQL, DCS, SRS). It can install Python and PostgreSQL with winget, lets the admin
+move each folder somewhere else, and then:
+
+- unpacks the zip. A folder that is already there is renamed `*.before-restore-<time>`, never deleted;
+- rewrites old paths in the text config files when a folder or the Windows user changed;
+- renames the node in `nodes.yaml` when the PC's name changed;
+- loads the database (creates the bot's role and database with the `postgres` password);
+- restores `manager.json` and installs and starts the service.
+
+It can't restore automatic sign-in, because Windows never hands the old password back. Turn it
+on again in Setup step 4.
+
+`cargo test --lib e2e -- --ignored` (with `FOWL_E2E_DIR` set to a scratch folder) runs a full
+backup, wipe and restore round trip on a fake box.
 
 ## Develop
 

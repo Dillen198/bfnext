@@ -234,11 +234,69 @@ const botHandlers: Record<string, (args: Record<string, unknown>) => unknown> = 
   },
 }
 
+// ── BACKUP tab: a fake job that runs for ~8 s ─────────────────────────────────
+const P = 'C:\\Users\\ATPAdmin\\Saved Games'
+const mockRoots = [
+  { id: 'bot', kind: 'bot', label: 'DCSServerBot (bot, plugins, config + secrets)', path: 'C:\\VectorStrike\\Tools\\DCSServerBot', files: 2140, bytes: 96e6, include: true, note: 'without its Python venv (run.cmd builds it again), caches and logs' },
+  { id: 'instance-DCS.vectorstrike_1-a1b2c3', kind: 'instance', label: 'DCS server DCS.vectorstrike_1 (config, missions, campaign saves, bfdb data)', path: `${P}\\DCS.vectorstrike_1`, files: 812, bytes: 2.4e9, include: true, note: 'without tracks, screenshots, shader caches and DCS logs' },
+  { id: 'instance-DCS.vectorstrike_2-d4e5f6', kind: 'instance', label: 'DCS server DCS.vectorstrike_2 (config, missions, campaign saves, bfdb data)', path: `${P}\\DCS.vectorstrike_2`, files: 377, bytes: 610e6, include: true, note: 'without tracks, screenshots, shader caches and DCS logs' },
+  { id: 'extra-whisper-0a0b0c', kind: 'extra', label: "Folder the bot's config points at", path: 'C:\\VectorStrike\\Tools\\whisper', files: 9, bytes: 1.6e9, include: false, note: '1.6 GB -- unticked because it is big; tick it if it can\'t be downloaded again' },
+]
+let mockJob: Record<string, unknown> | null = null
+let mockJobStart = 0
+function mockJobNow() {
+  if (!mockJob) return null
+  const t = (Date.now() - mockJobStart) / 8000
+  const total = mockJob.total_bytes as number
+  if (t >= 1 && mockJob.running) {
+    mockJob.running = false
+    mockJob.phase = 'done'
+    mockJob.finished_at = now()
+    mockJob.output = mockJob.kind === 'backup' ? 'D:\\FowlEngineBackups\\FowlEngine-backup-VS-SERVER-20261008-1412.zip (2.1 GB)' : '3 folder(s) restored, database loaded'
+    mockJob.next_steps = mockJob.kind === 'backup'
+      ? ['Copy D:\\FowlEngineBackups\\FowlEngine-backup-VS-SERVER-20261008-1412.zip OFF this PC (USB stick, another drive, cloud) before reinstalling Windows.', "Keep it private: it holds the bot's Discord token, database password and API keys.", 'On the new Windows: install DCS World Server (and SRS), install Fowl Engine Manager, open BACKUP → Restore and pick this zip.']
+      : ['Setup → step 4: turn automatic sign-in on again for the server\'s user.', 'Watch the OVERVIEW tab: the bot\'s first start builds its Python venv, which takes a few minutes.']
+  }
+  return { ...mockJob, done_bytes: Math.round(Math.min(1, t) * total), current: mockJob.running ? `${P}\\DCS.vectorstrike_1\\bfdb\\db` : null }
+}
+function startMockJob(kind: string) {
+  mockJobStart = Date.now()
+  mockJob = { id: 1, kind, running: true, phase: kind === 'backup' ? 'Copying DCS server DCS.vectorstrike_1' : 'Restoring DCSServerBot', done_bytes: 0, total_bytes: 3.1e9, current: null,
+              log: ['Looking at what to back up', 'Stopping DCSServerBot (bfdb stops with it)'], warnings: [], error: null, output: null, next_steps: [], started_at: now(), finished_at: null }
+  return null
+}
+
+const backupHandlers: Record<string, (args: Record<string, unknown>) => unknown> = {
+  backup_plan: () => ({
+    roots: mockRoots, programs: [{ what: 'DCS World Server', path: 'C:\\Program Files\\Eagle Dynamics\\DCS World Server' }, { what: 'DCS-SimpleRadio Standalone', path: 'C:\\Program Files\\DCS-SimpleRadio-Standalone' }],
+    database: { host: '127.0.0.1', port: 5432, name: 'dcsserverbot', user: 'dcsserverbot', pg_dump: 'C:\\Program Files\\PostgreSQL\\16\\bin\\pg_dump.exe', problem: null },
+    default_dest: 'D:\\FowlEngineBackups', hostname: 'VS-SERVER', bot_running: true, service_running: true, bfdb_running: true, dcs_running: true, warnings: [],
+  }),
+  backup_start: () => startMockJob('backup'),
+  restore_start: () => startMockJob('restore'),
+  backup_job: () => mockJobNow(),
+  find_backups: () => [{ path: 'D:\\FowlEngineBackups\\FowlEngine-backup-VS-SERVER-20261008-1412.zip', bytes: 2.1e9, modified: now() }],
+  restore_inspect: (a) => ({
+    zip: a.zip, zip_bytes: 2.1e9, hostname_now: 'DESKTOP-NEW123', hostname_changed: true, profile_now: 'C:\\Users\\Admin', desktop_user: '.\\Admin',
+    has_database: true, postgres_found: null, service_installed: false,
+    manifest: { format: 1, created: now(), hostname: 'VS-SERVER', manager_version: '0.2.16', desktop_user: '.\\ATPAdmin', profile: 'C:\\Users\\ATPAdmin',
+                bot_dir: 'C:\\VectorStrike\\Tools\\DCSServerBot', roots: mockRoots.slice(0, 3), programs: [], python: 'Python 3.12.4', service_installed: true, warnings: [],
+                database: { host: '127.0.0.1', port: 5432, name: 'dcsserverbot', user: 'dcsserverbot', dump: 'database/dcsserverbot.dump', bytes: 48e6, pg_version: 'pg_dump (PostgreSQL) 16.4' } },
+    mappings: mockRoots.slice(0, 3).map(r => ({ id: r.id, kind: r.kind, label: r.label, from: r.path, to: r.path.replace('ATPAdmin', 'Admin'), files: r.files, bytes: r.bytes, exists: r.id === 'instance-DCS.vectorstrike_1-a1b2c3', problem: null })),
+    checks: [
+      { what: 'Python 3.11+ (runs DCSServerBot)', ok: false, detail: 'not found -- DCSServerBot can\'t start without it', install: 'python' },
+      { what: "PostgreSQL (the bot's database)", ok: false, detail: 'not installed -- DCSServerBot can\'t start without it', install: 'postgres' },
+      { what: 'DCS World Server', ok: true, detail: 'C:\\Program Files\\Eagle Dynamics\\DCS World Server', install: null },
+      { what: 'DCS-SimpleRadio Standalone', ok: false, detail: 'not at C:\\Program Files\\DCS-SimpleRadio-Standalone -- install it there (or fix the path in the bot\'s nodes.yaml)', install: null },
+    ],
+  }),
+}
+
 export function installDevMock(): void {
   ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args: Record<string, unknown>) => {
       await new Promise(r => setTimeout(r, 150))
-      const h = handlers[cmd] ?? botHandlers[cmd]
+      const h = handlers[cmd] ?? botHandlers[cmd] ?? backupHandlers[cmd]
       return h ? h(args ?? {}) : 'done (mock)'
     },
     transformCallback: () => 0,

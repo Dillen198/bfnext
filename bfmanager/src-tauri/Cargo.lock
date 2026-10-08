@@ -262,6 +262,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-single-instance",
+ "url",
  "windows-service",
  "windows-sys 0.59.0",
  "zip",

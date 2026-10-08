@@ -37,6 +37,8 @@ minisign-verify = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# postgres:// URLs in the bot's config (already in the tree via reqwest)
+url = "2"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.8"
@@ -44,6 +46,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authentication_Identity",
+    "Win32_Storage_FileSystem",
     "Win32_System_Console",
     "Win32_System_Environment",
     "Win32_System_RemoteDesktop",

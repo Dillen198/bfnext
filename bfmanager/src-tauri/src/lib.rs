@@ -6,6 +6,7 @@
 //!   --console    the service loop in a terminal, for testing
 
 pub mod agent;
+pub mod backup;
 pub mod bot;
 pub mod botcfg;
 pub mod config;
@@ -498,6 +499,51 @@ async fn set_config_value(rel: String, path: Vec<String>, value: String, expecte
     .await
 }
 
+// ---- whole-box backup and restore (backup.rs) ---------------------------------------
+//
+// Long jobs run on a background thread; the BACKUP tab polls backup_job.
+
+#[tauri::command]
+async fn backup_plan() -> CmdResult<backup::BackupPlan> {
+    blocking(backup::backup_plan).await
+}
+
+#[tauri::command]
+async fn backup_start(opts: backup::BackupOptions) -> CmdResult<()> {
+    blocking(move || backup::start_backup(opts)).await
+}
+
+#[tauri::command]
+async fn backup_job() -> CmdResult<Option<backup::Job>> {
+    Ok(backup::job_status())
+}
+
+#[tauri::command]
+async fn backup_cancel() -> CmdResult<()> {
+    backup::cancel_job();
+    Ok(())
+}
+
+#[tauri::command]
+async fn find_backups() -> CmdResult<Vec<backup::FoundBackup>> {
+    blocking(|| Ok(backup::find_backups())).await
+}
+
+#[tauri::command]
+async fn restore_inspect(zip: String) -> CmdResult<backup::RestorePreview> {
+    blocking(move || backup::inspect(&zip)).await
+}
+
+#[tauri::command]
+async fn restore_start(opts: backup::RestoreOptions) -> CmdResult<()> {
+    blocking(move || backup::start_restore(opts)).await
+}
+
+#[tauri::command]
+async fn reveal_backup(path: String) -> CmdResult<()> {
+    blocking(move || backup::reveal(&path)).await
+}
+
 // ---- the window lives in the tray -------------------------------------------------
 //
 // Closing the window hides it; the tray icon brings it back and its menu can
@@ -635,6 +681,14 @@ pub fn run() {
             read_public_key,
             preview_config_value,
             set_config_value,
+            backup_plan,
+            backup_start,
+            backup_job,
+            backup_cancel,
+            find_backups,
+            restore_inspect,
+            restore_start,
+            reveal_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fowl Engine Manager");

@@ -245,6 +245,119 @@ export interface PublicKeyInfo {
   path: string
 }
 
+// ── BACKUP & RESTORE (backup.rs) ────────────────────────────────────────────
+
+export type RootKind = 'bot' | 'instance' | 'bfdb' | 'extra'
+
+export interface BackupRoot {
+  id: string
+  kind: RootKind
+  label: string
+  path: string
+  files: number
+  bytes: number
+  include: boolean
+  note: string | null
+}
+
+export interface BackupProgram { what: string; path: string }
+
+export interface BackupPlan {
+  roots: BackupRoot[]
+  database: { host: string; port: number; name: string; user: string; pg_dump: string | null; problem: string | null } | null
+  programs: BackupProgram[]
+  default_dest: string
+  hostname: string
+  bot_running: boolean
+  service_running: boolean
+  bfdb_running: boolean
+  dcs_running: boolean
+  warnings: string[]
+}
+
+export interface BackupOptions {
+  dest_dir: string
+  roots: string[]
+  extra_paths: string[]
+  database: boolean
+  stop_bot: boolean
+}
+
+export interface BackupJob {
+  id: number
+  kind: 'backup' | 'restore'
+  running: boolean
+  phase: string
+  done_bytes: number
+  total_bytes: number
+  current: string | null
+  log: string[]
+  warnings: string[]
+  error: string | null
+  output: string | null
+  next_steps: string[]
+  started_at: string
+  finished_at: string | null
+}
+
+export interface FoundBackup { path: string; bytes: number; modified: string | null }
+
+export interface BackupManifest {
+  format: number
+  created: string
+  hostname: string
+  manager_version: string
+  desktop_user: string | null
+  profile: string | null
+  bot_dir: string | null
+  roots: BackupRoot[]
+  database: { host: string; port: number; name: string; user: string; dump: string | null; bytes: number; pg_version: string | null } | null
+  programs: BackupProgram[]
+  python: string | null
+  service_installed: boolean
+  warnings: string[]
+}
+
+export interface RestoreMapping {
+  id: string
+  kind: RootKind
+  label: string
+  from: string
+  to: string
+  files: number
+  bytes: number
+  exists: boolean
+  problem: string | null
+}
+
+export interface RestoreCheck { what: string; ok: boolean; detail: string; install: 'python' | 'postgres' | null }
+
+export interface RestorePreview {
+  zip: string
+  zip_bytes: number
+  manifest: BackupManifest
+  mappings: RestoreMapping[]
+  hostname_now: string
+  hostname_changed: boolean
+  profile_now: string | null
+  desktop_user: string | null
+  checks: RestoreCheck[]
+  has_database: boolean
+  postgres_found: string | null
+  service_installed: boolean
+}
+
+export interface RestoreOptions {
+  zip: string
+  targets: { id: string; to: string }[]
+  restore_database: boolean
+  pg_password: string | null
+  install_python: boolean
+  install_postgres: boolean
+  install_service: boolean
+  desktop_user: string | null
+}
+
 // ── commands ─────────────────────────────────────────────────────────────────
 
 export const mgr = {
@@ -279,6 +392,14 @@ export const mgr = {
                       invoke<{ change: ConfigChange; sha256: string }>('preview_config_value', { rel, path, value }),
   setConfigValue:   (rel: string, path: string[], value: string, expectedSha: string) =>
                       invoke<{ written: ConfigWritten; change: ConfigChange }>('set_config_value', { rel, path, value, expectedSha }),
+  backupPlan:       () => invoke<BackupPlan>('backup_plan'),
+  backupStart:      (opts: BackupOptions) => invoke<void>('backup_start', { opts }),
+  backupJob:        () => invoke<BackupJob | null>('backup_job'),
+  backupCancel:     () => invoke<void>('backup_cancel'),
+  findBackups:      () => invoke<FoundBackup[]>('find_backups'),
+  restoreInspect:   (zip: string) => invoke<RestorePreview>('restore_inspect', { zip }),
+  restoreStart:     (opts: RestoreOptions) => invoke<void>('restore_start', { opts }),
+  revealBackup:     (path: string) => invoke<void>('reveal_backup', { path }),
 }
 
 // ── the api.ts transport: the OPS page's requests, answered locally ──────────

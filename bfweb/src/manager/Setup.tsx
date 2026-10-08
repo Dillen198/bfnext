@@ -20,7 +20,7 @@ function Step({ n, title, done, children }: { n: number; title: string; done: bo
   )
 }
 
-export default function Setup({ state: s, onDone }: { state: AppState; onDone: () => void }) {
+export default function Setup({ state: s, onDone, onRestore }: { state: AppState; onDone: () => void; onRestore?: () => void }) {
   const act = useAction()
   const [dir, setDir] = useState(s.config.bot_dir ?? '')
   const [found, setFound] = useState<string[] | null>(null)
@@ -73,6 +73,13 @@ export default function Setup({ state: s, onDone }: { state: AppState; onDone: (
           DCSServerBot's own first-run setup (Discord token, DCS servers) must already be done: run its <span style={MONO}>run.cmd</span> once by hand if not.
         </div>
       </div>
+      {!s.bot_dir_valid && onRestore && (
+        <Note>
+          Reinstalled Windows or moving to a new PC? If you have a Fowl Engine backup zip, restore it instead: it puts DCSServerBot,
+          the DCS servers, the campaign and the database back and installs the service.{' '}
+          <Btn primary onClick={onRestore}>Restore from a backup</Btn>
+        </Note>
+      )}
       <Result r={act.result} onClose={act.clear} />
 
       <Step n={1} title="Where is DCSServerBot?" done={step1}>

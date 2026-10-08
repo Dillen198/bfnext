@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Server, Activity, Config, Terminal, Download, Shield, FolderCog } from '@icons'
+import { Server, Activity, Config, Terminal, Download, Shield, FolderCog, Save } from '@icons'
 import { mgr, inTauri } from './tauri'
 import { Dot, Pill, Btn } from './ui'
 import logo from './logo.png'
@@ -10,17 +10,19 @@ import Setup from './Setup'
 import Settings from './Settings'
 import Logs from './Logs'
 import BotConfig from './BotConfig'
+import Backup from './Backup'
 
 // The dashboard's own OPS page, unchanged, over the local transport.
 const OpsPage = lazy(() => import('../pages/OpsPage'))
 
-type Tab = 'overview' | 'ops' | 'botconfig' | 'setup' | 'settings' | 'logs'
+type Tab = 'overview' | 'ops' | 'botconfig' | 'setup' | 'backup' | 'settings' | 'logs'
 
 const TABS: { key: Tab; label: string; icon: typeof Server }[] = [
   { key: 'overview', label: 'OVERVIEW', icon: Activity },
   { key: 'ops', label: 'SERVER OPS', icon: Server },
   { key: 'botconfig', label: 'BOT CONFIG', icon: FolderCog },
   { key: 'setup', label: 'SETUP', icon: Shield },
+  { key: 'backup', label: 'BACKUP', icon: Save },
   { key: 'settings', label: 'SETTINGS', icon: Config },
   { key: 'logs', label: 'LOGS', icon: Terminal },
 ]
@@ -113,7 +115,8 @@ export default function ManagerApp() {
         )}
         <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
           {current === 'overview' && <Overview state={state} onSetup={() => setTab('setup')} />}
-          {current === 'setup' && state && <Setup state={state} onDone={() => setTab('overview')} />}
+          {current === 'setup' && state && <Setup state={state} onDone={() => setTab('overview')} onRestore={() => setTab('backup')} />}
+          {current === 'backup' && state && <Backup state={state} />}
           {current === 'settings' && state && <Settings state={state} />}
           {current === 'logs' && <Logs />}
           {current === 'botconfig' && <BotConfig onDirtyChange={setCfgDirty} />}
