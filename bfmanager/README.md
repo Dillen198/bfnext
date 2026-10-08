@@ -87,7 +87,10 @@ move each folder somewhere else, and then:
 CRC. It then compares each section with what was on disk and looks for the files a restore needs
 (`nodes.yaml`, `.secret`, `serverSettings.lua`, missions, `bfdb\`, `netidx.exe`, the SRS program, a
 `PGDMP` database dump). The report shows OK / CHECK (some files couldn't be read at backup time) /
-BROKEN per section. **Check a backup** runs the same check on any zip, e.g. the copy on the USB
+BROKEN per section. A file that doesn't read back (CRC mismatch) is written again: the zip is
+rebuilt with every good entry raw-copied and the bad ones re-read from disk, then checked again,
+up to 3 times. That fixes a one-off bit flip. A file that keeps failing means the PC itself is
+damaging data (RAM or disk). **Check a backup** runs the same check on any zip, e.g. the copy on the USB
 stick. The whole log is saved as `<zip>.log` next to the zip and as `logs\<backup|verify|restore>-<time>.log`.
 
 It can't restore automatic sign-in, because Windows never hands the old password back. Turn it

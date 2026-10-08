@@ -1732,7 +1732,28 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
     with_job(|j| j.zip_path = Some(disp(&final_path)));
     // the bot can come back while the zip is read through
     drop(restart);
-    let report = verify_zip(&final_path).context("checking the finished zip")?;
+    let mut report = verify_zip(&final_path).context("checking the finished zip")?;
+    // a file that doesn't read back: copy it again, up to three times
+    let mut tries = 0;
+    while !report.corrupt_names.is_empty() && tries < 3 {
+        tries += 1;
+        phase(&format!(
+            "{} file(s) didn't read back -- writing them again (try {tries} of 3): {}",
+            report.corrupt_names.len(),
+            report.corrupt_names.join(", ")
+        ));
+        repair_zip(&final_path, &m, &report.corrupt_names).context("rewriting the files that didn't read back")?;
+        report = verify_zip(&final_path).context("checking the repaired zip")?;
+        if report.corrupt_names.is_empty() {
+            note(format!("  the repaired zip reads back clean (took {tries} rewrite(s))"));
+            warn(format!(
+                "a file came out damaged and had to be written again ({tries} time(s)). Data that changes after it was read points at bad RAM or a failing disk -- test them (mdsched.exe, CrystalDiskInfo)."
+            ));
+        }
+    }
+    if !report.corrupt_names.is_empty() {
+        warn("files still don't read back after 3 rewrites: this PC is damaging data (RAM or disk). Test the hardware before trusting any copy made on it.".into());
+    }
     let report_ok = report.ok;
     if !report_ok {
         for p in report.problems.iter().chain(report.corrupt.iter().take(20)) {
@@ -1816,6 +1837,9 @@ pub struct VerifyReport {
     pub sections: Vec<Section>,
     /// Entries whose data doesn't read back (checksum, truncation).
     pub corrupt: Vec<String>,
+    /// The zip entry names of `corrupt`, for a repair.
+    #[serde(skip)]
+    pub corrupt_names: Vec<String>,
     pub problems: Vec<String>,
 }
 
@@ -1889,6 +1913,7 @@ pub fn verify_zip(zip_path: &Path) -> Result<VerifyReport> {
     let mut names: Vec<(String, u64)> = Vec::with_capacity(a.len());
     let mut corrupt = Vec::new();
     let mut dump_head: Vec<u8> = Vec::new();
+    let mut corrupt_names: Vec<String> = Vec::new();
     let dump_entry = m.database.as_ref().and_then(|d| d.dump.clone());
     for i in 0..a.len() {
         cancelled()?;
@@ -1909,7 +1934,10 @@ pub fn verify_zip(zip_path: &Path) -> Result<VerifyReport> {
         match res {
             Ok(_) => names.push((name, size)),
             Err(err) if err.to_string() == "cancelled" => bail!("cancelled"),
-            Err(err) => corrupt.push(format!("{name} ({err})")),
+            Err(err) => {
+                corrupt.push(format!("{name} ({err})"));
+                corrupt_names.push(name);
+            }
         }
     }
     let has = |prefix: &str, pred: &dyn Fn(&str) -> bool| {
@@ -1979,7 +2007,7 @@ pub fn verify_zip(zip_path: &Path) -> Result<VerifyReport> {
         }
         checks.extend(later);
         // an older zip has no expected_files: only compare when recorded
-        let missing = r.files.saturating_sub(count);
+        let missing = r.files.saturating_sub(count + bad_here as u64);
         if missing > 0 {
             checks.push(CheckLine { ok: false, info: false, text: format!("{missing} file(s) the manifest lists are not in the zip") });
         } else {
@@ -2103,6 +2131,7 @@ pub fn verify_zip(zip_path: &Path) -> Result<VerifyReport> {
         zip_bytes,
         sections,
         corrupt,
+        corrupt_names,
         problems,
     };
     note(String::new());
@@ -2110,6 +2139,69 @@ pub fn verify_zip(zip_path: &Path) -> Result<VerifyReport> {
         note(l.to_string());
     }
     Ok(report)
+}
+
+/// Rebuild `zip_path` with the entries in `bad` written again from their
+/// source files: every other entry is copied across as it is (no
+/// recompression), then the whole thing replaces the old zip. The database
+/// dump can't be redone here (its temp file is gone) -- that one stays bad.
+fn repair_zip(zip_path: &Path, m: &Manifest, bad: &[String]) -> Result<()> {
+    let size = std::fs::metadata(zip_path)?.len();
+    if let Some(free) = free_space(zip_path) {
+        if free < size + size / 10 {
+            bail!("rewriting needs a second copy of the zip ({}) and only {} is free", fmt_bytes(size), fmt_bytes(free));
+        }
+    }
+    let tmp = zip_path.with_extension("zip.repair");
+    let result = (|| -> Result<()> {
+        let mut a = zip::ZipArchive::new(File::open(zip_path)?)?;
+        let f = File::create(&tmp)?;
+        let mut w = zip::ZipWriter::new(std::io::BufWriter::with_capacity(1 << 20, f));
+        DONE.store(0, Ordering::Relaxed);
+        with_job(|j| j.total_bytes = size);
+        for i in 0..a.len() {
+            cancelled()?;
+            let e = a.by_index_raw(i)?;
+            if bad.iter().any(|b| b == e.name()) {
+                continue;
+            }
+            DONE.fetch_add(e.compressed_size(), Ordering::Relaxed);
+            w.raw_copy_file(e)?;
+        }
+        for name in bad {
+            if name == MANIFEST {
+                let mj = serde_json::to_vec_pretty(m)?;
+                w.start_file(MANIFEST, file_opts(MANIFEST, mj.len() as u64))?;
+                w.write_all(&mj)?;
+                continue;
+            }
+            // roots/<id>/<rel> -> the file it came from
+            let src = name
+                .strip_prefix("roots/")
+                .and_then(|r| r.split_once('/'))
+                .and_then(|(id, rel)| m.roots.iter().find(|r| r.id == id).map(|r| (r, rel)))
+                .map(|(r, rel)| rel.split('/').fold(PathBuf::from(&r.path), |p, part| p.join(part)));
+            let Some(src) = src else {
+                warn(format!("{name}: can't write it again from here (not a copied file)"));
+                continue;
+            };
+            let file = File::open(&src).with_context(|| format!("reading {} again", disp(&src)))?;
+            let len = file.metadata().map(|md| md.len()).unwrap_or(0);
+            note(format!("  writing {} again", disp(&src)));
+            w.start_file(name.as_str(), file_opts(name, len))?;
+            std::io::copy(&mut Counting { inner: file }, &mut w)?;
+        }
+        let mut b = w.finish()?;
+        b.flush()?;
+        b.into_inner().map_err(|e| anyhow!("{}", e.error()))?.sync_all()?;
+        Ok(())
+    })();
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    std::fs::rename(&tmp, zip_path).context("replacing the zip with the repaired one")?;
+    Ok(())
 }
 
 // ---- finding backups -------------------------------------------------------------------
@@ -3095,6 +3187,13 @@ mod tests {
         let rep = verify_zip(&bad).unwrap();
         assert!(!rep.ok && rep.corrupt.iter().any(|c| c.contains("a.miz")), "{}", rep.to_text());
         assert!(rep.sections.iter().any(|s| s.status == "bad"), "{}", rep.to_text());
+        assert!(!rep.problems.iter().any(|p| p.contains("not in the zip")), "a corrupt entry is not also 'missing': {}", rep.to_text());
+        // ...and a repair writes it again from the source and checks clean
+        let (m, _) = read_manifest(&bad).unwrap();
+        repair_zip(&bad, &m, &rep.corrupt_names).unwrap();
+        let rep = verify_zip(&bad).unwrap();
+        assert!(rep.ok, "{}", rep.to_text());
+        assert_eq!(rep.entries as usize, names.len(), "same entries after the repair");
 
         // fresh Windows: everything gone, another user
         std::fs::remove_dir_all(&bot).unwrap();
