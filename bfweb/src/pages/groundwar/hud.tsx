@@ -2,7 +2,7 @@
 // command bar (selection cards + command card), the single-formation detail
 // drawer, toasts and the controls overlay. Presentational only -- the page
 // owns state and passes actions down.
-import { useEffect, useState, type ReactElement, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import {
   Activity, Alert, Armor, Capture, Defend, Eye, Helicopter, Plus, Shield, Strike, Supply, X, type IconComponent,
 } from '@icons'
@@ -176,14 +176,47 @@ const EVENT_ICON: Record<GroundEvent['kind'], [IconComponent, string]> = {
   destroyed: [X, '#ff5b45'],
 }
 
-export function EventFeed({ events, time, onPick }: { events: GroundEvent[]; time: number; onPick: (e: GroundEvent) => void }): ReactElement {
+/**
+ * The combat log: the live feed merged with the round's saved log (bfdb
+ * keeps every line until the campaign resets). RECENT shows the latest;
+ * ALL is the whole round, paged back with LOAD OLDER.
+ */
+export function EventFeed({ events, saved = [], time, onPick, onOlder, hasOlder = false, olderBusy = false }: {
+  events: GroundEvent[]
+  saved?: GroundEvent[]
+  time: number
+  onPick: (e: GroundEvent) => void
+  onOlder?: () => void
+  hasOlder?: boolean
+  olderBusy?: boolean
+}): ReactElement {
   const [open, setOpen] = useState(true)
-  const list = [...events].sort((a, b) => b.at - a.at).slice(0, 14)
+  const [all, setAll] = useState(false)
+  const merged = useMemo(() => {
+    const seen = new Set<string>()
+    const out: GroundEvent[] = []
+    for (const e of [...events, ...saved]) {
+      const k = `${e.at}|${e.text}`
+      if (seen.has(k)) continue
+      seen.add(k)
+      out.push(e)
+    }
+    return out.sort((a, b) => b.at - a.at)
+  }, [events, saved])
+  const list = all ? merged : merged.slice(0, 14)
   return (
-    <section className={`gw-log${open ? '' : ' shut'}`}>
-      <button className="gw-log-head" onClick={() => setOpen(!open)}>
-        <span>COMBAT LOG</span><span>{open ? '–' : '+'}</span>
-      </button>
+    <section className={`gw-log${open ? '' : ' shut'}${all && open ? ' all' : ''}`}>
+      <div className="gw-log-bar">
+        <button className="gw-log-head" onClick={() => setOpen(!open)}>
+          <span>COMBAT LOG</span><span>{open ? '–' : '+'}</span>
+        </button>
+        {open && (
+          <button className="gw-log-mode" onClick={() => setAll(!all)}
+            title={all ? 'Show the latest only' : `The whole round: ${merged.length} lines kept until the campaign resets`}>
+            {all ? 'RECENT' : 'ALL'}
+          </button>
+        )}
+      </div>
       {open && (
         <ol>
           {list.length === 0 && <li className="gw-log-empty">Quiet front. Nothing reported yet.</li>}
@@ -197,6 +230,11 @@ export function EventFeed({ events, time, onPick }: { events: GroundEvent[]; tim
               </li>
             )
           })}
+          {all && onOlder && hasOlder && (
+            <li className="gw-log-more">
+              <button disabled={olderBusy} onClick={onOlder}>{olderBusy ? 'LOADING…' : 'LOAD OLDER'}</button>
+            </li>
+          )}
         </ol>
       )}
     </section>

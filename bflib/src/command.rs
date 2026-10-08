@@ -467,12 +467,17 @@ pub(crate) fn order(
     o: CommandOrder,
     now: DateTime<Utc>,
 ) -> CommandReply {
+    // A formation's own order already goes in the log, by the ground war.
+    let logged = !matches!(o, CommandOrder::MoveFormation { .. });
     match order_inner(lua, ctx, perf, side, ucid, o, now) {
         Ok(text) => {
             let who = ucid
                 .and_then(|u| ctx.db.player(&u).map(|p| p.name.to_string()))
                 .unwrap_or_else(|| "Command".into());
             info!("command: {side:?} {who}: {text}");
+            if logged {
+                ctx.groundwar.rt.event(side, "order", format_compact!("{who}: {text}"), None, None, now);
+            }
             ctx.db.ephemeral.msgs().panel_to_side(10, false, side, format_compact!("COMMAND {who}: {text}"));
             CommandReply { ok: true, message: text.to_string() }
         }

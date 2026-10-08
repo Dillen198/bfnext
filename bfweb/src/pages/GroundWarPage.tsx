@@ -17,7 +17,7 @@ import type { MapLibreEvent, Map as MlMap } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { Aircraft, ChevronsLeft, Defend, Info, Pin, Plus, Shield, Strike, X } from '@icons'
 
-import { api, type CommandMe, type CommandOrder, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon, type OrderOption } from '../api'
+import { api, type CommandMe, type CommandOrder, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon, type OrderOption, type CombatLogLine } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { useInstance } from '../context/InstanceContext'
 import { useTheme } from '../context/ThemeContext'
@@ -113,6 +113,33 @@ export default function GroundWarPage(): ReactElement {
   const [layers, setLayersState] = useState<Layers>(() => loadPref('cm.layers', ALL_LAYERS))
   const setLayers = (l: Layers) => { setLayersState(l); savePref('cm.layers', l) }
   const cmdQ = useCommandFeed(sideParam, instance, cmdMock, !!pic?.enabled)
+  // The round's saved combat log (bfdb keeps it until the campaign resets),
+  // merged into the live feed; older pages on demand.
+  const logQ = useQuery({
+    queryKey: ['command-log', sideParam, instance],
+    queryFn: () => api.command.log(sideParam),
+    refetchInterval: 15_000,
+    enabled: !mock && !!pic?.enabled,
+    retry: false,
+  })
+  const [olderLog, setOlderLog] = useState<CombatLogLine[]>([])
+  const [logEnd, setLogEnd] = useState(false)
+  const [logBusy, setLogBusy] = useState(false)
+  const savedLog = useMemo(() => [...(logQ.data?.lines ?? []), ...olderLog], [logQ.data, olderLog])
+  const loadOlderLog = async () => {
+    const oldest = savedLog[savedLog.length - 1]
+    if (!oldest) return
+    setLogBusy(true)
+    try {
+      const r = await api.command.log(sideParam, oldest.ns)
+      if (r.lines.length === 0) setLogEnd(true)
+      setOlderLog((o) => [...o, ...r.lines])
+    } catch (e) {
+      toast((e as Error).message, false)
+    } finally {
+      setLogBusy(false)
+    }
+  }
   const cp = cmdQ.data ?? null
   // A busy engine (vs1) misses refreshes: that is not the same as an engine
   // without the command map, and the commander should know which it is.
@@ -846,7 +873,8 @@ export default function GroundWarPage(): ReactElement {
         {follow && <div className="gw-modebar follow">FOLLOWING {selfPlayer?.name.toUpperCase() ?? 'YOU'} · DRAG OR F TO STOP</div>}
       </div>
 
-      <EventFeed events={pic.events} time={pic.time} onPick={onEvent} />
+      <EventFeed events={pic.events} saved={savedLog} time={pic.time} onPick={onEvent}
+        onOlder={() => void loadOlderLog()} hasOlder={!logEnd && savedLog.length >= 200} olderBusy={logBusy} />
       {single && !selAsset && (
         <Drawer f={single} side={side} pic={pic} lockMins={Math.round(pic.player_lock_secs / 60)} onClose={clearAll} />
       )}

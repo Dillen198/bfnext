@@ -298,6 +298,7 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Da
     {
         let gw = &mut ctx.groundwar;
         ctx.db.tick_garrisons(&mut gw.rt, &mut gw.garrison, lua, now);
+        ctx.db.flush_combat_log(&mut gw.rt, lua);
     }
     let Some(cfg) = cfg(ctx) else {
         // Switched off with formations still out: send them home, or their

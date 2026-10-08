@@ -346,6 +346,8 @@ pub struct FormationRt {
     cut_off_said: FxHashSet<FormationId>,
     /// Each side's recent ground-war events, oldest first.
     events: FxHashMap<Side, VecDeque<Event>>,
+    /// Events not yet written to the stats stream (`Db::flush_combat_log`).
+    outbox: Vec<(Side, Event)>,
     /// Real fire missions sent in support, by (side, ~3 km cell), so the
     /// batteries aren't re-tasked onto the same spot every round.
     fire_ts: FxHashMap<(Side, i64, i64), DateTime<Utc>>,
@@ -377,8 +379,10 @@ pub struct Event {
     pub formation: Option<FormationId>,
 }
 
-/// Events kept per side.
-const MAX_EVENTS: usize = 60;
+/// Events kept per side for the live feed (bfdb keeps every one).
+const MAX_EVENTS: usize = 200;
+/// Events waiting to go to the stats stream, at most.
+const MAX_OUTBOX: usize = 2_000;
 
 impl FormationRt {
     pub fn is_live(&self, f: &Formation) -> bool {
@@ -443,8 +447,12 @@ impl FormationRt {
         formation: Option<FormationId>,
         now: DateTime<Utc>,
     ) {
+        let ev = Event { at: now, kind, text: text.into(), pos, formation };
+        if self.outbox.len() < MAX_OUTBOX {
+            self.outbox.push((side, ev.clone()));
+        }
         let q = self.events.entry(side).or_default();
-        q.push_back(Event { at: now, kind, text: text.into(), pos, formation });
+        q.push_back(ev);
         while q.len() > MAX_EVENTS {
             q.pop_front();
         }
@@ -3211,6 +3219,28 @@ impl Db {
     /// One pass of the ground war's mechanics (not the AI): movement,
     /// arrivals, assaults, who is in DCS, spotting, deployment, fighting,
     /// supply and morale, map pins.
+    /// Write the combat log's new lines to the stats stream, where bfdb
+    /// keeps them for the round. Every slow tick, ground war on or off.
+    pub fn flush_combat_log(&mut self, rt: &mut FormationRt, lua: MizLua) {
+        if rt.outbox.is_empty() {
+            return;
+        }
+        let coord = dcso3::coord::Coord::singleton(lua).ok();
+        for (side, e) in rt.outbox.drain(..) {
+            let pos = e.pos.and_then(|p| {
+                let ll = coord.as_ref()?.lo_to_ll(LuaVec3(Vector3::new(p.x, 0., p.y))).ok()?;
+                Some([ll.latitude, ll.longitude])
+            });
+            self.ephemeral.stat(bfprotocols::stats::Stat::CombatLog {
+                side,
+                kind: e.kind.into(),
+                text: e.text.as_str().into(),
+                pos,
+                formation: e.formation,
+            });
+        }
+    }
+
     pub fn tick_formations(
         &mut self,
         rt: &mut FormationRt,

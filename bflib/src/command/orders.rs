@@ -743,6 +743,7 @@ pub(crate) fn tick_hunters(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     for (i, h) in ctx.hunters.list.iter_mut().enumerate() {
         let Some(pos) = lead_pos(lua, &h.name) else {
             info!("command: {:?} {} lost", h.side, h.label);
+            ctx.groundwar.rt.event(h.side, "destroyed", format_compact!("{} has been lost", h.label), None, None, now);
             ctx.db.ephemeral.msgs().panel_to_side(15, false, h.side, format_compact!("COMMAND: {} has been lost.", h.label));
             gone.push(i);
             continue;

@@ -434,6 +434,14 @@ impl Db {
                     self.route_garrison(lua, &land, &legs, REACT_MPS, true);
                     if first {
                         info!("garrison: {name} ({side:?}) moving out to meet enemy ground units {away:.0} m out");
+                        rt.event(
+                            side,
+                            "contact",
+                            format_compact!("{name}: enemy armour at the perimeter, the garrison is moving to engage"),
+                            Some(t),
+                            None,
+                            now,
+                        );
                         self.ephemeral.msgs().panel_to_side(
                             15,
                             false,
@@ -451,6 +459,14 @@ impl Db {
                         grt.bases.get_mut(&oid).unwrap().qrf = Some(id);
                         let fname = self.formation(id).map(|f| f.name.clone()).unwrap_or_default();
                         info!("garrison: {fname} sent as a quick reaction force to {name}");
+                        rt.event(
+                            side,
+                            "order",
+                            format_compact!("{fname} is the quick reaction force for {name}"),
+                            Some(center),
+                            Some(id),
+                            now,
+                        );
                         self.ephemeral.msgs().panel_to_side(
                             15,
                             false,
@@ -475,6 +491,7 @@ impl Db {
                         groups.iter().filter_map(|g| self.home_of(g).map(|h| (*g, h))).collect();
                     self.route_garrison(lua, &land, &legs, PATROL_MPS * 1.5, false);
                     info!("garrison: {name} ({side:?}) all clear, back to its positions");
+                    rt.event(side, "arrived", format_compact!("{name}: all clear, the garrison is back in its positions"), Some(center), None, now);
                 }
                 continue;
             }

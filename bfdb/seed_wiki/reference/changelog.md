@@ -11,6 +11,10 @@
   them in DCS (before, no ship ever fired).
 - **The ground war happens in DCS**: moving and fighting formations are real
   DCS groups; nothing advances or fights off the map.
+- **The combat log is kept for the whole round**: every contact, battle, loss,
+  capture, order, garrison reaction and hunter group report is saved and
+  survives server restarts; only a campaign reset clears it. **ALL** on the
+  COMBAT LOG shows the whole round.
 
 **A harder, less predictable enemy**
 - **Bases defend themselves**: garrisons drive out to meet enemy vehicles, call

@@ -991,6 +991,11 @@ pub(crate) struct StatsDbInner {
     /// `command::GrantRecord`, not bincode, so the record can grow without
     /// breaking the tree (see the bincode schema notes).
     commander_grants: Tree<std::string::String, std::string::String>,
+    /// Every side's combat log for every round (`Stat::CombatLog`). Key:
+    /// zero-padded "<round>:<unix nanos>" so a round's lines sort by time
+    /// and a new round starts an empty log; the value is a JSON
+    /// `CombatLogLine` (not bincode, so the line can grow).
+    combat_log: Tree<std::string::String, std::string::String>,
     // bfwiki uploaded images (screenshots etc.), keyed by generated Uuid
     wiki_images: Tree<Uuid, WikiImage>,
     // Recon intel (TARPS) captures, keyed (RoundId, capture Uuid). Per-round,
@@ -1185,6 +1190,25 @@ fn copy_locked_file(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
 }
 
+/// One combat-log line as bfdb keeps it (`StatsDb::combat_log`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct CombatLogLine {
+    /// Unix seconds.
+    pub(crate) at: i64,
+    pub(crate) side: std::string::String,
+    pub(crate) kind: std::string::String,
+    pub(crate) text: std::string::String,
+    #[serde(default)]
+    pub(crate) pos: Option<[f64; 2]>,
+    #[serde(default)]
+    pub(crate) formation: Option<u32>,
+}
+
+/// Fixed width, so keys sort by round, then time.
+fn combat_log_key(round: RoundId, nanos: i64) -> std::string::String {
+    format!("{:020}:{:020}", round.0, nanos.max(0))
+}
+
 fn stat_variant_name(s: &Stat) -> &'static str {
     match s {
         Stat::NewRound { .. } => "NewRound",
@@ -1231,6 +1255,7 @@ fn stat_variant_name(s: &Stat) -> &'static str {
         Stat::SeaRouteDestroyed { .. } => "SeaRouteDestroyed",
         Stat::Weather { .. } => "Weather",
         Stat::GciPicture(_) => "GciPicture",
+        Stat::CombatLog { .. } => "CombatLog",
     }
 }
 
@@ -1339,6 +1364,7 @@ impl StatsDb {
             news_image_count: Tree::open(&db, "news_image_count")?,
             wiki_pages: Tree::open(&db, "wiki_pages")?,
             commander_grants: Tree::open(&db, "commander_grants")?,
+            combat_log: Tree::open(&db, "combat_log")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
             intel_captures: Tree::open(&db, "intel_captures")?,
             intel_images: Tree::open(&db, "intel_images")?,
@@ -3116,6 +3142,34 @@ impl StatsDb {
         self.wiki_pages.get(&slug.to_string())
     }
 
+    /// `side`'s combat log for `round`, newest first: at most `limit` lines
+    /// from before `before` (unix nanos; None = now). The round's whole log
+    /// is kept until the campaign resets.
+    pub(crate) fn combat_log(
+        &self,
+        round: RoundId,
+        side: &str,
+        before: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<(i64, CombatLogLine)>> {
+        let lo = combat_log_key(round, 0);
+        let hi = combat_log_key(round, before.unwrap_or(i64::MAX));
+        let mut out = vec![];
+        for r in self.combat_log.range(lo..hi)?.rev() {
+            let (k, v) = r?;
+            let Ok(line) = serde_json::from_str::<CombatLogLine>(&v) else { continue };
+            if !line.side.eq_ignore_ascii_case(side) {
+                continue;
+            }
+            let ns = k.rsplit(':').next().and_then(|n| n.parse::<i64>().ok()).unwrap_or(0);
+            out.push((ns, line));
+            if out.len() >= limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
     /// Every admin commander override, by pilot. A record that no longer
     /// parses is skipped (and logged), not fatal.
     pub(crate) fn commander_grants(&self) -> Result<HashMap<Ucid, crate::command::GrantRecord>> {
@@ -4597,6 +4651,18 @@ impl StatsDb {
                         visibility_m,
                     });
                 }
+            }
+            Stat::CombatLog { side, kind, text, pos, formation } => {
+                let key = combat_log_key(ctx.round, time.timestamp_nanos_opt().unwrap_or(0));
+                let line = CombatLogLine {
+                    at: time.timestamp(),
+                    side: format!("{side:?}"),
+                    kind: kind.to_string(),
+                    text: text.to_string(),
+                    pos,
+                    formation,
+                };
+                self.combat_log.insert(&key, &serde_json::to_string(&line)?)?;
             }
             Stat::ConvoyDestroyed { .. }
             | Stat::CampaignEvent { .. }

@@ -272,4 +272,19 @@ pub enum Stat {
         visibility_m: Option<f64>,
     },
     GciPicture(crate::gci::GciPicture),
+    /// One line of a side's combat log (the command map's feed: contacts,
+    /// battles, losses, captures, orders, garrison reactions, naval
+    /// hunters). bfdb keeps every one for the whole round, so the log
+    /// survives restarts and is only cleared by a campaign reset. Appended
+    /// last: bfdb's bincode records number variants by position.
+    CombatLog {
+        side: Side,
+        kind: String,
+        text: String,
+        /// [lat, lon], where it happened.
+        #[serde(default)]
+        pos: Option<[f64; 2]>,
+        #[serde(default)]
+        formation: Option<u32>,
+    },
 }

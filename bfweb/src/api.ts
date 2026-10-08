@@ -401,6 +401,12 @@ export interface GroundEvent {
   formation: number | null
 }
 
+/** GET /api/command/log: a saved combat-log line (kept for the whole round). */
+export interface CombatLogLine extends GroundEvent {
+  /** Unix nanos: the cursor for the next (older) page. */
+  ns: number
+}
+
 export interface GroundPicture {
   side: 'Blue' | 'Red'
   enabled: boolean
@@ -2000,6 +2006,13 @@ export const api = {
     picture: (side?: 'Blue' | 'Red') => get<CommandPicture>(side ? `/command?side=${side}` : '/command'),
     order: (o: CommandOrder, side?: 'Blue' | 'Red') =>
       post<CommandReply>(side ? `/command/order?side=${side}` : '/command/order', o),
+    /** The side's combat log for the round, newest first; `before` pages back. */
+    log: (side?: 'Blue' | 'Red', before?: number, limit = 200) => {
+      const q = new URLSearchParams({ limit: String(limit) })
+      if (side) q.set('side', side)
+      if (before != null) q.set('before', String(before))
+      return get<{ lines: CombatLogLine[] }>(`/command/log?${q}`)
+    },
     roster: () => get<CommanderRoster>('/admin/commanders'),
     /** grant = null goes back to what the pilot's rank says. */
     setGrant: (ucid: string, grant: 'granted' | 'revoked' | null) =>

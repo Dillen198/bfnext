@@ -4976,6 +4976,41 @@ const COMMAND_STALE_MAX: std::time::Duration = std::time::Duration::from_secs(12
 /// Only ever the caller's own side's assets; the enemy comes from the
 /// fog-of-war feeds (`/ws/tacmap`, `/ws/groundwar`). Coalition-locked like
 /// those; an admin with no side looks at `?side=`.
+/// GET /api/command/log -- the caller's side's combat log for this round,
+/// newest first, `limit` (default 200, at most 500) lines from before
+/// `before` (unix nanos, from the last page). Kept for the whole round, so
+/// it survives restarts and is only cleared by a campaign reset.
+/// Coalition-locked: a side reads its own log only.
+async fn api_command_log(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let side = match c.side {
+        dcso3::coalition::Side::Red => "Red",
+        _ => "Blue",
+    };
+    let before = query.get("before").and_then(|b| b.parse::<i64>().ok());
+    let limit = query.get("limit").and_then(|l| l.parse::<usize>().ok()).unwrap_or(200).clamp(1, 500);
+    let lines = task::block_in_place(|| -> anyhow::Result<_> {
+        let Some(round) = db.active_round_id(&inst.id)? else { return Ok(vec![]) };
+        db.combat_log(round, side, before, limit)
+    })?;
+    let out: Vec<serde_json::Value> = lines
+        .into_iter()
+        .map(|(ns, l)| {
+            serde_json::json!({
+                "ns": ns, "at": l.at, "kind": l.kind, "text": l.text,
+                "pos": l.pos, "formation": l.formation,
+            })
+        })
+        .collect();
+    Ok(json_response(serde_json::json!({ "lines": out }).to_string()))
+}
+
 async fn api_command(
     session_id: Option<Uuid>,
     query: std::collections::HashMap<std::string::String, std::string::String>,
@@ -8732,6 +8767,15 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_command_order);
 
+    let command_log_route = warp::path!("api" / "command" / "log")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_command_log);
+
     let command_me_route = warp::path!("api" / "command" / "me")
         .and(warp::get())
         .and(extract_session_cookie())
@@ -8860,6 +8904,7 @@ async fn main() -> Result<()> {
         // page: added after it, they were never reached (the SPA answered
         // /api/command with index.html, 200).
         .or(command_me_route)
+        .or(command_log_route)
         .or(command_picture_route)
         .or(admin_commanders_route)
         .boxed();
