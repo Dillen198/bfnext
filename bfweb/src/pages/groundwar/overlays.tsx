@@ -37,7 +37,7 @@ function TerritoryImpl({ objectives, visible }: { objectives: GroundObjective[];
 }
 export const Territory = memo(TerritoryImpl)
 
-function SupplyImpl({ lines, side, visible }: { lines: SupplyLine[]; side: Side; visible: boolean }): ReactElement {
+function SupplyImpl({ lines, visible }: { lines: SupplyLine[]; visible: boolean }): ReactElement {
   const geo = useMemo<FeatureCollection>(() => ({
     type: 'FeatureCollection',
     features: lines.map((l) => ({

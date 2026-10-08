@@ -818,7 +818,7 @@ export default function GroundWarPage(): ReactElement {
         onZoom={onZoom}
       >
         <Territory objectives={pic.objectives} visible={territory} />
-        <SupplyNetwork lines={cp?.supply ?? []} side={side} visible={layers.supply !== false} />
+        <SupplyNetwork lines={cp?.supply ?? []} visible={layers.supply !== false} />
         <Coverage defences={cp?.defences ?? []} tac={tac} side={side} visible={layers.cover !== false} />
         <Threats tac={tac} side={side} visible={layers.threats !== false} />
         <RoutePreview from={selForms.map((f) => f.pos)} wps={assetMode === 'fmove' ? wps : []} side={side} />
