@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Save, Upload, Search, RotateCcw, X, Alert, CheckCircle2 } from '@icons'
 import {
-  mgr, type AppState, type BackupPlan, type BackupJob, type FoundBackup, type RestorePreview,
+  mgr, type AppState, type BackupPlan, type BackupJob, type FoundBackup, type RestorePreview, type VerifyReport,
 } from './tauri'
 import { Card, Btn, Field, Note, Result, Pill } from './ui'
 import { useAction, input, OK, AMBER, RED, MONO, DIM, fmtWhen } from './style'
@@ -17,15 +17,116 @@ const check: React.CSSProperties = { fontSize: '0.72rem', cursor: 'pointer', dis
 
 // ── the running / last job ───────────────────────────────────────────────────
 
+const STATUS_COLOR = { ok: OK, warn: AMBER, bad: RED } as const
+const STATUS_TEXT = { ok: 'OK', warn: 'CHECK', bad: 'BROKEN' } as const
+
+/** What a backup zip was checked to hold, section by section. */
+function ReportView({ r }: { r: VerifyReport }) {
+  const [open, setOpen] = useState<Set<number>>(new Set())
+  const toggle = (i: number) => {
+    const n = new Set(open)
+    if (n.has(i)) n.delete(i)
+    else n.add(i)
+    setOpen(n)
+  }
+  const unread = r.sections.reduce((n, s) => n + s.skipped.length, 0)
+  return (
+    <div className="space-y-2">
+      <Note tone={!r.ok ? 'bad' : unread ? 'warn' : 'ok'}>
+        {!r.ok
+          ? <>✗ The check found problems. Don't wipe anything until a backup checks clean.</>
+          : unread
+            ? <>✓ The zip is complete and every file reads back clean ({r.entries} files, {fmtBytes(r.bytes)}), but {unread} file(s)
+                couldn't be read when the backup was made -- see the sections marked CHECK. Usually a file in use; stop the bot (or DCS) and back up again if it matters.</>
+            : <>✓ Everything is in the backup and every file reads back clean: {r.entries} files, {fmtBytes(r.bytes)} ({fmtBytes(r.zip_bytes)} zipped).</>}
+        {r.problems.map((p, i) => <div key={i} style={{ marginTop: 4 }}>• {p}</div>)}
+      </Note>
+      <div style={{ border: '1px solid var(--border)', borderRadius: 3 }}>
+        {r.sections.map((s, i) => {
+          const bad = s.checks.filter(c => !c.ok && !c.info).length
+          return (
+            <div key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+              <button onClick={() => toggle(i)} className="flex items-center gap-2" style={{
+                width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer',
+                padding: '7px 10px', color: 'var(--text)', fontSize: '0.7rem',
+              }}>
+                <Pill color={STATUS_COLOR[s.status]}>{STATUS_TEXT[s.status]}</Pill>
+                <span style={{ flex: 1, minWidth: 0 }}>{s.label}</span>
+                <span style={{ fontSize: '0.64rem', color: 'var(--text-muted)', ...MONO, whiteSpace: 'nowrap' }}>
+                  {s.files_in_zip}{s.files_on_disk > 0 ? ` / ${s.files_on_disk}` : ''} files · {fmtBytes(s.bytes_in_zip)}
+                </span>
+                <span style={{ color: 'var(--text-dim)', fontSize: '0.6rem' }}>{open.has(i) || bad > 0 ? '▾' : '▸'}</span>
+              </button>
+              {(open.has(i) || bad > 0) && (
+                <div style={{ padding: '0 10px 8px 34px', fontSize: '0.66rem', lineHeight: 1.7 }}>
+                  <div style={{ color: 'var(--text-dim)', ...MONO, wordBreak: 'break-all' }}>{s.path}</div>
+                  {s.checks.map((c, k) => (
+                    <div key={k} style={{ color: c.ok ? 'var(--text-muted)' : c.info ? 'var(--text-dim)' : RED }}>
+                      {c.ok ? '✓' : c.info ? '–' : '✗'} {c.text}
+                    </div>
+                  ))}
+                  {s.skipped.length > 0 && (
+                    <div style={{ color: AMBER, marginTop: 4 }}>
+                      Not in the backup (couldn't be read):
+                      {s.skipped.map((k, n) => <div key={n} style={{ ...MONO, marginLeft: 10 }}>{k}</div>)}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {r.corrupt.length > 0 && (
+        <Note tone="bad">
+          Files that don't read back ({r.corrupt.length}):
+          {r.corrupt.slice(0, 30).map((c, i) => <div key={i} style={MONO}>{c}</div>)}
+        </Note>
+      )}
+    </div>
+  )
+}
+
+/** The job's whole log, filterable, with its file on disk. */
+function LogView({ job }: { job: BackupJob }) {
+  const [show, setShow] = useState(false)
+  const [onlyWarn, setOnlyWarn] = useState(false)
+  const lines = onlyWarn ? job.log.filter(l => /WARNING|!!|! |corrupt|failed|BROKEN/i.test(l)) : job.log
+  return (
+    <div>
+      <div className="flex items-center gap-3">
+        <button onClick={() => setShow(!show)} style={{ ...DIM, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+          {show ? '▾' : '▸'} log ({job.log.length} lines{job.warnings.length > 0 ? `, ${job.warnings.length} warnings` : ''})
+        </button>
+        {show && (
+          <label style={{ ...check, fontSize: '0.64rem' }}>
+            <input type="checkbox" checked={onlyWarn} onChange={e => setOnlyWarn(e.target.checked)} /> only warnings and errors
+          </label>
+        )}
+        {job.log_file && (
+          <span className="ml-auto flex items-center gap-2" style={{ fontSize: '0.62rem', color: 'var(--text-dim)', ...MONO }}>
+            {job.log_file}
+            <Btn onClick={() => { void mgr.revealBackup(job.log_file!) }}>Open log file</Btn>
+          </span>
+        )}
+      </div>
+      {show && (
+        <pre style={{ fontSize: '0.62rem', ...MONO, maxHeight: 360, overflow: 'auto', background: 'var(--bg-input)',
+                      padding: 8, marginTop: 6, border: '1px solid var(--border)', whiteSpace: 'pre-wrap' }}>
+          {lines.length ? lines.join('\n') : 'nothing to show'}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 function JobPanel({ job }: { job: BackupJob }) {
-  const [showLog, setShowLog] = useState(false)
   const pct = job.total_bytes > 0 ? Math.min(100, (job.done_bytes / job.total_bytes) * 100) : 0
   const failed = !!job.error
-  const title = job.kind === 'backup' ? 'Backup' : 'Restore'
-  const zipPath = job.kind === 'backup' && job.output ? job.output.replace(/ \([^)]*\)$/, '') : null
+  const title = job.kind === 'backup' ? 'Backup' : job.kind === 'verify' ? 'Backup check' : 'Restore'
   return (
     <Card
-      icon={job.running ? <RotateCcw size={13} style={{ color: AMBER }} /> : failed ? <X size={13} style={{ color: RED }} /> : <CheckCircle2 size={13} style={{ color: OK }} />}
+      icon={job.running ? <RotateCcw size={13} style={{ color: AMBER }} /> : failed || job.report?.ok === false ? <X size={13} style={{ color: RED }} /> : <CheckCircle2 size={13} style={{ color: OK }} />}
       title={`${title} ${job.running ? 'running' : failed ? 'failed' : 'finished'}`}
       badge={job.running ? <Btn danger onClick={() => { void mgr.backupCancel() }}>Cancel</Btn> : undefined}
     >
@@ -44,14 +145,16 @@ function JobPanel({ job }: { job: BackupJob }) {
         )}
         {job.error && <Note tone="bad">{job.error}</Note>}
         {job.output && (
-          <Note tone="ok">
+          <Note tone={job.report?.ok === false ? 'warn' : 'ok'}>
             {job.kind === 'backup' ? 'Saved ' : ''}<span style={MONO}>{job.output}</span>
-            {zipPath && <> <Btn onClick={() => { void mgr.revealBackup(zipPath) }}>Show in Explorer</Btn></>}
+            {job.zip_path && <> <Btn onClick={() => { void mgr.revealBackup(job.zip_path!) }}>Show in Explorer</Btn></>}
           </Note>
         )}
+        {job.report && !job.running && <ReportView r={job.report} />}
         {job.warnings.length > 0 && (
           <Note tone="warn">
-            {job.warnings.map((w, i) => <div key={i}>• {w}</div>)}
+            {job.warnings.slice(0, 40).map((w, i) => <div key={i}>• {w}</div>)}
+            {job.warnings.length > 40 && <div>… and {job.warnings.length - 40} more (see the log)</div>}
           </Note>
         )}
         {job.next_steps.length > 0 && !job.running && (
@@ -62,16 +165,50 @@ function JobPanel({ job }: { job: BackupJob }) {
             </ol>
           </div>
         )}
-        <div>
-          <button onClick={() => setShowLog(!showLog)} style={{ ...DIM, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-            {showLog ? '▾' : '▸'} log ({job.log.length})
-          </button>
-          {showLog && (
-            <pre style={{ fontSize: '0.62rem', ...MONO, maxHeight: 260, overflow: 'auto', background: 'var(--bg-input)',
-                          padding: 8, marginTop: 6, border: '1px solid var(--border)', whiteSpace: 'pre-wrap' }}>
-              {job.log.join('\n')}
-            </pre>
-          )}
+        <LogView job={job} />
+      </div>
+    </Card>
+  )
+}
+
+// ── check a zip ──────────────────────────────────────────────────────────────
+
+function CheckCard({ busy }: { busy: boolean }) {
+  const act = useAction()
+  const qc = useQueryClient()
+  const [zip, setZip] = useState('')
+  const [found, setFound] = useState<FoundBackup[] | null>(null)
+  useEffect(() => { mgr.findBackups().then(setFound).catch(() => setFound([])) }, [])
+  const start = (p: string) => act.run('verify', async () => {
+    await mgr.verifyBackup(p)
+    qc.invalidateQueries({ queryKey: ['mgr', 'backup-job'] })
+    return 'checking -- the report appears at the top'
+  })
+  return (
+    <Card icon={<CheckCircle2 size={13} style={{ color: 'var(--accent)' }} />} title="Check a backup">
+      <div className="space-y-3">
+        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          Reads every file in a backup zip back and checks it against what was backed up: nothing missing, nothing corrupt,
+          and the key files a restore needs are there. Run it again after copying the zip to the USB stick, on the copy.
+        </div>
+        <Result r={act.result} onClose={act.clear} />
+        {found && found.length > 0 && (
+          <div className="flex flex-col gap-1">
+            {found.map(f => (
+              <div key={f.path} className="flex items-center gap-2" style={{ fontSize: '0.68rem', ...MONO }}>
+                <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>{f.path} <span style={{ color: 'var(--text-dim)' }}>· {fmtBytes(f.bytes)} · {fmtWhen(f.modified)}</span></span>
+                <Btn disabled={busy} onClick={() => start(f.path)}>Check</Btn>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2" style={{ alignItems: 'flex-end' }}>
+          <div style={{ flex: 1 }}>
+            <Field label="Or a zip anywhere (USB stick, another drive)">
+              <input style={{ ...input, ...MONO }} value={zip} placeholder="F:\FowlEngine-backup-….zip" onChange={e => setZip(e.target.value)} />
+            </Field>
+          </div>
+          <Btn disabled={busy || !zip.trim()} onClick={() => start(zip.trim().replace(/^"|"$/g, ''))}>Check</Btn>
         </div>
       </div>
     </Card>
@@ -415,6 +552,8 @@ export default function Backup({ state }: { state: AppState }) {
     queryKey: ['mgr', 'backup-job'],
     queryFn: mgr.backupJob,
     refetchInterval: q => (q.state.data?.running ? 800 : 4_000),
+    // the window may sit in the tray while a long backup runs
+    refetchIntervalInBackground: true,
     retry: false,
   })
   const busy = !!job?.running
@@ -429,6 +568,7 @@ export default function Backup({ state }: { state: AppState }) {
       </div>
       {job && <JobPanel job={job} />}
       <BackupCard busy={busy} />
+      <CheckCard busy={busy} />
       <RestoreCard busy={busy} state={state} />
     </div>
   )

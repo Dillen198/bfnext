@@ -252,7 +252,34 @@ function mockJobNow() {
     mockJob.running = false
     mockJob.phase = 'done'
     mockJob.finished_at = now()
-    mockJob.output = mockJob.kind === 'backup' ? 'D:\\FowlEngineBackups\\FowlEngine-backup-VS-SERVER-20261008-1412.zip (2.1 GB)' : '3 folder(s) restored, database loaded'
+    mockJob.output = mockJob.kind === 'backup' ? 'D:\\FowlEngineBackups\\FowlEngine-backup-VS-SERVER-20261008-1412.zip (2.1 GB)'
+      : mockJob.kind === 'verify' ? 'the backup is complete and reads back clean' : '3 folder(s) restored, database loaded'
+    if (mockJob.kind !== 'restore') {
+      const zip = 'D:\\FowlEngineBackups\\FowlEngine-backup-VS-SERVER-20261008-1412.zip'
+      mockJob.zip_path = zip
+      mockJob.log_file = zip.replace(/\.zip$/, '.log')
+      const ok = (label: string, path: string, files: number, bytes: number, checks: string[], skipped: string[] = []) => ({
+        label, kind: 'x', path, status: skipped.length ? 'warn' : 'ok', files_on_disk: files + skipped.length, files_in_zip: files, bytes_in_zip: bytes,
+        checks: [...checks.map(text => ({ ok: true, info: false, text })), { ok: true, info: false, text: `all ${files} file(s) written are in the zip` },
+                 ...(skipped.length ? [{ ok: false, info: false, text: `${skipped.length} of ${files + skipped.length} file(s) on disk couldn't be read at backup time` }] : [])],
+        skipped,
+      })
+      mockJob.report = {
+        zip, ok: true, created: now(), hostname: 'VS-SERVER', manager_version: '0.2.18', entries: 3341, bytes: 3.1e9, zip_bytes: 2.1e9, corrupt: [], problems: [],
+        sections: [
+          ok(mockRoots[0].label, mockRoots[0].path, 2140, 96e6, ['run.py (DCSServerBot itself)', 'config/main.yaml', 'config/nodes.yaml (DCS install, servers, database URL)', 'config/.secret (Discord token, passwords)', 'config/plugins/fowlengine.yaml (bfdb, GCI, keys)', 'the Fowl Engine plugin']),
+          ok('SRS server (DCS-SimpleRadio Standalone, the whole program folder)', 'C:\\Program Files\\DCS-SimpleRadio-Standalone', 212, 140e6, ["the program's .exe files"]),
+          ok(mockRoots[1].label, mockRoots[1].path, 811, 2.4e9, ['Config/serverSettings.lua (name, password, mission list)', '14 mission file(s) (.miz)', 'Scripts/bflib.dll (the engine)', 'bfdb/ (stats database)', 'Logs/stats (what bfdb reads)'], ['Logs\\stats\\0042.bin (only partly read: locked)']),
+          ok(mockRoots[2].label, mockRoots[2].path, 377, 610e6, ['Config/serverSettings.lua (name, password, mission list)', '6 mission file(s) (.miz)', 'Scripts/bflib.dll (the engine)']),
+          ok('netidx tools (netidx.exe -- runs the resolver the live map and stats use)', 'C:\\Users\\ATPAdmin\\.cargo\\bin', 1, 14e6, ['netidx.exe']),
+          ok('netidx client config (where bflib and bfdb find the resolver)', 'C:\\Users\\ATPAdmin\\AppData\\Roaming\\netidx', 1, 300, ['client.json']),
+          ok('Bot database (dcsserverbot)', '127.0.0.1:5432/dcsserverbot', 1, 48e6, ['database/dcsserverbot.dump is in the zip', 'a PostgreSQL custom-format dump (PGDMP header)', '46 MB -- 46 MB when it was taken']),
+        ],
+      }
+      mockJob.log = [...(mockJob.log as string[]), 'Checking the zip: reading every file back', 'BACKUP CHECK: OK -- everything listed is in the zip and reads back clean',
+                     'WARNING: C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats\\0042.bin was only partly read (locked)']
+      mockJob.warnings = ['C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats\\0042.bin was only partly read (locked)']
+    }
     mockJob.next_steps = mockJob.kind === 'backup'
       ? ['Copy D:\\FowlEngineBackups\\FowlEngine-backup-VS-SERVER-20261008-1412.zip OFF this PC (USB stick, another drive, cloud) before reinstalling Windows.', "Keep it private: it holds the bot's Discord token, database password and API keys.", 'On the new Windows: install DCS World Server (and SRS), install Fowl Engine Manager, open BACKUP → Restore and pick this zip.']
       : ['Setup → step 4: turn automatic sign-in on again for the server\'s user.', 'Watch the OVERVIEW tab: the bot\'s first start builds its Python venv, which takes a few minutes.']
@@ -274,6 +301,7 @@ const backupHandlers: Record<string, (args: Record<string, unknown>) => unknown>
   }),
   backup_start: () => startMockJob('backup'),
   restore_start: () => startMockJob('restore'),
+  verify_backup: () => startMockJob('verify'),
   backup_job: () => mockJobNow(),
   find_backups: () => [{ path: 'D:\\FowlEngineBackups\\FowlEngine-backup-VS-SERVER-20261008-1412.zip', bytes: 2.1e9, modified: now() }],
   restore_inspect: (a) => ({

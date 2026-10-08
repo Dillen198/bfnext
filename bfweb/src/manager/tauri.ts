@@ -285,7 +285,7 @@ export interface BackupOptions {
 
 export interface BackupJob {
   id: number
-  kind: 'backup' | 'restore'
+  kind: 'backup' | 'restore' | 'verify'
   running: boolean
   phase: string
   done_bytes: number
@@ -298,6 +298,37 @@ export interface BackupJob {
   next_steps: string[]
   started_at: string
   finished_at: string | null
+  report: VerifyReport | null
+  zip_path: string | null
+  log_file: string | null
+}
+
+export interface CheckLine { ok: boolean; info: boolean; text: string }
+
+export interface VerifySection {
+  label: string
+  kind: string
+  path: string
+  status: 'ok' | 'warn' | 'bad'
+  files_on_disk: number
+  files_in_zip: number
+  bytes_in_zip: number
+  checks: CheckLine[]
+  skipped: string[]
+}
+
+export interface VerifyReport {
+  zip: string
+  ok: boolean
+  created: string
+  hostname: string
+  manager_version: string
+  entries: number
+  bytes: number
+  zip_bytes: number
+  sections: VerifySection[]
+  corrupt: string[]
+  problems: string[]
 }
 
 export interface FoundBackup { path: string; bytes: number; modified: string | null }
@@ -400,6 +431,7 @@ export const mgr = {
   restoreInspect:   (zip: string) => invoke<RestorePreview>('restore_inspect', { zip }),
   restoreStart:     (opts: RestoreOptions) => invoke<void>('restore_start', { opts }),
   revealBackup:     (path: string) => invoke<void>('reveal_backup', { path }),
+  verifyBackup:     (zip: string) => invoke<void>('verify_backup', { zip }),
 }
 
 // ── the api.ts transport: the OPS page's requests, answered locally ──────────

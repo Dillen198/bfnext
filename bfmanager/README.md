@@ -79,6 +79,13 @@ move each folder somewhere else, and then:
 - loads the database (creates the bot's role and database with the `postgres` password);
 - restores `manager.json` and installs and starts the service.
 
+**Checking a backup.** Every backup ends by reading the whole zip back, which checks each file's
+CRC. It then compares each section with what was on disk and looks for the files a restore needs
+(`nodes.yaml`, `.secret`, `serverSettings.lua`, missions, `bfdb\`, `netidx.exe`, the SRS program, a
+`PGDMP` database dump). The report shows OK / CHECK (some files couldn't be read at backup time) /
+BROKEN per section. **Check a backup** runs the same check on any zip, e.g. the copy on the USB
+stick. The whole log is saved as `<zip>.log` next to the zip and as `logs\<backup|verify|restore>-<time>.log`.
+
 It can't restore automatic sign-in, because Windows never hands the old password back. Turn it
 on again in Setup step 4.
 

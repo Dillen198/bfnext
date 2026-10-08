@@ -540,6 +540,11 @@ async fn restore_start(opts: backup::RestoreOptions) -> CmdResult<()> {
 }
 
 #[tauri::command]
+async fn verify_backup(zip: String) -> CmdResult<()> {
+    blocking(move || backup::start_verify(zip)).await
+}
+
+#[tauri::command]
 async fn reveal_backup(path: String) -> CmdResult<()> {
     blocking(move || backup::reveal(&path)).await
 }
@@ -689,6 +694,7 @@ pub fn run() {
             restore_inspect,
             restore_start,
             reveal_backup,
+            verify_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fowl Engine Manager");

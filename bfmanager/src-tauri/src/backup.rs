@@ -83,6 +83,12 @@ pub struct Root {
     /// below it; empty = the whole folder. netidx.exe out of .cargo\bin.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub only: Vec<String>,
+    /// Backup: files found on disk (`files` is how many made it in).
+    #[serde(default)]
+    pub expected_files: u64,
+    /// Backup: files that couldn't be read, or only partly (capped).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -156,6 +162,12 @@ pub struct Job {
     pub next_steps: Vec<String>,
     pub started_at: String,
     pub finished_at: Option<String>,
+    /// What the zip was checked to hold (backup and verify).
+    pub report: Option<VerifyReport>,
+    /// The zip this job wrote or checked.
+    pub zip_path: Option<String>,
+    /// The whole log, saved when the job ends.
+    pub log_file: Option<String>,
 }
 
 static JOB: Mutex<Option<Job>> = Mutex::new(None);
@@ -228,7 +240,6 @@ fn spawn(kind: &str, f: impl FnOnce() -> Result<String> + Send + 'static) -> Res
     std::thread::spawn(move || {
         let r = f();
         with_job(|j| {
-            j.running = false;
             j.current = None;
             j.finished_at = Some(now());
             match r {
@@ -243,8 +254,67 @@ fn spawn(kind: &str, f: impl FnOnce() -> Result<String> + Send + 'static) -> Res
                 }
             }
         });
+        // the log is on disk before anyone sees the job as finished
+        save_log();
+        with_job(|j| j.running = false);
     });
     Ok(())
+}
+
+/// The whole job as plain text: log, report, warnings, next steps.
+fn job_text(j: &Job) -> String {
+    let mut t = format!(
+        "Fowl Engine Manager {} -- {} started {}, finished {}\nresult: {}\n\n",
+        crate::update::current_version(),
+        j.kind,
+        j.started_at,
+        j.finished_at.as_deref().unwrap_or("-"),
+        j.error.as_deref().map(|e| format!("FAILED: {e}")).or_else(|| j.output.clone()).unwrap_or_default()
+    );
+    if let Some(r) = &j.report {
+        t.push_str(&r.to_text());
+        t.push('\n');
+    }
+    if !j.warnings.is_empty() {
+        t.push_str("WARNINGS\n");
+        for w in &j.warnings {
+            t.push_str(&format!("  - {w}\n"));
+        }
+        t.push('\n');
+    }
+    if !j.next_steps.is_empty() {
+        t.push_str("NEXT\n");
+        for (i, s) in j.next_steps.iter().enumerate() {
+            t.push_str(&format!("  {}. {s}\n", i + 1));
+        }
+        t.push('\n');
+    }
+    t.push_str("LOG\n");
+    for l in &j.log {
+        t.push_str(l);
+        t.push('\n');
+    }
+    t
+}
+
+/// Write the finished job's log to logs\<kind>-<time>.log, and a backup's
+/// also next to its zip (so the report travels with it).
+fn save_log() {
+    let Some(j) = JOB.lock().ok().and_then(|g| g.clone()) else { return };
+    let text = job_text(&j);
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let _ = config::ensure_dirs();
+    let main = config::logs_dir().join(format!("{}-{stamp}.log", j.kind));
+    let mut saved = std::fs::write(&main, &text).ok().map(|_| disp(&main));
+    if j.kind == "backup" {
+        if let Some(zip) = j.zip_path.as_deref().filter(|_| j.error.is_none()) {
+            let side = PathBuf::from(zip).with_extension("log");
+            if std::fs::write(&side, &text).is_ok() {
+                saved = Some(disp(&side));
+            }
+        }
+    }
+    with_job(|j| j.log_file = saved);
 }
 
 fn now() -> String {
@@ -920,6 +990,8 @@ pub fn backup_plan() -> Result<BackupPlan> {
         include: true,
         note: Some("without its Python venv (run.cmd builds it again), caches and logs".into()),
         only: vec![],
+        expected_files: 0,
+        skipped: vec![],
     });
 
     // DCS server instances
@@ -950,6 +1022,8 @@ pub fn backup_plan() -> Result<BackupPlan> {
                         include: true,
                         note: Some("restored to the same folder -- no SRS installer needed".into()),
                         only: vec![],
+                        expected_files: 0,
+                        skipped: vec![],
                     });
                 } else {
                     programs.push(Program { what: "DCS-SimpleRadio Standalone".into(), path: p.into() });
@@ -994,6 +1068,8 @@ pub fn backup_plan() -> Result<BackupPlan> {
             include: true,
             note: Some("without tracks, screenshots, shader caches and DCS logs".into()),
             only: vec![],
+            expected_files: 0,
+            skipped: vec![],
         });
     }
 
@@ -1010,6 +1086,8 @@ pub fn backup_plan() -> Result<BackupPlan> {
             include: true,
             note: Some("only netidx.exe from this folder; the restore puts the folder on PATH".into()),
             only: vec!["netidx.exe".into()],
+            expected_files: 0,
+            skipped: vec![],
         });
     } else {
         warnings.push("netidx.exe was not found on PATH or in .cargo\\bin -- the live map and stats need it (cargo install netidx-tools)".into());
@@ -1029,6 +1107,8 @@ pub fn backup_plan() -> Result<BackupPlan> {
             include: true,
             note: None,
             only: vec![],
+            expected_files: 0,
+            skipped: vec![],
         });
     }
 
@@ -1055,6 +1135,8 @@ pub fn backup_plan() -> Result<BackupPlan> {
                                 include: true,
                                 note: None,
                                 only: vec![],
+                                expected_files: 0,
+                                skipped: vec![],
                             });
                         }
                     }
@@ -1125,6 +1207,8 @@ pub fn backup_plan() -> Result<BackupPlan> {
             include: true,
             note: None,
             only: vec![],
+            expected_files: 0,
+            skipped: vec![],
         });
     }
 
@@ -1266,6 +1350,8 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
             include: true,
             note: None,
             only: vec![],
+            expected_files: 0,
+            skipped: vec![],
         };
         measure(&mut r);
         roots.push(r);
@@ -1349,6 +1435,8 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
             let mut files = Vec::new();
             let mut links = Vec::new();
             walk_root(&r, &mut files, &mut links);
+            r.expected_files = files.len() as u64;
+            r.skipped.clear();
             let (mut n, mut bytes) = (0u64, 0u64);
             for fe in files {
                 cancelled()?;
@@ -1358,6 +1446,9 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
                     Ok(f) => f,
                     Err(e) => {
                         warn(format!("could not read {}: {e}", disp(&fe.abs)));
+                        if r.skipped.len() < 200 {
+                            r.skipped.push(format!("{} (not readable: {e})", fe.rel));
+                        }
                         DONE.fetch_add(fe.size, Ordering::Relaxed);
                         continue;
                     }
@@ -1371,7 +1462,13 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
                     }
                     Err(e) if e.to_string() == "cancelled" => bail!("cancelled"),
                     // a file locked part-way: the entry holds what was read
-                    Err(e) => warn(format!("{} was only partly read ({e})", disp(&fe.abs))),
+                    Err(e) => {
+                        warn(format!("{} was only partly read ({e})", disp(&fe.abs)));
+                        n += 1;
+                        if r.skipped.len() < 200 {
+                            r.skipped.push(format!("{} (only partly read: {e})", fe.rel));
+                        }
+                    }
                 }
             }
             r.files = n;
@@ -1469,17 +1566,23 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
         }
     };
 
-    phase("Checking the zip");
-    {
-        let mut a = zip::ZipArchive::new(File::open(&partial)?).context("the finished zip doesn't open")?;
-        let entries = a.len();
-        a.by_name(MANIFEST).context("the finished zip has no manifest")?;
-        note(format!("  {entries} entries"));
-    }
     std::fs::rename(&partial, &final_path)?;
+    with_job(|j| j.zip_path = Some(disp(&final_path)));
+    // the bot can come back while the zip is read through
     drop(restart);
+    let report = verify_zip(&final_path).context("checking the finished zip")?;
+    let report_ok = report.ok;
+    if !report_ok {
+        for p in report.problems.iter().chain(report.corrupt.iter().take(20)) {
+            warn(format!("check: {p}"));
+        }
+    }
+    with_job(|j| j.report = Some(report));
 
     let size = std::fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
+    if !report_ok {
+        next_step("The check found problems (see the report above) -- fix them and back up again before wiping anything.".into());
+    }
     next_step(format!(
         "Copy {} OFF this PC (USB stick, another drive, cloud) before reinstalling Windows.",
         disp(&final_path)
@@ -1508,6 +1611,326 @@ fn dump_database(_cfg: &ManagerConfig, d: &DbPlan, dest: &Path) -> Result<(PathB
         bail!("pg_dump failed: {}", String::from_utf8_lossy(&out.stderr).trim());
     }
     Ok((tmp, tool_version(&pg_dump)))
+}
+
+// ---- checking a zip -------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct CheckLine {
+    pub ok: bool,
+    /// A missing extra is a note, not a fault (a test server has no bfdb).
+    #[serde(default)]
+    pub info: bool,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Section {
+    pub label: String,
+    pub kind: String,
+    pub path: String,
+    /// ok | warn | bad
+    pub status: String,
+    /// On disk when backed up (0 = not recorded: an older backup).
+    pub files_on_disk: u64,
+    pub files_in_zip: u64,
+    pub bytes_in_zip: u64,
+    pub checks: Vec<CheckLine>,
+    /// Files that didn't make it in whole.
+    pub skipped: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct VerifyReport {
+    pub zip: String,
+    /// Every entry read back clean and nothing expected is missing.
+    pub ok: bool,
+    pub created: String,
+    pub hostname: String,
+    pub manager_version: String,
+    pub entries: u64,
+    pub bytes: u64,
+    pub zip_bytes: u64,
+    pub sections: Vec<Section>,
+    /// Entries whose data doesn't read back (checksum, truncation).
+    pub corrupt: Vec<String>,
+    pub problems: Vec<String>,
+}
+
+impl VerifyReport {
+    pub fn to_text(&self) -> String {
+        let mut t = format!(
+            "BACKUP CHECK: {}\n  {}\n  made {} on {} by manager {}; {} entries, {} unpacked, {} zip\n",
+            if self.ok { "OK -- everything listed is in the zip and reads back clean" } else { "PROBLEMS FOUND" },
+            self.zip,
+            self.created,
+            self.hostname,
+            self.manager_version,
+            self.entries,
+            fmt_bytes(self.bytes),
+            fmt_bytes(self.zip_bytes)
+        );
+        for p in &self.problems {
+            t.push_str(&format!("  ! {p}\n"));
+        }
+        for c in self.corrupt.iter().take(50) {
+            t.push_str(&format!("  ! corrupt: {c}\n"));
+        }
+        for s in &self.sections {
+            t.push_str(&format!(
+                "\n  [{}] {}\n      {}\n      {} files in zip{}, {}\n",
+                s.status.to_uppercase(),
+                s.label,
+                s.path,
+                s.files_in_zip,
+                if s.files_on_disk > 0 { format!(" of {} on disk", s.files_on_disk) } else { String::new() },
+                fmt_bytes(s.bytes_in_zip)
+            ));
+            for c in &s.checks {
+                t.push_str(&format!("      {} {}\n", if c.ok { "ok " } else if c.info { "-- " } else { "!! " }, c.text));
+            }
+            for k in &s.skipped {
+                t.push_str(&format!("      skipped: {k}\n"));
+            }
+        }
+        t
+    }
+}
+
+pub fn start_verify(zip: String) -> Result<()> {
+    let p = PathBuf::from(zip.trim().trim_matches('"'));
+    if !p.is_file() {
+        bail!("{} not found", disp(&p));
+    }
+    spawn("verify", move || {
+        with_job(|j| j.zip_path = Some(disp(&p)));
+        let r = verify_zip(&p)?;
+        let ok = r.ok;
+        let n = r.problems.len() + r.corrupt.len();
+        with_job(|j| j.report = Some(r));
+        Ok(if ok { "the backup is complete and reads back clean".into() } else { format!("{n} problem(s) found -- see the report") })
+    })
+}
+
+/// Read every entry of a backup back (zip checks each one's CRC as it
+/// reads), then compare with what its manifest says went in, and look for
+/// the files a restore can't do without.
+pub fn verify_zip(zip_path: &Path) -> Result<VerifyReport> {
+    phase("Checking the zip: reading every file back");
+    let (m, zip_bytes) = read_manifest(zip_path)?;
+    let mut a = zip::ZipArchive::new(File::open(zip_path)?)?;
+    let total: u64 = (0..a.len()).filter_map(|i| a.by_index_raw(i).ok().map(|e| e.size())).sum();
+    DONE.store(0, Ordering::Relaxed);
+    with_job(|j| j.total_bytes = total);
+
+    // per entry: read through (CRC), tally by root
+    let mut names: Vec<(String, u64)> = Vec::with_capacity(a.len());
+    let mut corrupt = Vec::new();
+    let mut dump_head: Vec<u8> = Vec::new();
+    let dump_entry = m.database.as_ref().and_then(|d| d.dump.clone());
+    for i in 0..a.len() {
+        cancelled()?;
+        let mut e = a.by_index(i)?;
+        if e.is_dir() {
+            continue;
+        }
+        let name = e.name().to_string();
+        let size = e.size();
+        with_job(|j| j.current = Some(name.clone()));
+        if dump_entry.as_deref() == Some(name.as_str()) {
+            let mut head = [0u8; 5];
+            let n = e.read(&mut head).unwrap_or(0);
+            dump_head = head[..n].to_vec();
+            DONE.fetch_add(n as u64, Ordering::Relaxed);
+        }
+        let res = std::io::copy(&mut Counting { inner: &mut e }, &mut std::io::sink());
+        match res {
+            Ok(_) => names.push((name, size)),
+            Err(err) if err.to_string() == "cancelled" => bail!("cancelled"),
+            Err(err) => corrupt.push(format!("{name} ({err})")),
+        }
+    }
+    let has = |prefix: &str, pred: &dyn Fn(&str) -> bool| {
+        names.iter().any(|(n, _)| n.strip_prefix(prefix).map(pred).unwrap_or(false))
+    };
+
+    let mut sections = Vec::new();
+    let mut problems = Vec::new();
+    for r in &m.roots {
+        let prefix = format!("roots/{}/", r.id);
+        let (count, bytes) = names
+            .iter()
+            .filter(|(n, _)| n.starts_with(&prefix))
+            .fold((0u64, 0u64), |(c, b), (_, s)| (c + 1, b + s));
+        let bad_here = corrupt.iter().filter(|c| c.starts_with(&prefix)).count();
+        let mut checks = Vec::new();
+        let mut later: Option<CheckLine> = None;
+        let mut need = |ok: bool, text: &str| checks.push(CheckLine { ok, info: false, text: text.into() });
+        let ci = |want: &str| {
+            let w = want.to_lowercase();
+            move |rel: &str| rel.to_lowercase() == w
+        };
+        let starts = |want: &str| {
+            let w = want.to_lowercase();
+            move |rel: &str| rel.to_lowercase().starts_with(&w)
+        };
+        match r.kind {
+            Kind::Bot => {
+                need(has(&prefix, &ci("run.py")), "run.py (DCSServerBot itself)");
+                need(has(&prefix, &ci("config/main.yaml")), "config/main.yaml");
+                need(has(&prefix, &ci("config/nodes.yaml")), "config/nodes.yaml (DCS install, servers, database URL)");
+                need(has(&prefix, &starts("config/.secret/")), "config/.secret (Discord token, passwords)");
+                need(has(&prefix, &ci("config/plugins/fowlengine.yaml")), "config/plugins/fowlengine.yaml (bfdb, GCI, keys)");
+                need(has(&prefix, &starts("plugins/fowlengine/")), "the Fowl Engine plugin");
+            }
+            Kind::Instance => {
+                need(has(&prefix, &ci("config/serversettings.lua")), "Config/serverSettings.lua (name, password, mission list)");
+                let miz = names
+                    .iter()
+                    .filter(|(n, _)| n.starts_with(&prefix) && n.to_lowercase().ends_with(".miz"))
+                    .count();
+                need(miz > 0, &format!("{miz} mission file(s) (.miz)"));
+                let bfdb = has(&prefix, &starts("bfdb/"));
+                let dll = has(&prefix, &ci("scripts/bflib.dll"));
+                if dll {
+                    need(true, "Scripts/bflib.dll (the engine)");
+                }
+                later = Some(CheckLine {
+                    ok: bfdb,
+                    info: !bfdb,
+                    text: if bfdb { "bfdb/ (stats database)".into() } else { "no bfdb/ here (normal unless bfdb runs from this folder)".into() },
+                });
+                if has(&prefix, &starts("logs/stats")) {
+                    need(true, "Logs/stats (what bfdb reads)");
+                }
+            }
+            Kind::Netidx if !r.only.is_empty() => {
+                need(has(&prefix, &ci("netidx.exe")), "netidx.exe");
+            }
+            Kind::Netidx => {
+                need(has(&prefix, &ci("client.json")), "client.json");
+            }
+            Kind::Program => {
+                need(has(&prefix, &|rel: &str| rel.to_lowercase().ends_with(".exe")), "the program's .exe files");
+            }
+            Kind::Bfdb | Kind::Extra => {}
+        }
+        checks.extend(later);
+        // an older zip has no expected_files: only compare when recorded
+        let missing = r.files.saturating_sub(count);
+        if missing > 0 {
+            checks.push(CheckLine { ok: false, info: false, text: format!("{missing} file(s) the manifest lists are not in the zip") });
+        } else {
+            checks.push(CheckLine { ok: true, info: false, text: format!("all {} file(s) written are in the zip", r.files) });
+        }
+        if bad_here > 0 {
+            checks.push(CheckLine { ok: false, info: false, text: format!("{bad_here} file(s) don't read back (corrupt)") });
+        }
+        if r.expected_files > 0 && r.files < r.expected_files {
+            checks.push(CheckLine {
+                ok: false,
+                info: false,
+                text: format!("{} of {} file(s) on disk couldn't be read at backup time", r.expected_files - r.files, r.expected_files),
+            });
+        }
+        // bad: something a restore needs is missing or corrupt; warn: some
+        // files couldn't be read when the backup was made (locked, gone)
+        let unread = !r.skipped.is_empty() || (r.expected_files > 0 && r.files < r.expected_files);
+        let key_missing = checks.iter().any(|c| !c.ok && !c.info && !c.text.contains("couldn't be read"));
+        let status = if bad_here > 0 || missing > 0 || key_missing {
+            "bad"
+        } else if unread {
+            "warn"
+        } else {
+            "ok"
+        };
+        if status == "bad" {
+            problems.push(format!("{}: {}", r.label, checks.iter().filter(|c| !c.ok && !c.info).map(|c| c.text.as_str()).collect::<Vec<_>>().join("; ")));
+        }
+        sections.push(Section {
+            label: r.label.clone(),
+            kind: format!("{:?}", r.kind).to_lowercase(),
+            path: r.path.clone(),
+            status: status.into(),
+            files_on_disk: r.expected_files,
+            files_in_zip: count,
+            bytes_in_zip: bytes,
+            checks,
+            skipped: r.skipped.clone(),
+        });
+    }
+
+    // the database dump
+    if let Some(d) = &m.database {
+        let mut checks = Vec::new();
+        let (status, count, bytes) = match &d.dump {
+            Some(entry) => match names.iter().find(|(n, _)| n == entry) {
+                Some((_, size)) => {
+                    let magic = dump_head.starts_with(b"PGDMP");
+                    checks.push(CheckLine { ok: true, info: false, text: format!("{entry} is in the zip") });
+                    checks.push(CheckLine { ok: magic, info: false, text: "a PostgreSQL custom-format dump (PGDMP header)".into() });
+                    checks.push(CheckLine {
+                        ok: *size == d.bytes,
+                        info: false,
+                        text: format!("{} -- {} when it was taken", fmt_bytes(*size), fmt_bytes(d.bytes)),
+                    });
+                    (if magic && *size == d.bytes { "ok" } else { "bad" }, 1, *size)
+                }
+                None => {
+                    checks.push(CheckLine { ok: false, info: false, text: format!("{entry} is listed but not readable in the zip") });
+                    ("bad", 0, 0)
+                }
+            },
+            None => {
+                checks.push(CheckLine { ok: false, info: false, text: "the database was not dumped when this backup was made".into() });
+                ("warn", 0, 0)
+            }
+        };
+        if status == "bad" {
+            problems.push("the bot's database dump is broken or missing".into());
+        }
+        sections.push(Section {
+            label: format!("Bot database ({})", d.name),
+            kind: "database".into(),
+            path: format!("{}:{}/{}", d.host, d.port, d.name),
+            status: status.into(),
+            files_on_disk: 0,
+            files_in_zip: count,
+            bytes_in_zip: bytes,
+            checks,
+            skipped: vec![],
+        });
+    }
+    if !names.iter().any(|(n, _)| n == "manager/manager.json") {
+        problems.push("the manager's settings (manager/manager.json) are not in the zip".into());
+    }
+    for kind in [Kind::Bot, Kind::Instance] {
+        if !m.roots.iter().any(|r| r.kind == kind) {
+            problems.push(format!("no {} section in this backup", if kind == Kind::Bot { "DCSServerBot" } else { "DCS server" }));
+        }
+    }
+    if !corrupt.is_empty() {
+        problems.push(format!("{} file(s) in the zip don't read back -- make the backup again", corrupt.len()));
+    }
+    let ok = problems.is_empty() && corrupt.is_empty();
+    let report = VerifyReport {
+        zip: disp(zip_path),
+        ok,
+        created: m.created.clone(),
+        hostname: m.hostname.clone(),
+        manager_version: m.manager_version.clone(),
+        entries: names.len() as u64 + corrupt.len() as u64,
+        bytes: total,
+        zip_bytes,
+        sections,
+        corrupt,
+        problems,
+    };
+    note(String::new());
+    for l in report.to_text().lines() {
+        note(l.to_string());
+    }
+    Ok(report)
 }
 
 // ---- finding backups -------------------------------------------------------------------
@@ -2311,11 +2734,12 @@ fn restore_database(a: &mut zip::ZipArchive<File>, d: &DbInfo, bot: Option<&Path
     Ok(format!("database {} loaded", d.name))
 }
 
-/// Explorer, with the zip selected.
+/// Explorer, with the zip (or a backup log) selected.
 pub fn reveal(path: &str) -> Result<()> {
     let p = PathBuf::from(path.trim());
-    if !p.is_file() || !p.extension().map(|e| e.eq_ignore_ascii_case("zip")).unwrap_or(false) {
-        bail!("not a backup zip");
+    let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if !p.is_file() || !(ext == "zip" || ext == "log") {
+        bail!("not a backup zip or log");
     }
     std::process::Command::new("explorer.exe").arg(format!("/select,{}", disp(&p))).spawn()?;
     Ok(())
@@ -2402,6 +2826,9 @@ mod tests {
         w(bot.join("run.py"), "");
         w(bot.join("core").join("x.py"), "");
         w(bot.join("plugins").join("p.py"), "");
+        w(bot.join("plugins").join("fowlengine").join("commands.py"), "");
+        w(bot.join("config").join("main.yaml"), "guild_id: 1");
+        w(bot.join("config").join("plugins").join("fowlengine.yaml"), "DEFAULT: {}");
         w(bot.join("logs").join("bot.log"), "skip me");
         w(bot.join("config").join(".secret").join("database.pkl"), "secret");
         let srs = base.join("Program Files").join("SRS");
@@ -2450,7 +2877,12 @@ mod tests {
         .unwrap();
         let j = wait();
         assert!(j.error.is_none(), "{j:?}");
-        let zip = std::fs::read_dir(base.join("out")).unwrap().flatten().next().unwrap().path();
+        let zip = std::fs::read_dir(base.join("out"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().map(|x| x == "zip").unwrap_or(false))
+            .unwrap();
         let names: Vec<String> = {
             let a = zip::ZipArchive::new(File::open(&zip).unwrap()).unwrap();
             a.file_names().map(String::from).collect()
@@ -2464,6 +2896,25 @@ mod tests {
         assert!(names.iter().any(|n| n.ends_with("/netidx.exe")));
         assert!(names.iter().any(|n| n.starts_with("roots/netidx-netidx-") && n.ends_with("/client.json")), "{names:?}");
         assert!(!names.iter().any(|n| n.ends_with("/cargo.exe")), "only netidx.exe out of .cargo\\bin");
+
+        // the check that ran at the end of the backup
+        let rep = j.report.clone().expect("a backup carries its check");
+        assert!(rep.ok, "{}", rep.to_text());
+        assert!(rep.sections.iter().all(|s| s.status == "ok"), "{}", rep.to_text());
+        assert!(rep.sections.iter().all(|s| s.files_in_zip > 0), "{}", rep.to_text());
+        let log = std::fs::read_to_string(zip.with_extension("log")).expect("the log sits next to the zip");
+        assert!(log.contains("BACKUP CHECK: OK") && log.contains("LOG"), "{log}");
+        assert_eq!(j.log_file.as_deref().map(lower), Some(lower(&disp(&zip.with_extension("log")))));
+
+        // one flipped byte in a stored entry (the .miz) must be caught
+        let mut bytes = std::fs::read(&zip).unwrap();
+        let at = bytes.windows(3).position(|w| w == b"MIZ").expect("stored miz data");
+        bytes[at + 2] = b'X';
+        let bad = base.join("corrupt.zip");
+        std::fs::write(&bad, bytes).unwrap();
+        let rep = verify_zip(&bad).unwrap();
+        assert!(!rep.ok && rep.corrupt.iter().any(|c| c.contains("a.miz")), "{}", rep.to_text());
+        assert!(rep.sections.iter().any(|s| s.status == "bad"), "{}", rep.to_text());
 
         // fresh Windows: everything gone, another user
         std::fs::remove_dir_all(&bot).unwrap();
