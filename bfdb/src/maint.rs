@@ -280,6 +280,32 @@ pub(crate) fn explain_open_failure(db_path: &Path, dir: &Path, e: &anyhow::Error
     };
     log::error!("{hint}");
     eprintln!("{hint}");
+    // The bot also copies the database aside before every bfdb.exe swap
+    // (`<home>/_backups/db-*`); with redeploys more often than the daily
+    // backup interval, that may be the newest copy there is.
+    if let Some(home) = db_path.parent() {
+        let newest = std::fs::read_dir(home.join("_backups"))
+            .map(|rd| {
+                let mut v: Vec<PathBuf> = rd
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.is_dir() && p.file_name().map_or(false, |n| n.to_string_lossy().starts_with("db-")))
+                    .collect();
+                v.sort();
+                v.pop()
+            })
+            .ok()
+            .flatten();
+        if let Some(s) = newest {
+            let more = format!(
+                "There is also a copy taken before the last bfdb.exe swap: {}. With DCSServerBot, \
+                 /feops db_restore restores the newest copy of either kind.",
+                s.display()
+            );
+            log::error!("{more}");
+            eprintln!("{more}");
+        }
+    }
 }
 
 // ── Housekeeping ─────────────────────────────────────────────────────────────

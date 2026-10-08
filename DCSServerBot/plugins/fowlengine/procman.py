@@ -862,6 +862,60 @@ class Procman:
             pass
         return dest
 
+    def db_restore_candidates(self) -> list[tuple[float, str, str]]:
+        """Copies of the DB to restore from, newest first: (mtime, path, kind).
+        `daily` = bfdb's own consistent export (`<db>.backups/<UTC>`), `swap` =
+        the copy taken before a bfdb.exe swap (`_backups/db-*`)."""
+        out: list[tuple[float, str, str]] = []
+        for base, kind, ok in ((f"{self.db_path}.backups", "daily", lambda n: not n.endswith(".partial")),
+                               (self.backups_dir, "swap", lambda n: n.startswith("db-"))):
+            try:
+                for e in os.scandir(base):
+                    if e.is_dir() and ok(e.name):
+                        out.append((e.stat().st_mtime, e.path, kind))
+            except OSError:
+                pass
+        out.sort(reverse=True)
+        return out
+
+    async def restore_db(self, admin_password: str, prefer: str = "newest") -> str:
+        """Put a good copy of the database back when bfdb can't open its own:
+        stop bfdb, move the damaged DB aside (kept as `bfdb.damaged-<ts>`), copy
+        the chosen backup in, start bfdb. What was recorded since the copy is
+        re-read from stats.jsonl (the replay cursor lives in the DB). `prefer`:
+        "newest", "daily" or "swap"."""
+        cands = self.db_restore_candidates()
+        if prefer in ("daily", "swap"):
+            cands = [c for c in cands if c[2] == prefer]
+        if not cands:
+            return f"{icon('blocked')} no database copy to restore from (looked in `{self.db_path}.backups` and `{self.backups_dir}`)."
+        _, src, kind = cands[0]
+        async with self._op_lock:
+            await self._stop_bfdb(admin_password)
+            await self._stop_orphans(admin_password)
+            await asyncio.sleep(3.0)
+            tag = _now_tag()
+            aside = None
+            try:
+                if os.path.isdir(self.db_path):
+                    aside = f"{self.db_path}.damaged-{tag}"
+                    os.rename(self.db_path, aside)
+                await asyncio.get_running_loop().run_in_executor(None, lambda: shutil.copytree(src, self.db_path))
+            except Exception as ex:  # noqa: BLE001
+                if aside and not os.path.isdir(self.db_path):
+                    try:
+                        os.rename(aside, self.db_path)
+                    except OSError:
+                        pass
+                await self._start_unlocked(admin_password)
+                return f"{icon('blocked')} DB restore failed ({ex}); put back what was there and restarted."
+            await self._start_unlocked(admin_password)
+        msg = (f"{icon('rollback')} **bfdb database restored** from the {kind} copy `{os.path.basename(src)}`"
+               + (f"; the damaged one is kept as `{os.path.basename(aside)}`" if aside else "")
+               + ". Stats since the copy are re-read from stats.jsonl.")
+        self.log.warning(f"FowlEngine/procman: {msg}")
+        return msg
+
     def list_backups(self) -> dict:
         """For the Ops page: exe backups next to bfdb.exe and the DB snapshots."""
         out: dict = {"bfdb_exe": [], "db_snapshots": []}

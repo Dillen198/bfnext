@@ -65,6 +65,7 @@ mod voice;
 mod intel;
 mod instance;
 mod range;
+mod replay;
 mod websec;
 mod maint;
 
@@ -393,6 +394,14 @@ struct Args {
     /// this its card is drawn without the track.
     #[arg(long = "range-track-days", default_value_t = 180)]
     range_track_days: u32,
+    /// Where flight replays (processed Tacview recordings, see
+    /// `src/replay`) are kept. Default: `<db>.replays` next to the database.
+    /// Each instance's `tacview_dir` is the source.
+    #[arg(long = "replay-dir")]
+    replay_dir: Option<PathBuf>,
+    /// Days to keep a flight replay before it is deleted.
+    #[arg(long = "replay-days", default_value_t = 30)]
+    replay_days: u32,
     /// Addresses allowed to use `POST /api/auth/local-login` (the password
     /// login DCSServerBot uses), as IPs or CIDR blocks; repeat for several.
     /// Default: loopback only -- the bot talks to bfdb on this machine
@@ -7457,13 +7466,26 @@ async fn main() -> Result<()> {
         if !has_engine {
             log::info!("Running in offline mode (no instance has a netidx base, Netidx disabled)");
         }
-        match StatsDb::new(
-            &subscribers,
-            args.db.clone(),
-            registry,
-            args.include.clone(),
-            args.exclude.clone(),
-        ) {
+        // sled reports some on-disk damage by panicking inside its recovery
+        // (an assertion over its segment accounting) rather than returning
+        // an error: the process died with code 101 and none of the advice
+        // below was ever printed (Oct 8). Catch it so it is.
+        let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            StatsDb::new(&subscribers, args.db.clone(), registry, args.include.clone(), args.exclude.clone())
+        }));
+        let opened = match opened {
+            Ok(r) => r,
+            Err(p) => {
+                let what = p
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| p.downcast_ref::<std::string::String>().cloned())
+                    .unwrap_or_else(|| "a panic".into());
+                let first = what.lines().next().unwrap_or("").to_string();
+                Err(anyhow::anyhow!("the database files are damaged (sled panicked while opening them: {first})"))
+            }
+        };
+        match opened {
             Ok(db) => db,
             Err(e) => {
                 // Say what to do about it, not just what sled said.
@@ -7602,6 +7624,16 @@ async fn main() -> Result<()> {
     )?;
     range::spawn_tasks(&range_ctx, args.range_track_days);
     let range_routes = range::api::routes(range_ctx.clone());
+
+    // ── Flight replay (each instance's Tacview recordings) ───────────────
+    let replay_dir = args.replay_dir.clone().unwrap_or_else(|| {
+        let mut p = args.db.clone().into_os_string();
+        p.push(".replays");
+        PathBuf::from(p)
+    });
+    let replay_ctx = replay::ReplayCtx::new(db.clone(), replay_dir, args.replay_days.max(1))?;
+    replay::spawn_tasks(&replay_ctx);
+    let replay_routes = replay::api::routes(replay_ctx);
 
     // ── Load campaign config JSON (served at /api/config) ────────────────
     let (campaign_json, srs_url_from_cfg, gci_cfg): (Arc<String>, Option<String>, Option<gci::GciConfig>) = match &args.config {
@@ -8987,6 +9019,8 @@ async fn main() -> Result<()> {
         // catch-all in the GET group below (which would otherwise answer
         // /api/range/... with index.html).
         .or(range_routes)
+        // Flight replay: also boxed, also ahead of the SPA catch-all.
+        .or(replay_routes)
         .or(admin_ops_proxy)
         .or(warp::get()
         .and(

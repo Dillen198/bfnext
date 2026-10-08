@@ -3649,6 +3649,37 @@ class FowlEngine(Plugin):
         await interaction.followup.send(
             embed=embed, file=discord.File(io.BytesIO(report.encode("utf-8")), filename="fowl-issues.md"))
 
+    @feops.command(name="db_restore",
+                   description="bfdb won't start (damaged database)? Restore the newest good copy of it.")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    @app_commands.choices(source=[
+        app_commands.Choice(name="newest copy of either kind", value="newest"),
+        app_commands.Choice(name="daily backup (always consistent)", value="daily"),
+        app_commands.Choice(name="copy taken before the last bfdb.exe swap", value="swap"),
+    ])
+    async def feops_db_restore(self, interaction: discord.Interaction,
+                               source: Optional[app_commands.Choice[str]] = None,
+                               confirm: bool = False):
+        """Stops bfdb, moves the damaged database aside (kept, not deleted),
+        copies the chosen backup in and starts bfdb, which re-reads whatever
+        the stats log has since that copy."""
+        await interaction.response.defer(ephemeral=True)
+        pm = await self._procman_or_warn(interaction)
+        if not pm:
+            return
+        cands = pm.db_restore_candidates()
+        if not confirm:
+            listing = "\n".join(
+                f"- `{os.path.basename(p)}` ({kind}, {datetime.fromtimestamp(t, tz=timezone.utc):%Y-%m-%d %H:%MZ})"
+                for t, p, kind in cands[:6]) or "_none found_"
+            await interaction.followup.send(
+                f"{icon('warning')} This stops bfdb, moves the current database aside and restores a copy. "
+                f"Copies available, newest first:\n{listing}\nRe-run with **confirm: True** to proceed.")
+            return
+        await interaction.followup.send(
+            await pm.restore_db(self._bfdb_admin_password, source.value if source else "newest"))
+
     @feops.command(name="rebuild_stats",
                    description="Wipe & re-ingest all stats from the log to undo duplicated/inflated numbers.")
     @app_commands.guild_only()
