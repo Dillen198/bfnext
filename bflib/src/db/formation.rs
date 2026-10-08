@@ -464,11 +464,13 @@ struct Want {
     enemy: bool,
     target: bool,
     assault: bool,
+    /// On the move with `live_only`: it can only drive in DCS.
+    moving: bool,
 }
 
 impl Want {
     fn any(&self) -> bool {
-        self.player || self.ordered || self.contact || self.enemy || self.target || self.assault
+        self.player || self.ordered || self.contact || self.enemy || self.target || self.assault || self.moving
     }
 
     fn reason(&self) -> &'static str {
@@ -482,8 +484,10 @@ impl Want {
             "in contact with an enemy formation"
         } else if self.enemy {
             "enemy units in DCS within reach"
-        } else {
+        } else if self.target {
             "closing on its target"
+        } else {
+            "on the move"
         }
     }
 
@@ -496,7 +500,7 @@ impl Want {
             + (self.player as u32) * 8
             + (self.assault as u32) * 4
             + (self.contact as u32) * 2
-            + (self.target || self.enemy) as u32
+            + (self.target || self.enemy || self.moving) as u32
     }
 }
 
@@ -1051,6 +1055,10 @@ impl Db {
         if in_field >= cfg.max_formations_per_side as usize {
             bail!("{side:?} already has {in_field} formations in the field, the most it can have")
         }
+        let total = self.formations().count();
+        if cfg.live_only && total >= cfg.max_live_formations as usize {
+            bail!("the server can run no more than {total} formations in DCS at once")
+        }
         let obj = objective!(self, oid)?;
         let oname = obj.name.clone();
         if obj.owner != side {
@@ -1402,6 +1410,10 @@ impl Db {
     /// Move the formations that are on the map only along their paths, each
     /// at its own speed, burning fuel as they go.
     fn advance_on_map(&mut self, rt: &FormationRt, cfg: &GroundWarCfg, dt: f64) {
+        if cfg.live_only {
+            // Driving happens in DCS or not at all.
+            return;
+        }
         let ids: SmallVec<[(FormationId, f64, f64); 16]> = self
             .formations()
             .filter(|f| f.posture == Posture::Moving && !rt.is_live(f) && !rt.is_halted(f.id))
@@ -2221,6 +2233,7 @@ impl Db {
                     _ => false,
                 },
                 assault: *posture == Posture::Assaulting,
+                moving: cfg.live_only && *posture == Posture::Moving,
             };
             if want.any() {
                 rt.wanted_ts.insert(*id, now);
@@ -2262,7 +2275,7 @@ impl Db {
         // that isn't fighting (weakest first).
         let mut bumpable: SmallVec<[(FormationId, u32); 16]> = wants
             .iter()
-            .filter(|(_, w, live)| *live && w.any() && !w.ordered && !w.fighting())
+            .filter(|(_, w, live)| *live && w.any() && !w.ordered && !w.fighting() && !w.moving)
             .map(|(id, w, _)| (*id, w.priority()))
             .collect();
         bumpable.sort_by_key(|(_, p)| std::cmp::Reverse(*p));
@@ -2272,7 +2285,7 @@ impl Db {
                 budget -= 1;
                 info!("ground war: formation {id} into DCS: {}", want.reason());
                 self.materialize(rt, id);
-            } else if want.ordered
+            } else if (want.ordered || (cfg.live_only && (want.fighting() || want.moving)))
                 && bumpable.last().map_or(false, |(_, p)| *p < want.priority())
             {
                 let (out, _) = bumpable.pop().unwrap();
@@ -3229,7 +3242,10 @@ impl Db {
         self.issue_routes(rt, &cfg, lua);
         self.spot(rt, &cfg.combat, lua, now);
         self.deploy_states(rt, &cfg.combat, now);
-        self.fight(rt, &cfg.combat, lua, now);
+        if !cfg.live_only {
+            // With `live_only` every fight is in DCS, and DCS deals the losses.
+            self.fight(rt, &cfg.combat, lua, now);
+        }
         self.sustain(rt, &cfg.combat, lua, dt, now);
         if cfg.map_pins {
             self.draw_pins(rt, now);

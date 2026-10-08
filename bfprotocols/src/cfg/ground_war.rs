@@ -58,6 +58,15 @@ pub struct GroundWarCfg {
     /// (`player_order_lock_secs`). Default true.
     #[serde(default = "default_true")]
     pub live_when_ordered: bool,
+    /// Nothing happens off the map: a formation that is moving or fighting
+    /// is a real DCS group, and one that can't get a live slot waits where
+    /// it is instead of driving and fighting as numbers. Ordered and moving
+    /// formations take the slots of parked ones, and no formation is raised
+    /// past `max_live_formations` (counting both sides). Off = the old
+    /// hybrid, where distant formations move and fight on the map.
+    /// Default true.
+    #[serde(default = "default_true")]
+    pub live_only: bool,
     /// A live formation with no reason to be live any more is despawned
     /// after this long. Default 300.
     #[serde(default = "default_despawn_grace")]
