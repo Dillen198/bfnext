@@ -71,6 +71,7 @@ use crate::{
 use anyhow::{anyhow, bail, Context, Result};
 use bfprotocols::{
     cfg::{GroundCombatCfg, GroundWarCfg, UnitTag},
+    command::{Pace, Roe},
     db::{
         group::{GroupId, UnitId},
         objective::{ObjectiveId, ObjectiveKind},
@@ -256,6 +257,13 @@ pub struct Formation {
     /// Damage taken that hasn't yet added up to a vehicle lost.
     #[serde(default)]
     pub damage: f64,
+    /// Rules of engagement a commander set; None = the doctrine (weapons
+    /// free, return fire only on a road march).
+    #[serde(default)]
+    pub roe: Option<Roe>,
+    /// How hard it drives.
+    #[serde(default)]
+    pub pace: Pace,
 }
 
 fn full() -> f64 {
@@ -265,6 +273,22 @@ fn full() -> f64 {
 impl Formation {
     pub fn ai_controlled(&self, now: DateTime<Utc>) -> bool {
         self.locked_until.map_or(true, |t| now >= t)
+    }
+
+    /// The ROE its DCS groups get: a commander's, or the doctrine's.
+    pub fn dcs_roe(&self, now: DateTime<Utc>) -> GroundRoe {
+        match self.roe {
+            Some(Roe::Free) => GroundRoe::WeaponFree,
+            Some(Roe::Return) => GroundRoe::ReturnFire,
+            Some(Roe::Hold) => GroundRoe::WeaponHold,
+            Some(Roe::Auto) | None => {
+                if self.marching(now) {
+                    GroundRoe::ReturnFire
+                } else {
+                    GroundRoe::WeaponFree
+                }
+            }
+        }
     }
 
     /// On the march under a player's Move order: going somewhere, not
@@ -657,11 +681,10 @@ fn dcs_route<'lua>(
 /// weapons free, DCS halts a ground group to engage anything it sees in
 /// range, so an ordered column parked on its first waypoint the moment an
 /// enemy came into view and never drove on.
-fn set_march_ai(group: &Group, marching: bool) -> Result<()> {
+fn set_march_ai(group: &Group, roe: GroundRoe) -> Result<()> {
     let con = group.get_controller()?;
     con.set_option(AiOption::Ground(GroundOption::DisperseOnAttack(0)))?;
     con.set_option(AiOption::Ground(GroundOption::AlarmState(AlarmState::Auto)))?;
-    let roe = if marching { GroundRoe::ReturnFire } else { GroundRoe::WeaponFree };
     con.set_option(AiOption::Ground(GroundOption::Roe(roe)))?;
     Ok(())
 }
@@ -814,7 +837,7 @@ impl Db {
         if f.supply < cfg.combat.low_supply {
             v *= 0.5;
         }
-        v
+        v * f.pace.factor()
     }
 
     /// How much of the usual supply `f` burns: its own trucks carry fuel and
@@ -1159,6 +1182,8 @@ impl Db {
             losses: 0,
             kills: 0,
             damage: 0.,
+            roe: None,
+            pace: Pace::Normal,
         };
         self.persisted.formations.insert_cow(id, f);
         if let Err(e) = self.update_objective_status(&oid, now) {
@@ -1302,6 +1327,7 @@ impl Db {
         lua: MizLua,
         id: FormationId,
         to: Vector2,
+        via: &[Vector2],
         by: Option<Ucid>,
         now: DateTime<Utc>,
     ) -> Result<CompactString> {
@@ -1321,17 +1347,32 @@ impl Db {
                 bail!("{name} is carrying out {who}'s order")
             }
         }
-        if let Some((_, o)) = self
-            .objectives()
-            .find(|(_, o)| o.owner() != side && o.owner() != Side::Neutral && o.contains(to))
-        {
-            bail!("{} is an enemy base: order an attack to take it", o.name)
+        if via.len() > 12 {
+            bail!("at most 12 waypoints")
         }
         let land = Land::singleton(lua)?;
-        if matches!(land.get_surface_type(LuaVec2(to))?, SurfaceType::Water | SurfaceType::ShallowWater) {
-            bail!("that point is in the water")
+        for p in via.iter().chain(std::iter::once(&to)) {
+            if let Some((_, o)) = self
+                .objectives()
+                .find(|(_, o)| o.owner() != side && o.owner() != Side::Neutral && o.contains(*p))
+            {
+                bail!("{} is an enemy base: order an attack to take it", o.name)
+            }
+            if matches!(land.get_surface_type(LuaVec2(*p))?, SurfaceType::Water | SurfaceType::ShallowWater) {
+                bail!("a waypoint is in the water")
+            }
         }
-        let (path, off_road) = self.plan_path(lua, from, to)?;
+        // Leg by leg through the waypoints; one cross-country leg makes the
+        // whole route cross-country (DCS takes one formation per route).
+        let mut path = vec![];
+        let mut off_road = false;
+        let mut at = from;
+        for p in via.iter().chain(std::iter::once(&to)) {
+            let (leg, off) = self.plan_path(lua, at, *p)?;
+            path.extend(leg);
+            off_road |= off;
+            at = *p;
+        }
         let km = {
             let mut prev = from;
             path.iter().fold(0., |d, p| {
@@ -1367,6 +1408,54 @@ impl Db {
             .unwrap_or_else(|| "Command".into());
         info!("ground war: {side:?} {what} (by {who})");
         rt.event(side, "order", format_compact!("{who}: {what}"), Some(from), Some(id), now);
+        Ok(what)
+    }
+
+    /// A commander sets how a formation fights (`roe`, `Roe::Auto` = the
+    /// doctrine) and how hard it drives. Takes effect in DCS at once.
+    pub fn set_formation_posture(
+        &mut self,
+        rt: &mut FormationRt,
+        id: FormationId,
+        roe: Option<Roe>,
+        pace: Option<Pace>,
+        by: Option<Ucid>,
+        now: DateTime<Utc>,
+    ) -> Result<CompactString> {
+        let f = self.persisted.formations.get(&id).ok_or_else(|| anyhow!("no such formation {id}"))?;
+        if let (Some(b), Some(c)) = (by.as_ref(), f.commander.as_ref()) {
+            if b != c && !f.ai_controlled(now) {
+                let who = self.persisted.players.get(c).map(|p| p.name.clone()).unwrap_or_default();
+                bail!("{} is carrying out {who}'s order", f.name)
+            }
+        }
+        let live = rt.is_live(f);
+        let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+        if let Some(r) = roe {
+            f.roe = (r != Roe::Auto).then_some(r);
+        }
+        if let Some(p) = pace {
+            f.pace = p;
+        }
+        let what = format_compact!(
+            "{}: {}, {}",
+            f.name,
+            match f.roe {
+                None | Some(Roe::Auto) => "weapons per doctrine",
+                Some(Roe::Free) => "weapons free",
+                Some(Roe::Return) => "return fire only",
+                Some(Roe::Hold) => "hold fire",
+            },
+            match f.pace {
+                Pace::Slow => "slow",
+                Pace::Normal => "normal pace",
+                Pace::Fast => "flat out",
+            }
+        );
+        if live {
+            rt.route_dirty.insert(id);
+        }
+        self.ephemeral.dirty();
         Ok(what)
     }
 
@@ -2376,7 +2465,7 @@ impl Db {
             _ => (vec![], false),
         };
         let deployed = matches!(f.deployment, Deployment::Deployed | Deployment::DugIn) && !f.broken;
-        let marching = f.marching(Utc::now());
+        let roe = f.dcs_roe(Utc::now());
         let speed = self.formation_speed_kph(cfg, f).max(3.) / 3.6;
         let land = Land::singleton(lua)?;
         // The persisted positions carry the map's x/y; DCS wants the ground
@@ -2396,7 +2485,7 @@ impl Db {
             .spawn_group(perf, &self.persisted, idx, &spctx, group!(self, gid)?, route)
             .with_context(|| format_compact!("spawning formation {id} group {gid}"))?;
         if let Some(crate::spawnctx::Spawned::Group(g)) = spawned {
-            if let Err(e) = set_march_ai(&g, marching) {
+            if let Err(e) = set_march_ai(&g, roe) {
                 warn!("ground war: march orders for {gid}: {e:?}");
             }
         }
@@ -2421,13 +2510,13 @@ impl Db {
                 _ => (vec![], false),
             };
             let deployed = matches!(f.deployment, Deployment::Deployed | Deployment::DugIn) && !f.broken;
-            let marching = f.marching(Utc::now());
+            let roe = f.dcs_roe(Utc::now());
             let speed = self.formation_speed_kph(cfg, f).max(3.) / 3.6;
             for gid in f.groups.iter().filter(|g| rt.live.contains(g)) {
                 let Some(g) = self.persisted.groups.get(gid) else { continue };
                 let from = self.group_center(gid).unwrap_or(f.pos);
                 let res = Group::get_by_name(lua, &g.name).and_then(|group| {
-                    set_march_ai(&group, marching)?;
+                    set_march_ai(&group, roe)?;
                     let route = dcs_route(&land, from, &path, off_road, deployed, speed);
                     group
                         .get_controller()?

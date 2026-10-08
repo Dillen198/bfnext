@@ -2,6 +2,12 @@
 
 ## October 7, 2026
 
+**Command: a real command display**
+- Zones of control, the supply network (cut routes in red), your air-defence
+  and radar coverage, and the enemy air defences you know of, on the map.
+- Routes with waypoints, and rules of engagement and pace per formation. See
+  [Command](../advanced/command.md#moving-formations).
+
 **Command: the full order catalogue**
 - Everything your side can do is on the COMMAND panel, at the place you pick:
   air operations, bombers, missile strikes, deployments by road, convoy

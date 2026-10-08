@@ -20,13 +20,24 @@ export function useCommandFeed(side: Side | undefined, instance: string | undefi
 }
 
 /** The enemy aircraft our side can see (/ws/tacmap, fog-of-war). */
-export function useEnemyAir(enabled: boolean): AirTrack[] {
+/** The side's fog-of-war picture (/ws/tacmap): what it can see of the enemy
+ *  in the air and on the ground, and its own radar coverage. */
+export function useTacPicture(enabled: boolean): TacPicture | null {
   const [pic, setPic] = useState<TacPicture | null>(null)
   useEffect(() => {
     if (!enabled) return
     return connectTacmap((f) => setPic(f.picture), () => {})
   }, [enabled])
-  return useMemo(() => (pic?.air ?? []).filter((t) => t.iff !== 'friendly' && !t.stale), [pic])
+  return enabled ? pic : null
+}
+
+export function enemyAirOf(pic: TacPicture | null): AirTrack[] {
+  return (pic?.air ?? []).filter((t) => t.iff !== 'friendly' && !t.stale)
+}
+
+export function useEnemyAir(enabled: boolean): AirTrack[] {
+  const pic = useTacPicture(enabled)
+  return useMemo(() => enemyAirOf(pic), [pic])
 }
 
 export interface Layers {
@@ -35,8 +46,14 @@ export interface Layers {
   naval: boolean
   logi: boolean
   enemyAir: boolean
+  /** Our supply network. */
+  supply?: boolean
+  /** Our air defences and radar coverage. */
+  cover?: boolean
+  /** Enemy air-defence threat rings we know of. */
+  threats?: boolean
 }
-export const ALL_LAYERS: Layers = { air: true, ground: true, naval: true, logi: true, enemyAir: true }
+export const ALL_LAYERS: Layers = { air: true, ground: true, naval: true, logi: true, enemyAir: true, supply: true, cover: true, threats: true }
 
 export function shown(a: Asset, l: Layers): boolean {
   switch (a.kind) {
@@ -56,7 +73,7 @@ export const MODE_TEXT: Record<AssetMode, string> = {
   station: 'STATION · CLICK THE MAP',
   sail: 'SAIL · CLICK OPEN WATER',
   barrage: 'BARRAGE · CLICK THE TARGET (EVERY BATTERY IN RANGE)',
-  fmove: 'MOVE FORMATIONS · CLICK THE MAP',
+  fmove: 'MOVE · CLICK TO ADD WAYPOINTS · RIGHT-CLICK OR ENTER TO GO',
 }
 
 /** How the map asks for an order's target, for the mode bar. */

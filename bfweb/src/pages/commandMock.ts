@@ -107,6 +107,16 @@ export function createCommandMock(): CommandMock {
         launch: launch.map((l) => ({ ...l, ready: l.ready && l.cost <= treasury })),
         hq: true,
         orders: orders.map((o) => ({ ...o, why_not: o.why_not || (o.cost > treasury ? `the treasury has ${treasury} of ${o.cost}` : '') })),
+        supply: [
+          { from: [42.176, 42.482], to: [42.29, 43.28], from_name: 'Kutaisi', to_name: 'Chiatura', cut: false, why: '' },
+          { from: [42.176, 42.482], to: [41.99, 43.6], from_name: 'Kutaisi', to_name: 'Khashuri', cut: false, why: '' },
+          { from: [41.99, 43.6], to: [42.23, 43.97], from_name: 'Khashuri', to_name: 'Tskhinvali', cut: true, why: 'an enemy base sits on the route' },
+        ],
+        defences: [
+          { name: 'Kutaisi SA-11', pos: [42.18, 42.5], range_m: 32000, kind: 'sam', live: true },
+          { name: 'Chiatura Tor', pos: [42.29, 43.28], range_m: 12000, kind: 'sam', live: false },
+          { name: 'Khashuri ZSU', pos: [41.99, 43.6], range_m: 3000, kind: 'aaa', live: true },
+        ],
         can_command: true,
         god_mode: false,
         commander: null,
@@ -181,6 +191,7 @@ export function createCommandMock(): CommandMock {
         if (!pay(120)) return { ok: false, message: 'the treasury can’t pay for that' }
         return { ok: true, message: `${s.a.name} firing (120 from the treasury)` }
       }
+      if ('posture' in o) return { ok: true, message: `posture set${o.posture.roe ? `: ${o.posture.roe}` : ''}${o.posture.pace ? `, ${o.posture.pace}` : ''}` }
       if ('order' in o) {
         const opt = orders.find((x) => x.key === o.order.key)
         if (!opt) return { ok: false, message: 'no such order' }

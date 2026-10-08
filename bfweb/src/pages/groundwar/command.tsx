@@ -29,6 +29,9 @@ const LAYER_LABELS: [keyof Layers, string, string][] = [
   ['naval', 'SEA', 'Carrier groups'],
   ['logi', 'LOG', 'Supply convoys'],
   ['enemyAir', 'HOS', 'Enemy aircraft our side can see'],
+  ['supply', 'SUP', 'Our supply network: hub to base, red where it is cut'],
+  ['cover', 'COV', 'Our air defences and radar coverage'],
+  ['threats', 'THR', 'Enemy air defences we know of (faded when old or unsure)'],
 ]
 
 /** Why our own assets may be missing or behind: two short lines and the long story. */
@@ -43,7 +46,7 @@ export function LayerToggles({ layers, set, note }: { layers: Layers; set: (l: L
         </div>
       )}
       {LAYER_LABELS.map(([k, label, title]) => (
-        <button key={k} className={layers[k] ? 'on' : ''} title={title} onClick={() => set({ ...layers, [k]: !layers[k] })}>
+        <button key={k} className={layers[k] !== false ? 'on' : ''} title={title} onClick={() => set({ ...layers, [k]: layers[k] === false })}>
           {label}
         </button>
       ))}

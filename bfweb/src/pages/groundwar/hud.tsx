@@ -7,7 +7,7 @@ import {
   Activity, Alert, Armor, Capture, Defend, Eye, Helicopter, Plus, Shield, Strike, Supply, X, type IconComponent,
 } from '@icons'
 import type {
-  GroundEnemyContact, GroundEvent, GroundFormation, GroundObjective, GroundPicture, GroundRole,
+  GroundEnemyContact, GroundEvent, GroundFormation, GroundObjective, GroundPicture, GroundRole, Pace, Roe,
 } from '../../api'
 import { fmtAge, fmtZulu } from './geo'
 import { MAP_LOOKS, type MapLook } from './mapStyles'
@@ -427,7 +427,29 @@ export function CommandBar({
 
 // ── Detail drawer ────────────────────────────────────────────────────────
 
-export function Drawer({ f, side, pic, lockMins, onClose }: { f: GroundFormation; side: Side; pic: GroundPicture; lockMins: number; onClose: () => void }): ReactElement {
+const ROE_OPTS: [Roe, string, string][] = [
+  ['auto', 'AUTO', 'Doctrine: weapons free; return fire only on a road march'],
+  ['free', 'FREE', 'Engage anything in reach'],
+  ['return', 'RETURN', 'Shoot only when shot at: keeps moving'],
+  ['hold', 'HOLD', 'Hold fire'],
+]
+const PACE_OPTS: [Pace, string, string][] = [
+  ['slow', 'SLOW', 'Half speed: quieter, keeps together'],
+  ['normal', 'NORMAL', 'Normal pace'],
+  ['fast', 'FAST', 'Flat out'],
+]
+
+export function Drawer({ f, side, pic, lockMins, onClose, canOrder = false, onPosture }: {
+  f: GroundFormation
+  side: Side
+  pic: GroundPicture
+  lockMins: number
+  onClose: () => void
+  canOrder?: boolean
+  onPosture?: (roe?: Roe, pace?: Pace) => void
+}): ReactElement {
+  const roe: Roe = f.roe ?? 'auto'
+  const pace: Pace = f.pace ?? 'normal'
   const s = natoSymbol({
     kind: f.kind, hostile: false, company: true, size: 30, fill: f.broken ? '#8a8a80' : SIDE_COLOR[side],
     designation: shortName(f.name), reduced: f.alive < f.total,
@@ -446,6 +468,25 @@ export function Drawer({ f, side, pic, lockMins, onClose }: { f: GroundFormation
         {f.kind.toUpperCase()} COMPANY · {f.commander ? `COMMANDED BY ${f.commander.toUpperCase()}${f.locked_mins != null ? ` · ${f.locked_mins} MIN LEFT` : ''}` : 'AI COMMAND'}
       </div>
       <div className="gw-drawer-order">{orderLine(f)}</div>
+
+      {onPosture && (
+        <>
+          <h3>RULES OF ENGAGEMENT</h3>
+          <div className="gw-seg">
+            {ROE_OPTS.map(([k, label, title]) => (
+              <button key={k} className={roe === k ? 'on' : ''} disabled={!canOrder || roe === k} title={title}
+                onClick={() => onPosture(k, undefined)}>{label}</button>
+            ))}
+          </div>
+          <h3>PACE</h3>
+          <div className="gw-seg">
+            {PACE_OPTS.map(([k, label, title]) => (
+              <button key={k} className={pace === k ? 'on' : ''} disabled={!canOrder || pace === k} title={title}
+                onClick={() => onPosture(undefined, k)}>{label}</button>
+            ))}
+          </div>
+        </>
+      )}
 
       <h3>COMPOSITION</h3>
       <div className="gw-chips">

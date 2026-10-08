@@ -61,6 +61,34 @@ with its price. Click one to launch it.
 
 Press **?** on the page for every key.
 
+## Reading the map
+
+The command map shows your side's whole situation, under the units:
+
+- **Zones of control**: every base's ground (what is nearer to it than to any
+  other base) washed in its owner's colour, so the front is where the two
+  colours meet. **TERR** turns them off.
+- **Supply (SUP)**: yellow dashes from each logistics hub to the bases it
+  feeds; red where the route is cut (an enemy base on it, or the hub wrecked).
+- **Coverage (COV)**: how far your SAM and AAA sites reach (bright when they
+  are live in DCS) and your radar coverage.
+- **Threats (THR)**: enemy air defences your side has found, with a dotted
+  ring for how sure you are of where they are. Old or uncertain reports fade.
+
+## Moving formations
+
+**M** then click the map to lay waypoints, one click each (up to 12); the
+route is drawn as you go. **Right-click** or **Enter** sends it (a right-click
+also adds that point as the destination). A plain right-click on the map with
+formations selected sends them straight there.
+
+The formation panel sets how it fights and drives, at once in DCS:
+
+- **Rules of engagement**: **AUTO** (the doctrine: weapons free, return fire
+  only on a road march), **FREE**, **RETURN** (shoot only when shot at, and keep
+  moving), **HOLD** (hold fire).
+- **Pace**: **SLOW** (half speed, keeps together), **NORMAL**, **FAST** (flat out).
+
 ## The order catalogue
 
 The **COMMAND** panel (**L**) lists everything your side can order on this

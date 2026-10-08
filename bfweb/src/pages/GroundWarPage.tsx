@@ -35,7 +35,8 @@ import { createGroundwarMock } from './groundwarMock'
 import { createCommandMock } from './commandMock'
 import { visibleNames } from './groundwar/declutter'
 import { AssetLines, AssetMarker, AssetPanel, BaseOrders, EnemyAirMarker, LaunchPanel, LayerToggles, type AssetNote } from './groundwar/command'
-import { ALL_LAYERS, MODE_TEXT, TARGET_TEXT, shown, useCommandFeed, useEnemyAir, type AssetMode, type Layers } from './groundwar/commandFeed'
+import { ALL_LAYERS, MODE_TEXT, TARGET_TEXT, enemyAirOf, shown, useCommandFeed, useTacPicture, type AssetMode, type Layers } from './groundwar/commandFeed'
+import { Coverage, RoutePreview, SupplyNetwork, Territory, Threats } from './groundwar/overlays'
 import { rankFor } from '../ranks'
 import './groundwar/groundwar.css'
 
@@ -153,7 +154,10 @@ export default function GroundWarPage(): ReactElement {
           ? { top: 'ENGINE', bottom: 'BUSY', title: "The game server isn't answering the command map right now. Retrying every few seconds." }
           : { top: 'ASSETS', bottom: 'OFFLINE', title: "Our aircraft, convoys and batteries aren't on this map yet: this server's engine and bfdb need the update that adds the command map." }
         : null
-  const enemyAir = useEnemyAir(!mock && layers.enemyAir && !!pic?.enabled)
+  const tac = useTacPicture(!mock && !!pic?.enabled && (layers.enemyAir || layers.threats !== false || layers.cover !== false))
+  const enemyAir = useMemo(() => (layers.enemyAir ? enemyAirOf(tac) : []), [tac, layers.enemyAir])
+  /** Waypoints of the Move being planned, before it is sent. */
+  const [wps, setWps] = useState<LatLon[]>([])
   const { data: fronts = NO_FRONTS } = useQuery<Frontlines>({
     queryKey: ['frontline'],
     queryFn: () => (mock ? Promise.resolve(NO_FRONTS) : api.frontline()),
@@ -237,7 +241,7 @@ export default function GroundWarPage(): ReactElement {
     if (pic) engine.setPicture(pic, feed.gap)
   }, [engine, pic, feed.gap])
   useEffect(() => engine.setSelection(selSet), [engine, selSet])
-  useEffect(() => engine.setOptions({ fog, territory, follow }), [engine, fog, territory, follow])
+  useEffect(() => engine.setOptions({ fog, territory: false, follow }), [engine, fog, follow])
 
   // ── Toasts and orders ──────────────────────────────────────────────────
   const toast = useCallback((text: string, ok: boolean) => {
@@ -308,16 +312,28 @@ export default function GroundWarPage(): ReactElement {
     return void order({ order: { key: o.key, objective: obj } }, ask(`at ${name(obj)}`))
   }
   /** Carry out the armed command-map order at `at`. */
+  /** Send the planned Move: through the waypoints, ending at `last` (or the last waypoint). */
+  const sendRoute = (last?: LatLon) => {
+    const pts = last ? [...wps, last] : wps
+    setWps([])
+    setAssetMode('none')
+    if (pts.length === 0) return
+    if (!selIds.length) return toast('Select formations first.', false)
+    const to = pts[pts.length - 1]
+    const via = pts.slice(0, -1)
+    void Promise.all(selIds.map((id) => order({ move_formation: { formation: id, to, via } })))
+  }
   const applyAssetMode = (at: LatLon) => {
     const a = selAsset
     const m = assetMode
+    if (m === 'fmove') {
+      // Each click is a waypoint; right-click or Enter sends the route.
+      if (!selIds.length) return toast('Select formations first.', false)
+      if (wps.length >= 12) return toast('At most 12 waypoints: right-click or Enter to send.', false)
+      return setWps((w) => [...w, at])
+    }
     setAssetMode('none')
     if (m === 'barrage') return void order({ barrage: { at } }, 'Every battery of ours in range fires on this point. Pay for a barrage from the treasury?')
-    if (m === 'fmove') {
-      if (!selIds.length) return toast('Select formations first.', false)
-      void Promise.all(selIds.map((id) => order({ move_formation: { formation: id, to: at } })))
-      return
-    }
     if (!a) return toast('Select one of our assets first.', false)
     if (m === 'move') return void order({ move: { group: a.id, to: at } })
     if (m === 'fire') return void order({ fire: { group: a.id, at } })
@@ -522,7 +538,7 @@ export default function GroundWarPage(): ReactElement {
     applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
     selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
     assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset, selObjId,
-    pending, applyOrder,
+    pending, applyOrder, wps, sendRoute,
   })
   useEffect(() => {
     live.current = {
@@ -530,7 +546,7 @@ export default function GroundWarPage(): ReactElement {
       applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
       selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
       assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset, selObjId,
-      pending, applyOrder,
+      pending, applyOrder, wps, sendRoute,
     }
   })
 
@@ -613,16 +629,15 @@ export default function GroundWarPage(): ReactElement {
       context: (obj, at) => {
         const L = live.current
         if (L.pending) return setPending(null)
+        if (L.assetMode === 'fmove' && L.selIds.length) return L.sendRoute(at)
         if (L.assetMode !== 'none') return setAssetMode('none')
         if (L.mode !== 'none' && L.mode !== 'raise' && obj != null) return L.applyMode(obj)
         if (L.mode !== 'none') return setMode('none')
         if (L.selAsset) return void L.assetDefault(at)
         if (!L.selIds.length) return
-        // Away from any base, a right-click moves the selection to that point.
-        if (obj == null) {
-          L.armAsset('fmove')
-          return L.applyAssetMode(at)
-        }
+        // Away from any base, a right-click moves the selection to that point
+        // (through any waypoints already clicked).
+        if (obj == null) return L.sendRoute(at)
         const r = L.resolve(obj)
         if (r && (r.verb === 'attack' || r.verb === 'defend')) L.orderTo(r.verb, obj)
       },
@@ -649,7 +664,13 @@ export default function GroundWarPage(): ReactElement {
         setHelp((h) => !h)
         return
       }
+      if (e.key === 'Enter' && L.assetMode === 'fmove' && L.wps.length) {
+        e.preventDefault()
+        L.sendRoute()
+        return
+      }
       if (e.key === 'Escape') {
+        setWps([])
         if (L.help) setHelp(false)
         else if (L.pending) setPending(null)
         else if (L.assetMode !== 'none') setAssetMode('none')
@@ -796,6 +817,11 @@ export default function GroundWarPage(): ReactElement {
         onStyleData={onLoad}
         onZoom={onZoom}
       >
+        <Territory objectives={pic.objectives} visible={territory} />
+        <SupplyNetwork lines={cp?.supply ?? []} side={side} visible={layers.supply !== false} />
+        <Coverage defences={cp?.defences ?? []} tac={tac} side={side} visible={layers.cover !== false} />
+        <Threats tac={tac} side={side} visible={layers.threats !== false} />
+        <RoutePreview from={selForms.map((f) => f.pos)} wps={assetMode === 'fmove' ? wps : []} side={side} />
         <BattlefieldLayers formations={pic.formations} fronts={fronts} selected={selSet} side={side} territory={territory} />
         {pic.objectives.map((o) => (
           <ObjectiveMarker key={`o${o.id}`} o={o} side={side} selected={o.id === selObjId} showName={!names || names.has(o.id)} onPick={onPickObjective} />
@@ -876,7 +902,8 @@ export default function GroundWarPage(): ReactElement {
       <EventFeed events={pic.events} saved={savedLog} time={pic.time} onPick={onEvent}
         onOlder={() => void loadOlderLog()} hasOlder={!logEnd && savedLog.length >= 200} olderBusy={logBusy} />
       {single && !selAsset && (
-        <Drawer f={single} side={side} pic={pic} lockMins={Math.round(pic.player_lock_secs / 60)} onClose={clearAll} />
+        <Drawer f={single} side={side} pic={pic} lockMins={Math.round(pic.player_lock_secs / 60)} onClose={clearAll}
+          canOrder={canOrder} onPosture={(roe, pace) => void order({ posture: { formations: [single.id], roe, pace } })} />
       )}
       {selAsset && (
         <AssetPanel a={selAsset} canCommand={canOrder} mode={assetMode} setMode={armAsset}

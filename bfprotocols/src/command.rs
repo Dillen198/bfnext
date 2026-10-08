@@ -182,6 +182,75 @@ pub struct CommandPicture {
     /// deployments by road, and the operations that aren't actions.
     #[serde(default)]
     pub orders: Vec<OrderOption>,
+    /// Our supply network: each base and the hub that feeds it.
+    #[serde(default)]
+    pub supply: Vec<SupplyLine>,
+    /// Our air defences and how far they reach.
+    #[serde(default)]
+    pub defences: Vec<DefenceRing>,
+}
+
+/// One leg of our supply network: a hub feeding a base.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupplyLine {
+    pub from: LatLon,
+    pub to: LatLon,
+    pub from_name: String,
+    pub to_name: String,
+    /// The route is cut: an enemy base sits on it, or the hub is wrecked.
+    pub cut: bool,
+    /// Why it is cut, when it is.
+    #[serde(default)]
+    pub why: String,
+}
+
+/// One of our air-defence sites and its reach.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefenceRing {
+    pub name: String,
+    pub pos: LatLon,
+    /// Engagement range, metres.
+    pub range_m: f64,
+    /// "sam" or "aaa".
+    pub kind: String,
+    /// In DCS right now.
+    pub live: bool,
+}
+
+/// Rules of engagement for ground forces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Roe {
+    /// The doctrine: weapons free, return fire only on a road march.
+    Auto,
+    /// Engage anything in reach.
+    Free,
+    /// Shoot only when shot at.
+    Return,
+    /// Hold fire.
+    Hold,
+}
+
+/// How hard a ground force drives.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Pace {
+    /// Half speed: quieter, keeps together.
+    Slow,
+    #[default]
+    Normal,
+    /// Flat out.
+    Fast,
+}
+
+impl Pace {
+    pub fn factor(self) -> f64 {
+        match self {
+            Pace::Slow => 0.5,
+            Pace::Normal => 1.,
+            Pace::Fast => 1.35,
+        }
+    }
 }
 
 /// What an order is aimed at, which decides how the map asks for it.
@@ -229,8 +298,27 @@ pub struct OrderOption {
 pub enum CommandOrder {
     /// A ground group (deployed, troops, other ground) drives to a point.
     Move { group: i64, to: LatLon },
-    /// A ground formation drives to a point and holds there.
-    MoveFormation { formation: u32, to: LatLon },
+    /// A ground formation drives to a point and holds there, by way of
+    /// `via` in order when given.
+    MoveFormation {
+        formation: u32,
+        to: LatLon,
+        #[serde(default)]
+        via: Vec<LatLon>,
+    },
+    /// Set how ground forces fight and drive: formations by id, deployed
+    /// groups by id. A field left out is left as it is; `Roe::Auto` goes
+    /// back to the doctrine.
+    Posture {
+        #[serde(default)]
+        formations: Vec<u32>,
+        #[serde(default)]
+        groups: Vec<i64>,
+        #[serde(default)]
+        roe: Option<Roe>,
+        #[serde(default)]
+        pace: Option<Pace>,
+    },
     /// A battery fires on a point.
     Fire { group: i64, at: LatLon },
     /// Every battery of ours in range fires on a point.

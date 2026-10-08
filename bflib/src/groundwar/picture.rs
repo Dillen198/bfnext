@@ -239,6 +239,8 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
             let trail: Vec<LatLon> = f.trail.iter().rev().take(25).rev().map(|p| geo.ll(*p)).collect();
             FormationInfo {
                 id: f.id,
+                roe: f.roe,
+                pace: f.pace,
                 name: f.name.to_string(),
                 pos: geo.ll(f.pos),
                 heading: deg(f.heading),

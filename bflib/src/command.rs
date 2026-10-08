@@ -116,7 +116,10 @@ use crate::{
 };
 use bfprotocols::{
     cfg::{Action, ActionKind},
-    command::{Asset, AssetKind, AssetUnit, CommandOrder, CommandPicture, CommandReply, LatLon, LaunchOption, Verb},
+    command::{
+        Asset, AssetKind, AssetUnit, CommandOrder, CommandPicture, CommandReply, DefenceRing, LatLon, LaunchOption, Roe,
+        SupplyLine, Verb,
+    },
     db::{group::GroupId, objective::ObjectiveId},
     hq::OpKind,
     perf::PerfInner,
@@ -351,6 +354,7 @@ pub(crate) fn picture(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<
         }
     }
     assets.extend(orders::hunter_assets(lua, ctx, side, coord));
+    let (supply, defences) = overlays(ctx, side, coord);
     let menu = crate::hq::launch_menu_cached(ctx, side, 24, now);
     let launch = menu
         .iter()
@@ -372,6 +376,8 @@ pub(crate) fn picture(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<
         launch,
         hq: crate::hq::cfg(ctx).is_some(),
         orders: orders::catalog(ctx, side),
+        supply,
+        defences,
     }
 }
 
@@ -458,6 +464,87 @@ fn run_action(
 
 /// Carry out a commander's order for `side`. `ucid` is the commander (None =
 /// a server admin, through bfdb).
+/// The command map's own-side overlays: the supply network (each base and
+/// the hub feeding it, and whether the route is cut) and our air defences
+/// with their reach (the widest weapon of the site, from DCS's own data).
+fn overlays(ctx: &Context, side: Side, coord: Option<&Coord>) -> (Vec<SupplyLine>, Vec<DefenceRing>) {
+    use bfprotocols::cfg::UnitTag;
+    let mut supply = vec![];
+    let mut defences = vec![];
+    let db = crate::unitdb::get();
+    for (_, o) in ctx.db.objectives() {
+        if o.owner() != side {
+            continue;
+        }
+        if let Some(hub) = o.warehouse().supplier().and_then(|h| ctx.db.persisted.objectives.get(&h).map(|ho| (h, ho))) {
+            let (_, ho) = hub;
+            if ho.id != o.id {
+                let from = ho.pos();
+                let to = o.pos();
+                let interdicted = crate::db::logistics::route_is_interdicted(&ctx.db.persisted, side, from, to);
+                let wrecked = ho.warehouse().is_damaged();
+                let why = if interdicted {
+                    "an enemy base sits on the route".to_string()
+                } else if wrecked {
+                    format!("{} is wrecked", ho.name)
+                } else {
+                    String::new()
+                };
+                supply.push(SupplyLine {
+                    from: to_ll(coord, from, 0.),
+                    to: to_ll(coord, to, 0.),
+                    from_name: ho.name.to_string(),
+                    to_name: o.name.to_string(),
+                    cut: interdicted || wrecked,
+                    why,
+                });
+            }
+        }
+    }
+    let ad_groups = ctx
+        .db
+        .objectives()
+        .filter(|(_, o)| o.owner() == side)
+        .flat_map(|(_, o)| o.groups().get(&side).into_iter().flat_map(|g| g.into_iter().copied()).collect::<Vec<_>>())
+        .chain(ctx.db.deployed().filter(|g| g.side == side).map(|g| g.id));
+    let mut seen = fxhash::FxHashSet::default();
+    for gid in ad_groups {
+        if !seen.insert(gid) {
+            continue;
+        }
+        let Some(g) = ctx.db.persisted.groups.get(&gid) else { continue };
+        let sam = g.tags.contains(UnitTag::SAM);
+        let aaa = g.tags.contains(UnitTag::AAA);
+        if !sam && !aaa {
+            continue;
+        }
+        let mut range: f64 = 0.;
+        let mut live = false;
+        for uid in &g.units {
+            let Some(u) = ctx.db.persisted.units.get(uid) else { continue };
+            if u.dead {
+                continue;
+            }
+            live |= ctx.db.ephemeral.get_object_id_by_uid(uid).is_some();
+            if let Some(r) = db.get(u.typ.as_str()).and_then(|i| i.threat_range_m) {
+                range = range.max(r);
+            }
+        }
+        if range <= 0. {
+            continue;
+        }
+        let Ok(pos) = ctx.db.group_center(&gid) else { continue };
+        defences.push(DefenceRing {
+            name: g.name.to_string(),
+            pos: to_ll(coord, pos, 0.),
+            range_m: range,
+            kind: if sam { "sam".into() } else { "aaa".into() },
+            live,
+        });
+    }
+    (supply, defences)
+}
+
 pub(crate) fn order(
     lua: MizLua,
     ctx: &mut Context,
@@ -528,7 +615,7 @@ fn order_inner(
             pay(ctx, side, cost);
             Ok(format_compact!("{} moving ({cost} from the treasury)", group_name(ctx, &gid)))
         }
-        CommandOrder::MoveFormation { formation, to } => {
+        CommandOrder::MoveFormation { formation, to, via } => {
             let id: crate::db::formation::FormationId = formation;
             match ctx.db.formation(id) {
                 Some(f) if f.side == side => (),
@@ -542,9 +629,13 @@ fn order_inner(
                 }
             }
             let pos = from_ll(lua, to)?;
+            let mut wps = Vec::with_capacity(via.len());
+            for ll in via {
+                wps.push(from_ll(lua, ll)?);
+            }
             let what = ctx
                 .db
-                .move_formation_to(&mut ctx.groundwar.rt, lua, id, pos, ucid, now)
+                .move_formation_to(&mut ctx.groundwar.rt, lua, id, pos, &wps, ucid, now)
                 .map_err(|e| format_compact!("{e}"))?;
             if let Some(u) = ucid {
                 ctx.groundwar.last_order.insert(u, now);
@@ -657,6 +748,43 @@ fn order_inner(
         CommandOrder::Launch { kind, objective } => {
             // Paid, tracked and announced by the HQ itself.
             crate::hq::commander_launch(lua, ctx, perf, side, kind, ObjectiveId::from(objective), &who, now)
+        }
+        CommandOrder::Posture { formations, groups, roe, pace } => {
+            if formations.is_empty() && groups.is_empty() {
+                return Err("nothing selected".into());
+            }
+            let mut said = vec![];
+            for id in formations {
+                match ctx.db.formation(id) {
+                    Some(f) if f.side == side => (),
+                    Some(_) => return Err("that formation isn't ours".into()),
+                    None => return Err("no such formation".into()),
+                }
+                let what = ctx
+                    .db
+                    .set_formation_posture(&mut ctx.groundwar.rt, id, roe, pace, ucid, now)
+                    .map_err(|e| format_compact!("{e}"))?;
+                said.push(what.to_string());
+            }
+            for id in groups {
+                let gid = own_group(ctx, side, id)?;
+                let Some(r) = roe else { continue };
+                let dcs = match r {
+                    Roe::Free | Roe::Auto => dcso3::controller::GroundRoe::WeaponFree,
+                    Roe::Return => dcso3::controller::GroundRoe::ReturnFire,
+                    Roe::Hold => dcso3::controller::GroundRoe::WeaponHold,
+                };
+                let name = group_name(ctx, &gid);
+                let g = dcso3::group::Group::get_by_name(lua, &name)
+                    .map_err(|_| format_compact!("{name} is not in DCS right now"))?;
+                g.get_controller()
+                    .and_then(|c| {
+                        c.set_option(dcso3::controller::AiOption::Ground(dcso3::controller::GroundOption::Roe(dcs)))
+                    })
+                    .map_err(|e| format_compact!("{e}"))?;
+                said.push(format!("{name}: {r:?}").to_lowercase());
+            }
+            Ok(said.join("; ").into())
         }
         CommandOrder::Order { key, at, objective, to_objective } => {
             orders::order(lua, ctx, perf, side, &key, at, objective, to_objective, now)

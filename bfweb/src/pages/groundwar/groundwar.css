@@ -915,3 +915,18 @@
   padding: 4px 10px;
   cursor: pointer;
 }
+
+/* Segmented choice in the formation drawer (ROE, pace). */
+.gw-seg { display: flex; gap: 2px; margin-top: 4px; }
+.gw-seg button {
+  flex: 1;
+  padding: 5px 0;
+  background: rgba(230, 225, 207, 0.06);
+  border: 1px solid var(--gw-line);
+  color: var(--gw-dim);
+  font: 700 9px var(--font-mono);
+  letter-spacing: 0.14em;
+  cursor: pointer;
+}
+.gw-seg button.on { background: var(--own); color: #0b0d0b; border-color: var(--own); }
+.gw-seg button:disabled:not(.on) { cursor: not-allowed; opacity: 0.5; }

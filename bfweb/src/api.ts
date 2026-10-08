@@ -298,8 +298,15 @@ export interface GroundUnit {
   typ: string
 }
 
+/** Rules of engagement for ground forces; 'auto' = the doctrine. */
+export type Roe = 'auto' | 'free' | 'return' | 'hold'
+export type Pace = 'slow' | 'normal' | 'fast'
+
 export interface GroundFormation {
   id: number
+  /** A commander's ROE; absent = doctrine. */
+  roe?: Roe | null
+  pace?: Pace
   name: string
   pos: LatLon
   heading: number
@@ -526,6 +533,27 @@ export interface CommandPicture {
   stale_secs?: number
   /** Everything this side can order at a place of the commander's choosing. */
   orders?: OrderOption[]
+  /** Our supply network: each base and the hub that feeds it. */
+  supply?: SupplyLine[]
+  /** Our air defences and their reach. */
+  defences?: DefenceRing[]
+}
+
+export interface SupplyLine {
+  from: LatLon
+  to: LatLon
+  from_name: string
+  to_name: string
+  cut: boolean
+  why: string
+}
+
+export interface DefenceRing {
+  name: string
+  pos: LatLon
+  range_m: number
+  kind: 'sam' | 'aaa'
+  live: boolean
 }
 
 /** What an order is aimed at: how the map asks for it. */
@@ -547,7 +575,8 @@ export interface OrderOption {
 /** POST /api/command/order (externally tagged, as the engine parses it). */
 export type CommandOrder =
   | { move: { group: number; to: LatLon } }
-  | { move_formation: { formation: number; to: LatLon } }
+  | { move_formation: { formation: number; to: LatLon; via?: LatLon[] } }
+  | { posture: { formations?: number[]; groups?: number[]; roe?: Roe; pace?: Pace } }
   | { fire: { group: number; at: LatLon } }
   | { barrage: { at: LatLon } }
   | { station: { group: number; at: LatLon } }

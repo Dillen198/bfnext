@@ -98,6 +98,11 @@ pub struct GroundEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormationInfo {
     pub id: u32,
+    /// Rules of engagement a commander set; None = doctrine.
+    #[serde(default)]
+    pub roe: Option<crate::command::Roe>,
+    #[serde(default)]
+    pub pace: crate::command::Pace,
     pub name: String,
     pub pos: LatLon,
     /// Degrees true.
