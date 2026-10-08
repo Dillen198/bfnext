@@ -89,6 +89,14 @@ pub struct Root {
     /// Backup: files that couldn't be read, or only partly (capped).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped: Vec<String>,
+    /// Backup: files gone between listing and copying -- temp files of a
+    /// save being written. Not counted in expected_files.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub vanished: u64,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -991,6 +999,7 @@ pub fn backup_plan() -> Result<BackupPlan> {
         note: Some("without its Python venv (run.cmd builds it again), caches and logs".into()),
         only: vec![],
         expected_files: 0,
+        vanished: 0,
         skipped: vec![],
     });
 
@@ -1023,6 +1032,7 @@ pub fn backup_plan() -> Result<BackupPlan> {
                         note: Some("restored to the same folder -- no SRS installer needed".into()),
                         only: vec![],
                         expected_files: 0,
+                        vanished: 0,
                         skipped: vec![],
                     });
                 } else {
@@ -1069,6 +1079,7 @@ pub fn backup_plan() -> Result<BackupPlan> {
             note: Some("without tracks, screenshots, shader caches and DCS logs".into()),
             only: vec![],
             expected_files: 0,
+            vanished: 0,
             skipped: vec![],
         });
     }
@@ -1087,6 +1098,7 @@ pub fn backup_plan() -> Result<BackupPlan> {
             note: Some("only netidx.exe from this folder; the restore puts the folder on PATH".into()),
             only: vec!["netidx.exe".into()],
             expected_files: 0,
+            vanished: 0,
             skipped: vec![],
         });
     } else {
@@ -1108,6 +1120,7 @@ pub fn backup_plan() -> Result<BackupPlan> {
             note: None,
             only: vec![],
             expected_files: 0,
+            vanished: 0,
             skipped: vec![],
         });
     }
@@ -1136,6 +1149,7 @@ pub fn backup_plan() -> Result<BackupPlan> {
                                 note: None,
                                 only: vec![],
                                 expected_files: 0,
+                                vanished: 0,
                                 skipped: vec![],
                             });
                         }
@@ -1208,6 +1222,7 @@ pub fn backup_plan() -> Result<BackupPlan> {
             note: None,
             only: vec![],
             expected_files: 0,
+            vanished: 0,
             skipped: vec![],
         });
     }
@@ -1271,6 +1286,117 @@ pub struct BackupOptions {
     /// Stop DCSServerBot (and so bfdb) while copying -- a consistent copy.
     #[serde(default)]
     pub stop_bot: bool,
+    /// Read every file from a Windows shadow copy (VSS): files in use --
+    /// bfdb's database, bflib's live stats -- come out whole and all from
+    /// one instant, with nothing stopped.
+    #[serde(default = "yes")]
+    pub shadow_copy: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+// ---- shadow copies ---------------------------------------------------------------------
+
+/// A Windows shadow copy (VSS snapshot) of one volume: a frozen view of
+/// every file on it as of one instant, the way Windows Backup reads files in
+/// use. Crash-consistent -- what a power cut would leave -- which bfdb's
+/// database (sled) and bflib's netidx archive are built to recover from;
+/// unlike a live copy, a locked range doesn't come out missing. Deleted when
+/// dropped.
+pub struct Shadow {
+    id: String,
+    /// `\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopyN`
+    device: String,
+    /// "C:"
+    volume: String,
+}
+
+fn powershell(script: &str) -> Result<String> {
+    use base64::Engine;
+    // errors come back as plain text on stdout: with stderr redirected,
+    // powershell writes them as CLIXML
+    let script = format!(
+        "try {{\n{script}\n}} catch {{ Write-Output ('FOWL-ERROR: ' + $_.Exception.Message); exit 1 }}"
+    );
+    // -EncodedCommand (UTF-16LE base64): no quoting through cmd lines at all
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    let enc = base64::engine::general_purpose::STANDARD.encode(utf16);
+    let out = hidden("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &enc])
+        .output()
+        .context("running powershell.exe")?;
+    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if let Some(e) = stdout.lines().find_map(|l| l.trim().strip_prefix("FOWL-ERROR: ")) {
+        bail!("{}", e.trim());
+    }
+    if !out.status.success() {
+        bail!("powershell exited with {:?}", out.status.code());
+    }
+    Ok(stdout)
+}
+
+impl Shadow {
+    /// Needs administrator rights (this app has them) and the Volume Shadow
+    /// Copy service (on demand on every Windows).
+    pub fn create(volume: &str) -> Result<Shadow> {
+        let v = volume.trim_end_matches('\\').to_uppercase();
+        if v.len() != 2 || !v.ends_with(':') {
+            bail!("not a drive: {volume}");
+        }
+        let script = format!(
+            "$ErrorActionPreference = 'Stop'\n\
+             $r = (Get-WmiObject -List Win32_ShadowCopy).Create('{v}\\', 'ClientAccessible')\n\
+             if ($r.ReturnValue -ne 0) {{ throw ('Win32_ShadowCopy.Create returned ' + $r.ReturnValue) }}\n\
+             $s = Get-WmiObject Win32_ShadowCopy | Where-Object {{ $_.ID -eq $r.ShadowID }}\n\
+             Write-Output ($s.ID + '|' + $s.DeviceObject)"
+        );
+        let out = powershell(&script).map_err(|e| {
+            let m = format!("{e:#}");
+            if m.contains("Initialization failure") || m.to_lowercase().contains("access") {
+                anyhow!("{m} -- shadow copies need Fowl Engine Manager running as administrator")
+            } else {
+                e
+            }
+        })?;
+        let line = out.lines().last().unwrap_or("").trim();
+        let (id, device) = line.split_once('|').ok_or_else(|| anyhow!("unexpected answer from VSS: {line:?}"))?;
+        if !device.to_lowercase().contains("shadowcopy") {
+            bail!("unexpected shadow copy device {device:?}");
+        }
+        Ok(Shadow { id: id.trim().into(), device: device.trim().trim_end_matches('\\').into(), volume: v })
+    }
+
+    /// The same file inside the snapshot, if it is on this volume.
+    pub fn map(&self, abs: &Path) -> Option<PathBuf> {
+        let s = disp(abs);
+        (s.len() > 2 && s[..2].eq_ignore_ascii_case(&self.volume)).then(|| PathBuf::from(format!("{}{}", self.device, &s[2..])))
+    }
+}
+
+impl Drop for Shadow {
+    fn drop(&mut self) {
+        let id = self.id.replace('\'', "");
+        let script = format!("Get-WmiObject Win32_ShadowCopy | Where-Object {{ $_.ID -eq '{id}' }} | ForEach-Object {{ $_.Delete() }}");
+        match powershell(&script) {
+            Ok(_) => note(format!("deleted the shadow copy of {}", self.volume)),
+            Err(e) => warn(format!("could not delete the shadow copy {} of {} ({e:#}) -- `vssadmin delete shadows /shadow={}` removes it", self.id, self.volume, self.id)),
+        }
+    }
+}
+
+/// Open a file from the shadow copy of its volume, else the live one.
+fn open_snapshot(shadows: &[Shadow], abs: &Path) -> std::io::Result<File> {
+    if let Some(p) = shadows.iter().find_map(|s| s.map(abs)) {
+        match File::open(&p) {
+            Ok(f) => return Ok(f),
+            // made after the snapshot was taken: read it live
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e),
+        }
+    }
+    File::open(abs)
 }
 
 pub fn start_backup(opts: BackupOptions) -> Result<()> {
@@ -1351,6 +1477,7 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
             note: None,
             only: vec![],
             expected_files: 0,
+            vanished: 0,
             skipped: vec![],
         };
         measure(&mut r);
@@ -1406,11 +1533,35 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
     } else if opts.stop_bot && !plan.service_running && plan.bot_running {
         warn("the FowlEngine service is not running, so this app can't stop the bot -- copying while it runs".into());
     }
-    if !running(&["bfdb.exe"]).is_empty() {
-        warn("bfdb.exe is running: its database is copied while it writes. It usually recovers, but stopping the bot first gives a clean copy.".into());
+    // one snapshot per drive the copied folders are on
+    let mut shadows: Vec<Shadow> = Vec::new();
+    if opts.shadow_copy {
+        let mut vols: Vec<String> = roots.iter().filter_map(|r| r.path.get(..2).map(|v| v.to_uppercase())).collect();
+        vols.sort();
+        vols.dedup();
+        for v in vols {
+            cancelled()?;
+            phase(&format!("Taking a shadow copy of {v} (files in use are copied whole, nothing has to stop)"));
+            match Shadow::create(&v) {
+                Ok(s) => {
+                    note(format!("  {} ({})", s.device, s.id));
+                    shadows.push(s);
+                }
+                Err(e) => warn(format!("no shadow copy of {v} ({e:#}) -- files in use there are copied live and may come out partial")),
+            }
+        }
+    }
+    let shadowed = |p: &str| shadows.iter().any(|s| s.map(Path::new(p)).is_some());
+    let live_roots: Vec<&Root> = roots.iter().filter(|r| !shadowed(&r.path)).collect();
+    if !live_roots.is_empty() && !running(&["bfdb.exe"]).is_empty() {
+        warn("bfdb.exe is running and its folder is copied live: its database may come out partial. Stop the bot first, or allow the shadow copy.".into());
     }
     if !running(&DCS_EXES).is_empty() {
-        note("DCS is running: the campaign save in the backup is the last one it wrote. Shut the DCS servers down first if you want the very latest state.".into());
+        note(if shadows.is_empty() {
+            "DCS is running: the campaign save in the backup is the last one it wrote, and its live stats files may come out partial.".into()
+        } else {
+            "DCS is running: the backup holds everything as it was the moment the shadow copy was taken.".into()
+        });
     }
 
     let host = plan.hostname.clone();
@@ -1437,13 +1588,22 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
             walk_root(&r, &mut files, &mut links);
             r.expected_files = files.len() as u64;
             r.skipped.clear();
+            r.vanished = 0;
             let (mut n, mut bytes) = (0u64, 0u64);
             for fe in files {
                 cancelled()?;
                 with_job(|j| j.current = Some(disp(&fe.abs)));
                 let name = format!("roots/{}/{}", r.id, fe.rel);
-                let file = match File::open(&fe.abs) {
+                let file = match open_snapshot(&shadows, &fe.abs) {
                     Ok(f) => f,
+                    // a save's temp file, renamed away since the listing
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        note(format!("  gone before it was copied (a temporary file): {}", fe.rel));
+                        r.vanished += 1;
+                        r.expected_files = r.expected_files.saturating_sub(1);
+                        DONE.fetch_add(fe.size, Ordering::Relaxed);
+                        continue;
+                    }
                     Err(e) => {
                         warn(format!("could not read {}: {e}", disp(&fe.abs)));
                         if r.skipped.len() < 200 {
@@ -1558,6 +1718,8 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
         w.into_inner().map_err(|e| anyhow!("{}", e.error()))?.sync_all()?;
         Ok(m)
     })();
+    // every file is read: let the snapshots go
+    drop(shadows);
     let m = match result {
         Ok(m) => m,
         Err(e) => {
@@ -1825,6 +1987,23 @@ pub fn verify_zip(zip_path: &Path) -> Result<VerifyReport> {
         }
         if bad_here > 0 {
             checks.push(CheckLine { ok: false, info: false, text: format!("{bad_here} file(s) don't read back (corrupt)") });
+        }
+        // in the zip but cut short (a locked range): a restore would get a
+        // broken file -- worse than a missing one
+        let partial = r.skipped.iter().filter(|k| k.contains("only partly read")).count();
+        if partial > 0 {
+            checks.push(CheckLine {
+                ok: false,
+                info: false,
+                text: format!("{partial} file(s) only partly copied (in use while copying) -- broken in this backup"),
+            });
+        }
+        if r.vanished > 0 {
+            checks.push(CheckLine {
+                ok: false,
+                info: true,
+                text: format!("{} temporary file(s) disappeared while copying (a save being written) -- harmless", r.vanished),
+            });
         }
         if r.expected_files > 0 && r.files < r.expected_files {
             checks.push(CheckLine {
@@ -2873,6 +3052,7 @@ mod tests {
             extra_paths: vec![],
             database: false,
             stop_bot: false,
+            shadow_copy: false,
         })
         .unwrap();
         let j = wait();
@@ -2953,6 +3133,92 @@ mod tests {
         assert_eq!(cfg.desktop_user.as_deref(), Some(".\\newuser"));
         assert_eq!(cfg.bot_dir.as_deref().map(lower), Some(lower(&disp(&bot))));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// What 0.2.18 reported as WARN on the live box: bfdb/db cut short by a
+    /// lock. That's a broken backup; a vanished save temp file is not.
+    #[test]
+    fn partial_read_is_broken() {
+        let dir = std::env::temp_dir().join(format!("fowl-partial-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zp = dir.join("b.zip");
+        let root = |skipped: Vec<String>, vanished: u64| Root {
+            id: "instance-x".into(),
+            kind: Kind::Instance,
+            label: "DCS server x".into(),
+            path: r"C:\x".into(),
+            files: 3,
+            bytes: 0,
+            include: true,
+            note: None,
+            only: vec![],
+            expected_files: 3,
+            skipped,
+            vanished,
+        };
+        let write = |r: Root| {
+            let mut z = zip::ZipWriter::new(File::create(&zp).unwrap());
+            let o = zip::write::SimpleFileOptions::default();
+            for (n, d) in [("roots/instance-x/Config/serverSettings.lua", "x"), ("roots/instance-x/Missions/a.miz", "m"),
+                           ("roots/instance-x/bfdb/db", "half"), ("manager/manager.json", "{}")] {
+                z.start_file(n, o).unwrap();
+                z.write_all(d.as_bytes()).unwrap();
+            }
+            let m = Manifest {
+                format: FORMAT, created: now(), hostname: "H".into(), manager_version: "t".into(), desktop_user: None,
+                profile: None, bot_dir: None, roots: vec![r], database: None, programs: vec![], python: None,
+                service_installed: false, warnings: vec![],
+            };
+            z.start_file(MANIFEST, o).unwrap();
+            z.write_all(&serde_json::to_vec(&m).unwrap()).unwrap();
+            z.finish().unwrap();
+        };
+        write(root(vec!["bfdb/db (only partly read: locked)".into()], 0));
+        let r = verify_zip(&zp).unwrap();
+        assert_eq!(r.sections[0].status, "bad", "{}", r.to_text());
+        write(root(vec![], 2));
+        let r = verify_zip(&zp).unwrap();
+        assert_eq!(r.sections[0].status, "ok", "{}", r.to_text());
+        assert!(r.to_text().contains("--  2 temporary file(s) disappeared"), "{}", r.to_text());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn shadow_paths() {
+        let s = Shadow {
+            id: "{x}".into(),
+            device: r"\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy12".into(),
+            volume: "C:".into(),
+        };
+        assert_eq!(
+            s.map(Path::new(r"c:\Users\A\Saved Games\DCS.x\bfdb\db")),
+            Some(PathBuf::from(r"\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy12\Users\A\Saved Games\DCS.x\bfdb\db"))
+        );
+        assert_eq!(s.map(Path::new(r"D:\x")), None);
+        std::mem::forget(s); // not a real shadow: don't try to delete it
+    }
+
+    /// `cargo test --lib shadow_live -- --ignored --nocapture`: elevated, it
+    /// takes a real snapshot of C:, reads a locked file through it and deletes
+    /// it; unelevated it must fail with a clear message, not a script error.
+    #[test]
+    #[ignore]
+    fn shadow_live() {
+        match Shadow::create("C:") {
+            Ok(s) => {
+                println!("shadow {} at {}", s.id, s.device);
+                let p = s.map(Path::new(r"C:\Windows\System32\config\SYSTEM")).unwrap();
+                let mut f = File::open(&p).expect("a file Windows keeps locked opens from the snapshot");
+                let mut buf = [0u8; 4];
+                f.read_exact(&mut buf).unwrap();
+                assert_eq!(&buf, b"regf");
+            }
+            Err(e) => {
+                let m = format!("{e:#}");
+                println!("no shadow (expected without admin): {m}");
+                assert!(!m.contains("ParserError") && !m.contains("Unexpected token"), "{m}");
+            }
+        }
     }
 
     #[test]

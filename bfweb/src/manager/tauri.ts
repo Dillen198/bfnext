@@ -281,6 +281,8 @@ export interface BackupOptions {
   extra_paths: string[]
   database: boolean
   stop_bot: boolean
+  /** read every file from a Windows shadow copy (files in use come out whole) */
+  shadow_copy: boolean
 }
 
 export interface BackupJob {

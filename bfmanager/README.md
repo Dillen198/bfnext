@@ -66,8 +66,12 @@ The **BACKUP** tab writes one `FowlEngine-backup-<pc>-<date>.zip`:
   `C:\netidx`). `netidx-resolver.json` is already in the DCS server folder;
 - the bot's PostgreSQL database (`pg_dump -Fc`, password from `config\.secret\database.pkl`).
 
-By default it stops DCSServerBot while copying, so procman shuts bfdb down cleanly, and starts
-it again afterwards. DCS keeps running. The zip holds the Discord token and passwords: keep it private.
+By default it reads every file from a **Windows shadow copy** (VSS, via WMI
+`Win32_ShadowCopy.Create`; needs the app elevated, which it always is), one per drive. Files that
+bfdb and DCS hold open (`bfdb\db`, `Logs\stats\0\current`) come out whole and all from the same
+instant, with nothing stopped. The snapshots are deleted when the copy is done. Without one
+(it failed, or was unticked), a locked file comes out partial, and the check marks that section
+BROKEN. Stopping DCSServerBot while copying is still offered, but off by default. The zip holds the Discord token and passwords: keep it private.
 
 **Restore** (same tab, or the button on Setup for a fresh box) shows what is missing on this PC
 (Python, PostgreSQL, DCS, SRS). It can install Python and PostgreSQL with winget, lets the admin

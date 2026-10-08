@@ -225,7 +225,8 @@ function BackupCard({ busy }: { busy: boolean }) {
   const [scanning, setScanning] = useState(false)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [db, setDb] = useState(true)
-  const [stopBot, setStopBot] = useState(true)
+  const [stopBot, setStopBot] = useState(false)
+  const [shadow, setShadow] = useState(true)
   const [dest, setDest] = useState('')
   const [extra, setExtra] = useState('')
 
@@ -312,18 +313,26 @@ function BackupCard({ busy }: { busy: boolean }) {
               <input style={{ ...input, ...MONO }} value={dest} onChange={e => setDest(e.target.value)} />
             </Field>
 
+            <label style={check}>
+              <input type="checkbox" checked={shadow} onChange={e => setShadow(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>
+                Copy from a Windows shadow copy (recommended): a snapshot of the drive at one instant, so files in use -- bfdb's database,
+                the live stats DCS writes -- come out whole, and nothing has to stop. Players can keep flying.
+              </span>
+            </label>
             {plan.bot_running && (
               <label style={check}>
                 <input type="checkbox" checked={stopBot} onChange={e => setStopBot(e.target.checked)} style={{ marginTop: 3 }} />
                 <span>
-                  Stop DCSServerBot while copying, so bfdb's database is copied cleanly (it starts again afterwards).
+                  Also stop DCSServerBot while copying (bfdb stops with it; both start again afterwards){shadow ? ' -- not needed with the shadow copy' : ''}.
                   {!plan.service_running && <span style={{ color: AMBER }}> The FowlEngine service isn't running, so this app can't stop it.</span>}
                 </span>
               </label>
             )}
-            {plan.dcs_running && (
+            {!shadow && (plan.dcs_running || plan.bfdb_running) && (
               <Note tone="warn">
-                DCS is running: the campaign save in the backup is the last one it wrote. Shut the DCS servers down first if you want the very latest state.
+                {plan.bfdb_running ? 'bfdb is running' : 'DCS is running'}: without the shadow copy, files they hold open (bfdb's database, the live
+                stats) come out partial. Keep the shadow copy on, or stop the DCS servers and the bot first.
               </Note>
             )}
             {plan.warnings.length > 0 && <Note tone="warn">{plan.warnings.map((w, i) => <div key={i}>• {w}</div>)}</Note>}
@@ -336,6 +345,7 @@ function BackupCard({ busy }: { busy: boolean }) {
                   extra_paths: extra.split('\n').map(s => s.trim()).filter(Boolean),
                   database: db,
                   stop_bot: stopBot && plan.bot_running,
+                  shadow_copy: shadow,
                 })
                 qc.invalidateQueries({ queryKey: ['mgr', 'backup-job'] })
                 return 'backup started'
