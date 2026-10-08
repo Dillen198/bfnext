@@ -44,6 +44,13 @@ impl<'lua> Ammo<'lua> {
         Ok(self.t.raw_get::<_, LuaTable>("desc")?.raw_get("typeName")?)
     }
 
+    /// `desc.missileCategory` when this is a missile (DCS
+    /// `Weapon.MissileCategory`: 1 AAM, 2 SAM, 3 BM, 4 anti-ship,
+    /// 5 cruise, 6 other), None for guns, shells and bombs.
+    pub fn missile_category(&self) -> Result<Option<u8>> {
+        Ok(self.t.raw_get::<_, LuaTable>("desc")?.raw_get("missileCategory")?)
+    }
+
     pub fn display_name(&self) -> Result<String> {
         Ok(self
             .t

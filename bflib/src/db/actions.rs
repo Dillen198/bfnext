@@ -36,9 +36,9 @@ use dcso3::{
     centroid2d, change_heading,
     coalition::Side,
     controller::{
-        ActionTyp, AiOption, AlarmState, AltType, AttackParams, BeaconSystem, BeaconType, Command,
+        ActionTyp, AiOption, AlarmState, AltType, BeaconSystem, BeaconType, Command,
         GroundOption, MissionPoint, OrbitPattern, PointType, Task, TacanBand, TurnMethod,
-        VehicleFormation, WeaponExpend,
+        VehicleFormation,
     },
     env::miz::MizIndex,
     group::Group,
@@ -2263,110 +2263,114 @@ impl Db {
         Ok(None)
     }
 
+    /// A carrier task force fires land-attack cruise missiles at an enemy
+    /// objective, for real: the ships that carry them launch them in DCS.
+    ///
+    /// It used to give the carrier's own group a `Bombing` task -- an
+    /// aircraft task ships ignore -- after counting whatever the first armed
+    /// ship carried first (usually its SAMs), so no ship ever launched
+    /// (Oct 8). Now every group of the task force is searched for cruise
+    /// missiles (DCS missileCategory 5: Tomahawks on a Ticonderoga or an
+    /// Arleigh Burke), and the group with enough of them gets a
+    /// `FireAtPoint` with weapon type cruise missile. A side whose ships
+    /// carry none -- in DCS the Red fleet's missiles are all anti-ship --
+    /// is told so, rather than paying for a strike that can't happen.
     fn naval_cruise_missile_strike(
         &mut self,
         lua: MizLua,
         side: Side,
         args: WithObj<NavalCruiseMissileCfg>,
     ) -> Result<Option<GroupId>> {
-        // 1. Validate target is enemy objective, get target position
-        let target_pos = {
+        const CRUISE: u8 = 5;
+        const CRUISE_FLAG: u64 = 2097152;
+        let (target_pos, target_name) = {
             let target_obj = objective!(self, &args.oid)?;
             if target_obj.owner == side {
                 bail!("Cannot strike a friendly objective");
             }
-            target_obj.zone.pos()
+            (target_obj.zone.pos(), target_obj.name.clone())
         };
-
-        // 2. Find nearest friendly carrier group in range with ammo
-        let mut best_carrier: Option<(ObjectiveId, f64, dcso3::String)> = None;
-        for cg_id in &self.persisted.carrier_groups {
-            let cg = objective!(self, cg_id)?;
-            if cg.owner != side || cg.health == 0 {
-                continue;
-            }
-            if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &cg.kind {
-                let dist = na::distance(&cg.zone.pos().into(), &target_pos.into());
-                if dist <= args.cfg.max_range as f64 {
-                    match &best_carrier {
-                        None => best_carrier = Some((*cg_id, dist, carrier_template.clone())),
-                        Some((_, best_dist, _)) if dist < *best_dist => {
-                            best_carrier = Some((*cg_id, dist, carrier_template.clone()));
-                        }
-                        _ => {}
+        let want = args.cfg.missiles_per_strike.max(1) as u32;
+        // Task forces in range, nearest first.
+        let mut forces: Vec<(ObjectiveId, f64)> = self
+            .persisted
+            .carrier_groups
+            .into_iter()
+            .filter_map(|cg_id| {
+                let cg = self.persisted.objectives.get(cg_id)?;
+                (cg.owner == side && cg.health > 0).then(|| (*cg_id, na::distance(&cg.zone.pos().into(), &target_pos.into())))
+            })
+            .filter(|(_, d)| *d <= args.cfg.max_range as f64)
+            .collect();
+        if forces.is_empty() {
+            bail!("No friendly carrier group in range");
+        }
+        forces.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let mut seen_any = 0u32;
+        for (cg_id, dist) in forces {
+            let names: Vec<String> = {
+                let cg = objective!(self, &cg_id)?;
+                let mut names: Vec<String> = cg
+                    .groups
+                    .get(&side)
+                    .into_iter()
+                    .flat_map(|gs| gs.into_iter())
+                    .filter_map(|gid| self.persisted.groups.get(gid))
+                    .map(|g| g.name.clone())
+                    .collect();
+                if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &cg.kind {
+                    if !names.iter().any(|n| n == carrier_template) {
+                        names.push(carrier_template.clone());
                     }
                 }
-            }
-        }
-
-        let (carrier_oid, _dist, template) = best_carrier
-            .ok_or_else(|| anyhow!("No friendly carrier group in range"))?;
-
-        // 3. Get the DCS group and check ammo
-        let dcs_group = Group::get_by_name(lua, &template)
-            .or_else(|_| {
-                Unit::get_by_name(lua, &template)
-                    .and_then(|u| u.get_group())
-            })?;
-
-        let mut available_missiles: u8 = 0;
-        for unit_res in dcs_group.get_units()? {
-            let dcs_unit = unit_res?;
-            let first = dcs_unit.get_ammo()?.first();
-            match first {
-                std::result::Result::Ok(ammo) => {
-                    available_missiles = ammo.count()? as u8;
-                    break;
+                names
+            };
+            for name in names {
+                let std::result::Result::Ok(dcs_group) = Group::get_by_name(lua, &name).or_else(|_| {
+                    Unit::get_by_name(lua, &name).and_then(|u| u.get_group())
+                }) else {
+                    continue;
+                };
+                let mut cruise = 0u32;
+                for unit in dcs_group.get_units()? {
+                    let std::result::Result::Ok(unit) = unit else { continue };
+                    let std::result::Result::Ok(ammo) = unit.get_ammo() else { continue };
+                    for a in ammo {
+                        let std::result::Result::Ok(a) = a else { continue };
+                        if a.missile_category().ok().flatten() == Some(CRUISE) {
+                            cruise += a.count().unwrap_or(0);
+                        }
+                    }
                 }
-                std::result::Result::Err(_) => continue,
+                seen_any += cruise;
+                if cruise < want {
+                    continue;
+                }
+                let task = Task::FireAtPoint {
+                    point: LuaVec2(target_pos),
+                    radius: Some(100.),
+                    expend_qty: Some(want as i64),
+                    weapon_type: Some(CRUISE_FLAG),
+                    altitude: None,
+                    altitude_type: None,
+                    counter_battery_radius: None,
+                };
+                dcs_group.get_controller()?.push_task(task)?;
+                info!(
+                    "Naval cruise missile strike: {name} of carrier group {cg_id:?} launching {want} of its                      {cruise} cruise missiles at {target_name} ({:.0} km)",
+                    dist / 1000.
+                );
+                return Ok(None);
             }
         }
-
-        if available_missiles < args.cfg.missiles_per_strike {
+        if seen_any == 0 {
             bail!(
-                "Carrier has only {} missiles remaining, need {} for strike",
-                available_missiles,
-                args.cfg.missiles_per_strike
+                "None of our ships in range carries land-attack cruise missiles (a Ticonderoga or an                  Arleigh Burke does)"
             );
         }
-
-
-        // 5. Build Task::Bombing and command the carrier group
-        let expend = match args.cfg.missiles_per_strike {
-            1 => WeaponExpend::One,
-            2 => WeaponExpend::Two,
-            4 => WeaponExpend::Four,
-            _ => WeaponExpend::Two,
-        };
-        let attack_params = AttackParams {
-            altitude: Some(9000.),
-            attack_qty: Some(1),
-            direction: None,
-            expend: Some(expend),
-            group_attack: Some(false),
-            weapon_type: Some(2097152),
-            attack_qty_limit: None,
-            altitude_enabled: Some(false),
-            direction_enabled: Some(false),
-            point: None,
-            x: Some(target_pos.x),
-            y: Some(target_pos.y),
-        };
-
-        let task = Task::Bombing {
-            point: LuaVec2(target_pos),
-            params: attack_params,
-        };
-
-        let controller = dcs_group.get_controller()?;
-        controller.push_task(task)?;
-
-        info!(
-            "Naval cruise missile strike: carrier {:?} firing {} missiles at objective {:?}",
-            carrier_oid, args.cfg.missiles_per_strike, args.oid
-        );
-
-        Ok(None)
+        bail!(
+            "Our ships in range have only {seen_any} cruise missiles between them, not {want} on one ship group"
+        )
     }
 
     fn tanker_mission<'lua>(
