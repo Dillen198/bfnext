@@ -93,6 +93,17 @@ fn who(db: &Db, id: DcsOid<ClassUnit>) -> Option<Who> {
     }
 }
 
+/// Land-attack cruise missiles: aimed at a map point, never at a unit, so
+/// `weapon.get_target()` on one crashes DCS (see `ShotDb::shot`).
+fn is_cruise_missile(name: &str) -> bool {
+    const NAMES: [&str; 14] = [
+        "tomahawk", "bgm-109", "bgm_109", "agm-86", "agm_86", "kh-55", "x_555", "x-555", "kh-101",
+        "x_101", "kh-65", "x_65", "3m-14", "kalibr",
+    ];
+    let n = name.to_ascii_lowercase();
+    NAMES.iter().any(|k| n.contains(k))
+}
+
 impl ShotDb {
     pub fn dead(&mut self, target: DcsOid<ClassUnit>, time: DateTime<Utc>) {
         if let Entry::Vacant(e) = self.dead.entry(target) {
@@ -224,6 +235,19 @@ impl ShotDb {
         {
             return Ok(());
         }
+        // Third line, from our own data instead of DCS's: only an aircraft's
+        // shot is worth a target lookup. A destroyer's Tomahawk got past the
+        // category gate above (Oct 8, vs1: ship fires FireAtPoint -> shot
+        // event -> get_target() -> access violation, server down on every
+        // naval strike once ships actually started firing).
+        if !(itags.contains(UnitTag::Aircraft) || itags.contains(UnitTag::Helicopter)) {
+            return Ok(());
+        }
+        // Cruise missiles fly at a map point even off an aircraft (B-52 /
+        // Tu-95 ALCMs); asking DCS for their target is the same crash.
+        if e.weapon_name.as_ref().map_or(false, |n| is_cruise_missile(n.as_str())) {
+            return Ok(());
+        }
         let target = ok!(some!(e.weapon.get_target()?).as_unit());
         let target_oid = target.object_id()?;
         if self.dead.contains_key(&target_oid) || self.recently_dead.contains_key(&target_oid) {
@@ -308,5 +332,19 @@ impl ShotDb {
             });
         }
         dead
+    }
+}
+
+#[cfg(test)]
+mod cruise_tests {
+    use super::is_cruise_missile;
+
+    #[test]
+    fn cruise_missiles_are_recognised() {
+        assert!(is_cruise_missile("BGM-109C Tomahawk"));
+        assert!(is_cruise_missile("AGM_86C"));
+        assert!(is_cruise_missile("X_555"));
+        assert!(!is_cruise_missile("AIM_120C"));
+        assert!(!is_cruise_missile("GBU_31"));
     }
 }
