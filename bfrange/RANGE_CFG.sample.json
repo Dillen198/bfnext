@@ -1,0 +1,3402 @@
+{
+  "_copyright": "Copyright (c) 2026 Dillen Weerasinghe. All rights reserved. Proprietary; see the repository NOTICE file.",
+  "netidx_base": "/local/fowl/range",
+  "name": "Vector Strike Range",
+  "welcome": "Welcome to the Vector Strike Range. The coloured sectors on the F10 map each have one job; F10 > Range > Sectors lists them. The missile trainer is ON. Debriefs and spawning: range.vectorstrike.org",
+  "sectors": [
+    {
+      "id": "r-1",
+      "name": "R-1 SAMGORI",
+      "kind": "air_to_ground",
+      "side": "blue",
+      "purpose": "Bomb circle, strafe pit (run in from the east)",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 41.64075,
+            "lon": 45.14635
+          },
+          {
+            "lat": 41.62683,
+            "lon": 45.27543
+          },
+          {
+            "lat": 41.56522,
+            "lon": 45.26358
+          },
+          {
+            "lat": 41.57912,
+            "lon": 45.13462
+          }
+        ]
+      }
+    },
+    {
+      "id": "g-1",
+      "name": "G-1 LILO",
+      "kind": "gunnery",
+      "side": "blue",
+      "purpose": "Combined Arms gunnery lane",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 41.68524,
+            "lon": 45.16334
+          },
+          {
+            "lat": 41.67892,
+            "lon": 45.22206
+          },
+          {
+            "lat": 41.65075,
+            "lon": 45.21665
+          },
+          {
+            "lat": 41.65707,
+            "lon": 45.15795
+          }
+        ]
+      }
+    },
+    {
+      "id": "r-2",
+      "name": "R-2 IORI",
+      "kind": "tactical",
+      "side": "blue",
+      "purpose": "Tactical array (laser 1688), moving convoy, JDAM targets. JTAC Axeman 133.0 AM",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 41.64726,
+            "lon": 45.2973
+          },
+          {
+            "lat": 41.63188,
+            "lon": 45.43804
+          },
+          {
+            "lat": 41.55272,
+            "lon": 45.42261
+          },
+          {
+            "lat": 41.56806,
+            "lon": 45.28203
+          }
+        ]
+      }
+    },
+    {
+      "id": "r-3",
+      "name": "R-3 TETRI TSKARO",
+      "kind": "threat",
+      "side": "blue",
+      "purpose": "SA-8 site, radar on / weapons hold. Instructors can spawn more SAMs",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 41.53797,
+            "lon": 44.3248
+          },
+          {
+            "lat": 41.52144,
+            "lon": 44.4893
+          },
+          {
+            "lat": 41.44199,
+            "lon": 44.47508
+          },
+          {
+            "lat": 41.45848,
+            "lon": 44.31078
+          }
+        ]
+      }
+    },
+    {
+      "id": "h-1",
+      "name": "H-1 VAZIANI",
+      "kind": "helo",
+      "side": "blue",
+      "purpose": "Precision pad, confined LZ, pinnacle, sling-load and troop courses",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 41.66759,
+            "lon": 45.0403
+          },
+          {
+            "lat": 41.65819,
+            "lon": 45.12838
+          },
+          {
+            "lat": 41.6124,
+            "lon": 45.11967
+          },
+          {
+            "lat": 41.62178,
+            "lon": 45.03164
+          }
+        ]
+      }
+    },
+    {
+      "id": "h-2",
+      "name": "H-2 TSKALTUBO",
+      "kind": "helo",
+      "side": "blue",
+      "purpose": "Mountain flying: pads, confined LZ, pinnacle, sling and troop courses near Kutaisi",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 42.40478,
+            "lon": 42.48637
+          },
+          {
+            "lat": 42.39166,
+            "lon": 42.64213
+          },
+          {
+            "lat": 42.2052,
+            "lon": 42.61345
+          },
+          {
+            "lat": 42.21824,
+            "lon": 42.45814
+          }
+        ]
+      }
+    },
+    {
+      "id": "moa-kakheti",
+      "name": "MOA KAKHETI",
+      "kind": "air_to_air",
+      "side": "blue",
+      "purpose": "BFM over the mountains. Floor 8,000 ft",
+      "shape": {
+        "circle": {
+          "lat": 41.93,
+          "lon": 45.18,
+          "radius_m": 20372.0
+        }
+      }
+    },
+    {
+      "id": "ar-4",
+      "name": "AR-4 TEXACO 2",
+      "kind": "aar",
+      "side": "blue",
+      "purpose": "KC-135 boom, FL240, TACAN 54Y, 254.0",
+      "shape": {
+        "track": {
+          "lat": 41.95,
+          "lon": 43.55,
+          "heading_deg": 90,
+          "leg_m": 55560.0,
+          "width_m": 14816.0
+        }
+      }
+    },
+    {
+      "id": "r-11",
+      "name": "R-11 STEPNOYE",
+      "kind": "air_to_ground",
+      "side": "red",
+      "purpose": "Bomb circle, strafe pit (run in from the east)",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 44.46776,
+            "lon": 44.39835
+          },
+          {
+            "lat": 44.45397,
+            "lon": 44.53386
+          },
+          {
+            "lat": 44.39222,
+            "lon": 44.52156
+          },
+          {
+            "lat": 44.40598,
+            "lon": 44.38619
+          }
+        ]
+      }
+    },
+    {
+      "id": "g-11",
+      "name": "G-11 STARODUB",
+      "kind": "gunnery",
+      "side": "red",
+      "purpose": "Combined Arms gunnery lane",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 44.49219,
+            "lon": 44.15189
+          },
+          {
+            "lat": 44.48607,
+            "lon": 44.21357
+          },
+          {
+            "lat": 44.45781,
+            "lon": 44.20809
+          },
+          {
+            "lat": 44.46392,
+            "lon": 44.14644
+          }
+        ]
+      }
+    },
+    {
+      "id": "r-12",
+      "name": "R-12 KARST",
+      "kind": "tactical",
+      "side": "red",
+      "purpose": "Tactical array (laser 1511), moving convoy, JDAM targets. JTAC Topor 124.5 AM",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 44.42769,
+            "lon": 44.21295
+          },
+          {
+            "lat": 44.41289,
+            "lon": 44.36077
+          },
+          {
+            "lat": 44.34228,
+            "lon": 44.34695
+          },
+          {
+            "lat": 44.35704,
+            "lon": 44.1993
+          }
+        ]
+      }
+    },
+    {
+      "id": "r-13",
+      "name": "R-13 ACHIKULAK",
+      "kind": "threat",
+      "side": "red",
+      "purpose": "SA-8 site, radar on / weapons hold. Instructors can spawn more SAMs",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 44.60786,
+            "lon": 44.3523
+          },
+          {
+            "lat": 44.59031,
+            "lon": 44.52519
+          },
+          {
+            "lat": 44.5021,
+            "lon": 44.50756
+          },
+          {
+            "lat": 44.5196,
+            "lon": 44.33492
+          }
+        ]
+      }
+    },
+    {
+      "id": "r-14",
+      "name": "R-14 KUBAN",
+      "kind": "air_to_ground",
+      "side": "red",
+      "purpose": "Bomb circle, strafe pit, tactical array (laser 1512) for Maykop and Krymsk",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 44.99078,
+            "lon": 40.16546
+          },
+          {
+            "lat": 44.98277,
+            "lon": 40.2913
+          },
+          {
+            "lat": 44.9292,
+            "lon": 40.28448
+          },
+          {
+            "lat": 44.93719,
+            "lon": 40.15875
+          }
+        ]
+      }
+    },
+    {
+      "id": "h-11",
+      "name": "H-11 MOZDOK",
+      "kind": "helo",
+      "side": "red",
+      "purpose": "Precision pad, confined LZ, pinnacle, sling-load and troop courses",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 43.82765,
+            "lon": 44.63186
+          },
+          {
+            "lat": 43.81818,
+            "lon": 44.72319
+          },
+          {
+            "lat": 43.77234,
+            "lon": 44.7141
+          },
+          {
+            "lat": 43.78179,
+            "lon": 44.62284
+          }
+        ]
+      }
+    },
+    {
+      "id": "h-12",
+      "name": "H-12 NALCHIK",
+      "kind": "helo",
+      "side": "red",
+      "purpose": "Mountain flying: pads, confined LZ, pinnacle, sling and troop courses",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 43.54997,
+            "lon": 43.64278
+          },
+          {
+            "lat": 43.54018,
+            "lon": 43.74617
+          },
+          {
+            "lat": 43.43403,
+            "lon": 43.72714
+          },
+          {
+            "lat": 43.44377,
+            "lon": 43.62393
+          }
+        ]
+      }
+    },
+    {
+      "id": "moa-nogai",
+      "name": "MOA NOGAI",
+      "kind": "air_to_air",
+      "side": "red",
+      "purpose": "BFM over the steppe. Floor 5,000 ft",
+      "shape": {
+        "circle": {
+          "lat": 44.25,
+          "lon": 45.3,
+          "radius_m": 27780.0
+        }
+      }
+    },
+    {
+      "id": "ar-5",
+      "name": "AR-5 ILYUSHA",
+      "kind": "aar",
+      "side": "red",
+      "purpose": "IL-78M basket, FL230, TACAN 59Y, 124.0",
+      "shape": {
+        "track": {
+          "lat": 44.65,
+          "lon": 43.3,
+          "heading_deg": 90,
+          "leg_m": 55560.0,
+          "width_m": 14816.0
+        }
+      }
+    },
+    {
+      "id": "ar-6",
+      "name": "AR-6 ILYUSHA WEST",
+      "kind": "aar",
+      "side": "red",
+      "purpose": "IL-78M basket, FL220, TACAN 58Y, 123.0",
+      "shape": {
+        "track": {
+          "lat": 44.3,
+          "lon": 37.3,
+          "heading_deg": 90,
+          "leg_m": 55560.0,
+          "width_m": 14816.0
+        }
+      }
+    },
+    {
+      "id": "oparea",
+      "name": "CV OPAREA",
+      "kind": "carrier",
+      "side": "all",
+      "purpose": "CVN-72 TACAN 72X ICLS 11 Link-4 336.0 | LHA-1 TACAN 71X | recovery tanker A-6E 63Y 261.0",
+      "shape": {
+        "circle": {
+          "lat": 41.7,
+          "lon": 41.0,
+          "radius_m": 37040.0
+        }
+      }
+    },
+    {
+      "id": "as-1",
+      "name": "AS-1 SHIPPING",
+      "kind": "anti_ship",
+      "side": "all",
+      "purpose": "Undefended merchant ships steaming west. Spawn warships from the site or F10",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 42.55796,
+            "lon": 40.08125
+          },
+          {
+            "lat": 42.5023,
+            "lon": 40.92627
+          },
+          {
+            "lat": 42.10088,
+            "lon": 40.87576
+          },
+          {
+            "lat": 42.15576,
+            "lon": 40.03602
+          }
+        ]
+      }
+    },
+    {
+      "id": "w-1",
+      "name": "W-1 BFM NORTH",
+      "kind": "air_to_air",
+      "side": "all",
+      "purpose": "BFM set-ups and duels. Floor 5,000 ft",
+      "shape": {
+        "circle": {
+          "lat": 42.3,
+          "lon": 39.45,
+          "radius_m": 27780.0
+        }
+      }
+    },
+    {
+      "id": "w-2",
+      "name": "W-2 BFM SOUTH",
+      "kind": "air_to_air",
+      "side": "all",
+      "purpose": "BFM set-ups and duels. Floor 5,000 ft",
+      "shape": {
+        "circle": {
+          "lat": 41.75,
+          "lon": 39.45,
+          "radius_m": 27780.0
+        }
+      }
+    },
+    {
+      "id": "w-3",
+      "name": "W-3 BVR",
+      "kind": "bvr",
+      "side": "all",
+      "purpose": "BVR presentations, Fox 1 / Fox 3 missile defence",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 43.97926,
+            "lon": 37.34252
+          },
+          {
+            "lat": 43.91277,
+            "lon": 38.832
+          },
+          {
+            "lat": 43.01694,
+            "lon": 38.74624
+          },
+          {
+            "lat": 43.08138,
+            "lon": 37.27848
+          }
+        ]
+      }
+    },
+    {
+      "id": "w-4",
+      "name": "W-4 DUEL",
+      "kind": "duel",
+      "side": "all",
+      "purpose": "Blue vs red: meet here. Missile trainer on, guns are real",
+      "shape": {
+        "circle": {
+          "lat": 43.2,
+          "lon": 39.45,
+          "radius_m": 27780.0
+        }
+      }
+    },
+    {
+      "id": "ar-1",
+      "name": "AR-1 TEXACO",
+      "kind": "aar",
+      "side": "blue",
+      "purpose": "KC-135 boom, FL250, TACAN 51Y, 251.0",
+      "shape": {
+        "track": {
+          "lat": 42.75,
+          "lon": 39.1,
+          "heading_deg": 90,
+          "leg_m": 55560.0,
+          "width_m": 14816.0
+        }
+      }
+    },
+    {
+      "id": "ar-2",
+      "name": "AR-2 ARCO",
+      "kind": "aar",
+      "side": "blue",
+      "purpose": "KC-135MPRS basket, FL210, TACAN 52Y, 252.0",
+      "shape": {
+        "track": {
+          "lat": 42.25,
+          "lon": 38.2,
+          "heading_deg": 90,
+          "leg_m": 46300.0,
+          "width_m": 14816.0
+        }
+      }
+    },
+    {
+      "id": "ar-3",
+      "name": "AR-3 SHELL",
+      "kind": "aar",
+      "side": "blue",
+      "purpose": "KC-130 basket (helos too), 14,000 ft, TACAN 53Y, 253.0",
+      "shape": {
+        "track": {
+          "lat": 41.6,
+          "lon": 39.95,
+          "heading_deg": 90,
+          "leg_m": 37040.0,
+          "width_m": 11112.0
+        }
+      }
+    },
+    {
+      "id": "s-1",
+      "name": "S-1 AKHALKALAKI",
+      "kind": "threat",
+      "side": "blue",
+      "purpose": "LIVE SEAD/IADS: EWR, SA-2, SA-3, SA-6, SA-11, SA-10, Pantsir. Weapons free, networked, trainer protects you",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 41.66129,
+            "lon": 43.07785
+          },
+          {
+            "lat": 41.59628,
+            "lon": 43.78623
+          },
+          {
+            "lat": 41.19807,
+            "lon": 43.71981
+          },
+          {
+            "lat": 41.26218,
+            "lon": 43.0156
+          }
+        ]
+      }
+    },
+    {
+      "id": "r-4",
+      "name": "R-4 GAREJI",
+      "kind": "air_to_ground",
+      "side": "blue",
+      "purpose": "Tiered targets: EASY trucks, MEDIUM armour under AAA, HARD armour under SHORAD",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 41.54973,
+            "lon": 45.24893
+          },
+          {
+            "lat": 41.53059,
+            "lon": 45.42461
+          },
+          {
+            "lat": 41.46022,
+            "lon": 45.41095
+          },
+          {
+            "lat": 41.47932,
+            "lon": 45.23546
+          }
+        ]
+      }
+    },
+    {
+      "id": "ew-1",
+      "name": "EW-1 TSALKA",
+      "kind": "ew",
+      "side": "blue",
+      "purpose": "GPS jamming: jammer on the Trialeti slope, coordinate targets on the Tsalka plateau",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 41.76783,
+            "lon": 44.04357
+          },
+          {
+            "lat": 41.7446,
+            "lon": 44.27959
+          },
+          {
+            "lat": 41.61211,
+            "lon": 44.25617
+          },
+          {
+            "lat": 41.63522,
+            "lon": 44.02061
+          }
+        ]
+      }
+    },
+    {
+      "id": "hz-1",
+      "name": "HZ-1 LIAKHVI",
+      "kind": "hot_zone",
+      "side": "blue",
+      "purpose": "HOT ZONE: red CAP, SHORAD and targets that fight back. AWACS Overlord 1 on 251.5",
+      "shape": {
+        "circle": {
+          "lat": 42.38,
+          "lon": 44.1,
+          "radius_m": 37040.0
+        }
+      }
+    },
+    {
+      "id": "ll-1",
+      "name": "LL-1 KOLKHETI",
+      "kind": "low_level",
+      "side": "blue",
+      "purpose": "Low-level route, 8 gates, 69 nm: below 500 ft AGL, 420 kts",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 42.07259,
+            "lon": 42.42621
+          },
+          {
+            "lat": 42.13321,
+            "lon": 42.20315
+          },
+          {
+            "lat": 42.13132,
+            "lon": 41.93969
+          },
+          {
+            "lat": 42.28186,
+            "lon": 41.8479
+          },
+          {
+            "lat": 42.41236,
+            "lon": 41.87489
+          },
+          {
+            "lat": 42.48729,
+            "lon": 42.0558
+          },
+          {
+            "lat": 42.50689,
+            "lon": 42.24615
+          },
+          {
+            "lat": 42.43866,
+            "lon": 42.39033
+          },
+          {
+            "lat": 42.46134,
+            "lon": 42.40967
+          },
+          {
+            "lat": 42.53311,
+            "lon": 42.25386
+          },
+          {
+            "lat": 42.51271,
+            "lon": 42.0442
+          },
+          {
+            "lat": 42.42764,
+            "lon": 41.8451
+          },
+          {
+            "lat": 42.27814,
+            "lon": 41.8121
+          },
+          {
+            "lat": 42.10868,
+            "lon": 41.92032
+          },
+          {
+            "lat": 42.10679,
+            "lon": 42.19685
+          },
+          {
+            "lat": 42.04741,
+            "lon": 42.41379
+          }
+        ]
+      }
+    },
+    {
+      "id": "cs-1",
+      "name": "CS-1 BAKHMARO",
+      "kind": "csar",
+      "side": "blue",
+      "purpose": "CSAR: forested Meskheti ridges. Beacon 350 kHz",
+      "shape": {
+        "circle": {
+          "lat": 41.83,
+          "lon": 42.4,
+          "radius_m": 15000
+        }
+      }
+    },
+    {
+      "id": "pt-1",
+      "name": "PT-1 SENAKI",
+      "kind": "pattern",
+      "side": "blue",
+      "purpose": "Circuits and landings, RWY 09/27; every landing graded",
+      "shape": {
+        "circle": {
+          "lat": 42.24085,
+          "lon": 42.04802,
+          "radius_m": 9260.0
+        }
+      }
+    },
+    {
+      "id": "fd-1",
+      "name": "FD-1 KOBULETI",
+      "kind": "ship_deck",
+      "side": "blue",
+      "purpose": "Frigate deck landings: FFG-7 Perry and Arleigh Burke under way",
+      "shape": {
+        "circle": {
+          "lat": 42.0,
+          "lon": 41.52,
+          "radius_m": 14816.0
+        }
+      }
+    },
+    {
+      "id": "as-2",
+      "name": "AS-2 SUKHUMI",
+      "kind": "anti_ship",
+      "side": "all",
+      "purpose": "Escorted convoy, red: Krivak, Neustrashimy and a Tor-armed corvette guarding merchants. Weapons free",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 42.92234,
+            "lon": 40.25759
+          },
+          {
+            "lat": 42.87355,
+            "lon": 40.98599
+          },
+          {
+            "lat": 42.51681,
+            "lon": 40.94011
+          },
+          {
+            "lat": 42.56499,
+            "lon": 40.21581
+          }
+        ]
+      }
+    },
+    {
+      "id": "s-11",
+      "name": "S-11 KURSAVKA",
+      "kind": "threat",
+      "side": "red",
+      "purpose": "LIVE SEAD/IADS: EWR, Hawk, Patriot, NASAMS, IRIS-T SLM, Roland, Gepard. Weapons free, networked",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 44.7806,
+            "lon": 42.13883
+          },
+          {
+            "lat": 44.71775,
+            "lon": 42.88636
+          },
+          {
+            "lat": 44.31861,
+            "lon": 42.81843
+          },
+          {
+            "lat": 44.38059,
+            "lon": 42.07585
+          }
+        ]
+      }
+    },
+    {
+      "id": "r-15",
+      "name": "R-15 EDISSEYA",
+      "kind": "air_to_ground",
+      "side": "red",
+      "purpose": "Tiered targets: EASY trucks, MEDIUM armour under AAA, HARD armour under SHORAD",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 44.01264,
+            "lon": 44.45626
+          },
+          {
+            "lat": 43.99386,
+            "lon": 44.63956
+          },
+          {
+            "lat": 43.92331,
+            "lon": 44.62561
+          },
+          {
+            "lat": 43.94205,
+            "lon": 44.44251
+          }
+        ]
+      }
+    },
+    {
+      "id": "ew-11",
+      "name": "EW-11 TEREK",
+      "kind": "ew",
+      "side": "red",
+      "purpose": "GPS jamming: jammer on the Terek ridge, coordinate targets on the plain north of it",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 43.65683,
+            "lon": 44.78186
+          },
+          {
+            "lat": 43.6312,
+            "lon": 45.02449
+          },
+          {
+            "lat": 43.4991,
+            "lon": 44.99785
+          },
+          {
+            "lat": 43.52461,
+            "lon": 44.75572
+          }
+        ]
+      }
+    },
+    {
+      "id": "hz-11",
+      "name": "HZ-11 ZELENCHUK",
+      "kind": "hot_zone",
+      "side": "red",
+      "purpose": "HOT ZONE: blue CAP, SHORAD and targets that fight back. AWACS Focus 1 on 124.5",
+      "shape": {
+        "circle": {
+          "lat": 43.95,
+          "lon": 41.75,
+          "radius_m": 37040.0
+        }
+      }
+    },
+    {
+      "id": "ll-11",
+      "name": "LL-11 PSEKUPS",
+      "kind": "low_level",
+      "side": "red",
+      "purpose": "Low-level route, 8 gates, 78 nm Krymsk to Maykop: below 500 ft AGL, 420 kts",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 44.84706,
+            "lon": 38.0747
+          },
+          {
+            "lat": 44.7968,
+            "lon": 38.31623
+          },
+          {
+            "lat": 44.77687,
+            "lon": 38.55574
+          },
+          {
+            "lat": 44.7168,
+            "lon": 38.79624
+          },
+          {
+            "lat": 44.70686,
+            "lon": 39.01584
+          },
+          {
+            "lat": 44.62752,
+            "lon": 39.29293
+          },
+          {
+            "lat": 44.5566,
+            "lon": 39.53821
+          },
+          {
+            "lat": 44.5968,
+            "lon": 39.82366
+          },
+          {
+            "lat": 44.6232,
+            "lon": 39.81634
+          },
+          {
+            "lat": 44.5834,
+            "lon": 39.54179
+          },
+          {
+            "lat": 44.65248,
+            "lon": 39.30707
+          },
+          {
+            "lat": 44.73313,
+            "lon": 39.02416
+          },
+          {
+            "lat": 44.7432,
+            "lon": 38.80377
+          },
+          {
+            "lat": 44.80313,
+            "lon": 38.56426
+          },
+          {
+            "lat": 44.8232,
+            "lon": 38.32377
+          },
+          {
+            "lat": 44.87294,
+            "lon": 38.0853
+          }
+        ]
+      }
+    },
+    {
+      "id": "cs-11",
+      "name": "CS-11 CHEGEM",
+      "kind": "csar",
+      "side": "red",
+      "purpose": "CSAR: forested ridges between the Baksan and Chegem gorges. Beacon 400 kHz",
+      "shape": {
+        "circle": {
+          "lat": 43.44,
+          "lon": 43.34,
+          "radius_m": 13000
+        }
+      }
+    },
+    {
+      "id": "pt-11",
+      "name": "PT-11 MINERALNYE VODY",
+      "kind": "pattern",
+      "side": "red",
+      "purpose": "Circuits and landings, RWY 12/30; every landing graded",
+      "shape": {
+        "circle": {
+          "lat": 44.22785,
+          "lon": 43.08119,
+          "radius_m": 9260.0
+        }
+      }
+    },
+    {
+      "id": "fd-11",
+      "name": "FD-11 UTRISH",
+      "kind": "ship_deck",
+      "side": "red",
+      "purpose": "Frigate deck landings: Neustrashimy and Project 22160 under way",
+      "shape": {
+        "circle": {
+          "lat": 44.52,
+          "lon": 37.43,
+          "radius_m": 14816.0
+        }
+      }
+    },
+    {
+      "id": "as-3",
+      "name": "AS-3 TAMAN",
+      "kind": "anti_ship",
+      "side": "all",
+      "purpose": "Escorted convoy, NATO: Arleigh Burke and Perry guarding merchants. Weapons free",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 44.76167,
+            "lon": 36.4335
+          },
+          {
+            "lat": 44.73639,
+            "lon": 37.18979
+          },
+          {
+            "lat": 44.37724,
+            "lon": 37.16406
+          },
+          {
+            "lat": 44.40221,
+            "lon": 36.41239
+          }
+        ]
+      }
+    }
+  ],
+  "stations": [
+    {
+      "id": "r1-bomb",
+      "name": "R-1 Samgori - Bomb Circle",
+      "kind": "bomb_circle",
+      "loc": {
+        "zone": "R1-BOMB"
+      },
+      "rings_m": [
+        25,
+        50,
+        100,
+        150
+      ],
+      "side": "red",
+      "country": "CJTF Red",
+      "targets": [
+        {
+          "typ": "Container red 1",
+          "category": "static",
+          "name": "Circle R-1"
+        }
+      ],
+      "note": "Unguided and guided bombs, rockets. Any run-in heading."
+    },
+    {
+      "id": "r1-strafe",
+      "name": "R-1 Samgori - Strafe Pit",
+      "kind": "strafe_pit",
+      "loc": {
+        "zone": "R1-STRAFE"
+      },
+      "heading_deg": 270,
+      "side": "red",
+      "country": "CJTF Red",
+      "strafe": {
+        "box_length_m": 3000,
+        "box_width_m": 300,
+        "foul_line_m": 610,
+        "max_alt_agl_m": 914
+      },
+      "targets": [
+        {
+          "typ": "Container white",
+          "category": "static",
+          "y": -15
+        },
+        {
+          "typ": "Container white",
+          "category": "static",
+          "y": 15
+        }
+      ],
+      "note": "Foul line 2000 ft. Run in from the east, heading 270."
+    },
+    {
+      "id": "r2-array",
+      "name": "R-2 Iori - Tactical Array",
+      "kind": "tactical_array",
+      "loc": {
+        "zone": "R2-ARRAY"
+      },
+      "heading_deg": 45,
+      "laser_code": 1688,
+      "rings_m": [
+        25,
+        50
+      ],
+      "side": "red",
+      "country": "CJTF Red",
+      "respawn_s": 300,
+      "targets": [
+        {
+          "typ": "T-72B",
+          "category": "vehicle",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "typ": "T-72B",
+          "category": "vehicle",
+          "x": 40,
+          "y": 20
+        },
+        {
+          "typ": "BMP-2",
+          "category": "vehicle",
+          "x": -40,
+          "y": 25
+        },
+        {
+          "typ": "BMP-2",
+          "category": "vehicle",
+          "x": 30,
+          "y": -35
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": -60,
+          "y": -20
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": 70,
+          "y": -10
+        }
+      ],
+      "note": "AI laser on the first live target, code 1688."
+    },
+    {
+      "id": "r2-convoy",
+      "name": "R-2 Iori - Moving Convoy",
+      "kind": "convoy",
+      "loc": {
+        "zone": "R2-CONVOY"
+      },
+      "side": "red",
+      "country": "CJTF Red",
+      "respawn_s": 600,
+      "targets": [
+        {
+          "typ": "Ural-375",
+          "category": "vehicle"
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": -30
+        },
+        {
+          "typ": "BTR-80",
+          "category": "vehicle",
+          "x": -60
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": -90
+        }
+      ],
+      "route": {
+        "points": [
+          {
+            "zone": "R2-CONVOY-END"
+          }
+        ],
+        "speed_kts": 20,
+        "on_road": false
+      }
+    },
+    {
+      "id": "r2-jdam",
+      "name": "R-2 Iori - Coordinate Targets",
+      "kind": "coord_target",
+      "loc": {
+        "zone": "R2-JDAM"
+      },
+      "side": "red",
+      "country": "CJTF Red",
+      "respawn_s": 900,
+      "targets": [
+        {
+          "typ": "Hangar A",
+          "category": "static",
+          "name": "Hangar"
+        },
+        {
+          "typ": "Garage A",
+          "category": "static",
+          "x": 120,
+          "y": 60,
+          "name": "Garage"
+        },
+        {
+          "typ": ".Command Center",
+          "category": "static",
+          "x": -150,
+          "y": 80,
+          "name": "Command post"
+        }
+      ],
+      "note": "JDAM / JSOW / coordinate weapons. Coordinates: F10 > Range > Air-to-Ground > Stations."
+    },
+    {
+      "id": "r3-sam",
+      "name": "R-3 Tetri Tskaro - SA-8 Threat",
+      "kind": "sam_site",
+      "loc": {
+        "zone": "R3-SAM"
+      },
+      "side": "red",
+      "country": "CJTF Red",
+      "targets": [
+        {
+          "typ": "Osa 9A33 ln",
+          "category": "vehicle"
+        }
+      ],
+      "weapons_free": false,
+      "locked": true,
+      "note": "Radar on, weapons hold. Instructors can go weapons free; the missile trainer protects you."
+    },
+    {
+      "id": "g1-lane",
+      "name": "G-1 Lilo - CA Gunnery Lane",
+      "kind": "gunnery_lane",
+      "loc": {
+        "zone": "G1-LANE"
+      },
+      "heading_deg": 0,
+      "side": "red",
+      "country": "CJTF Red",
+      "respawn_s": 120,
+      "targets": [
+        {
+          "typ": "T-55",
+          "category": "vehicle",
+          "x": 800
+        },
+        {
+          "typ": "T-55",
+          "category": "vehicle",
+          "x": 1200,
+          "y": 150
+        },
+        {
+          "typ": "BMP-1",
+          "category": "vehicle",
+          "x": 1600,
+          "y": -120
+        }
+      ]
+    },
+    {
+      "id": "r11-bomb",
+      "name": "R-11 Stepnoye - Bomb Circle",
+      "kind": "bomb_circle",
+      "loc": {
+        "zone": "R11-BOMB"
+      },
+      "rings_m": [
+        25,
+        50,
+        100,
+        150
+      ],
+      "side": "blue",
+      "country": "CJTF Blue",
+      "targets": [
+        {
+          "typ": "Container red 1",
+          "category": "static",
+          "name": "Circle R-11"
+        }
+      ],
+      "note": "Unguided and guided bombs, rockets. Any run-in heading."
+    },
+    {
+      "id": "r11-strafe",
+      "name": "R-11 Stepnoye - Strafe Pit",
+      "kind": "strafe_pit",
+      "loc": {
+        "zone": "R11-STRAFE"
+      },
+      "heading_deg": 270,
+      "side": "blue",
+      "country": "CJTF Blue",
+      "strafe": {
+        "box_length_m": 3000,
+        "box_width_m": 300,
+        "foul_line_m": 610,
+        "max_alt_agl_m": 914
+      },
+      "targets": [
+        {
+          "typ": "Container white",
+          "category": "static",
+          "y": -15
+        },
+        {
+          "typ": "Container white",
+          "category": "static",
+          "y": 15
+        }
+      ],
+      "note": "Foul line 2000 ft. Run in from the east, heading 270."
+    },
+    {
+      "id": "r12-array",
+      "name": "R-12 Karst - Tactical Array",
+      "kind": "tactical_array",
+      "loc": {
+        "zone": "R12-ARRAY"
+      },
+      "heading_deg": 45,
+      "laser_code": 1511,
+      "rings_m": [
+        25,
+        50
+      ],
+      "side": "blue",
+      "country": "CJTF Blue",
+      "respawn_s": 300,
+      "targets": [
+        {
+          "typ": "T-72B",
+          "category": "vehicle",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "typ": "T-72B",
+          "category": "vehicle",
+          "x": 40,
+          "y": 20
+        },
+        {
+          "typ": "BMP-2",
+          "category": "vehicle",
+          "x": -40,
+          "y": 25
+        },
+        {
+          "typ": "BMP-2",
+          "category": "vehicle",
+          "x": 30,
+          "y": -35
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": -60,
+          "y": -20
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": 70,
+          "y": -10
+        }
+      ],
+      "note": "AI laser on the first live target, code 1511."
+    },
+    {
+      "id": "r12-convoy",
+      "name": "R-12 Karst - Moving Convoy",
+      "kind": "convoy",
+      "loc": {
+        "zone": "R12-CONVOY"
+      },
+      "side": "blue",
+      "country": "CJTF Blue",
+      "respawn_s": 600,
+      "targets": [
+        {
+          "typ": "Ural-375",
+          "category": "vehicle"
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": -30
+        },
+        {
+          "typ": "BTR-80",
+          "category": "vehicle",
+          "x": -60
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": -90
+        }
+      ],
+      "route": {
+        "points": [
+          {
+            "zone": "R12-CONVOY-END"
+          }
+        ],
+        "speed_kts": 20,
+        "on_road": false
+      }
+    },
+    {
+      "id": "r12-jdam",
+      "name": "R-12 Karst - Coordinate Targets",
+      "kind": "coord_target",
+      "loc": {
+        "zone": "R12-JDAM"
+      },
+      "side": "blue",
+      "country": "CJTF Blue",
+      "respawn_s": 900,
+      "targets": [
+        {
+          "typ": "Hangar A",
+          "category": "static",
+          "name": "Hangar"
+        },
+        {
+          "typ": "Garage A",
+          "category": "static",
+          "x": 120,
+          "y": 60,
+          "name": "Garage"
+        },
+        {
+          "typ": ".Command Center",
+          "category": "static",
+          "x": -150,
+          "y": 80,
+          "name": "Command post"
+        }
+      ],
+      "note": "JDAM / JSOW / coordinate weapons. Coordinates: F10 > Range > Air-to-Ground > Stations."
+    },
+    {
+      "id": "r13-sam",
+      "name": "R-13 Achikulak - SA-8 Threat",
+      "kind": "sam_site",
+      "loc": {
+        "zone": "R13-SAM"
+      },
+      "side": "blue",
+      "country": "CJTF Blue",
+      "targets": [
+        {
+          "typ": "Osa 9A33 ln",
+          "category": "vehicle"
+        }
+      ],
+      "weapons_free": false,
+      "locked": true,
+      "note": "Radar on, weapons hold. Instructors can go weapons free; the missile trainer protects you."
+    },
+    {
+      "id": "g11-lane",
+      "name": "G-11 Starodub - CA Gunnery Lane",
+      "kind": "gunnery_lane",
+      "loc": {
+        "zone": "G11-LANE"
+      },
+      "heading_deg": 0,
+      "side": "blue",
+      "country": "CJTF Blue",
+      "respawn_s": 120,
+      "targets": [
+        {
+          "typ": "T-55",
+          "category": "vehicle",
+          "x": 800
+        },
+        {
+          "typ": "T-55",
+          "category": "vehicle",
+          "x": 1200,
+          "y": 150
+        },
+        {
+          "typ": "BMP-1",
+          "category": "vehicle",
+          "x": 1600,
+          "y": -120
+        }
+      ]
+    },
+    {
+      "id": "r14-bomb",
+      "name": "R-14 Kuban - Bomb Circle",
+      "kind": "bomb_circle",
+      "loc": {
+        "zone": "R14-BOMB"
+      },
+      "rings_m": [
+        25,
+        50,
+        100,
+        150
+      ],
+      "side": "blue",
+      "country": "CJTF Blue",
+      "targets": [
+        {
+          "typ": "Container red 1",
+          "category": "static",
+          "name": "Circle R-14"
+        }
+      ],
+      "note": "Unguided and guided bombs, rockets. Any run-in heading."
+    },
+    {
+      "id": "r14-strafe",
+      "name": "R-14 Kuban - Strafe Pit",
+      "kind": "strafe_pit",
+      "loc": {
+        "zone": "R14-STRAFE"
+      },
+      "heading_deg": 270,
+      "side": "blue",
+      "country": "CJTF Blue",
+      "strafe": {
+        "box_length_m": 3000,
+        "box_width_m": 300,
+        "foul_line_m": 610,
+        "max_alt_agl_m": 914
+      },
+      "targets": [
+        {
+          "typ": "Container white",
+          "category": "static",
+          "y": -15
+        },
+        {
+          "typ": "Container white",
+          "category": "static",
+          "y": 15
+        }
+      ],
+      "note": "Foul line 2000 ft. Run in from the east, heading 270."
+    },
+    {
+      "id": "r14-array",
+      "name": "R-14 Kuban - Tactical Array",
+      "kind": "tactical_array",
+      "loc": {
+        "zone": "R14-ARRAY"
+      },
+      "heading_deg": 45,
+      "laser_code": 1512,
+      "rings_m": [
+        25,
+        50
+      ],
+      "side": "blue",
+      "country": "CJTF Blue",
+      "respawn_s": 300,
+      "targets": [
+        {
+          "typ": "T-72B",
+          "category": "vehicle",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "typ": "T-72B",
+          "category": "vehicle",
+          "x": 40,
+          "y": 20
+        },
+        {
+          "typ": "BMP-2",
+          "category": "vehicle",
+          "x": -40,
+          "y": 25
+        },
+        {
+          "typ": "BMP-2",
+          "category": "vehicle",
+          "x": 30,
+          "y": -35
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": -60,
+          "y": -20
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": 70,
+          "y": -10
+        }
+      ],
+      "note": "AI laser on the first live target, code 1512."
+    },
+    {
+      "id": "r4-easy",
+      "name": "R-4 Gareji - Easy",
+      "kind": "tactical_array",
+      "loc": {
+        "zone": "R4-EASY"
+      },
+      "heading_deg": 45,
+      "rings_m": [
+        25,
+        50
+      ],
+      "side": "red",
+      "country": "CJTF Red",
+      "respawn_s": 300,
+      "tier": "easy",
+      "weapons_free": false,
+      "targets": [
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": 40,
+          "y": 25
+        },
+        {
+          "typ": "GAZ-66",
+          "category": "vehicle",
+          "x": -35,
+          "y": 30
+        },
+        {
+          "typ": "KAMAZ Truck",
+          "category": "vehicle",
+          "x": 30,
+          "y": -40
+        },
+        {
+          "typ": "Ural-375",
+          "category": "vehicle",
+          "x": -50,
+          "y": -25
+        }
+      ],
+      "note": "Trucks, nothing shoots back. Learn the weapon."
+    },
+    {
+      "id": "r4-medium",
+      "name": "R-4 Gareji - Medium",
+      "kind": "tactical_array",
+      "loc": {
+        "zone": "R4-MEDIUM"
+      },
+      "heading_deg": 45,
+      "rings_m": [
+        25,
+        50
+      ],
+      "side": "red",
+      "country": "CJTF Red",
+      "respawn_s": 300,
+      "tier": "medium",
+      "weapons_free": true,
+      "targets": [
+        {
+          "typ": "BMP-2",
+          "category": "vehicle",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "typ": "BMP-2",
+          "category": "vehicle",
+          "x": 45,
+          "y": 25
+        },
+        {
+          "typ": "BTR-80",
+          "category": "vehicle",
+          "x": -40,
+          "y": 30
+        },
+        {
+          "typ": "T-72B",
+          "category": "vehicle",
+          "x": 35,
+          "y": -35
+        },
+        {
+          "typ": "ZSU-23-4 Shilka",
+          "category": "vehicle",
+          "x": 140,
+          "y": 0
+        },
+        {
+          "typ": "Ural-375 ZU-23",
+          "category": "vehicle",
+          "x": -130,
+          "y": 60
+        }
+      ],
+      "note": "APCs and a tank with AAA covering them: the guns are real, stay above 10,000 ft or come in fast."
+    },
+    {
+      "id": "r4-hard",
+      "name": "R-4 Gareji - Hard",
+      "kind": "tactical_array",
+      "loc": {
+        "zone": "R4-HARD"
+      },
+      "heading_deg": 45,
+      "rings_m": [
+        25,
+        50
+      ],
+      "side": "red",
+      "country": "CJTF Red",
+      "respawn_s": 300,
+      "tier": "hard",
+      "weapons_free": true,
+      "targets": [
+        {
+          "typ": "CHAP_T90M",
+          "category": "vehicle",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "typ": "CHAP_T90M",
+          "category": "vehicle",
+          "x": 45,
+          "y": 25
+        },
+        {
+          "typ": "CHAP_BMPT",
+          "category": "vehicle",
+          "x": -40,
+          "y": 30
+        },
+        {
+          "typ": "BMP-3",
+          "category": "vehicle",
+          "x": 35,
+          "y": -35
+        },
+        {
+          "typ": "2S6 Tunguska",
+          "category": "vehicle",
+          "x": 220,
+          "y": 40
+        },
+        {
+          "typ": "Strela-10M3",
+          "category": "vehicle",
+          "x": -200,
+          "y": -60
+        },
+        {
+          "typ": "CHAP_PantsirS1",
+          "category": "vehicle",
+          "x": 60,
+          "y": -260
+        }
+      ],
+      "note": "Modern armour under SHORAD (SA-19, SA-13, Pantsir / Linebacker, Avenger, Roland): weapons free, the missile trainer protects you."
+    },
+    {
+      "id": "r15-easy",
+      "name": "R-15 Edisseya - Easy",
+      "kind": "tactical_array",
+      "loc": {
+        "zone": "R15-EASY"
+      },
+      "heading_deg": 45,
+      "rings_m": [
+        25,
+        50
+      ],
+      "side": "blue",
+      "country": "CJTF Blue",
+      "respawn_s": 300,
+      "tier": "easy",
+      "weapons_free": false,
+      "targets": [
+        {
+          "typ": "M 818",
+          "category": "vehicle",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "typ": "M 818",
+          "category": "vehicle",
+          "x": 40,
+          "y": 25
+        },
+        {
+          "typ": "Hummer",
+          "category": "vehicle",
+          "x": -35,
+          "y": 30
+        },
+        {
+          "typ": "M 818",
+          "category": "vehicle",
+          "x": 30,
+          "y": -40
+        },
+        {
+          "typ": "Hummer",
+          "category": "vehicle",
+          "x": -50,
+          "y": -25
+        }
+      ],
+      "note": "Trucks, nothing shoots back. Learn the weapon."
+    },
+    {
+      "id": "r15-medium",
+      "name": "R-15 Edisseya - Medium",
+      "kind": "tactical_array",
+      "loc": {
+        "zone": "R15-MEDIUM"
+      },
+      "heading_deg": 45,
+      "rings_m": [
+        25,
+        50
+      ],
+      "side": "blue",
+      "country": "CJTF Blue",
+      "respawn_s": 300,
+      "tier": "medium",
+      "weapons_free": true,
+      "targets": [
+        {
+          "typ": "M-2 Bradley",
+          "category": "vehicle",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "typ": "M-2 Bradley",
+          "category": "vehicle",
+          "x": 45,
+          "y": 25
+        },
+        {
+          "typ": "LAV-25",
+          "category": "vehicle",
+          "x": -40,
+          "y": 30
+        },
+        {
+          "typ": "M-1 Abrams",
+          "category": "vehicle",
+          "x": 35,
+          "y": -35
+        },
+        {
+          "typ": "Gepard",
+          "category": "vehicle",
+          "x": 140,
+          "y": 0
+        },
+        {
+          "typ": "Vulcan",
+          "category": "vehicle",
+          "x": -130,
+          "y": 60
+        }
+      ],
+      "note": "APCs and a tank with AAA covering them: the guns are real, stay above 10,000 ft or come in fast."
+    },
+    {
+      "id": "r15-hard",
+      "name": "R-15 Edisseya - Hard",
+      "kind": "tactical_array",
+      "loc": {
+        "zone": "R15-HARD"
+      },
+      "heading_deg": 45,
+      "rings_m": [
+        25,
+        50
+      ],
+      "side": "blue",
+      "country": "CJTF Blue",
+      "respawn_s": 300,
+      "tier": "hard",
+      "weapons_free": true,
+      "targets": [
+        {
+          "typ": "Leopard-2",
+          "category": "vehicle",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "typ": "Leopard-2",
+          "category": "vehicle",
+          "x": 45,
+          "y": 25
+        },
+        {
+          "typ": "Marder",
+          "category": "vehicle",
+          "x": -40,
+          "y": 30
+        },
+        {
+          "typ": "CHAP_M1130",
+          "category": "vehicle",
+          "x": 35,
+          "y": -35
+        },
+        {
+          "typ": "M6 Linebacker",
+          "category": "vehicle",
+          "x": 220,
+          "y": 40
+        },
+        {
+          "typ": "M1097 Avenger",
+          "category": "vehicle",
+          "x": -200,
+          "y": -60
+        },
+        {
+          "typ": "Roland ADS",
+          "category": "vehicle",
+          "x": 60,
+          "y": -260
+        }
+      ],
+      "note": "Modern armour under SHORAD (SA-19, SA-13, Pantsir / Linebacker, Avenger, Roland): weapons free, the missile trainer protects you."
+    },
+    {
+      "id": "ew1-targets",
+      "name": "EW-1 Tsalka jammer - GPS-denied targets",
+      "kind": "coord_target",
+      "loc": {
+        "zone": "EW1-TARGETS"
+      },
+      "side": "red",
+      "country": "CJTF Red",
+      "respawn_s": 900,
+      "targets": [
+        {
+          "typ": "Hangar A",
+          "category": "static",
+          "name": "Hangar"
+        },
+        {
+          "typ": "Garage A",
+          "category": "static",
+          "x": 120,
+          "y": 60,
+          "name": "Garage"
+        },
+        {
+          "typ": ".Command Center",
+          "category": "static",
+          "x": -150,
+          "y": 80,
+          "name": "Command post"
+        }
+      ],
+      "note": "Inside the jammer's radius: GPS/INS weapons degrade. Kill the jammer, or use laser, TV or your eyes."
+    },
+    {
+      "id": "ew11-targets",
+      "name": "EW-11 Terek jammer - GPS-denied targets",
+      "kind": "coord_target",
+      "loc": {
+        "zone": "EW11-TARGETS"
+      },
+      "side": "blue",
+      "country": "CJTF Blue",
+      "respawn_s": 900,
+      "targets": [
+        {
+          "typ": "Hangar A",
+          "category": "static",
+          "name": "Hangar"
+        },
+        {
+          "typ": "Garage A",
+          "category": "static",
+          "x": 120,
+          "y": 60,
+          "name": "Garage"
+        },
+        {
+          "typ": ".Command Center",
+          "category": "static",
+          "x": -150,
+          "y": 80,
+          "name": "Command post"
+        }
+      ],
+      "note": "Inside the jammer's radius: GPS/INS weapons degrade. Kill the jammer, or use laser, TV or your eyes."
+    },
+    {
+      "id": "as2-convoy",
+      "name": "AS-2 Sukhumi - Escorted Convoy",
+      "kind": "ship_target",
+      "loc": {
+        "lat": 42.6,
+        "lon": 40.93
+      },
+      "side": "red",
+      "country": "CJTF Red",
+      "respawn_s": 1200,
+      "weapons_free": true,
+      "targets": [
+        {
+          "typ": "Dry-cargo ship-1",
+          "category": "ship",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "typ": "Dry-cargo ship-2",
+          "category": "ship",
+          "x": -700,
+          "y": 0
+        },
+        {
+          "typ": "ELNYA",
+          "category": "ship",
+          "x": -1400,
+          "y": 0
+        },
+        {
+          "typ": "REZKY",
+          "category": "ship",
+          "x": 1500,
+          "y": 800
+        },
+        {
+          "typ": "NEUSTRASH",
+          "category": "ship",
+          "x": -700,
+          "y": -1200
+        },
+        {
+          "typ": "CHAP_Project22160_TorM2KM",
+          "category": "ship",
+          "x": -2200,
+          "y": 700
+        }
+      ],
+      "route": {
+        "points": [
+          {
+            "lat": 42.84,
+            "lon": 40.28
+          }
+        ],
+        "speed_kts": 14
+      },
+      "note": "Merchants under a Krivak, a Neustrashimy and a Tor-armed corvette: weapons free, the missile trainer protects you."
+    },
+    {
+      "id": "as3-convoy",
+      "name": "AS-3 Taman - Escorted Convoy",
+      "kind": "ship_target",
+      "loc": {
+        "lat": 44.45,
+        "lon": 37.13
+      },
+      "side": "blue",
+      "country": "CJTF Blue",
+      "respawn_s": 1200,
+      "weapons_free": true,
+      "targets": [
+        {
+          "typ": "HandyWind",
+          "category": "ship",
+          "x": 0,
+          "y": 0
+        },
+        {
+          "typ": "Ship_Tilde_Supply",
+          "category": "ship",
+          "x": -700,
+          "y": 0
+        },
+        {
+          "typ": "Dry-cargo ship-2",
+          "category": "ship",
+          "x": -1400,
+          "y": 0
+        },
+        {
+          "typ": "USS_Arleigh_Burke_IIa",
+          "category": "ship",
+          "x": 1500,
+          "y": 800
+        },
+        {
+          "typ": "PERRY",
+          "category": "ship",
+          "x": -700,
+          "y": -1200
+        }
+      ],
+      "route": {
+        "points": [
+          {
+            "lat": 44.68,
+            "lon": 36.58
+          }
+        ],
+        "speed_kts": 14
+      },
+      "note": "Merchants under an Arleigh Burke and a Perry: weapons free, the missile trainer protects you."
+    },
+    {
+      "id": "as1-ships",
+      "name": "AS-1 Shipping - Merchant Ships",
+      "kind": "ship_target",
+      "loc": {
+        "lat": 42.30031,
+        "lon": 40.74247
+      },
+      "side": "red",
+      "country": "CJTF Red",
+      "respawn_s": 900,
+      "targets": [
+        {
+          "typ": "Dry-cargo ship-1",
+          "category": "ship"
+        },
+        {
+          "typ": "ELNYA",
+          "category": "ship",
+          "y": 600
+        }
+      ],
+      "route": {
+        "points": [
+          {
+            "lat": 42.30031,
+            "lon": 40.20052
+          }
+        ],
+        "speed_kts": 12
+      },
+      "note": "Undefended shipping for anti-ship missiles and bombs."
+    }
+  ],
+  "tankers": [
+    {
+      "id": "texaco2",
+      "callsign": "Texaco",
+      "callsign_number": 2,
+      "typ": "KC-135",
+      "side": "blue",
+      "country": "CJTF Blue",
+      "loc": {
+        "lat": 41.95,
+        "lon": 43.55
+      },
+      "heading_deg": 90,
+      "leg_nm": 30.0,
+      "alt_ft": 24000,
+      "freq_mhz": 254.0,
+      "tacan": {
+        "channel": 54,
+        "band": "Y",
+        "morse": "TX2"
+      }
+    },
+    {
+      "id": "ilyusha",
+      "callsign": "Texaco",
+      "callsign_number": 9,
+      "typ": "IL-78M",
+      "side": "red",
+      "country": "CJTF Red",
+      "loc": {
+        "lat": 44.65,
+        "lon": 43.3
+      },
+      "heading_deg": 90,
+      "leg_nm": 30.0,
+      "alt_ft": 23000,
+      "freq_mhz": 124.0,
+      "tacan": {
+        "channel": 59,
+        "band": "Y",
+        "morse": "ILR"
+      }
+    },
+    {
+      "id": "ilyusha-west",
+      "callsign": "Texaco",
+      "callsign_number": 8,
+      "typ": "IL-78M",
+      "side": "red",
+      "country": "CJTF Red",
+      "loc": {
+        "lat": 44.3,
+        "lon": 37.3
+      },
+      "heading_deg": 90,
+      "leg_nm": 30.0,
+      "alt_ft": 22000,
+      "freq_mhz": 123.0,
+      "tacan": {
+        "channel": 58,
+        "band": "Y",
+        "morse": "ILW"
+      }
+    },
+    {
+      "id": "texaco",
+      "callsign": "Texaco",
+      "callsign_number": 1,
+      "typ": "KC-135",
+      "side": "blue",
+      "country": "CJTF Blue",
+      "loc": {
+        "lat": 42.75,
+        "lon": 39.1
+      },
+      "heading_deg": 90,
+      "leg_nm": 30.0,
+      "alt_ft": 25000,
+      "freq_mhz": 251.0,
+      "tacan": {
+        "channel": 51,
+        "band": "Y",
+        "morse": "TEX"
+      }
+    },
+    {
+      "id": "arco",
+      "callsign": "Arco",
+      "callsign_number": 1,
+      "typ": "KC135MPRS",
+      "side": "blue",
+      "country": "CJTF Blue",
+      "loc": {
+        "lat": 42.25,
+        "lon": 38.2
+      },
+      "heading_deg": 90,
+      "leg_nm": 25.0,
+      "alt_ft": 21000,
+      "freq_mhz": 252.0,
+      "tacan": {
+        "channel": 52,
+        "band": "Y",
+        "morse": "ARC"
+      }
+    },
+    {
+      "id": "shell",
+      "callsign": "Shell",
+      "callsign_number": 1,
+      "typ": "KC130",
+      "side": "blue",
+      "country": "CJTF Blue",
+      "loc": {
+        "lat": 41.6,
+        "lon": 39.95
+      },
+      "heading_deg": 90,
+      "leg_nm": 20.0,
+      "alt_ft": 14000,
+      "freq_mhz": 253.0,
+      "tacan": {
+        "channel": 53,
+        "band": "Y",
+        "morse": "SHL"
+      }
+    }
+  ],
+  "carriers": [
+    {
+      "id": "cvn72",
+      "unit_name": "CVN-72",
+      "name": "CVN-72 Abraham Lincoln",
+      "kind": "nimitz",
+      "tacan": {
+        "channel": 72,
+        "band": "X",
+        "morse": "ABL"
+      },
+      "icls_channel": 11,
+      "acls": true,
+      "link4_mhz": 336.0,
+      "tower_mhz": 305.0,
+      "wind_over_deck_kts": 27,
+      "op_center": {
+        "lat": 41.7,
+        "lon": 41.0
+      },
+      "op_radius_nm": 20,
+      "recovery_tanker": {
+        "id": "cvn72-tanker",
+        "callsign": "Arco",
+        "callsign_number": 3,
+        "typ": "A-6E",
+        "loc": {
+          "lat": 41.7,
+          "lon": 41.0
+        },
+        "heading_deg": 0,
+        "leg_nm": 10,
+        "alt_ft": 6000,
+        "freq_mhz": 261.0,
+        "tacan": {
+          "channel": 63,
+          "band": "Y",
+          "morse": "A6E"
+        }
+      },
+      "plane_guard": "SH-60B"
+    },
+    {
+      "id": "lha1",
+      "unit_name": "LHA-1",
+      "name": "LHA-1 Tarawa",
+      "kind": "tarawa",
+      "tacan": {
+        "channel": 71,
+        "band": "X",
+        "morse": "LHA"
+      },
+      "icls_channel": 12,
+      "acls": false,
+      "tower_mhz": 306.0,
+      "wind_over_deck_kts": 20,
+      "op_center": {
+        "lat": 41.62,
+        "lon": 41.08
+      },
+      "op_radius_nm": 15
+    }
+  ],
+  "air_to_air": {
+    "missile_trainer": {
+      "enabled": true,
+      "kill_radius_m": 200,
+      "big_kill_radius_m": 500,
+      "big_warhead_kg": 50,
+      "launch_alerts": true,
+      "protect_ai": false,
+      "max_tracked": 64
+    },
+    "arenas": [
+      {
+        "id": "moa-kakheti",
+        "name": "MOA KAKHETI",
+        "loc": {
+          "lat": 41.93,
+          "lon": 45.18
+        },
+        "radius_nm": 11.0,
+        "duels": true,
+        "floor_ft": 8000
+      },
+      {
+        "id": "moa-nogai",
+        "name": "MOA NOGAI",
+        "loc": {
+          "lat": 44.25,
+          "lon": 45.3
+        },
+        "radius_nm": 15.0,
+        "duels": true,
+        "floor_ft": 5000
+      },
+      {
+        "id": "w-1",
+        "name": "W-1 BFM NORTH",
+        "loc": {
+          "lat": 42.3,
+          "lon": 39.45
+        },
+        "radius_nm": 15.0,
+        "duels": true,
+        "floor_ft": 5000
+      },
+      {
+        "id": "w-2",
+        "name": "W-2 BFM SOUTH",
+        "loc": {
+          "lat": 41.75,
+          "lon": 39.45
+        },
+        "radius_nm": 15.0,
+        "duels": true,
+        "floor_ft": 5000
+      },
+      {
+        "id": "w-3",
+        "name": "W-3 BVR",
+        "loc": {
+          "lat": 43.5,
+          "lon": 38.05
+        },
+        "radius_nm": 32.4,
+        "duels": true,
+        "floor_ft": 5000
+      },
+      {
+        "id": "w-4",
+        "name": "W-4 DUEL",
+        "loc": {
+          "lat": 43.2,
+          "lon": 39.45
+        },
+        "radius_nm": 15.0,
+        "duels": true,
+        "floor_ft": 5000
+      }
+    ],
+    "duels": true,
+    "gun_kill_hits": 10
+  },
+  "helo": {
+    "pads": [
+      {
+        "id": "h1-pad",
+        "name": "H-1 Vaziani - Precision Pad",
+        "loc": {
+          "zone": "H1-PAD"
+        },
+        "drill": "precision",
+        "perfect_m": 3
+      },
+      {
+        "id": "h1-confined",
+        "name": "H-1 Vaziani - Confined Area LZ",
+        "loc": {
+          "zone": "H1-CONFINED"
+        },
+        "drill": "confined",
+        "perfect_m": 5
+      },
+      {
+        "id": "h1-pinnacle",
+        "name": "H-1 Vaziani - Pinnacle",
+        "loc": {
+          "zone": "H1-PINNACLE"
+        },
+        "drill": "pinnacle",
+        "perfect_m": 4
+      },
+      {
+        "id": "h2-pad",
+        "name": "H-2 Tskaltubo - Precision Pad",
+        "loc": {
+          "zone": "H2-PAD"
+        },
+        "drill": "precision",
+        "perfect_m": 3
+      },
+      {
+        "id": "h2-confined",
+        "name": "H-2 Tskaltubo - Confined Area LZ",
+        "loc": {
+          "zone": "H2-CONFINED"
+        },
+        "drill": "confined",
+        "perfect_m": 5
+      },
+      {
+        "id": "h2-pinnacle",
+        "name": "H-2 Tskaltubo - Pinnacle",
+        "loc": {
+          "zone": "H2-PINNACLE"
+        },
+        "drill": "pinnacle",
+        "perfect_m": 4
+      },
+      {
+        "id": "h11-pad",
+        "name": "H-11 Mozdok - Precision Pad",
+        "loc": {
+          "zone": "H11-PAD"
+        },
+        "drill": "precision",
+        "perfect_m": 3
+      },
+      {
+        "id": "h11-confined",
+        "name": "H-11 Mozdok - Confined Area LZ",
+        "loc": {
+          "zone": "H11-CONFINED"
+        },
+        "drill": "confined",
+        "perfect_m": 5
+      },
+      {
+        "id": "h11-pinnacle",
+        "name": "H-11 Mozdok - Pinnacle",
+        "loc": {
+          "zone": "H11-PINNACLE"
+        },
+        "drill": "pinnacle",
+        "perfect_m": 4
+      },
+      {
+        "id": "h12-pad",
+        "name": "H-12 Nalchik - Precision Pad",
+        "loc": {
+          "zone": "H12-PAD"
+        },
+        "drill": "precision",
+        "perfect_m": 3
+      },
+      {
+        "id": "h12-confined",
+        "name": "H-12 Nalchik - Confined Area LZ",
+        "loc": {
+          "zone": "H12-CONFINED"
+        },
+        "drill": "confined",
+        "perfect_m": 5
+      },
+      {
+        "id": "h12-pinnacle",
+        "name": "H-12 Nalchik - Pinnacle",
+        "loc": {
+          "zone": "H12-PINNACLE"
+        },
+        "drill": "pinnacle",
+        "perfect_m": 4
+      }
+    ],
+    "sling": [
+      {
+        "id": "h1-sling-1",
+        "name": "H-1 Vaziani - Sling Course",
+        "pickup": {
+          "zone": "H1-SLING1-PICKUP"
+        },
+        "dropzone": {
+          "zone": "H1-SLING1-DZ"
+        },
+        "cargo_type": "uh1h_cargo",
+        "mass_kg": 800,
+        "perfect_m": 5
+      },
+      {
+        "id": "h1-sling-2",
+        "name": "H-1 Vaziani - Heavy Lift",
+        "pickup": {
+          "zone": "H1-SLING2-PICKUP"
+        },
+        "dropzone": {
+          "zone": "H1-SLING2-DZ"
+        },
+        "cargo_type": "container_cargo",
+        "mass_kg": 3500,
+        "perfect_m": 8
+      },
+      {
+        "id": "h2-sling-1",
+        "name": "H-2 Tskaltubo - Sling Course",
+        "pickup": {
+          "zone": "H2-SLING1-PICKUP"
+        },
+        "dropzone": {
+          "zone": "H2-SLING1-DZ"
+        },
+        "cargo_type": "uh1h_cargo",
+        "mass_kg": 800,
+        "perfect_m": 5
+      },
+      {
+        "id": "h2-sling-2",
+        "name": "H-2 Tskaltubo - Heavy Lift",
+        "pickup": {
+          "zone": "H2-SLING2-PICKUP"
+        },
+        "dropzone": {
+          "zone": "H2-SLING2-DZ"
+        },
+        "cargo_type": "container_cargo",
+        "mass_kg": 3500,
+        "perfect_m": 8
+      },
+      {
+        "id": "h11-sling-1",
+        "name": "H-11 Mozdok - Sling Course",
+        "pickup": {
+          "zone": "H11-SLING1-PICKUP"
+        },
+        "dropzone": {
+          "zone": "H11-SLING1-DZ"
+        },
+        "cargo_type": "uh1h_cargo",
+        "mass_kg": 800,
+        "perfect_m": 5
+      },
+      {
+        "id": "h11-sling-2",
+        "name": "H-11 Mozdok - Heavy Lift",
+        "pickup": {
+          "zone": "H11-SLING2-PICKUP"
+        },
+        "dropzone": {
+          "zone": "H11-SLING2-DZ"
+        },
+        "cargo_type": "container_cargo",
+        "mass_kg": 3500,
+        "perfect_m": 8
+      },
+      {
+        "id": "h12-sling-1",
+        "name": "H-12 Nalchik - Sling Course",
+        "pickup": {
+          "zone": "H12-SLING1-PICKUP"
+        },
+        "dropzone": {
+          "zone": "H12-SLING1-DZ"
+        },
+        "cargo_type": "uh1h_cargo",
+        "mass_kg": 800,
+        "perfect_m": 5
+      },
+      {
+        "id": "h12-sling-2",
+        "name": "H-12 Nalchik - Heavy Lift",
+        "pickup": {
+          "zone": "H12-SLING2-PICKUP"
+        },
+        "dropzone": {
+          "zone": "H12-SLING2-DZ"
+        },
+        "cargo_type": "container_cargo",
+        "mass_kg": 3500,
+        "perfect_m": 8
+      }
+    ],
+    "troops": [
+      {
+        "id": "h1-troops",
+        "name": "H-1 Vaziani - Air Assault",
+        "pickup": {
+          "zone": "H1-TROOPS-PICKUP"
+        },
+        "lz": {
+          "zone": "H1-TROOPS-LZ"
+        },
+        "troops": 8,
+        "radius_m": 60
+      },
+      {
+        "id": "h2-troops",
+        "name": "H-2 Tskaltubo - Air Assault",
+        "pickup": {
+          "zone": "H2-TROOPS-PICKUP"
+        },
+        "lz": {
+          "zone": "H2-TROOPS-LZ"
+        },
+        "troops": 8,
+        "radius_m": 60
+      },
+      {
+        "id": "h11-troops",
+        "name": "H-11 Mozdok - Air Assault",
+        "pickup": {
+          "zone": "H11-TROOPS-PICKUP"
+        },
+        "lz": {
+          "zone": "H11-TROOPS-LZ"
+        },
+        "troops": 8,
+        "radius_m": 60
+      },
+      {
+        "id": "h12-troops",
+        "name": "H-12 Nalchik - Air Assault",
+        "pickup": {
+          "zone": "H12-TROOPS-PICKUP"
+        },
+        "lz": {
+          "zone": "H12-TROOPS-LZ"
+        },
+        "troops": 8,
+        "radius_m": 60
+      }
+    ]
+  },
+  "jtacs": [
+    {
+      "id": "axeman",
+      "callsign": "Axeman",
+      "station": "r2-array",
+      "loc": {
+        "zone": "R2-ARRAY"
+      },
+      "laser_code": 1688,
+      "freq_mhz": 133.0,
+      "typ": "MQ-9 Reaper",
+      "friendlies_m": 600
+    },
+    {
+      "id": "topor",
+      "callsign": "Topor",
+      "station": "r12-array",
+      "loc": {
+        "zone": "R12-ARRAY"
+      },
+      "laser_code": 1511,
+      "freq_mhz": 124.5,
+      "typ": "MQ-9 Reaper",
+      "friendlies_m": 600
+    }
+  ],
+  "iads": [
+    {
+      "id": "s1-iads",
+      "name": "S-1 Akhalkalaki IADS",
+      "side": "red",
+      "country": "CJTF Red",
+      "emcon": "iads",
+      "harm_defence_s": 45,
+      "weapons_free": true,
+      "respawn_s": 900,
+      "engage_within": {
+        "loc": {
+          "lat": 41.43,
+          "lon": 43.4
+        },
+        "radius_nm": 25.2
+      },
+      "sites": [
+        {
+          "id": "s1-ewr",
+          "name": "Javakheti EWR",
+          "system": "ewr_55g6",
+          "loc": {
+            "zone": "S1-EWR"
+          },
+          "heading_deg": 0
+        },
+        {
+          "id": "s1-sa10",
+          "name": "SA-10 battery",
+          "system": "sa10",
+          "loc": {
+            "zone": "S1-SA10"
+          },
+          "heading_deg": 0
+        },
+        {
+          "id": "s1-sa2",
+          "name": "SA-2 site",
+          "system": "sa2",
+          "loc": {
+            "zone": "S1-SA2"
+          },
+          "heading_deg": 0
+        },
+        {
+          "id": "s1-sa11",
+          "name": "SA-11 battery",
+          "system": "sa11",
+          "loc": {
+            "zone": "S1-SA11"
+          },
+          "heading_deg": 0
+        },
+        {
+          "id": "s1-sa3",
+          "name": "SA-3 site",
+          "system": "sa3",
+          "loc": {
+            "zone": "S1-SA3"
+          },
+          "heading_deg": 0
+        },
+        {
+          "id": "s1-sa6",
+          "name": "SA-6 battery",
+          "system": "sa6",
+          "loc": {
+            "zone": "S1-SA6"
+          },
+          "heading_deg": 0
+        },
+        {
+          "id": "s1-shorad",
+          "name": "Pantsir point defence",
+          "system": "pantsir",
+          "loc": {
+            "zone": "S1-SHORAD"
+          },
+          "heading_deg": 0
+        }
+      ]
+    },
+    {
+      "id": "s11-iads",
+      "name": "S-11 Kursavka IADS",
+      "side": "blue",
+      "country": "CJTF Blue",
+      "emcon": "iads",
+      "harm_defence_s": 45,
+      "weapons_free": true,
+      "respawn_s": 900,
+      "engage_within": {
+        "loc": {
+          "lat": 44.55,
+          "lon": 42.48
+        },
+        "radius_nm": 25.2
+      },
+      "sites": [
+        {
+          "id": "s11-ewr",
+          "name": "Kursavka EWR",
+          "system": "ewr_fps117",
+          "loc": {
+            "zone": "S11-EWR"
+          },
+          "heading_deg": 180
+        },
+        {
+          "id": "s11-patriot",
+          "name": "Patriot battery",
+          "system": "patriot",
+          "loc": {
+            "zone": "S11-PATRIOT"
+          },
+          "heading_deg": 180
+        },
+        {
+          "id": "s11-hawk",
+          "name": "Hawk battery",
+          "system": "hawk",
+          "loc": {
+            "zone": "S11-HAWK"
+          },
+          "heading_deg": 180
+        },
+        {
+          "id": "s11-nasams",
+          "name": "NASAMS battery",
+          "system": "nasams",
+          "loc": {
+            "zone": "S11-NASAMS"
+          },
+          "heading_deg": 180
+        },
+        {
+          "id": "s11-irist",
+          "name": "IRIS-T SLM battery",
+          "system": "iris_t",
+          "loc": {
+            "zone": "S11-IRIST"
+          },
+          "heading_deg": 180
+        },
+        {
+          "id": "s11-roland",
+          "name": "Roland section",
+          "system": "roland",
+          "loc": {
+            "zone": "S11-ROLAND"
+          },
+          "heading_deg": 180
+        },
+        {
+          "id": "s11-shorad",
+          "name": "Gepard section",
+          "system": "gepard",
+          "loc": {
+            "zone": "S11-SHORAD"
+          },
+          "heading_deg": 180
+        }
+      ]
+    }
+  ],
+  "hot_zones": [
+    {
+      "id": "hz1",
+      "name": "HZ-1 Liakhvi",
+      "loc": {
+        "lat": 42.38,
+        "lon": 44.1
+      },
+      "radius_nm": 20.0,
+      "ai_side": "red",
+      "country": "CJTF Red",
+      "cap_types": [
+        "MiG-29S",
+        "Su-27",
+        "J-11A"
+      ],
+      "cap_flights": 2,
+      "flight_size": 2,
+      "cap_skill": "Good",
+      "cap_weapons": "fox3",
+      "cap_respawn_s": 300,
+      "cap_alt_ft": 22000,
+      "idle_despawn_s": 600,
+      "ground": [
+        {
+          "id": "hz1-t1",
+          "name": "Armour at Kareli",
+          "loc": {
+            "zone": "HZ1-T1"
+          },
+          "composition": "armor_modern",
+          "respawn_s": 600
+        },
+        {
+          "id": "hz1-t2",
+          "name": "Pantsir / Tor site",
+          "loc": {
+            "zone": "HZ1-T2"
+          },
+          "composition": "sam_modern",
+          "respawn_s": 600
+        },
+        {
+          "id": "hz1-t3",
+          "name": "Artillery battery",
+          "loc": {
+            "zone": "HZ1-T3"
+          },
+          "composition": "artillery",
+          "respawn_s": 600
+        },
+        {
+          "id": "hz1-t4",
+          "name": "SHORAD",
+          "loc": {
+            "zone": "HZ1-T4"
+          },
+          "composition": "shorad",
+          "respawn_s": 600
+        },
+        {
+          "id": "hz1-t5",
+          "name": "Command post",
+          "loc": {
+            "zone": "HZ1-T5"
+          },
+          "composition": "hq",
+          "respawn_s": 600
+        }
+      ],
+      "awacs": {
+        "typ": "E-3A",
+        "callsign": "Overlord",
+        "callsign_number": 1,
+        "loc": {
+          "lat": 41.75,
+          "lon": 42.9
+        },
+        "heading_deg": 90,
+        "leg_nm": 25,
+        "alt_ft": 30000,
+        "freq_mhz": 251.5
+      }
+    },
+    {
+      "id": "hz11",
+      "name": "HZ-11 Zelenchuk",
+      "loc": {
+        "lat": 43.95,
+        "lon": 41.75
+      },
+      "radius_nm": 20.0,
+      "ai_side": "blue",
+      "country": "CJTF Blue",
+      "cap_types": [
+        "F-16C_50",
+        "F-15C",
+        "FA-18C_hornet"
+      ],
+      "cap_flights": 2,
+      "flight_size": 2,
+      "cap_skill": "Good",
+      "cap_weapons": "fox3",
+      "cap_respawn_s": 300,
+      "cap_alt_ft": 22000,
+      "idle_despawn_s": 600,
+      "ground": [
+        {
+          "id": "hz11-t1",
+          "name": "Armour column",
+          "loc": {
+            "zone": "HZ11-T1"
+          },
+          "composition": "armor_modern",
+          "respawn_s": 600
+        },
+        {
+          "id": "hz11-t2",
+          "name": "IRIS-T site",
+          "loc": {
+            "zone": "HZ11-T2"
+          },
+          "composition": "sam_modern",
+          "respawn_s": 600
+        },
+        {
+          "id": "hz11-t3",
+          "name": "Artillery battery",
+          "loc": {
+            "zone": "HZ11-T3"
+          },
+          "composition": "artillery",
+          "respawn_s": 600
+        },
+        {
+          "id": "hz11-t4",
+          "name": "SHORAD",
+          "loc": {
+            "zone": "HZ11-T4"
+          },
+          "composition": "shorad",
+          "respawn_s": 600
+        },
+        {
+          "id": "hz11-t5",
+          "name": "Command post",
+          "loc": {
+            "zone": "HZ11-T5"
+          },
+          "composition": "hq",
+          "respawn_s": 600
+        }
+      ],
+      "awacs": {
+        "typ": "A-50",
+        "callsign": "Focus",
+        "callsign_number": 1,
+        "loc": {
+          "lat": 44.4,
+          "lon": 41.1
+        },
+        "heading_deg": 270,
+        "leg_nm": 25,
+        "alt_ft": 30000,
+        "freq_mhz": 124.5
+      }
+    }
+  ],
+  "jammers": [
+    {
+      "id": "ew1",
+      "name": "EW-1 Tsalka jammer",
+      "side": "red",
+      "country": "CJTF Red",
+      "loc": {
+        "zone": "EW1-JAMMER"
+      },
+      "gps": "jam",
+      "glonass": "jam",
+      "radio": "off",
+      "radius_nm": 12
+    },
+    {
+      "id": "ew11",
+      "name": "EW-11 Terek jammer",
+      "side": "blue",
+      "country": "CJTF Blue",
+      "loc": {
+        "zone": "EW11-JAMMER"
+      },
+      "gps": "jam",
+      "glonass": "jam",
+      "radio": "off",
+      "radius_nm": 12
+    }
+  ],
+  "low_level": [
+    {
+      "id": "ll1",
+      "name": "LL-1 Kolkheti",
+      "side": "blue",
+      "gates": [
+        {
+          "name": "ALPHA",
+          "loc": {
+            "zone": "LL1-G1"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "BRAVO",
+          "loc": {
+            "zone": "LL1-G2"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "CHARLIE",
+          "loc": {
+            "zone": "LL1-G3"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "DELTA",
+          "loc": {
+            "zone": "LL1-G4"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "ECHO",
+          "loc": {
+            "zone": "LL1-G5"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "FOXTROT",
+          "loc": {
+            "zone": "LL1-G6"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "GOLF",
+          "loc": {
+            "zone": "LL1-G7"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "HOTEL",
+          "loc": {
+            "zone": "LL1-G8"
+          },
+          "radius_m": 1000
+        }
+      ],
+      "max_agl_ft": 500,
+      "min_agl_ft": 100,
+      "speed_kts": 420,
+      "tot_tolerance_s": 15
+    },
+    {
+      "id": "ll11",
+      "name": "LL-11 Psekups",
+      "side": "red",
+      "gates": [
+        {
+          "name": "ALPHA",
+          "loc": {
+            "zone": "LL11-G1"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "BRAVO",
+          "loc": {
+            "zone": "LL11-G2"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "CHARLIE",
+          "loc": {
+            "zone": "LL11-G3"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "DELTA",
+          "loc": {
+            "zone": "LL11-G4"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "ECHO",
+          "loc": {
+            "zone": "LL11-G5"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "FOXTROT",
+          "loc": {
+            "zone": "LL11-G6"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "GOLF",
+          "loc": {
+            "zone": "LL11-G7"
+          },
+          "radius_m": 1000
+        },
+        {
+          "name": "HOTEL",
+          "loc": {
+            "zone": "LL11-G8"
+          },
+          "radius_m": 1000
+        }
+      ],
+      "max_agl_ft": 500,
+      "min_agl_ft": 100,
+      "speed_kts": 420,
+      "tot_tolerance_s": 15
+    }
+  ],
+  "pattern": {
+    "enabled": true,
+    "fields": [],
+    "glideslope_deg": 3.0,
+    "aim_point_m": 300
+  },
+  "csar": {
+    "beacon_file": "l10n/DEFAULT/csar_beacon.wav",
+    "areas": [
+      {
+        "id": "cs1",
+        "name": "CS-1 Bakhmaro",
+        "side": "blue",
+        "loc": {
+          "lat": 41.83,
+          "lon": 42.4
+        },
+        "radius_m": 14250.0,
+        "beacon_khz": 350
+      },
+      {
+        "id": "cs11",
+        "name": "CS-11 Chegem",
+        "side": "red",
+        "loc": {
+          "lat": 43.44,
+          "lon": 43.34
+        },
+        "radius_m": 12350.0,
+        "beacon_khz": 400
+      }
+    ]
+  },
+  "ship_decks": [
+    {
+      "id": "fd1-perry",
+      "name": "FFG-7 Perry",
+      "typ": "PERRY",
+      "side": "blue",
+      "country": "CJTF Blue",
+      "loc": {
+        "lat": 42.0,
+        "lon": 41.453
+      },
+      "heading_deg": 90,
+      "speed_kts": 10,
+      "leg_nm": 4,
+      "perfect_m": 1.5,
+      "tacan": {
+        "channel": 41,
+        "band": "X",
+        "morse": "FFG"
+      }
+    },
+    {
+      "id": "fd1-burke",
+      "name": "DDG Arleigh Burke",
+      "typ": "USS_Arleigh_Burke_IIa",
+      "side": "blue",
+      "country": "CJTF Blue",
+      "loc": {
+        "lat": 41.965,
+        "lon": 41.587
+      },
+      "heading_deg": 270,
+      "speed_kts": 14,
+      "leg_nm": 4,
+      "perfect_m": 1.5,
+      "tacan": {
+        "channel": 42,
+        "band": "X",
+        "morse": "DDG"
+      }
+    },
+    {
+      "id": "fd11-neustrash",
+      "name": "Neustrashimy",
+      "typ": "NEUSTRASH",
+      "side": "red",
+      "country": "CJTF Red",
+      "loc": {
+        "lat": 44.52,
+        "lon": 37.36
+      },
+      "heading_deg": 90,
+      "speed_kts": 10,
+      "leg_nm": 4,
+      "perfect_m": 1.5,
+      "tacan": {
+        "channel": 43,
+        "band": "X",
+        "morse": "NEU"
+      }
+    },
+    {
+      "id": "fd11-p22160",
+      "name": "Project 22160 corvette",
+      "typ": "CHAP_Project22160",
+      "side": "red",
+      "country": "CJTF Red",
+      "loc": {
+        "lat": 44.485,
+        "lon": 37.5
+      },
+      "heading_deg": 270,
+      "speed_kts": 12,
+      "leg_nm": 4,
+      "perfect_m": 1.5,
+      "tacan": {
+        "channel": 44,
+        "band": "X",
+        "morse": "PRJ"
+      }
+    }
+  ],
+  "spawn": {
+    "max_active_per_player": 3,
+    "max_ai_units": 60,
+    "cooldown_s": 20,
+    "despawn_after_s": 3600,
+    "despawn_on_leave": true,
+    "instructor_only": [
+      "sam_site",
+      "naval_group"
+    ],
+    "instructors": []
+  },
+  "in_game_results": true,
+  "message_s": 20,
+  "record_tracks": true
+}

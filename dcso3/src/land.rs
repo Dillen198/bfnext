@@ -62,6 +62,19 @@ impl<'lua> Land<'lua> {
             .call_function("getIP", (origin, direction, distance))?)
     }
 
+    /// `land.getIP`, but `None` when the ray does not reach the ground within
+    /// `distance` (DCS returns nil, which `get_ip` reports as an error).
+    pub fn get_ip_opt(
+        &self,
+        origin: LuaVec3,
+        direction: LuaVec3,
+        distance: f64,
+    ) -> Result<Option<LuaVec3>> {
+        Ok(self
+            .t
+            .call_function("getIP", (origin, direction, distance))?)
+    }
+
     pub fn get_profile(&self, origin: LuaVec3, destination: LuaVec3) -> Result<Sequence<'lua, LuaVec3>> {
         Ok(self.t.call_function("profile", (origin, destination))?)
     }

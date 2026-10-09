@@ -1,0 +1,99 @@
+# Builds Fowl Engine Manager on a Windows runner and publishes the signed
+# installer as GitHub release manager-v<version> (bfmanager/release.ps1).
+# Installed copies update themselves from it.
+#
+# Needs the secret TAURI_SIGNING_PRIVATE_KEY = the contents of
+# %USERPROFILE%\.tauri\fowl-manager.key from the PC that made the key (the
+# public half is bfmanager/src-tauri/updater.pub), and, if that key has a
+# password (it should), FOWL_SIGNING_PASSWORD. Put both on the
+# `manager-release` environment (Settings -> Environments) with required
+# reviewers, not as plain repo secrets. Manual only.
+#
+# The key and the GitHub token each exist in exactly one step: the build --
+# which runs npm and cargo build scripts from the checked-out tree -- sees
+# neither; the key file is deleted as soon as the signing step ends; and only
+# the publish step can write to the repo.
+name: Manager release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or manager-v* tag to build (vector, main or manager-v<version>)
+        default: vector
+      channel:
+        type: choice
+        options: [beta, stable]
+        default: beta
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    environment: manager-release
+    permissions:
+      contents: write
+    steps:
+      - name: Check the ref
+        shell: pwsh
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          # Only the release branches (or a manager tag) may be built and
+          # signed: an arbitrary branch could bring its own package-lock.json
+          # and with it its own `tauri signer`.
+          if ($env:REF -notmatch '^(vector|main|manager-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?)$') {
+            throw "ref '$($env:REF)' is not vector, main or a manager-v<version> tag"
+          }
+      # actions pinned to commit SHAs (the tag each one was, in the comment)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: bfmanager/src-tauri
+      - name: Install JS dependencies (no install scripts)
+        shell: pwsh
+        run: |
+          npm --prefix bfweb ci --no-audit --no-fund --ignore-scripts
+          if ($LASTEXITCODE) { throw "npm ci (bfweb) failed" }
+          npm --prefix bfmanager ci --no-audit --no-fund --ignore-scripts
+          if ($LASTEXITCODE) { throw "npm ci (bfmanager) failed" }
+      - name: Build (no secrets)
+        shell: pwsh
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+        run: ./bfmanager/release.ps1 -Channel $env:RELEASE_CHANNEL -Repo $env:GITHUB_REPOSITORY -DryRun -NoSign
+      - name: Sign
+        shell: pwsh
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          FOWL_SIGNING_PASSWORD: ${{ secrets.FOWL_SIGNING_PASSWORD }}
+        run: |
+          if (-not $env:SIGNING_KEY) { throw "set the TAURI_SIGNING_PRIVATE_KEY secret" }
+          $key = Join-Path $env:RUNNER_TEMP 'fowl-manager.key'
+          Set-Content -Path $key -Value $env:SIGNING_KEY -NoNewline
+          try {
+            ./bfmanager/release.ps1 -Channel $env:RELEASE_CHANNEL -Repo $env:GITHUB_REPOSITORY -DryRun -NoBuild -KeyPath $key
+          } finally {
+            Remove-Item $key -Force -ErrorAction SilentlyContinue
+          }
+      - name: Remove the signing key
+        if: always()
+        shell: pwsh
+        run: Remove-Item (Join-Path $env:RUNNER_TEMP 'fowl-manager.key') -Force -ErrorAction SilentlyContinue
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+        run: ./bfmanager/release.ps1 -Channel $env:RELEASE_CHANNEL -Repo $env:GITHUB_REPOSITORY -NoBuild -NoSign

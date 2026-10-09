@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" data-theme="range">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b1016" />
+    <meta name="description" content="Vector Strike training range: live range picture, greenie board, bombing and strafe scores, debriefs and range tools." />
+    <title>Vector Strike Range</title>
+    <script>
+      // apply the saved theme before first paint (see src/context/ThemeContext.tsx)
+      try { if (localStorage.getItem('range.theme') === 'light') document.documentElement.dataset.theme = 'range-light' } catch (e) {}
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- one family per link: an unknown family 400s the whole request -->
+    <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil:opsz,wght@10..72,600..800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

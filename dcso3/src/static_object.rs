@@ -78,6 +78,16 @@ impl<'lua> StaticObject<'lua> {
     pub fn get_desc(&self) -> Result<mlua::Table<'lua>> {
         Ok(self.t.call_method("getDesc", ())?)
     }
+
+    /// Mass of a cargo static, kg (sling loads and DCS dynamic cargo).
+    pub fn get_cargo_weight(&self) -> Result<f64> {
+        Ok(self.t.call_method("getCargoWeight", ())?)
+    }
+
+    /// What a cargo static carries, as DCS names it in the cargo menus.
+    pub fn get_cargo_display_name(&self) -> Result<String> {
+        Ok(self.t.call_method("getCargoDisplayName", ())?)
+    }
 }
 
 

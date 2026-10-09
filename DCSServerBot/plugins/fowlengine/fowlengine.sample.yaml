@@ -1,0 +1,747 @@
+# Fowl Engine DCSServerBot Plugin Configuration
+# Rename this file to `fowlengine.yaml` and place it in your DCSServerBot `config/plugins/` directory.
+
+DEFAULT:
+  # ---------------------------------------------
+  # Presentation Configuration
+  # ---------------------------------------------
+  # The brand name to show in Discord Embeds (e.g. "Vector Strike", "Desert Fury", "Fowl Engine").
+  brand_name: "Vector Strike"
+
+  # ---------------------------------------------
+  # Channel Configurations
+  # ---------------------------------------------
+  # SINGLE DCS SERVER: set them here in DEFAULT and you're done.
+  #
+  # SEVERAL DCS SERVERS behind one bfdb: put every channel below in that
+  # server's OWN per-server section instead (see the bottom of this file).
+  # Anything left in DEFAULT is inherited by EVERY server -- so both post
+  # their campaign status to the same channel and each overwrites the other's
+  # embed, which reads as the bot duplicating itself. The plugin logs a
+  # warning at startup for any of these that two servers share.
+  #
+  # Guild-wide and shared on purpose (always fine in DEFAULT):
+  #   welcome_channel  -- fires on a Discord join, not tied to a DCS server
+  #                       (welcome_server picks which one it describes)
+  #   ops_channel      -- bfdb relaunches / staged binary swaps; one bfdb
+  # The ID of the Discord channel where the live campaign status embed will be updated.
+  status_channel: 123456789012345678
+
+  # (Optional) The status embed carries a picture of the campaign map: the
+  # dashboard's public SITREP map (objectives + front line only, never the
+  # fog-of-war tacmap), opened at <status_map_url>/snapshot in headless
+  # Microsoft Edge (or Chrome) and screenshotted. Nothing to install on
+  # Windows. Re-captured when an objective changes owner / health band /
+  # contested state (at most every status_map_min_gap_secs), and refreshed
+  # every status_map_minutes regardless. Needs a bfdb built with the current
+  # bfweb (the /snapshot route); an older one just posts no picture.
+  # status_map: true                     # false turns the picture off
+  # status_map_url: "http://localhost:8880"  # default: api_url (bfdb serves bfweb)
+  # status_map_browser: 'C:\Program Files\Google\Chrome\Application\chrome.exe'  # default: Edge, then Chrome
+  # status_map_size: "1200x800"
+  # status_map_minutes: 10
+  # status_map_min_gap_secs: 120
+  
+  # The ID of the Discord channel where killstreak achievements (Ace, Unstoppable,
+  # God of War) will be announced. Detected by polling /api/kills every ~20s and
+  # tracking consecutive kills per pilot (resets when they die); no admin auth needed.
+  achievements_channel: 123456789012345678
+
+  # The ID of the Discord channel where objective captures, neutrals, and
+  # ready-to-capture alerts are sent. Detected by polling /api/objectives every
+  # ~20s and diffing owner/health against the previous poll; no admin auth needed.
+  alerts_channel: 123456789012345678
+
+  # (Optional) When true (the default), the bot auto-creates "Blue Ops" and
+  # "Red Ops" threads under alerts_channel and routes alerts by relevance:
+  # the defending faction gets a "defend it!" warning, the opposing faction
+  # gets an "opportunity!" alert, for the same ready-to-capture event.
+  # Captures post to both. Set to false to post everything to alerts_channel
+  # directly instead. Requires the bot to have "Create Public Threads" and
+  # "Send Messages in Threads" permission on alerts_channel.
+  use_faction_threads: true
+
+  # (Optional) The ID of the Discord channel where the live bflib engine log will be
+  # relayed in real time. A single message is continuously edited with a rolling tail,
+  # and ERROR/WARN lines are additionally posted as standalone alerts. Leave unset to
+  # disable the relay entirely. Requires admin_username/admin_password below.
+  engine_log_channel: 123456789012345678
+
+  # (Optional) The ID of the Discord channel where a live server performance/hardware
+  # embed will be posted and edited every 5 minutes: CPU/RAM/GPU/disk usage, temps,
+  # and the DCS mission script's own frame-time breakdown (from bfdb's
+  # /api/admin/perf). Leave unset to disable. Requires admin_username/admin_password
+  # below, and bfdb must be running on the same machine it's reporting on.
+  perf_channel: 123456789012345678
+
+  # (Optional) "Comms, Rules & Links" embed (auto-updated every ~2 min): the
+  # GCI frequencies, each side's PLANNED comms channels (cfg `comms_plan`),
+  # the campaign rules (lives, side lock, points) and the dashboard/wiki
+  # links -- only what DCSServerBot's own server-status embed doesn't already
+  # show (connect, slots, mission time, restart, weather, SRS and Tacview are
+  # all there). Comms and rules come from bfdb's public /api/wiki/facts, so
+  # the instance needs `engine_config` set; the live overlay (which AWACS is
+  # up, TACANs, laser codes) stays in the per-side briefing channels. Engine
+  # builds live on the perf embed and /feops versions.
+  server_info_channel: 123456789012345678
+  # (Optional) Adds a Wiki link to that embed.
+  # wiki_url: "https://wiki.your-domain.com"
+
+  # (Optional) The bot tails bfdb's /ws/gci and posts every GCI (AWACS) call
+  # here as text, prefixed with the Blue/Red coalition icon. Replaces
+  # gci.discord_webhook_url.
+  # Requires admin_username/admin_password (the ws is admin-gated).
+  gci_transcript_channel: 123456789012345678
+
+  # (Optional) The ID of the Discord channel where a mission-briefing welcome
+  # message is posted whenever someone joins the Discord server. Pulls the
+  # active scenario, round duration, and current front (objective counts per
+  # faction) from bfdb, same as the live status embed. Leave unset to disable.
+  welcome_channel: 123456789012345678
+
+  # (Optional) With several DCS servers behind one bfdb, which one the welcome
+  # briefing describes -- the DCS server name, matching an instance's
+  # `dcs_server_name` below. Unset -> bfdb's default instance.
+  # welcome_server: "[VS] Vector Strike - Vector Strike | Dynamic Campaign PVP Modern"
+
+  # (Optional) The line posted above the briefing embed. {mention} and
+  # {brand_name} are substituted, and {icon:<key>} becomes a Vector Strike
+  # icon (see the plugin README for the keys; plain emoji work too).
+  welcome_message: "Welcome aboard, {mention}! {icon:welcome}"
+
+  # (Optional) Freeform briefing text shown inside the welcome embed
+  # (rules pointer, how to pick a faction, useful commands, etc).
+  welcome_briefing: >-
+    Read the rules, pick your faction, and check the dashboard for your pilot
+    profile and the live map.
+
+    Use /vs dashboard for your secure web login, /vs objectives for the full
+    objective list, and /vs stats to track your kills and captures.
+
+  # ---------------------------------------------
+  # Web Dashboard Configurations
+  # ---------------------------------------------
+  # The base URL to your bfweb or custom Fowl Engine web dashboard.
+  dashboard_url: "https://bfweb.your-domain.com"
+  # (dashboard_secret is gone: the dashboard logs in with Discord only, and
+  # nothing ever accepted the "auto-login" tokens it used to sign.)
+
+  # ---------------------------------------------
+  # Fowl Engine DB (bfdb) Integration
+  # ---------------------------------------------
+  # The base URL to your Fowl Engine REST API (bfdb). ONE bfdb serves every
+  # DCS server on the box -- see the `bfdb.instances:` block below. The plugin
+  # tags each request with `?server=<this DCS server's name>` so bfdb answers
+  # for the right one, which is why every instance needs `dcs_server_name` set.
+  api_url: "http://localhost:8765"
+  # (Optional) Direct path to the mission's ODFv2_CFG json file.
+  # If specified, the bot will parse deployables directly from this file
+  # rather than querying the bfdb API over HTTP.
+  cfg_path: "C:\\path\\to\\your\\miz\\ODFv2_CFG"
+
+  # Admin username/password for bfdb's local-login (matches bfdb's own
+  # --admin-username/--admin-password startup flags). Required for the
+  # engine_log_channel relay above (since /ws/engine-logs is admin-only) and
+  # for the commander terminal / spawn_deployable commands (POST /api/commander/spawn
+  # is also admin-only -- these always fail without it).
+  admin_username: ""
+  admin_password: ""
+
+  # (Optional) Discord channel for ops notices: bfdb relaunched, a staged
+  # engine binary swapped in, etc. Falls back to alerts_channel if unset,
+  # otherwise silent.
+  ops_channel: 123456789012345678
+
+  # (Optional) Which DCSServerBot role group may stage engine binaries by
+  # dropping them into Discord (upload.py). A staged binary runs on this box
+  # at the next restart, so it defaults to the full "Admin" group, not
+  # "DCS Admin". Every staged file is posted to ops_channel with its sha256.
+  # binary_upload_role: Admin
+
+  # ---------------------------------------------
+  # bfdb + netidx process management  (replaces bfsystem.ps1)
+  # ---------------------------------------------
+  # When manage: true the plugin OWNS bfdb.exe and the netidx resolver as
+  # child processes of the bot: it renders gci.json from the `gci:` block
+  # below, builds bfdb's arg list from these keys, starts everything, health-
+  # checks bfdb (GET /api/health) and relaunches it on crash/hang, and swaps
+  # in a staged bfdb.exe on (re)start. bfsystem.ps1 is then only a manual
+  # fallback. Requires the bot to run on the same Windows machine as bfdb.
+  bfdb:
+    manage: true
+    exe: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\bfdb.exe"
+    # everything below (db, gci.json, staging, ...) lives under home:
+    home: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1"
+    staging_dir: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\_staging"
+    # Loopback by default: Caddy / the tunnel on this box publishes the
+    # dashboard and site. Only a setup that reaches bfdb from ANOTHER PC
+    # (a reverse proxy elsewhere on the LAN) needs 0.0.0.0 or a LAN address
+    # here -- then firewall the ports to that PC.
+    listen_address: "127.0.0.1:8880"
+    site_address: "127.0.0.1:8766"
+    netidx_base: "/local/fowl/campaign"          # blank -> run bfdb offline, no resolver
+    sortie: ""                                   # leave blank: bfdb asks the resolver where the engine publishes. NOT a display name -- that is `label`.
+    netidx_resolver_config: "E:\\Github\\bfnext-vector\\netidx-resolver.json"
+    own_resolver: false                          # true -> also stop the resolver on bot shutdown
+    engine_config: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\ODFv2_CFG"
+    config: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\campaign.json"
+    stats_jsonl: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats.jsonl"
+    stats_dir: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats"
+    log_file: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\bfdb.log"
+    intel_dir: ""                                # optional --intel-dir
+    admin_username: "admin"                      # -> bfdb --admin-username
+    admin_password: ""                           # -> bfdb --admin-password (falls back to the top-level admin_password)
+    cors_origins:
+      - "https://vectorstrike.org"
+      - "https://dashboard.vectorstrike.org"
+    discord_redirect_uri: "https://api.vectorstrike.org/api/auth/callback"
+    discord_guild_id: ""
+    discord_admin_role_id: ""
+    discord_client_id: ""                        # secret -- bfdb --discord-client-id
+    discord_client_secret: ""                    # secret
+    dcsserverbot_url: "http://127.0.0.1:9876/stats"   # must include the restapi.yaml `prefix`
+    dcsserverbot_api_key: ""                     # secret -- X-API-Key from restapi.yaml
+    health_failures: 3                           # failed checks before a relaunch
+    hung_relaunch_secs: 600                      # if the process is alive but not answering
+    restart_cooldown: 120                        # min seconds between relaunch attempts
+    # Stopping bfdb: Ctrl-Break first (bfdb flushes its DB and exits), then
+    # POST <shutdown_path> on its loopback listener, and only if both are
+    # ignored for stop_timeout_secs each, a hard kill.
+    stop_timeout_secs: 15
+    shutdown_path: "/api/admin/shutdown"
+    # news_llm_key is handed to bfdb in its environment (BFDB_NEWS_LLM_KEY),
+    # never on its command line.
+    #
+    # War diary PICTURES (bfdb/src/news_image.rs): one wire-photo style image
+    # per filed daily dispatch, shown on the dashboard's WAR NEWS panel / War
+    # Diary page and posted with the dispatch to news_channel. OFF until a
+    # provider is set. Only filed days are drawn (once each, never redrawn
+    # automatically), at most news_image_daily_per_instance calls per server
+    # and news_image_daily_global in all per UTC day, and a dispatch whose
+    # calls keep failing is given up on after 3 tries. Pilot names and
+    # callsigns are stripped from the story before it is sent. The key /
+    # token is handed to bfdb as BFDB_NEWS_IMAGE_KEY (never on argv), only
+    # ever sent as an Authorization header, and masked in every log line.
+    #
+    # FREE SETUP 1 -- Pollinations with your account key (simplest):
+    #   news_image_provider: pollinations
+    #   news_image_key: "sk_..."                 # secret -- your pollinations.ai secret key
+    #   Calls go to gen.pollinations.ai, spaced news_image_min_interval
+    #   seconds apart (default 3). news_image_model picks a model (default:
+    #   the service's own); a spent pollen budget is retried an hour later.
+    #
+    # FREE SETUP 2 -- Cloudflare Workers AI (10,000 neurons/day free; FLUX
+    # schnell is ~40 an image):
+    #   1. dash.cloudflare.com -> My Profile -> API Tokens -> Create Token ->
+    #      "Workers AI" template (or a custom token with Account > Workers AI
+    #      > Read + Edit).
+    #   2. Copy the Account ID (Workers AI -> "Use REST API", or the right-hand
+    #      column of the account overview).
+    #   3. Set:
+    #   news_image_provider: cloudflare
+    #   news_image_cf_account_id: "0123456789abcdef0123456789abcdef"
+    #   news_image_key: "..."                    # secret -- the API token
+    #   news_image_steps: 6                      # 1-8; more = sharper, more neurons
+    #   news_image_fallback: pollinations        # optional: if Cloudflare fails (quota
+    #                                            # spent included), try anonymous Pollinations
+    #                                            # once -- the token is never sent there
+    #
+    # FREE SETUP 3 -- Pollinations anonymous (no key at all, last resort):
+    #   news_image_provider: pollinations
+    #   The legacy anonymous host: one call per 15 s (enforced), pictures may
+    #   carry a Pollinations watermark, and it is no longer in their docs, so
+    #   it may stop answering.
+    #
+    # PAID -- any OpenAI-compatible images endpoint:
+    #   OpenAI    https://api.openai.com/v1/images/generations    gpt-image-1 | dall-e-3
+    #   Together  https://api.together.xyz/v1/images/generations  black-forest-labs/FLUX.1-schnell
+    # news_image_provider: openai
+    # news_image_url: "https://api.openai.com/v1/images/generations"
+    # news_image_key: ""                         # secret
+    # news_image_model: "gpt-image-1"
+    # news_image_size: "1024x1024"               # openai: the one size every model takes
+    # news_image_quality: "medium"               # gpt-image-1 only: low | medium | high (price)
+    #
+    # Any provider:
+    # news_image_style: ""                       # replaces the default war-photojournalism look; the
+    #                                            # no-text / no-real-people / no-flags / no-gore rules always apply
+    # news_image_daily_per_instance: 3
+    # news_image_daily_global: 8
+
+    # -------------------------------------------------------------------
+    # MULTIPLE DCS SERVERS ON ONE MACHINE
+    # -------------------------------------------------------------------
+    # Leave `instances:` out entirely to keep the single-server shape above
+    # (netidx_base / stats_jsonl / stats_dir / engine_config / sortie / srs_url
+    # describe the one and only server).
+    #
+    # List it, and those flat keys are IGNORED: every DCS server gets its own
+    # entry here instead, and procman renders <home>\instances.json plus one
+    # <home>\gci.<id>.json per instance and starts bfdb with --instances.
+    # bfdb then serves one dashboard, one site and one wiki off one database,
+    # with an instance selector in the dashboard header.
+    #
+    # Hard rules bfdb enforces at startup (it refuses to start otherwise):
+    #   * `netidx_base` must be unique per instance -- and must match the
+    #     `netidx_base` in THAT instance's engine CFG.
+    #   * `export_port` must be unique per instance -- and must match BF_PORT
+    #     (or Scripts/bf_export_port.lua) in that instance's Export.lua.
+    #   * `stats_jsonl` must be unique per instance.
+    # And each DCS instance needs its own SRS port, in nodes.yaml and in the
+    # `gci:` override below.
+    #
+    # `id` becomes part of the DB (rounds are tagged with it) and appears in
+    # dashboard URLs -- pick it once and never change it.
+    # `dcs_server_name` MUST equal the DCSServerBot server name, or this plugin
+    # cannot map a Discord command on that server to the right instance.
+    #
+    # instances:
+    #   - id: vs1
+    #     label: "Vector Strike #1"
+    #     dcs_server_name: "[VS] Vector Strike - Vector Strike | Dynamic Campaign PVP Modern"
+    #     netidx_base: "/local/fowl/vs1"
+    #     sortie: ""    # leave blank -- auto-detected. The campaign's display name is `label`.
+    #     stats_jsonl: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\Logs\stats.jsonl"
+    #     stats_dir:   "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\Logs\stats"
+    #     engine_config: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\ODFv2_CFG"
+    #     export_port: 42001
+    #     srs_url: "http://127.0.0.1:5002"
+    #     # This server's Tacview recordings: the dashboard's flight replay
+    #     # (REPLAY page + "Watch" in each pilot's Flight Log) is built from
+    #     # them. Must match tacviewExportPath of the Tacview extension in
+    #     # nodes.yaml. Unset = no replays for this server.
+    #     tacview_dir: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\Tacview"
+    #     gci:                     # merged OVER the top-level `gci:` block
+    #       srs_port: 5002
+    #     # War diary pictures (only with bfdb.news_image_url/key set). Unset,
+    #     # the setting is worked out from the scenario (RGW2008 -> the 2008
+    #     # Russo-Georgian war) and the theatre; style falls back to
+    #     # bfdb.news_image_style.
+    #     # news_image_setting: "a present-day war in Syria and the Levant"
+    #     # news_image_style: ""
+    #   - id: vs2
+    #     label: "Vector Strike #2"
+    #     dcs_server_name: "[VS] Vector Strike #2 | Training"
+    #     # public: false marks a test/staging server: hidden from the server
+    #     # selector for everyone but a dashboard admin, and its rounds are
+    #     # left out of the all-time leaderboard and pilot profiles. Omit (or
+    #     # true) for a real public server.
+    #     public: false
+    #     netidx_base: "/local/fowl/vs2"
+    #     sortie: ""
+    #     stats_jsonl: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_2\Logs\stats.jsonl"
+    #     stats_dir:   "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_2\Logs\stats"
+    #     engine_config: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_2\ODFv2_CFG"
+    #     export_port: 42002
+    #     srs_url: "http://127.0.0.1:5003"
+    #     gci:
+    #       srs_port: 5003
+    #       blue_freq_mhz: 253.0
+    #       red_freq_mhz: 254.0
+    #
+    #   # The TRAINING RANGE: a DCS server running bfrange.dll instead of
+    #   # bflib.dll (see deploy/range.md). `kind: range` makes bfdb ingest its
+    #   # graded results and leave it out of the campaign's totals, and makes
+    #   # this plugin skip every campaign-only feed/command for it and run the
+    #   # range feeds instead (range_status_channel / range_results_channel /
+    #   # greenie_channel in its per-server section below).
+    #   - id: range
+    #     label: "Vector Strike Training Range"
+    #     kind: range                    # campaign (default) | range
+    #     dcs_server_name: "[VS] Vector Strike | Training Range"
+    #     netidx_base: "/local/fowl/range"   # must match netidx_base in its _RANGE config
+    #     sortie: ""
+    #     # identity events (slot/connect/Discord links), same as a campaign
+    #     stats_jsonl: "C:\Users\ATPAdmin\Saved Games\DCS.range\Logs\stats.jsonl"
+    #     # graded results. Unset -> range.jsonl next to stats_jsonl (procman
+    #     # logs the path it picked); set it anyway so it's explicit.
+    #     range_jsonl: "C:\Users\ATPAdmin\Saved Games\DCS.range\Logs\range.jsonl"
+    #     # Tacview recordings, for the range site's "download Tacview" links
+    #     # (and the dashboard's flight replay, as for a campaign server).
+    #     # Must match tacviewExportPath of the Tacview extension in nodes.yaml.
+    #     tacview_dir: "C:\Users\ATPAdmin\Saved Games\DCS.range\Tacview"
+    #     export_port: 42004             # = Scripts/bf_export_port.lua on that server
+    #     srs_url: "C:\Users\ATPAdmin\Saved Games\DCS.range\Config\clients-list.json"
+    #     # Only when this DCS server runs on ANOTHER PC (deploy/range.md, "Range
+    #     # on a second PC"): that PC's own netidx resolver, as <LAN ip>:<port>.
+    #     # procman writes <home>/netidx.range.json from it and bfdb reaches this
+    #     # instance's engine through it; every other instance keeps the shared
+    #     # resolver. The paths above then become UNC paths to that PC's shares
+    #     # (\\192.168.1.60\FowlRangeLogs\stats.jsonl ...).
+    #     # netidx_resolver: "192.168.1.60:4564"
+    #     # netidx_config: "C:\fowl\netidx.range.json"   # or name a client.json yourself
+    #     public: true
+    #     # A range instance NEVER inherits `gci.enabled: true` from the shared
+    #     # block below -- GCI stays off unless you set it here. Spelled out
+    #     # anyway so nobody wonders.
+    #     gci:
+    #       enabled: false
+    #
+    # Which instance answers a request that names none (the dashboard's initial
+    # view). Defaults to the first entry.
+    # default_instance: vs1
+
+  # ---------------------------------------------
+  # Live GCI  (rendered to <bfdb.home>\gci.json on every bfdb (re)start)
+  # ---------------------------------------------
+  # Proactive AWACS-style SRS callouts. Keys map 1:1 to bfdb/src/gci.rs
+  # GciConfig (see gci.sample.json for what each does). Omit a key to take
+  # bfdb's default; empty strings are dropped. bfdb only reads gci.json at
+  # startup, so after editing these run /feops bfdb_restart (or wait for the
+  # next rotation). Set enabled: false to delete gci.json and run GCI off.
+  # With `bfdb.instances:` set, this block is the SHARED baseline and each
+  # instance's own `gci:` is merged over it -- so put piper/whisper paths,
+  # units, brevity toggles here once and only the per-server bits (srs_port,
+  # frequencies, callsigns, EAM passwords) in the instance overrides.
+  gci:
+    enabled: true
+    srs_host: "127.0.0.1"
+    srs_port: 5002
+    opus_dll_path: "C:\\Program Files\\DCS-SimpleRadio-Standalone\\opus.dll"
+    blue_freq_mhz: 251.0
+    red_freq_mhz: 252.0
+    modulation: "AM"
+    blue_controller_callsign: "Magic"
+    red_controller_callsign: "Overlord"
+    blue_eam_password: ""      # secret
+    red_eam_password: ""       # secret
+    units: "imperial"
+    reference: "braa"
+    sam_threat_calls: true
+    splash_calls: true
+    piper_exe: ""
+    whisper_exe: ""
+    whisper_model: ""
+    # discord_webhook_url: ""  # legacy -- prefer gci_transcript_channel above (bot-managed)
+
+  # ---------------------------------------------
+  # Staged engine binaries  (drag-and-drop, applied on the next DCS restart)
+  # ---------------------------------------------
+  # Drop `bflib.dll`, `bfrange.dll` or `bfdb.exe` into the bot's admin
+  # channel and it is staged, then swapped in (after a timestamped backup):
+  #   bfdb.exe    -> bfdb.staging_dir, applied by procman on the next bfdb restart
+  #   bflib.dll   -> the staging_dir of EVERY campaign server's BFBinaries
+  #   bfrange.dll -> the staging_dir of every range server's BFBinaries
+  #                  (dll_name: bfrange.dll)
+  # each applied by that server's BFBinaries extension on its own next DCS
+  # restart. Dropped into ONE server's own channel instead, it is staged for
+  # that server only. An instance whose BFBinaries has no staging_dir falls
+  # back to bfdb.staging_dir -- give each its own, or two servers race for one
+  # file. Control with /feops stage_status | stage_cancel | stage_apply, and
+  # swap bfdb by hand with /feops bfdb_restart. BFBinaries is configured in
+  # nodes.yaml (dll_name / dll_path / staging_dir), NOT here.
+
+  # ---------------------------------------------
+  # Automatic engine updates  (autoupdate.py -- see deploy/auto-update.md)
+  # ---------------------------------------------
+  # Looks for new `engine-*` releases (published by deploy/publish-release.ps1
+  # or the "Engine release" GitHub Action), checks the release's signed
+  # manifest against `public_key`, verifies every file's sha256 and
+  # stages it exactly like a Discord drag-and-drop upload. Every swapped-in
+  # engine -- automatic OR hand-uploaded -- then goes on probation and is
+  # rolled back by itself if DCS crashes on it, the mission never loads it, or
+  # (bfdb) it dies / never answers; a rolled-back release is never staged
+  # again. The switches marked (OPS) can also be flipped on the dashboard's
+  # OPS page, which then overrides this block.
+  autoupdate:
+    enabled: false                 # (OPS) check for + stage new releases
+    # REQUIRED: the ENGINE release signing key's public half (the "RW..."
+    # line of %USERPROFILE%\.tauri\fowl-engine.key.pub, or the whole .pub
+    # file's contents). Every release's manifest.json.sig must verify against
+    # it; without it nothing is ever staged. See deploy/auto-update.md,
+    # "Signing releases". Not the Fowl Engine Manager key -- a separate one.
+    public_key: ""
+    source: github                 # github | folder
+    repo: "Dillen198/bfnext"
+    token: ""                      # optional: a private repo, or to lift the 60/h API limit
+    # folder: "\\\\buildpc\\fowl-releases"   # source: folder -> a dir of <tag>\manifest.json
+    tag_prefix: "engine-"
+    channel: stable                # (OPS) stable | beta (beta also takes GitHub pre-releases)
+    check_minutes: 15              # (OPS)
+    files: [bflib.dll, bfrange.dll, bfdb.exe, bftools.exe]
+    # When a staged build goes live:
+    #   next_restart  at the next scheduled DCS restart (what a manual upload does)
+    #   when_idle     as soon as that DCS server has had no players for idle_minutes
+    #   immediately   right away -- restarts a populated DCS server!
+    apply: when_idle               # (OPS) engine DLLs (need a full DCS restart)
+    bfdb_apply: when_idle          # (OPS) bfdb.exe (players stay connected; GCI/dashboard blip)
+    idle_minutes: 10               # (OPS)
+    apply_window: ""               # (OPS) e.g. "03:00-08:00" local time; blank = any time
+    probation_minutes: 10          # stable this long after loading = passed
+    load_timeout_minutes: 15       # DLL never loaded by the mission after this long running -> roll back
+    bfdb_unhealthy_minutes: 15     # new bfdb never answered /api/health in this long -> roll back
+    rollback_on_crash: true        # (OPS)
+    db_snapshots_keep: 3           # bfdb DB copies taken before each bfdb update
+    bot_plugin: false              # also update THIS plugin from fowlengine-bot.zip
+                                   # (refused when the plugin is a git checkout / symlink, or
+                                   # when the plugin installed now is newer -- both this and
+                                   # Fowl Engine Manager's sync read plugins/fowlengine/
+                                   # .fowl-plugin.json and never downgrade;
+                                   # YAML only -- the OPS page can't turn it on)
+    # Campaign packs: a release built with `publish-release.ps1 -Campaigns campaigns.json`
+    # carries campaign-<key>.zip per server -- its <sortie>_CFG + mission file(s). With
+    # this on, the pack for a server on THIS box is staged, then written when that DCS
+    # server next starts (BFBinaries, like a DLL -- so the instance needs BFBinaries in
+    # nodes.yaml), after a timestamped backup; it is then on probation, and a crash, a
+    # cfg the engine refuses or a mission that never comes up restores the backup (that
+    # release is never applied to the server again). <key> is the server's bfdb.instances
+    # `id` (vs1), or its DCSServerBot instance name (DCS.vectorstrike_1) on a box without
+    # instances. A cfg or mission EDITED ON THE SERVER since the last update is never
+    # overwritten: the pack is HELD until you answer on the OPS page (Campaign packs:
+    # Apply / Keep server's) or with /feops campaign_apply | campaign_keep.
+    campaigns: false               # YAML only, like bot_plugin
+    campaign_backups_keep: 5       # per server, in <instance home>\_fowl_campaign_backups
+
+  # ---------------------------------------------
+  # Log analyzer + persistent log archive  (loganalyzer.py)
+  # ---------------------------------------------
+  # Reads every log (engine bfnext.txt / bfrange.txt, DCS dcs.log script
+  # errors + crashes + crash dumps, bfdb, this bot) as it grows, groups
+  # WARN/ERROR lines into distinct fingerprinted issues (dashboard OPS page,
+  # ops_channel notice per new error, and GET <bfdb>/api/logs/issues?token=...
+  # -- the report Claude reads), and appends everything it reads to a
+  # PERSISTENT archive so no log is lost when DCS/bfdb/the bot restart:
+  #   <bfdb.home>\_logarchive\<source>\<UTC date>.log(.gz)
+  issues:
+    enabled: true
+    scan_seconds: 60
+    min_level: WARN                # WARN | ERROR -- what counts as an issue
+    notify: true                   # post NEW issues to ops_channel...
+    notify_min_level: ERROR        # ...at this level and up (crashes/panics always count)
+    include_dcs_log: true
+    ignore: []                     # regexes; a matching line never becomes an issue
+    extra_files: []                # [{name: srs, path: "C:\\...\\server.log"}]
+    archive: true
+    archive_dir: ""                # default <bfdb.home>\_logarchive
+    archive_days: 90               # 0 = keep forever
+    github:                        # optional: one GitHub issue per new recurring ERROR
+      repo: ""                     # use a PRIVATE repo -- samples can carry player names
+      token: ""                    # fine-grained token with Issues: read/write on that repo
+      min_count: 3
+      labels: [auto-report]
+
+  # ---------------------------------------------
+  # OPS API  (opsapi.py -- the dashboard's OPS page, reached through bfdb)
+  # ---------------------------------------------
+  # Routes are added to DCSServerBot's WebService at
+  # <path of bfdb.dcsserverbot_url>/fowlengine/ops/* and require X-API-Key =
+  # ops_api.api_key. They are plain HTTP: keep the WebService on loopback
+  # (config/services/webservice.yaml -> DEFAULT: listen: 127.0.0.1), which is
+  # where bfdb and Fowl Engine Manager call it from.
+  # Without api_key the RestAPI key (bfdb.dcsserverbot_api_key) is still
+  # accepted, with a deprecation warning in the bot log. procman hands
+  # api_key to bfdb (BFDB_OPS_API_KEY) so the dashboard's OPS page keeps
+  # working with a separate key. Generate one with:
+  #   python -c "import secrets; print(secrets.token_urlsafe(32))"
+  # The OPS page's config editor can't change keys that name a program, a
+  # path, a URL or an update source -- edit those here on the box.
+  ops_api:
+    enabled: true
+    service_name: DCSServerBot     # the Windows service install-service.ps1 created
+    # prefix: "/stats"             # override when bfdb.dcsserverbot_url's path differs
+    # api_key: ""                  # its own long random value (see above)
+
+  # ---------------------------------------------
+  # Training range site
+  # ---------------------------------------------
+  # Where /range me, the range status embed and the results feed link to.
+  # range_site_url: "https://range.vectorstrike.org"
+
+  # ---------------------------------------------
+  # Per-coalition briefing channels
+  # ---------------------------------------------
+  # Two channels per DCS server, one per coalition. Each holds a SINGLE embed
+  # that the bot edits in place every few minutes, built from bfdb's
+  # GET /api/situation -- the same auto-generated situation report that backs
+  # the in-game F10 -> Info -> Situation pages, the dashboard BRIEFING page and
+  # the kneeboard PDF. So a pilot reads one story wherever they look.
+  #
+  # WHY A PLAYER CANNOT CHEAT THEIR WAY INTO THE OTHER SIDE'S CHANNEL:
+  #   1. The report is built BY THE ENGINE for one side and only contains what
+  #      that side has earned -- threat rings from its own recon/ELINT, air
+  #      tracks from its own radar net. The bot never merges the two.
+  #   2. Who can read each channel is a Discord permission, set from the
+  #      coalition role below (apply it with /feops briefing_lock).
+  #   3. That role is a MIRROR of the side the engine registered -- first slot
+  #      pick, or a `-switch`. `coalition_roles` below never writes a side back
+  #      into the game; it only reflects one out. So the only way to hold the
+  #      Red role is to actually be flying Red, and changing it costs a side
+  #      switch in game like it always did.
+  #
+  # These are per-DCS-server (each instance has its own front line), so with
+  # several servers put them in the per-server sections at the bottom of this
+  # file, not here in DEFAULT. Requires admin_username/admin_password above --
+  # /api/situation is coalition-locked and will not answer without them.
+  blue_briefing_channel: 123456789012345678
+  red_briefing_channel: 123456789012345678
+
+  # ---------------------------------------------
+  # War diary feed
+  # ---------------------------------------------
+  # (Optional) Each newly FILED daily dispatch of the war diary (bfdb's
+  # /api/news -- a day is filed a little after 00:00 UTC) is posted here once:
+  # headline, the dispatch, a "Read more" link to <dashboard_url>/news, and
+  # the day's picture attached when bfdb draws them (bfdb.news_image_*).
+  # A picture still being drawn is waited for up to 10 minutes, then the
+  # dispatch goes out without one (and is not edited later -- the dashboard
+  # still shows it). Posted ids are kept in the plugin state file, so a bot
+  # restart never reposts; switching this on posts the latest dispatch only,
+  # no backfill. Public data -- no admin login needed. Per server: put it in
+  # the per-server sections with several servers. Unset = off.
+  # news_channel: 123456789012345678
+
+  # ---------------------------------------------
+  # Coalition roles, mirrored from the engine
+  # ---------------------------------------------
+  # Every ~5 minutes the bot reads bfdb's /api/admin/pilot-sides (the engine's
+  # own registrations for this instance) and makes the Discord roles agree:
+  # grant the matching side's role, remove the other one. Someone with no
+  # registration this campaign ends up with NEITHER role -- so a new player
+  # sees the public channels and has to take a slot in game before any briefing
+  # channel opens to them.
+  #
+  # Set `blue`/`red` to a role ID (preferred -- survives a rename) or the EXACT
+  # role name. The bot needs "Manage Roles", and its own highest role must sit
+  # ABOVE both coalition roles in the guild's role list or Discord refuses.
+  #
+  # With several DCS servers, give EACH ONE ITS OWN PAIR of roles. A pilot can
+  # legitimately be Blue on one server and Red on another; sharing one pair
+  # between servers makes the two syncs fight and the role flip every few
+  # minutes. The plugin logs a warning at startup if it spots this.
+  coalition_roles:
+    manage: true
+    blue: 123456789012345678      # role id, or "Blue Coalition"
+    red: 123456789012345678       # role id, or "Red Coalition"
+    # Optional: this server's Commander role. Given to the pilots who command
+    # here -- earned by rank (the engine config's command.commander_rank) or
+    # granted by an admin on the dashboard or with /fe_commander -- and taken
+    # away when they no longer do. Which side they command is what the
+    # blue/red role above says, and that follows a side switch.
+    #
+    # Give EACH SERVER ITS OWN role ("VS1 Commander", "VS2 Commander"), like
+    # the blue/red pair, so a role says where someone commands. (Putting one
+    # role in every section instead makes a single Discord-wide Commander role
+    # that a pilot keeps while any server backs them.) Leave out to not
+    # manage it.
+    commander: 123456789012345678        # role id, or "VS1 Commander"
+    # Take the role away from anyone the engine does not back -- someone who
+    # never registered, or who was handed the role by hand. Leave this ON: it
+    # is the half that actually closes the hole, since otherwise a stray role
+    # is a permanent key to that side's intel.
+    revoke_when_unregistered: true
+
+  # ---------------------------------------------
+  # Localization & Message Formats
+  # ---------------------------------------------
+  # Customize the text used by the bot when posting alerts and achievements.
+  # {icon:<key>} is replaced by that Vector Strike icon (its custom emoji once
+  # /feops icons_install has run, its unicode stand-in before); plain emoji
+  # typed here are left as they are.
+  messages:
+    capture: "{icon:captured} **[CAPTURED]** {message}"
+    neutral: "{icon:neutralised} **[NEUTRAL]** {message}"
+    ready_to_capture: "{icon:pending} **[READY TO CAPTURE]** {message}"
+    capture_opportunity: "{icon:target} **[OPPORTUNITY]** {message}"
+    achievement: "{icon:achievement} **[ACHIEVEMENT]** {message}"
+    alert: "{icon:alert} **[ALERT]** {message}"
+    
+  # ---------------------------------------------
+  # Discord Role Syncing
+  # ---------------------------------------------
+  # Automatically assigns Discord roles based on a pilot's total in-game score/points.
+  # Map your EXACT Discord role names to the minimum point threshold required.
+  rank_thresholds:
+    "Pilot Officer": 0
+    "Flight Lieutenant": 500
+    "Squadron Leader": 2000
+    "Wing Commander": 5000
+    "Group Captain": 10000
+
+# ===================================================================
+# Per-DCS-server overrides.  These merge over DEFAULT above.
+# Key each section by the DCSServerBot server name (config/servers.yaml).
+# Stock DCSServerBot keys plugin sections by INSTANCE name (nodes.yaml, e.g.
+# `DCS.vectorstrike_1:`) instead; this plugin accepts either, and an
+# instance-keyed section wins if both exist for one server.
+# ===================================================================
+#
+# With several instances, give EACH server its own channels here and leave
+# them out of DEFAULT entirely. An unset key then simply means "this server
+# doesn't post that feed", instead of silently falling back to another
+# server's channel.
+#
+# '[VS] Vector Strike #1':
+#   # Deployables for the commander terminal, from THIS server's CFG.
+#   cfg_path: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\ODFv2_CFG"
+#   bfbinaries:
+#     bflib_dll_path: 'C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\Scripts\bflib.dll'
+#   status_channel: 100000000000000001
+#   alerts_channel: 100000000000000002
+#   achievements_channel: 100000000000000003
+#   engine_log_channel: 100000000000000004
+#   perf_channel: 100000000000000005
+#   gci_transcript_channel: 100000000000000006
+#   server_info_channel: 100000000000000007
+#   # Coalition briefings -- ALWAYS per server, never in DEFAULT.
+#   blue_briefing_channel: 100000000000000008
+#   red_briefing_channel: 100000000000000009
+#   news_channel: 100000000000000012          # the war diary, one post per filed day
+#   coalition_roles:
+#     manage: true
+#     blue: 100000000000000010      # this server's OWN Blue role
+#     red: 100000000000000011       # this server's OWN Red role
+#     revoke_when_unregistered: true
+#
+# '[VS] Vector Strike #2 | Training':
+#   cfg_path: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_2\\ODFv2_CFG"
+#   bfbinaries:
+#     bflib_dll_path: 'C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_2\Scripts\bflib.dll'
+#   # Its own channels -- never reuse another server's.
+#   status_channel: 200000000000000001
+#   alerts_channel: 200000000000000002
+#   achievements_channel: 200000000000000003
+#   # null (or omitted) = this server doesn't post that feed at all.
+#   engine_log_channel: null
+#   perf_channel: null
+#   gci_transcript_channel: null
+#   server_info_channel: null
+#   blue_briefing_channel: 200000000000000008
+#   red_briefing_channel: 200000000000000009
+#   coalition_roles:
+#     manage: true
+#     # A DIFFERENT pair to server #1's -- a pilot may be Blue here and Red
+#     # there, and one shared pair would make the two syncs flip the role.
+#     blue: 200000000000000010
+#     red: 200000000000000011
+#
+# '[VS] Vector Strike | Training Range':
+#   # The kind: range instance above. The plugin skips every campaign feed and
+#   # command for it (Campaign Status, objective alerts, kill streaks,
+#   # briefings, coalition roles, GCI transcript, rank sync, /fe_objective,
+#   # /fe_terminal, /fe_briefing) whatever is set here -- the nulls just keep
+#   # DEFAULT from leaking a campaign channel onto it.
+#   status_channel: null
+#   alerts_channel: null
+#   achievements_channel: null
+#   gci_transcript_channel: null
+#   blue_briefing_channel: null
+#   red_briefing_channel: null
+#   coalition_roles: null
+#   engine_log_channel: null         # works for bfrange too, if you want it
+#   perf_channel: null
+#   server_info_channel: null        # connect string / DCS status, if you want it
+#   # One live embed, edited every 2 min: tankers on station (callsign, type,
+#   # TACAN, freq, altitude), carriers (BRC/FB, wind over deck, recovery
+#   # window, TACAN/ICLS), stations hot/cold, who is flying. /api/range/live.
+#   range_status_channel: 300000000000000001
+#   # Every graded result as bfdb's embed, with the debrief card attached.
+#   # Polled every 15 s; at most 10 posts per poll, the rest of a catch-up
+#   # (e.g. after the bot was down) collapses into one summary line.
+#   range_results_channel: 300000000000000002
+#   # Optional: only these result kinds go to range_results_channel.
+#   # bomb, strafe, trap, aar, missile, engagement, anti_ship, sling,
+#   # landing, troops, gunnery, cas. Omit for all of them.
+#   # range_results_kinds: [bomb, strafe, trap, aar]
+#   # Optional: carrier passes (traps) only, e.g. a #greenie-board channel.
+#   # Gets every trap whatever range_results_kinds says.
+#   greenie_channel: 300000000000000003

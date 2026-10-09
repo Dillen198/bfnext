@@ -1,0 +1,223 @@
+{
+  "name": "Falklands",
+  "center": [
+    -51.94983303664336,
+    -67.52615359840988
+  ],
+  "airports": [
+    {
+      "name": "Port Stanley",
+      "position": [
+        -51.68591194006994,
+        -57.77784098499985
+      ],
+      "heli": false
+    },
+    {
+      "name": "Mount Pleasant",
+      "position": [
+        -51.82067864644009,
+        -58.4577368399724
+      ],
+      "heli": false
+    },
+    {
+      "name": "San Carlos FOB",
+      "position": [
+        -51.501282923777715,
+        -59.00490403256474
+      ],
+      "heli": false
+    },
+    {
+      "name": "Rio Gallegos",
+      "position": [
+        -51.60885083631008,
+        -69.31226004331357
+      ],
+      "heli": false
+    },
+    {
+      "name": "Rio Grande",
+      "position": [
+        -53.777598496615255,
+        -67.74988138105482
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ushuaia",
+      "position": [
+        -54.843307990517935,
+        -68.2958468772112
+      ],
+      "heli": false
+    },
+    {
+      "name": "Ushuaia Helo Port",
+      "position": [
+        -54.82282376731659,
+        -68.30419004926847
+      ],
+      "heli": false
+    },
+    {
+      "name": "Punta Arenas",
+      "position": [
+        -53.00553433967422,
+        -70.85691680322564
+      ],
+      "heli": false
+    },
+    {
+      "name": "Pampa Guanaco",
+      "position": [
+        -54.049978835616905,
+        -68.80899839214395
+      ],
+      "heli": false
+    },
+    {
+      "name": "San Julian",
+      "position": [
+        -49.306694332777695,
+        -67.80272601527427
+      ],
+      "heli": false
+    },
+    {
+      "name": "Puerto Williams",
+      "position": [
+        -54.93099060993968,
+        -67.6262190840948
+      ],
+      "heli": false
+    },
+    {
+      "name": "Puerto Natales",
+      "position": [
+        -51.67070792460088,
+        -72.52819099479166
+      ],
+      "heli": false
+    },
+    {
+      "name": "El Calafate",
+      "position": [
+        -50.280243625504184,
+        -72.05274907347015
+      ],
+      "heli": false
+    },
+    {
+      "name": "Puerto Santa Cruz",
+      "position": [
+        -50.01702973505466,
+        -68.57908478851425
+      ],
+      "heli": false
+    },
+    {
+      "name": "Comandante Luis Piedrabuena",
+      "position": [
+        -49.99498424373885,
+        -68.9514480737075
+      ],
+      "heli": false
+    },
+    {
+      "name": "Tolhuin",
+      "position": [
+        -54.499616473058076,
+        -67.1723847837187
+      ],
+      "heli": false
+    },
+    {
+      "name": "Porvenir",
+      "position": [
+        -53.25368729798041,
+        -70.31930084373616
+      ],
+      "heli": false
+    },
+    {
+      "name": "Almirante Schroeders",
+      "position": [
+        -53.60692971624633,
+        -70.47620620196297
+      ],
+      "heli": false
+    },
+    {
+      "name": "Rio Turbio",
+      "position": [
+        -51.60505490774901,
+        -72.21982276875181
+      ],
+      "heli": false
+    },
+    {
+      "name": "Rio Chico",
+      "position": [
+        -51.66904702645627,
+        -69.26606651301357
+      ],
+      "heli": false
+    },
+    {
+      "name": "Franco Bianco",
+      "position": [
+        -52.73658601595915,
+        -69.33378930283207
+      ],
+      "heli": false
+    },
+    {
+      "name": "Goose Green",
+      "position": [
+        -51.81981504040619,
+        -58.98016443593687
+      ],
+      "heli": false
+    },
+    {
+      "name": "Hipico Flying Club",
+      "position": [
+        -48.75673603331817,
+        -70.23127975261418
+      ],
+      "heli": false
+    },
+    {
+      "name": "Gobernador Gregores",
+      "position": [
+        -48.78316888605037,
+        -70.14797234423916
+      ],
+      "heli": false
+    },
+    {
+      "name": "O'Higgins",
+      "position": [
+        -48.46900550842548,
+        -72.56332889903739
+      ],
+      "heli": false
+    },
+    {
+      "name": "Gull Point",
+      "position": [
+        -52.17939379912321,
+        -58.860684279207
+      ],
+      "heli": false
+    }
+  ],
+  "projection": {
+    "centralMeridian": -57,
+    "falseEasting": 147639.99999997593,
+    "falseNorthing": 5815417.000000032,
+    "scaleFactor": 0.9996
+  }
+}

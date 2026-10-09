@@ -1,0 +1,376 @@
+// Low-poly models for the 3D theatre, one per recognisable family, so an F-15
+// reads differently from an F-16, an AWACS has its dish and a Chinook has two
+// rotors. Built from primitives (no model files to license or load). Every
+// model faces +Y (north), Z up, origin at the centre of mass, sized in metres.
+
+import * as THREE from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import type { Kind } from './data'
+
+export type Family =
+  | 'fighter' | 'twinfighter' | 'delta' | 'attack' | 'heavy' | 'bomber' | 'awacs' | 'drone'
+  | 'helo' | 'attackhelo' | 'tandemhelo'
+  | 'missile' | 'bomb'
+  | 'sam' | 'radar' | 'armor' | 'vehicle' | 'infantry' | 'static' | 'ship' | 'carrier'
+
+const RULES: [RegExp, Family][] = [
+  [/E-3|A-50|E-2|KJ-2000|AWACS/i, 'awacs'],
+  [/MQ-9|MQ-1|RQ-|WingLoong|Reaper|Predator|Bayraktar|TB2|Orion|Heron|drone/i, 'drone'],
+  [/B-52|B-1|Tu-22|Tu-95|Tu-142|Tu-160|H-6/i, 'bomber'],
+  [/C-130|C-17|C-5|Il-76|Il-78|An-2[0-9]|An-30|An-12|Yak-40|KC-?135|KC-?10|KC130|A400|Boeing|Airbus|A320|A330|B7[0-9]7|CIV|Falcon|C-47|L-39C?$|Learjet/i, 'heavy'],
+  [/A-10|Su-25|Su-24|Tornado|Su-17|MiG-27|A-4|Harrier|AV8/i, 'attack'],
+  [/M-?2000|Mirage|Rafale|Typhoon|Eurofighter|J-10|JAS39|Gripen|AJS37|Viggen|J-?7|MiG-21|F-106|Kfir/i, 'delta'],
+  [/F-14|F-15|F-?A-18|F-18|Hornet|Su-2[7-9]|Su-3[0-5]|Su-57|MiG-29|MiG-3[15]|J-11|J-15|F-22|F-35|F-4/i, 'twinfighter'],
+  [/CH-47|Chinook|CH-46/i, 'tandemhelo'],
+  [/AH-64|AH-1|Mi-28|Ka-50|Ka-52|Mi-24|Tiger|Apache|Cobra/i, 'attackhelo'],
+]
+
+/** The model family for a recorded object. */
+export function familyOf(kind: Kind, name?: string | null): Family {
+  const n = name ?? ''
+  switch (kind) {
+    case 'air':
+      for (const [re, f] of RULES) if (f !== 'tandemhelo' && f !== 'attackhelo' && re.test(n)) return f
+      return 'fighter'
+    case 'helo':
+      if (/CH-47|Chinook|CH-46/i.test(n)) return 'tandemhelo'
+      if (/AH-64|AH-1|Mi-28|Ka-50|Ka-52|Mi-24|Tiger|Apache|Cobra/i.test(n)) return 'attackhelo'
+      return 'helo'
+    case 'missile': case 'rocket': case 'torpedo': return 'missile'
+    case 'bomb': return 'bomb'
+    case 'sam': return /SR|TR|radar|EWR|STR|Flap|Dome|search|track|P-1[49]|55G6|1L13|Kub 1S91|SNR|RLS|9S|AN\/MPQ|MPQ|Tin Shield/i.test(n) ? 'radar' : 'sam'
+    case 'armor': return 'armor'
+    case 'vehicle': return 'vehicle'
+    case 'infantry': return 'infantry'
+    case 'static': return 'static'
+    case 'ship': return 'ship'
+    case 'carrier': return 'carrier'
+  }
+}
+
+/** Approximate length (m) of each family's model. */
+export const LENGTH: Record<Family, number> = {
+  fighter: 15, twinfighter: 19, delta: 15, attack: 16, heavy: 35, bomber: 45, awacs: 46, drone: 11,
+  helo: 17, attackhelo: 17, tandemhelo: 30,
+  missile: 4, bomb: 2.5,
+  sam: 8, radar: 8, armor: 7, vehicle: 6, infantry: 1.8, static: 10, ship: 120, carrier: 330,
+}
+
+/** Smallest the model is drawn on screen, px (it is scaled up beyond its
+ *  real size when far away, as Tacview does). */
+export const MIN_PX: Record<Family, number> = {
+  fighter: 34, twinfighter: 36, delta: 34, attack: 34, heavy: 40, bomber: 42, awacs: 42, drone: 28,
+  helo: 30, attackhelo: 30, tandemhelo: 34,
+  missile: 12, bomb: 9,
+  sam: 12, radar: 12, armor: 10, vehicle: 9, infantry: 5, static: 9, ship: 24, carrier: 34,
+}
+
+const box = (w: number, l: number, h: number, x = 0, y = 0, z = 0) => new THREE.BoxGeometry(w, l, h).translate(x, y, z)
+const tube = (r1: number, r2: number, l: number, y = 0, z = 0, x = 0) => new THREE.CylinderGeometry(r1, r2, l, 10).translate(x, y, z)
+const cone = (r: number, l: number, y = 0, z = 0) => new THREE.ConeGeometry(r, l, 10).translate(0, y, z)
+
+/** A flat wing panel: a trapezoid in the XY plane, root at x=0. */
+function wing(span: number, root: number, tip: number, sweep: number, y: number, z: number, thick = 0.2): THREE.BufferGeometry {
+  const sh = new THREE.Shape()
+  sh.moveTo(0, root / 2)
+  sh.lineTo(span, root / 2 - sweep)
+  sh.lineTo(span, root / 2 - sweep - tip)
+  sh.lineTo(0, -root / 2)
+  sh.closePath()
+  const g = new THREE.ExtrudeGeometry(sh, { depth: thick, bevelEnabled: false })
+  g.translate(0, y, z - thick / 2)
+  return g
+}
+const mirror = (g: THREE.BufferGeometry) => g.clone().scale(-1, 1, 1)
+const both = (g: THREE.BufferGeometry) => [g, mirror(g)]
+/** A vertical fin: the wing shape stood up on the YZ plane. */
+function fin(height: number, root: number, tip: number, sweep: number, y: number, x = 0, z = 0): THREE.BufferGeometry {
+  return wing(height, root, tip, sweep, 0, 0, 0.18).rotateY(-Math.PI / 2).translate(x, y, z)
+}
+
+function build(f: Family): THREE.BufferGeometry {
+  const merge = (gs: THREE.BufferGeometry[]) => {
+    // ExtrudeGeometry is indexed; Box/Cylinder too -- make them all non-indexed
+    // so mergeGeometries never refuses a mix.
+    const g = mergeGeometries(gs.map(x => (x.index ? x.toNonIndexed() : x)).map(x => { x.deleteAttribute('uv'); return x }))
+    if (!g) throw new Error(`model ${f} failed to merge`)
+    g.computeVertexNormals()
+    return g
+  }
+  switch (f) {
+    case 'fighter':
+      return merge([
+        tube(0.7, 0.55, 12, -0.5), cone(0.7, 3.2, 7.1), box(0.9, 2.2, 0.8, 0, 3.4, 0.6),
+        ...both(wing(4.6, 4.2, 1.2, 3.0, -1.2, 0)), ...both(wing(2.4, 2.0, 0.8, 1.2, -5.6, 0, 0.15)),
+        fin(3.0, 3.0, 1.0, 2.2, -5.0, 0, 0.5),
+      ])
+    case 'twinfighter':
+      return merge([
+        tube(0.8, 0.6, 15, -0.5), cone(0.8, 3.6, 8.8), box(1.0, 2.6, 0.9, 0, 4.6, 0.7), box(3.0, 9, 0.7, 0, -2.5, 0),
+        ...both(wing(5.8, 5.6, 1.4, 3.6, -1.6, 0)), ...both(wing(2.8, 2.6, 1.0, 1.4, -7.4, 0, 0.15)),
+        fin(3.4, 3.4, 1.2, 2.4, -6.4, 1.1, 0.6), fin(3.4, 3.4, 1.2, 2.4, -6.4, -1.1, 0.6),
+      ])
+    case 'delta':
+      return merge([
+        tube(0.7, 0.6, 12, -0.5), cone(0.7, 3.2, 7.1), box(0.9, 2.2, 0.8, 0, 3.6, 0.6),
+        ...both(wing(4.6, 8.4, 0.6, 7.6, -1.8, 0)), ...both(wing(1.6, 1.4, 0.5, 0.8, 3.2, 0.2, 0.12)),
+        fin(3.2, 4.0, 1.0, 3.2, -4.4, 0, 0.5),
+      ])
+    case 'attack':
+      return merge([
+        tube(0.8, 0.6, 13, 0), cone(0.8, 2.4, 7.7), box(1.0, 2.0, 0.9, 0, 4.4, 0.7),
+        ...both(wing(8.2, 3.0, 1.6, 0.4, 0, 0)), tube(0.6, 0.6, 3.2, -3.0, 1.0, 1.3), tube(0.6, 0.6, 3.2, -3.0, 1.0, -1.3),
+        ...both(wing(3.0, 1.8, 1.2, 0.2, -6.4, 0, 0.15)), fin(2.6, 2.0, 1.2, 0.6, -6.6, 3.0, 0.4), fin(2.6, 2.0, 1.2, 0.6, -6.6, -3.0, 0.4),
+      ])
+    case 'heavy':
+      return merge([
+        tube(2.0, 2.0, 30, 0), cone(2.0, 4, 17), cone(2.0, 4, -17).rotateX(Math.PI),
+        ...both(wing(19, 6, 2.2, 3.0, 0.5, 1.0, 0.4)), tube(0.7, 0.7, 3.2, 1.8, -0.4, 6), tube(0.7, 0.7, 3.2, 1.8, -0.4, -6),
+        tube(0.7, 0.7, 3.2, 1.6, -0.4, 11), tube(0.7, 0.7, 3.2, 1.6, -0.4, -11),
+        ...both(wing(7, 4, 1.6, 2.4, -15, 0.8, 0.25)), fin(6.5, 5.5, 2.4, 3.4, -14.5, 0, 1.6),
+      ])
+    case 'bomber':
+      return merge([
+        tube(2.0, 1.8, 40, 0), cone(2.0, 6, 23),
+        ...both(wing(22, 9, 2.0, 12, 1.0, 0.6, 0.4)),
+        ...both(wing(7, 4, 1.6, 3, -19, 0.6, 0.25)), fin(7, 6, 2.6, 4, -18, 0, 1.8),
+      ])
+    case 'awacs':
+      return merge([
+        tube(2.0, 2.0, 40, 0), cone(2.0, 4, 22), cone(2.0, 4, -22).rotateX(Math.PI),
+        ...both(wing(20, 6.5, 2.2, 5.0, 1, 0.8, 0.4)), tube(0.7, 0.7, 3.4, 2, -0.6, 7), tube(0.7, 0.7, 3.4, 2, -0.6, -7),
+        ...both(wing(7, 4, 1.6, 2.8, -18, 0.8, 0.25)), fin(6.5, 5.5, 2.4, 3.4, -17.5, 0, 1.6),
+        new THREE.CylinderGeometry(4.6, 4.6, 1.1, 24).rotateX(Math.PI / 2).translate(0, -6, 5.2),
+        box(0.4, 1.6, 3.0, 0, -6, 3.2),
+      ])
+    case 'drone':
+      return merge([
+        tube(0.5, 0.35, 10, 0), cone(0.5, 1.4, 5.7),
+        ...both(wing(10, 1.2, 0.6, 0.3, 0.6, 0.2, 0.12)),
+        wing(2.6, 1.2, 0.5, 0.8, -4.6, 0.4, 0.1).rotateY(-0.6), mirror(wing(2.6, 1.2, 0.5, 0.8, -4.6, 0.4, 0.1).rotateY(-0.6)),
+      ])
+    case 'helo':
+      return merge([
+        box(2.2, 6.0, 2.2, 0, 1.4, 0), cone(1.1, 1.4, 5.1, 0), box(0.5, 8.0, 0.6, 0, -5.4, 0.4), fin(1.8, 1.4, 0.8, 0.6, -9.2, 0, 0.6),
+        new THREE.CylinderGeometry(8, 8, 0.1, 28).rotateX(Math.PI / 2).translate(0, 1.4, 1.9),
+        tube(0.15, 0.15, 1.0, 1.4, 1.4),
+      ])
+    case 'attackhelo':
+      return merge([
+        box(1.2, 7.0, 2.0, 0, 1.2, 0), cone(0.6, 1.6, 5.4, 0.2), box(0.5, 7.5, 0.6, 0, -5.0, 0.3),
+        ...both(wing(1.8, 1.2, 0.8, 0.2, 0.8, -0.2, 0.15)), fin(2.0, 1.4, 0.8, 0.6, -8.8, 0, 0.6),
+        new THREE.CylinderGeometry(7.3, 7.3, 0.1, 28).rotateX(Math.PI / 2).translate(0, 1.0, 1.8),
+      ])
+    case 'tandemhelo':
+      return merge([
+        box(3.6, 15, 3.4, 0, 0, 0), box(1.0, 2.4, 2.6, 0, -6.6, 2.4),
+        new THREE.CylinderGeometry(9, 9, 0.12, 28).rotateX(Math.PI / 2).translate(0, 6.2, 2.6),
+        new THREE.CylinderGeometry(9, 9, 0.12, 28).rotateX(Math.PI / 2).translate(0, -6.6, 3.9),
+      ])
+    case 'missile':
+      return merge([tube(0.18, 0.18, 3.6), cone(0.18, 0.6, 2.1), box(1.0, 0.4, 0.05, 0, -1.6), box(0.05, 0.4, 1.0, 0, -1.6)])
+    case 'bomb':
+      return merge([tube(0.25, 0.25, 2.0), cone(0.25, 0.6, 1.3), box(0.8, 0.3, 0.05, 0, -1.0), box(0.05, 0.3, 0.8, 0, -1.0)])
+    case 'sam':
+      return merge([box(3, 7, 1.8, 0, 0, 0.9), box(1.8, 5, 1.6, 0, -0.5, 2.5).rotateX(0.5).translate(0, 0, 0.6)])
+    case 'radar':
+      return merge([box(3, 7, 1.8, 0, 0, 0.9), box(0.4, 0.4, 2.4, 0, 0, 3.0), box(5.0, 0.3, 2.2, 0, 0, 4.6)])
+    case 'armor':
+      return merge([box(3.4, 7, 1.6, 0, 0, 0.8), box(2.2, 3, 1.0, 0, -0.3, 2.1), box(0.3, 4, 0.3, 0, 3, 2.1)])
+    case 'vehicle':
+      return merge([box(2.4, 2.0, 2.4, 0, 2.0, 1.2), box(2.4, 4.0, 2.6, 0, -1.0, 1.3)])
+    case 'infantry':
+      return box(0.6, 0.6, 1.8, 0, 0, 0.9)
+    case 'static':
+      return box(10, 10, 5, 0, 0, 2.5)
+    case 'ship':
+      return merge([box(15, 120, 9, 0, 0, 2), cone(7.5, 20, 69, 2), box(9, 22, 12, 0, -10, 10), box(1.2, 1.2, 14, 0, -6, 20)])
+    case 'carrier':
+      return merge([box(38, 330, 18, 0, 0, 7), box(8, 30, 22, 14, -20, 24)])
+  }
+}
+
+const cache = new Map<Family, THREE.BufferGeometry>()
+export function modelOf(f: Family): THREE.BufferGeometry {
+  let g = cache.get(f)
+  if (!g) cache.set(f, (g = build(f)))
+  return g
+}
+
+// ── real models ────────────────────────────────────────────────────────
+// public/models/*.glb, made by scripts/build-replay-model(s).mjs (credits in
+// public/models/CREDITS.txt). Types without a model of their own borrow the
+// nearest lookalike; anything unmatched keeps the built-in shapes above.
+
+/** A file name under public/models (without .glb). */
+export type Real = string
+
+// First match wins, so a type with a model of its own comes before the
+// lookalike rules. Patterns are tested against the DCS unit type name.
+const AIR: [RegExp, Real][] = [
+  [/F-14/i, 'F-14'],
+  [/F-?A-18|F-18|Hornet|EA-18/i, 'F-18'],
+  [/F-35/i, 'F-35'],
+  [/F-22|Su-57|J-20|J-31|FC-31/i, 'F-22'],
+  [/F-16/i, 'F-16'],
+  [/F-15/i, 'F-15'],
+  [/F-117/i, 'F-117'],
+  [/F-111|F-111/i, 'F-111'],
+  [/F-100/i, 'F-100'],
+  [/F-4/i, 'F-4'],
+  [/EA-6|A-6/i, 'EA-6B'],
+  [/A-10/i, 'A-10'],
+  [/Su-24/i, 'Su-24'],
+  [/Su-25/i, 'Su-25'],
+  [/Su-17|Su-22/i, 'Su-17'],
+  [/Su-34/i, 'Su-34'],
+  [/Su-2[7]|Su-3[0-5]|J-11|J-15|J-16/i, 'Su-35'],
+  [/MiG-29/i, 'MiG-29'],
+  [/MiG-31/i, 'MiG-31'],
+  [/MiG-25/i, 'MiG-25'],
+  [/MiG-27/i, 'MiG-27'],
+  [/MiG-23/i, 'MiG-23'],
+  [/MiG-1[579]|F-86/i, 'MiG-17'],
+  [/M-?2000|Mirage|MiG-21|J-7|Kfir|Cheetah/i, 'Mirage2000'],
+  [/Rafale/i, 'Rafale'],
+  [/Typhoon|Eurofighter|EF-?2000|J-10|JAS39|Gripen|AJS37|Viggen/i, 'EF2000'],
+  [/F-5|F-20/i, 'F-5'],
+  [/AV-?8|Harrier/i, 'AV-8B'],
+  [/Tornado/i, 'Tornado'],
+  [/Tu-160/i, 'Tu-160'],
+  [/Tu-22/i, 'Tu-22M3'],
+  [/B-52/i, 'B-52'],
+  [/B-1/i, 'B-1'],
+  [/Tu-95|Tu-142/i, 'Tu-95'],
+  [/E-3|A-50|KJ-2000/i, 'E-3'],
+  [/E-2/i, 'E-2'],
+  [/Il-7[68]|IL-7[68]|Y-20|C-17/i, 'Il-76'],
+  [/Yak-4[02]/i, 'Yak-40'],
+  [/An-2[0-9]|An-30|An-32/i, 'An-26'],
+  [/MQ-?[19]|RQ-?1|Predator|Reaper|Wing ?Loong|TB2|Bayraktar|CH-4|UAV|drone/i, 'MQ-1'],
+  // other jet transports and tankers read as the KC-135, props as the C-130
+  [/KC-?135|KC-?10|KC-?46|C-5|A_?3[23]0|B_?7[0-9]7|Boeing|Airbus|IL-62|Tu-154/i, 'KC-135'],
+  [/C-?130|KC-?130|An-12|Y-8|C-47|Hercules|A400/i, 'C-130'],
+  // lookalikes for fighters without a model yet
+  [/JF-17|L-39|C-101|MB-339|Hawk|T-45|Yak-130|K-8/i, 'F-16'],
+]
+const HELO: [RegExp, Real][] = [
+  [/CH-47|CH-46/i, 'CH-47'],
+  [/AH-64|Apache/i, 'AH-64'],
+  [/AH-1/i, 'AH-1'],
+  [/Mi-24|Mi-35/i, 'Mi-24'],
+  [/Mi-28|Ka-50|Ka-52/i, 'Mi-28'],
+  [/Mi-8|Mi-17|Mi-26/i, 'Mi-8'],
+  [/SH-60|UH-60|MH-60|HH-60|Black ?Hawk/i, 'SH-60'],
+  [/UH-1|OH-58|SA ?342|Gazelle|Bell/i, 'UH-1'],
+]
+const GROUND: [RegExp, Real][] = [
+  // launchers (not their radars)
+  [/NASAMS_LN|IRISTSLM_LN/i, 'NASAMS'],
+  [/Shilka|ZSU|ZU-23|Gepard|Vulcan/i, 'Shilka'],
+  [/Osa|9A33|\bTor\b|TorM2|Pantsir|Tunguska|2S6|Strela|Roland|HQ-7_STR_SP|M6 Linebacker|M1097 Avenger/i, 'Osa'],
+  [/M142|HIMARS|MLRS|M270|Smerch|Uragan|Grad|BM-2[17]|BM-30|9A52|PHL/i, 'HIMARS'],
+  [/\bln\b|_LN\b|LN_|Launcher|Volhov|S_75|5P85|9A310|RAPIER_FSA/i, 'Patriot'],
+  [/M-?1 Abrams|M1A[12]|Leopard|Leclerc|Challenger|Merkava|Chieftain|M-60|ZTZ96/i, 'M1A2'],
+  [/T-?72|T-?8[04]|T-?90|T-?55|T-?62|T-?64|Type 59|Oplot/i, 'T-90'],
+  [/M-?109|SAU|2S1|2S3|2S9|2S19|Msta|Akatsia|Gvozdika|Dana|PLZ05|Firtina|SpGH|M-?110/i, 'M109'],
+  [/ZIL|Ural|KAMAZ|GAZ-66|KrAZ|HEMTT|M 818|M818|M978|ATZ|ATMZ|TZ-22|Truck|truck|HX7|HX8|M1083|Tractor|Trailer|Tigr|Blitz|Opel|Spoofer|_CP\b|Command_Post/i, 'ZIL-131'],
+]
+const SEA: [RegExp, Real][] = [
+  [/CV_?1143|Kuznetsov|KUZNECOW/i, 'Kuznetsov'],
+  [/CVN|Stennis|Forrestal|Nimitz|Ford|LHA|Tarawa|Carrier/i, 'CVN'],
+  [/TICONDEROG|CG-?47/i, 'CG-47'],
+  [/Arleigh|DDG/i, 'DDG-51'],
+  [/Type_?05[24]|Type_?071|NEUSTRASH|REZKY|MOLNIYA|ALBATROS|MOSCOW|PIOTR|BDK|Grisha|Krivak/i, 'Type054'],
+  // warships only: a cargo ship or tanker keeps the plain hull
+  [/USS|Arleigh|PERRY|TICONDEROG|FFG|DDG|frigate|destroyer|cruiser|La_Combattante|HMS/i, 'FFG-7'],
+]
+
+// Weapons in flight. DCS names them with underscores (AIM_120C, GBU_12).
+const MISSILE: [RegExp, Real][] = [
+  [/TY-?90/i, 'TY-90'],
+  [/HJ-?10|AKD/i, 'HJ-10'],
+  [/AGM[_-]?114|Hellfire|Ataka|9M120|TOW|Vikhr|9M127|Kornet|\bHOT|Spike|Brimstone/i, 'AGM-114'],
+  [/Kh[_-]?29/i, 'Kh-29'],
+  // cruise missiles and other big strike weapons
+  [/BGM[_-]?109|Tomahawk|AGM[_-]?158|JASSM|Kh[_-]?(101|55|65|59)|Kalibr|3M14|P[_-]?800|Storm|SCALP|Taurus|\bM48\b|ATACMS|Iskander|9M723|Scud|R-17/i, 'Kh-29'],
+  [/AGM[_-]?(65|88|84|154)|HARM|Harpoon|JSOW|Kh[_-]?(25|31|35|58)|ALARM|BK[_-]?90|Maverick/i, 'AGM-65'],
+  [/PL-?11/i, 'PL-11'],
+  [/R[_-]?77|P[_-]?77|RVV|R[_-]?37/i, 'R-77'],
+  [/R[_-]?27|P[_-]?27|R[_-]?24|R[_-]?40|R[_-]?33/i, 'R-27'],
+  [/AIM[_-]?(7|120)|MICA|Meteor|PL-?1[25]|SD-10|Super[_-]?530|Skyflash|Aspide|SeaSparrow|ESSM/i, 'AIM-7'],
+  [/AIM[_-]?9|R[_-]?73|P[_-]?73|R[_-]?60|R[_-]?74|PL-?[589]\b|Magic|IRIS|ASRAAM|Python|Stinger|Igla|9M3[1-9]|SA9M3|Strela|Mistral|Rapier|Roland|RAM\b/i, 'AIM-9'],
+  // long-range SAMs: the biggest missile shape we have
+  [/SA5B|SA5V|48N6|5V55|HHQ|HQ-|MIM[_-]?(104|23)|PAC|Patriot|SA57E6|SA9M38|9M3[18]|SM[_-]?[26]|RIM|S-?75|V-?75|5V2|SA-?\d/i, 'R-27'],
+]
+const BOMB: [RegExp, Real][] = [
+  [/KAB|UPAB/i, 'KAB-500L'],
+  [/GBU[_-]?(10|12|16|24|27|28)|Paveway|LGB/i, 'GBU-12'],
+  [/./, 'JDAM'],
+]
+
+export function realOf(kind: Kind, name?: string | null): Real | null {
+  if (!name) return null
+  if (kind === 'missile' || kind === 'torpedo') {
+    for (const [re, r] of MISSILE) if (re.test(name)) return r
+    return null
+  }
+  if (kind === 'bomb') {
+    for (const [re, r] of BOMB) if (re.test(name)) return r
+    return null
+  }
+  const rules =
+    kind === 'air' ? AIR
+    : kind === 'helo' ? HELO
+    : kind === 'armor' || kind === 'vehicle' || kind === 'sam' ? GROUND
+    : kind === 'ship' || kind === 'carrier' ? SEA
+    : null
+  if (!rules) return null
+  // a radar is not a launcher
+  // (whole words: "Strela" is not a tracking radar)
+  if (kind === 'sam' && /\b(sr|tr|str|cwar|pcp)\b|_STR\b|_sr_|radar|search|track|SNR|RLS|EWR|1L13|55G6|9S\d|FPS|Dome|Dog Ear/i.test(name) && !/\bln\b|_LN\b|LN_|launcher/i.test(name)) return null
+  for (const [re, r] of rules) if (re.test(name)) return r
+  return null
+}
+
+const realCache = new Map<Real, THREE.BufferGeometry | null>()
+const realLoading = new Set<Real>()
+const loader = new GLTFLoader()
+
+/** A real model's geometry, merged into one; null until it has loaded (the
+ *  first call starts the load and `onReady` fires when it lands). */
+export function realModel(r: Real, onReady: () => void): THREE.BufferGeometry | null {
+  if (realCache.has(r)) return realCache.get(r) ?? null
+  if (!realLoading.has(r)) {
+    realLoading.add(r)
+    loader.load(
+      `${import.meta.env.BASE_URL}models/${r}.glb`,
+      gltf => {
+        const parts: THREE.BufferGeometry[] = []
+        gltf.scene.updateMatrixWorld(true)
+        gltf.scene.traverse(o => {
+          const m = o as THREE.Mesh
+          if (!m.isMesh) return
+          const g = m.geometry.clone().applyMatrix4(m.matrixWorld)
+          for (const k of Object.keys(g.attributes)) if (k !== 'position') g.deleteAttribute(k)
+          parts.push(g.index ? g.toNonIndexed() : g)
+        })
+        const g = parts.length ? mergeGeometries(parts) : null
+        g?.computeVertexNormals()
+        g?.computeBoundingBox()
+        realCache.set(r, g)
+        onReady()
+      },
+      undefined,
+      () => { realCache.set(r, null); onReady() },
+    )
+  }
+  return null
+}
+
+/** Length (m) of a loaded real model, nose to tail. */
+export function realLength(g: THREE.BufferGeometry): number {
+  const b = g.boundingBox
+  return b ? b.max.y - b.min.y : 15
+}

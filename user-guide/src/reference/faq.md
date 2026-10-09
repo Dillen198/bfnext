@@ -5,13 +5,13 @@ Common questions and answers about Fowl Engine.
 ## Getting Started
 
 ### Q: How do I join the server?
-**A**: Connect to "The Coop - Operation Fowl Intent" server, register for a team (type `blue` or `red` in chat), then select an aircraft slot.
+**A**: Connect to "The Coop - Operation Fowl Intent" server, pick a **BLUFOR** or **REDFOR** aircraft slot, and fly. Taking your first slot registers you to that coalition automatically — there is nothing to type.
 
 ### Q: Can I change teams?
 **A**: Some servers allow limited side switching with `-switch blue` or `-switch red`. Check your remaining switches with `-lives`.
 
 ### Q: Why can't I occupy any slots?
-**A**: You must register for a team first by typing `blue` or `red` in chat while in spectator mode.
+**A**: Usually you're registered to the other coalition — you can only take slots for your side. Registration happens on your first slot pick.
 
 ## Gameplay
 
@@ -138,7 +138,6 @@ If not enabled, this command won't work.
 
 ### Q: I'm stuck in spectator and can't slot!
 **A**: 
-- Did you register? (type `blue` or `red`)
 - Are you out of lives? (check `-lives`)
 - Is the slot occupied?
 - Try different slot
@@ -146,7 +145,7 @@ If not enabled, this command won't work.
 ### Q: Commands don't work!
 **A**: 
 - Check spelling
-- Include dash `-` prefix (except `blue`/`red`)
+- Include the dash `-` prefix
 - Verify you have permission
 - Some commands require admin
 

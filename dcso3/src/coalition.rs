@@ -155,6 +155,6 @@ impl<'lua> Coalition<'lua> {
     }
 
     pub fn get_country_coalition(&self, country: Country) -> Result<Side> {
-        Ok(self.t.call_function("getCountrySide", country)?)
+        Ok(self.t.call_function("getCountryCoalition", country)?)
     }
 }

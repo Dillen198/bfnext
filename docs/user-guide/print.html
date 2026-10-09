@@ -214,7 +214,7 @@
 <p>When you first connect to a Fowl Engine server:</p>
 <ol>
 <li><strong>Read the briefing</strong>: Check the mission briefing for current campaign status</li>
-<li><strong>Join a team</strong>: You must register for either Blue or Red coalition</li>
+<li><strong>Join a team</strong>: Pick Blue or Red on the DCS slot screen — taking your first slot registers you to that coalition</li>
 <li><strong>Choose your role</strong>: Select an appropriate aircraft or ground unit</li>
 <li><strong>Learn the basics</strong>: Familiarize yourself with chat commands and F10 menus</li>
 </ol>
@@ -241,25 +241,20 @@
 <li>Team-based objectives reward cooperation</li>
 </ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="joining-a-team"><a class="header" href="#joining-a-team">Joining a Team</a></h1>
-<p>Before you can fly or fight, you must register for either the Blue or Red coalition.</p>
-<h2 id="registration-commands"><a class="header" href="#registration-commands">Registration Commands</a></h2>
-<h3 id="first-time-registration"><a class="header" href="#first-time-registration">First-Time Registration</a></h3>
-<p>To register for a team, type in chat:</p>
-<pre><code>blue
-</code></pre>
-<p>or</p>
-<pre><code>red
-</code></pre>
-<p>The system will confirm your registration:</p>
+<p>Before you can fly or fight, you must be registered to either the Blue or Red coalition.</p>
+<h2 id="registering"><a class="header" href="#registering">Registering</a></h2>
+<p>With dynamic spawn you <strong>no longer type a coalition in chat</strong>. Just pick a coalition
+and a slot from the normal DCS role/slot selection screen. The first time you take a
+slot, the engine registers you to that coalition automatically and confirms in chat:</p>
 <blockquote>
 <p>"Welcome to the Blue team. You may only occupy slots belonging to your team. Good luck!"</p>
 </blockquote>
 <h3 id="important-notes"><a class="header" href="#important-notes">Important Notes</a></h3>
 <ul>
+<li>Registration happens the moment you take your first slot — there is nothing to type</li>
 <li>You can only occupy slots for your registered team</li>
 <li>Registration is <strong>permanent</strong> by default</li>
 <li>The server announces your team choice to all players</li>
-<li>You must be in spectator mode to register</li>
 </ul>
 <h2 id="side-switching"><a class="header" href="#side-switching">Side Switching</a></h2>
 <p>The server allows <strong>1 side switch</strong>. You can switch teams using:</p>
@@ -300,8 +295,6 @@
 <li>Side switches remaining (if any)</li>
 </ul>
 <h2 id="common-issues"><a class="header" href="#common-issues">Common Issues</a></h2>
-<h3 id="you-are-already-on-the-blue-team"><a class="header" href="#you-are-already-on-the-blue-team">"You are already on the Blue team"</a></h3>
-<p>You're already registered! No action needed.</p>
 <h3 id="you-must-be-in-spectators-to-switch-sides"><a class="header" href="#you-must-be-in-spectators-to-switch-sides">"You must be in spectators to switch sides"</a></h3>
 <p>You need to leave your current slot before switching teams.</p>
 <h3 id="you-may-not-switch-sides"><a class="header" href="#you-may-not-switch-sides">"You may not switch sides"</a></h3>
@@ -1310,23 +1303,11 @@ Side Switches: 1
 </ul>
 <h2 id="essential-commands"><a class="header" href="#essential-commands">Essential Commands</a></h2>
 <h3 id="registration--status"><a class="header" href="#registration--status">Registration &amp; Status</a></h3>
-<h4 id="blue--red"><a class="header" href="#blue--red"><code>blue</code> / <code>red</code></a></h4>
-<p>Register for a team (first-time only).</p>
-<pre><code>blue
-</code></pre>
-<pre><code>red
-</code></pre>
-<p><strong>Response</strong>:</p>
-<pre><code>Welcome to the Blue team. You may only occupy slots 
+<p>There is no join command. Taking your first slot on the DCS slot screen registers
+you to that coalition automatically, and the server confirms it in chat:</p>
+<pre><code>Welcome to the Blue team. You may only occupy slots
 belonging to your team. Good luck!
 </code></pre>
-<p><strong>Usage</strong>:</p>
-<ul>
-<li>First time joining server</li>
-<li>Must be in spectator mode</li>
-<li>Permanent choice (unless server allows switching)</li>
-</ul>
-<hr />
 <h4 id="-switch-blue---switch-red"><a class="header" href="#-switch-blue---switch-red"><code>-switch blue</code> / <code>-switch red</code></a></h4>
 <p>Switch teams (if allowed by server).</p>
 <pre><code>-switch blue
@@ -1661,8 +1642,6 @@ Side Switches: 1
 <h2 id="command-aliases"><a class="header" href="#command-aliases">Command Aliases</a></h2>
 <p>Some commands have shortcuts:</p>
 <div class="table-wrapper"><table><thead><tr><th>Full Command</th><th>Alias</th><th>Notes</th></tr></thead><tbody>
-<tr><td><code>blue</code></td><td>(none)</td><td>Registration only</td></tr>
-<tr><td><code>red</code></td><td>(none)</td><td>Registration only</td></tr>
 <tr><td><code>help</code></td><td><code>-help</code></td><td>Both work</td></tr>
 <tr><td><code>points</code></td><td><code>-balance</code></td><td>System interprets</td></tr>
 <tr><td><code>credits</code></td><td><code>-balance</code></td><td>System interprets</td></tr>
@@ -2918,8 +2897,6 @@ BRAA 270/15/20000/COLD
 <h2 id="player-commands"><a class="header" href="#player-commands">Player Commands</a></h2>
 <h3 id="registration--status-1"><a class="header" href="#registration--status-1">Registration &amp; Status</a></h3>
 <div class="table-wrapper"><table><thead><tr><th>Command</th><th>Description</th><th>Example</th></tr></thead><tbody>
-<tr><td><code>blue</code></td><td>Register for Blue team</td><td><code>blue</code></td></tr>
-<tr><td><code>red</code></td><td>Register for Red team</td><td><code>red</code></td></tr>
 <tr><td><code>-switch blue</code></td><td>Switch to Blue team</td><td><code>-switch blue</code></td></tr>
 <tr><td><code>-switch red</code></td><td>Switch to Red team</td><td><code>-switch red</code></td></tr>
 <tr><td><code>-lives</code></td><td>Check lives, points, status</td><td><code>-lives</code></td></tr>
@@ -4085,11 +4062,11 @@ BRAA 270/15/20000/COLD
 <p>Common questions and answers about Fowl Engine.</p>
 <h2 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h2>
 <h3 id="q-how-do-i-join-the-server"><a class="header" href="#q-how-do-i-join-the-server">Q: How do I join the server?</a></h3>
-<p><strong>A</strong>: Connect to "The Coop - Operation Fowl Intent" server, register for a team (type <code>blue</code> or <code>red</code> in chat), then select an aircraft slot.</p>
+<p><strong>A</strong>: Connect to "The Coop - Operation Fowl Intent" server, pick a <strong>BLUFOR</strong> or <strong>REDFOR</strong> aircraft slot, and fly. Taking your first slot registers you to that coalition automatically — there is nothing to type.</p>
 <h3 id="q-can-i-change-teams"><a class="header" href="#q-can-i-change-teams">Q: Can I change teams?</a></h3>
 <p><strong>A</strong>: Some servers allow limited side switching with <code>-switch blue</code> or <code>-switch red</code>. Check your remaining switches with <code>-lives</code>.</p>
 <h3 id="q-why-cant-i-occupy-any-slots"><a class="header" href="#q-why-cant-i-occupy-any-slots">Q: Why can't I occupy any slots?</a></h3>
-<p><strong>A</strong>: You must register for a team first by typing <code>blue</code> or <code>red</code> in chat while in spectator mode.</p>
+<p><strong>A</strong>: Usually you're registered to the other coalition — you can only take slots for your side. Registration happens on your first slot pick.</p>
 <h2 id="gameplay"><a class="header" href="#gameplay">Gameplay</a></h2>
 <h3 id="q-how-do-i-capture-an-objective"><a class="header" href="#q-how-do-i-capture-an-objective">Q: How do I capture an objective?</a></h3>
 <p><strong>A</strong>:</p>
@@ -4212,7 +4189,6 @@ If not enabled, this command won't work.</p>
 <h3 id="q-im-stuck-in-spectator-and-cant-slot"><a class="header" href="#q-im-stuck-in-spectator-and-cant-slot">Q: I'm stuck in spectator and can't slot!</a></h3>
 <p><strong>A</strong>:</p>
 <ul>
-<li>Did you register? (type <code>blue</code> or <code>red</code>)</li>
 <li>Are you out of lives? (check <code>-lives</code>)</li>
 <li>Is the slot occupied?</li>
 <li>Try different slot</li>
@@ -4221,7 +4197,7 @@ If not enabled, this command won't work.</p>
 <p><strong>A</strong>:</p>
 <ul>
 <li>Check spelling</li>
-<li>Include dash <code>-</code> prefix (except <code>blue</code>/<code>red</code>)</li>
+<li>Include the dash <code>-</code> prefix</li>
 <li>Verify you have permission</li>
 <li>Some commands require admin</li>
 </ul>

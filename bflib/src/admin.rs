@@ -24,13 +24,19 @@ use crate::{
 };
 use anyhow::{Context as AnyhowContext, Result, anyhow, bail};
 use bfprotocols::{
-    cfg::{Cfg, DeployableKind},
+    api::{
+        ArtilleryEntry, Briefing, CampaignState, DeployableEntry, GroupInfo, LogisticsInfo,
+        NavaidEntry, ObjectiveDetails, ObjectiveInfo, PlayerInfo, RadioEntry, ThreatEntry,
+        InventoryInfo, SupplyLink, UnitInfo, WarehouseInfo, WarehouseVisibility,
+    },
+    cfg::{ActionKind, AwacsCfg, Cfg, DeployableKind, LifeType, Rule, UnitTag},
     db::{group::GroupId, objective::ObjectiveId},
     perf::Perf,
     stats::Stat,
 };
+use std::collections::HashMap;
 use chrono::prelude::*;
-use compact_str::format_compact;
+use compact_str::{format_compact, CompactString};
 use dcso3::{
     MizLua, String, Vector2,
     coalition::Side,
@@ -45,14 +51,13 @@ use dcso3::{
     world::World,
 };
 use enumflags2::BitFlags;
-use log::warn;
+use log::{info, warn};
 use mlua::Value;
 use netidx::publisher::Value as NetIdxValue;
 use parking_lot::{Condvar, Mutex};
 use regex::{Regex, RegexBuilder};
 use smallvec::{SmallVec, smallvec};
 use std::{
-    mem,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
@@ -69,7 +74,7 @@ impl FromStr for WarehouseKind {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
-        match s {
+        match s.to_ascii_lowercase().as_str() {
             "objective" => Ok(Self::Objective),
             "dcs" => Ok(Self::DCS),
             x => bail!("unknown warehouse kind {x}"),
@@ -99,6 +104,10 @@ pub enum AdminCommand {
     Repair {
         airbase: String,
     },
+    Capture {
+        objective: String,
+        side: Side,
+    },
     Tim {
         key: String,
         size: usize,
@@ -106,6 +115,18 @@ pub enum AdminCommand {
     },
     Spawn {
         key: String,
+    },
+    /// Spawn a radio/GNSS jammer truck at every f10 mark `<key> <side>`.
+    JammerSpawn {
+        key: String,
+    },
+    /// Switch a jammer group's modes (all off = DeactivateJammer).
+    JammerMode {
+        group: GroupId,
+        gps: dcso3::controller::GnssJamming,
+        glonass: dcso3::controller::GnssJamming,
+        radio: dcso3::controller::RadioJamming,
+        band_mhz: Option<(f64, f64)>,
     },
     SideSwitch {
         side: Side,
@@ -130,10 +151,12 @@ pub enum AdminCommand {
         kind: WarehouseKind,
         airbase: String,
     },
+    LogLogistics,
     Logdesc,
     ResetLives {
         player: String,
     },
+    ResetLivesAll,
     AddAdmin {
         player: String,
     },
@@ -156,10 +179,229 @@ pub enum AdminCommand {
     Remark {
         objective: String,
     },
+    /// Why an objective isn't repairing: threat units (live or ghost),
+    /// capture timer, logi, supply, next pulse.
+    WhyThreat {
+        objective: String,
+    },
+    /// List units that are alive in the db but have no DCS object.
+    Ghosts,
+    /// Retire every current ghost now (see `db::ghosts`).
+    PurgeGhosts,
     Reset {
         winner: Option<Side>,
     },
     Shutdown,
+    /// Chat + panel message to every connected player.
+    Broadcast {
+        text: String,
+    },
+    /// Set how many lives of one type a player has left.
+    SetLives {
+        player: String,
+        life_type: LifeType,
+        lives: u8,
+    },
+    // Query API commands
+    QueryObjectives,
+    QueryObjective {
+        name: String,
+    },
+    QueryPlayers,
+    QueryPlayer {
+        player: String,
+    },
+    QueryGroups {
+        side: Option<Side>,
+    },
+    QueryGroup {
+        id: GroupId,
+    },
+    QueryUnits {
+        group: GroupId,
+    },
+    QueryWarehouse {
+        /// Objective id, or its exact name.
+        objective: String,
+        /// Coalition asking. `None` is an unscoped/admin query and sees
+        /// everything; anything else only sees its own objectives in full.
+        side: Option<Side>,
+    },
+    QueryLogistics,
+    QueryCampaignState,
+    QueryPerf,
+    QueryBriefing {
+        side: Side,
+    },
+    QuerySituation {
+        side: Side,
+    },
+    QueryTacmap {
+        side: Side,
+    },
+    /// One side's theatre HQ as that side sees it (`crate::hq::view`).
+    QueryHq {
+        side: Side,
+        /// Whose view it is, for `can_command`.
+        ucid: Option<Ucid>,
+    },
+    /// A directive from bfdb's language-model strategist.
+    HqDirective {
+        side: Side,
+        directive: bfprotocols::hq::Directive,
+    },
+    /// A command to a side's HQ from the dashboard: a support request, or a
+    /// human commander's orders. `ucid` is resolved and trusted by bfdb from
+    /// the player's login; `None` is bfdb acting for a server admin.
+    HqCommand {
+        side: Side,
+        ucid: Option<Ucid>,
+        cmd: bfprotocols::hq::HqCommand,
+    },
+    /// One side's own assets and launch options for the command map
+    /// (`crate::command::picture`).
+    QueryCommand {
+        side: Side,
+    },
+    /// A commander's order from the command map. `ucid` is resolved and
+    /// trusted by bfdb from the login; `None` is bfdb acting for a server
+    /// admin. The engine re-checks everything else itself.
+    CommandOrder {
+        side: Side,
+        ucid: Option<Ucid>,
+        order: bfprotocols::command::CommandOrder,
+    },
+    /// Who commands each side (`crate::command`), from bfdb.
+    SetCommanders {
+        commanders: bfprotocols::command::Commanders,
+    },
+    /// The ground war as one side sees it (`crate::groundwar::picture`).
+    QueryGroundWar {
+        side: Side,
+    },
+    /// A player's order to their side's ground formations, from the
+    /// dashboard. `ucid` is resolved and trusted by bfdb from the player's
+    /// login; the engine checks the formation is on that player's side.
+    GroundCommand {
+        ucid: Ucid,
+        cmd: bfprotocols::groundwar::GroundCommand,
+    },
+    QueryGci {
+        side: Side,
+    },
+    QueryCas {
+        side: Side,
+    },
+    QueryAtc {
+        side: Side,
+    },
+    /// The unit range database harvested out of the running DCS install,
+    /// tagged with its version so bfdb can snapshot and diff it across updates.
+    QueryUnitDb,
+    // Action API commands
+    SpawnDeployable {
+        side: Side,
+        name: String,
+        pos: Vector2,
+        heading: f64,
+    },
+    SpawnTroop {
+        side: Side,
+        name: String,
+        pos: Vector2,
+        heading: f64,
+    },
+    MoveGroup {
+        id: GroupId,
+        pos: Vector2,
+    },
+    AddPoints {
+        player: String,
+        amount: i32,
+        reason: String,
+    },
+    Blacklist {
+        rule: String,
+        player: String,
+    },
+    Whitelist {
+        rule: String,
+        player: String,
+    },
+    ReinitWarehouse {
+        airbase: String,
+    },
+    SetObjectivePriority {
+        objective: String,
+        priority: bool,
+    },
+    // Cockpit UI API commands -- scoped to the calling player's own ucid
+    // (resolved and trusted by bfdb from their linked session, not
+    // client-supplied), not admin-wide like the commands above.
+    //
+    // The in-DCS cockpit overlay (bfcockpit/Scripts/Hooks/bfcockpit.lua) identifies itself
+    // with net.get_my_player_id(), a per-connection id local to each
+    // player's own DCS client -- this resolves that id to a ucid using the
+    // live connected-player table, so the overlay works the instant a
+    // player joins with no manual pairing step.
+    ResolvePlayerId {
+        id: PlayerId,
+        /// The overlay key registered via `cockpit::KEY_CMD`.
+        key: String,
+    },
+    EwrToggle {
+        ucid: Ucid,
+    },
+    EwrReport {
+        ucid: Ucid,
+        friendly: bool,
+    },
+    EwrSetUnits {
+        ucid: Ucid,
+        imperial: bool,
+    },
+    EwrGroundIntel {
+        ucid: Ucid,
+    },
+    CarpSolve {
+        mark_key: String,
+        drop_altitude_agl_ft: f64,
+    },
+    CarpSolveLatLon {
+        lat: f64,
+        lon: f64,
+        drop_altitude_agl_ft: f64,
+    },
+    CockpitSpawnCrate {
+        ucid: Ucid,
+        crate_name: String,
+        qty: u32,
+        c130: bool,
+    },
+    /// Who the caller is, what they are flying and where -- so the overlay can
+    /// shape itself to the player without asking them anything.
+    CockpitContext {
+        ucid: Ucid,
+    },
+    /// The caller's entire F10 menu tree, read back from the dcso3 mirror.
+    CockpitMenu {
+        ucid: Ucid,
+    },
+    /// Click one item in that tree. `path` is an item's `path` exactly as
+    /// `CockpitMenu` reported it.
+    CockpitMenuInvoke {
+        ucid: Ucid,
+        path: Vec<std::string::String>,
+    },
+    /// DCSServerBot-derived server state, pushed in from bfdb: the scheduled
+    /// restart time and the current surface weather, for the F10 Info menu.
+    SetServerInfo {
+        restart_at: Option<DateTime<Utc>>,
+        weather: Option<crate::BotWeather>,
+    },
+    /// The active round's coalition recon markup, pushed in from bfdb as JSON
+    /// (see `intel_marks`) -- drawn on the F10 map for the owning side.
+    SetIntelMarks(std::string::String),
 }
 
 impl AdminCommand {
@@ -169,14 +411,19 @@ impl AdminCommand {
             "transfer <from-objective> <to-objective>: transfer supplies between two objectives",
             "tick: execute a logistics tick now",
             "deliver: execute a logistics delivery now",
+            "logistics: dump the whole logistics picture (hubs, materiel, cargo in flight, starving bases) to the log",
             "repair <airbase>: repair one step at the specified airbase",
+            "capture <objective> <blue|red|neutral>: force an objective to change hands",
             "tim <key> [size] [alt]: create explosions of [size] default 3000 at every f10 mark with text <key>",
             "spawn <key>: spawn at f10 mark. <key> <troop|deployable> <side> <heading> <name>",
+            "jammer <key>: spawn a GPS/radio jammer truck at every f10 mark '<key> <side>' (starts off)",
+            "jammer_mode <group> <gps> <glonass> <radio> [start_mhz end_mhz]: gps/glonass off|jam|spoof, radio off|simple|adaptive; spoofing aims at an f10 mark 'spoof' (else 20 km north)",
             "switch <side> <alias|playerid|ucid>: force side switch a player",
             "ban <duration|forever> <alias|playerid|ucid>: kick a player and ban them. e.g. ban 10days D4n",
             "unban <alias|ucid>: unban a player",
             "kick <alias|playerid|ucid>: kick a player",
             "reset-lives <alias|playerid|ucid>",
+            "reset-lives-all: reset every player's lives",
             "connected: list connected players",
             "banned: list banned players",
             "search <regex>: search the player list by regular expression",
@@ -189,9 +436,42 @@ impl AdminCommand {
             "delete <groupid>: delete deployed group, now with 100% less mess",
             "deslot <player>: force <player> to spectators",
             "remark <obj>: force refresh the markup on objective",
+            "whythreat <obj>: why <obj> isn't repairing -- threat units (live or ghost), capture timer, logi, supply, next pulse",
+            "ghosts: list units alive in the campaign db that have no DCS object",
+            "purge-ghosts: immediately mark dead / delete every unit the ghosts command lists",
             "reset [winner]: shutdown the server and reset the campaign state",
             "shutdown: shutdown the server",
+            "blacklist <rule> <player>: deny <player> access to <rule> (actions|cargo|troops|jtac|ca)",
+            "whitelist <rule> <player>: allow <player> access to <rule> (actions|cargo|troops|jtac|ca)",
+            "reinit-warehouse <airbase>: reinitialize the warehouse for the given airbase",
+            "addpoints <player> <n>: add <n> points to <player>'s balance (negative to take away)",
+            "broadcast <text>: send <text> to every player as chat and a panel message",
+            "lives <player> <standard|intercept|logistics|attack|recon> <n>: set how many lives of that type <player> has left",
+            "reset and shutdown must be confirmed: repeat the command with confirm on the end within 30s",
         ]
+    }
+}
+
+/// Parse a side the way an admin types it. dcso3's `Side::from_str` only
+/// knows the DCS coalition names ("neutrals"), so `capture X neutral` -- the
+/// form the help text itself advertises -- used to fail.
+fn parse_side(s: &str) -> Result<Side> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "blue" => Ok(Side::Blue),
+        "red" => Ok(Side::Red),
+        "neutral" | "neutrals" => Ok(Side::Neutral),
+        s => bail!("unknown side {s}, expected blue, red or neutral"),
+    }
+}
+
+fn parse_life_type(s: &str) -> Result<LifeType> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "standard" => Ok(LifeType::Standard),
+        "intercept" => Ok(LifeType::Intercept),
+        "logistics" => Ok(LifeType::Logistics),
+        "attack" => Ok(LifeType::Attack),
+        "recon" => Ok(LifeType::Recon),
+        s => bail!("unknown life type {s}, expected standard|intercept|logistics|attack|recon"),
     }
 }
 
@@ -199,7 +479,16 @@ impl FromStr for AdminCommand {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        if s.trim() == "help" {
+        // Command names are matched case-insensitively (a phone keyboard's
+        // "Kick" used to be an unknown command). Only the name is folded:
+        // mark keys, player names and regexes keep the case they were typed in.
+        let s = s.trim();
+        let s = match s.split_once(char::is_whitespace) {
+            None => s.to_ascii_lowercase(),
+            Some((head, rest)) => format!("{} {}", head.to_ascii_lowercase(), rest.trim()),
+        };
+        let s = s.as_str();
+        if s == "help" {
             Ok(Self::Help)
         } else if let Some(s) = s.strip_prefix("reduce ") {
             match s.split_once(" ") {
@@ -220,16 +509,27 @@ impl FromStr for AdminCommand {
                     to: to.into(),
                 }),
             }
+        } else if let Some(_) = s.strip_prefix("logistics") {
+            Ok(Self::LogLogistics)
         } else if let Some(_) = s.strip_prefix("tick") {
             Ok(Self::LogisticsTickNow)
         } else if let Some(_) = s.strip_prefix("deliver") {
             Ok(Self::LogisticsDeliverNow)
         } else if let Some(s) = s.strip_prefix("repair ") {
             Ok(Self::Repair { airbase: s.into() })
+        } else if let Some(s) = s.strip_prefix("capture ") {
+            match s.rsplit_once(' ') {
+                None => bail!("capture <objective> <blue|red|neutral>"),
+                Some((objective, side)) => Ok(Self::Capture {
+                    objective: objective.trim().into(),
+                    side: parse_side(side)?,
+                }),
+            }
         } else if let Some(s) = s.strip_prefix("tim ") {
             match &s.split(" ").collect::<SmallVec<[&str; 4]>>()[..] {
-                [] => Ok(Self::Tim {
-                    key: String::from(s),
+                [] | [""] => bail!("tim <mark> [size] [alt]"),
+                [key] => Ok(Self::Tim {
+                    key: String::from(*key),
                     size: 3000,
                     alt: None,
                 }),
@@ -254,11 +554,43 @@ impl FromStr for AdminCommand {
             }
         } else if let Some(s) = s.strip_prefix("spawn ") {
             Ok(Self::Spawn { key: s.into() })
+        } else if let Some(s) = s.strip_prefix("jammer_mode ") {
+            use dcso3::controller::{GnssJamming, RadioJamming};
+            let gnss = |s: &str| -> Result<GnssJamming> {
+                Ok(match s.to_ascii_lowercase().as_str() {
+                    "off" => GnssJamming::Off,
+                    "jam" => GnssJamming::Jamming,
+                    "spoof" => GnssJamming::Spoofing,
+                    s => bail!("expected off|jam|spoof, got {s}"),
+                })
+            };
+            let parts: SmallVec<[&str; 6]> = s.split_whitespace().collect();
+            let usage = "jammer_mode <group> <gps off|jam|spoof> <glonass off|jam|spoof> <radio off|simple|adaptive> [start_mhz end_mhz]";
+            if parts.len() != 4 && parts.len() != 6 {
+                bail!("{usage}")
+            }
+            Ok(Self::JammerMode {
+                group: parts[0].parse()?,
+                gps: gnss(parts[1])?,
+                glonass: gnss(parts[2])?,
+                radio: match parts[3].to_ascii_lowercase().as_str() {
+                    "off" => RadioJamming::Off,
+                    "simple" => RadioJamming::Simple,
+                    "adaptive" => RadioJamming::Adaptive,
+                    s => bail!("radio: expected off|simple|adaptive, got {s}"),
+                },
+                band_mhz: match parts.get(4..6) {
+                    Some([a, b]) => Some((a.parse()?, b.parse()?)),
+                    _ => None,
+                },
+            })
+        } else if let Some(s) = s.strip_prefix("jammer ") {
+            Ok(Self::JammerSpawn { key: s.trim().into() })
         } else if let Some(s) = s.strip_prefix("switch ") {
             match s.split_once(" ") {
                 None => bail!("switch <side> <player>"),
                 Some((side, player)) => {
-                    let side = side.parse::<Side>()?;
+                    let side = parse_side(side)?;
                     Ok(Self::SideSwitch {
                         side,
                         player: player.into(),
@@ -269,7 +601,7 @@ impl FromStr for AdminCommand {
             match s.split_once(" ") {
                 None => bail!("ban <duration|forever> <alias|id|ucid>"),
                 Some((dur, player)) => {
-                    let until = if dur == "forever" {
+                    let until = if dur.eq_ignore_ascii_case("forever") {
                         None
                     } else {
                         let dur = humantime::Duration::from_str(dur)?;
@@ -303,6 +635,8 @@ impl FromStr for AdminCommand {
             }
         } else if let Some(_) = s.strip_prefix("log-desc") {
             Ok(Self::Logdesc)
+        } else if let Some(_) = s.strip_prefix("reset-lives-all") {
+            Ok(Self::ResetLivesAll)
         } else if let Some(s) = s.strip_prefix("reset-lives ") {
             Ok(Self::ResetLives { player: s.into() })
         } else if let Some(_) = s.strip_prefix("shutdown") {
@@ -329,21 +663,75 @@ impl FromStr for AdminCommand {
             Ok(Self::Remark {
                 objective: s.into(),
             })
+        } else if let Some(s) = s.strip_prefix("whythreat ") {
+            Ok(Self::WhyThreat {
+                objective: s.into(),
+            })
+        } else if s == "ghosts" {
+            Ok(Self::Ghosts)
+        } else if s == "purge-ghosts" {
+            Ok(Self::PurgeGhosts)
         } else if let Some(s) = s.strip_prefix("reset") {
-            let winner = if s == "" {
-                None
-            } else {
-                Some(Side::from_str(s)?)
-            };
+            // strip_prefix leaves the separating space, so `reset blue` used
+            // to try to parse " blue" as a side and fail.
+            let s = s.trim();
+            let winner = if s.is_empty() { None } else { Some(parse_side(s)?) };
             Ok(Self::Reset { winner })
+        } else if let Some(s) = s.strip_prefix("addpoints ") {
+            // Player names may contain spaces; the amount is the last word.
+            match s.rsplit_once(' ') {
+                None => bail!("addpoints <player> <n>"),
+                Some((player, amount)) => Ok(Self::AddPoints {
+                    player: player.trim().into(),
+                    amount: amount.parse::<i32>()?,
+                    reason: "admin adjustment".into(),
+                }),
+            }
+        } else if let Some(s) = s.strip_prefix("broadcast ") {
+            Ok(Self::Broadcast { text: s.into() })
+        } else if let Some(s) = s.strip_prefix("lives ") {
+            let mut it = s.rsplitn(3, ' ');
+            match (it.next(), it.next(), it.next()) {
+                (Some(n), Some(typ), Some(player)) => Ok(Self::SetLives {
+                    player: player.trim().into(),
+                    life_type: parse_life_type(typ)?,
+                    lives: n.parse::<u8>()?,
+                }),
+                _ => bail!("lives <player> <type> <n>"),
+            }
+        } else if let Some(s) = s.strip_prefix("blacklist ") {
+            match s.split_once(" ") {
+                None => bail!("blacklist <rule> <player>"),
+                Some((rule, player)) => Ok(Self::Blacklist {
+                    rule: rule.into(),
+                    player: player.into(),
+                }),
+            }
+        } else if let Some(s) = s.strip_prefix("whitelist ") {
+            match s.split_once(" ") {
+                None => bail!("whitelist <rule> <player>"),
+                Some((rule, player)) => Ok(Self::Whitelist {
+                    rule: rule.into(),
+                    player: player.into(),
+                }),
+            }
+        } else if let Some(s) = s.strip_prefix("reinit-warehouse ") {
+            Ok(Self::ReinitWarehouse { airbase: s.into() })
         } else {
             bail!("unknown command {s}")
         }
     }
 }
 
-fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String) -> Result<()> {
-    let mut to_remove: SmallVec<[MarkId; 8]> = smallvec![];
+/// Spawn at every F10 mark whose text starts with `key`. Returns how many
+/// spawned.
+///
+/// Each mark is handled on its own. It used to be one `?` chain, so a bad
+/// mark part way through left the ones before it spawned but with their marks
+/// still on the map -- and the obvious retry spawned them all a second time.
+/// Now a mark is removed as soon as its spawn succeeds, and only the marks
+/// that failed stay behind (with the reason) to be fixed and retried.
+fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String) -> Result<usize> {
     let act = Trigger::singleton(lua)?.action()?;
     let spctx = SpawnCtx::new(lua)?;
     let key = format_compact!("{} ", key);
@@ -356,6 +744,122 @@ fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String
                 .ucid
         }
     };
+    let mut spawned = 0;
+    let mut errors: SmallVec<[std::string::String; 4]> = smallvec![];
+    for mk in World::singleton(lua)?
+        .get_mark_panels()
+        .context("getting marks")?
+    {
+        let mk = match mk {
+            Ok(mk) => mk,
+            Err(e) => {
+                errors.push(format!("reading a mark: {e:?}"));
+                continue;
+            }
+        };
+        if !mk.text.starts_with(key.as_str()) {
+            continue;
+        }
+        match admin_spawn_one(ctx, lua, &spctx, ucid, key.as_str(), &mk) {
+            Ok(()) => {
+                spawned += 1;
+                if let Err(e) = act.remove_mark(mk.id) {
+                    errors.push(format!("spawned '{}' but could not remove its mark: {e:?}", mk.text));
+                }
+            }
+            Err(e) => errors.push(format!("'{}': {e:?}", mk.text)),
+        }
+    }
+    if !errors.is_empty() {
+        bail!(
+            "spawned {spawned}, {} mark(s) failed and were left on the map: {}",
+            errors.len(),
+            errors.join("; ")
+        )
+    }
+    Ok(spawned)
+}
+
+/// Spawn a jammer truck at every f10 mark whose text is `<key> <side>`.
+fn admin_jammer_spawn(ctx: &mut Context, lua: MizLua, key: &str) -> Result<Vec<GroupId>> {
+    let act = Trigger::singleton(lua)?.action()?;
+    let spctx = SpawnCtx::new(lua)?;
+    let prefix = format_compact!("{key} ");
+    let mut perf = bfprotocols::perf::PerfInner::default();
+    let mut out = vec![];
+    for mk in World::singleton(lua)?.get_mark_panels().context("getting marks")? {
+        let mk = mk?;
+        let Some(side) = mk.text.as_str().strip_prefix(prefix.as_str()) else { continue };
+        let side = parse_side(side.trim())?;
+        let pos = Vector2::new(mk.pos.x, mk.pos.z);
+        let gid = ctx.db.spawn_jammer_truck(&mut perf, &spctx, &ctx.idx, side, pos, 0.)?;
+        info!("admin: jammer {gid} spawned for {side} at {pos:?}");
+        let _ = act.remove_mark(mk.id);
+        out.push(gid);
+    }
+    Ok(out)
+}
+
+/// Set a jammer group's modes. Spoofing aims at the f10 mark with text
+/// `spoof` if there is one, otherwise 20 km north of the jammer.
+fn admin_jammer_mode(
+    ctx: &mut Context,
+    lua: MizLua,
+    gid: GroupId,
+    gps: dcso3::controller::GnssJamming,
+    glonass: dcso3::controller::GnssJamming,
+    radio: dcso3::controller::RadioJamming,
+    band_mhz: Option<(f64, f64)>,
+) -> Result<CompactString> {
+    use dcso3::controller::{Command, GnssJamming, RadioJamming};
+    let name = ctx
+        .db
+        .persisted
+        .groups
+        .get(&gid)
+        .map(|g| g.name.clone())
+        .ok_or_else(|| anyhow!("no such group"))?;
+    let group = dcso3::group::Group::get_by_name(lua, name.as_str())?;
+    let p = group.get_unit(1)?.get_point()?;
+    let here = Vector2::new(p.x, p.z);
+    let spoof_point = World::singleton(lua)?
+        .get_mark_panels()?
+        .into_iter()
+        .filter_map(|m| m.ok())
+        .find(|m| m.text.as_str().trim().eq_ignore_ascii_case("spoof"))
+        .map(|m| Vector2::new(m.pos.x, m.pos.z))
+        .unwrap_or(here + Vector2::new(20_000., 0.));
+    let off = gps == GnssJamming::Off && glonass == GnssJamming::Off && radio == RadioJamming::Off;
+    let cmd = if off {
+        Command::DeactivateJammer
+    } else {
+        Command::ActivateJammer { gps, glonass, radio, band_mhz, spoof_point: Some(spoof_point) }
+    };
+    group.get_controller()?.set_command(cmd)?;
+    info!(
+        "admin: jammer {gid} ({name}) gps={gps:?} glonass={glonass:?} radio={radio:?}          band={band_mhz:?} spoof={spoof_point:?}"
+    );
+    Ok(if off {
+        format_compact!("jammer {gid} off")
+    } else {
+        format_compact!(
+            "jammer {gid}: gps {gps:?}, glonass {glonass:?}, radio {radio:?} {}",
+            match band_mhz {
+                Some((a, b)) => format_compact!("{a}-{b} MHz"),
+                None => format_compact!(""),
+            }
+        )
+    })
+}
+
+fn admin_spawn_one(
+    ctx: &mut Context,
+    lua: MizLua,
+    spctx: &SpawnCtx,
+    ucid: Ucid,
+    key: &str,
+    mk: &dcso3::world::MarkPanel,
+) -> Result<()> {
     enum Kind {
         Troop,
         Deployable,
@@ -364,133 +868,121 @@ fn admin_spawn(ctx: &mut Context, lua: MizLua, id: Option<PlayerId>, key: String
         type Err = anyhow::Error;
 
         fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
-            match s {
+            match s.to_ascii_lowercase().as_str() {
                 "troop" => Ok(Kind::Troop),
                 "deployable" => Ok(Kind::Deployable),
                 s => bail!("invalid kind, expected troop or deployable got {s}"),
             }
         }
     }
-    for mk in World::singleton(lua)?
-        .get_mark_panels()
-        .context("getting marks")?
-    {
-        let mk = mk?;
-        if mk.text.starts_with(key.as_str()) {
-            to_remove.push(mk.id);
-            let spec = mk.text.as_str().strip_prefix(key.as_str()).unwrap();
-            let mut iter = spec.splitn(4, " ");
-            let kind = iter
-                .next()
-                .ok_or_else(|| {
-                    anyhow!(
-                        "spawn mark '{}' missing kind expected troop or deployable",
-                        spec
-                    )
-                })?
-                .parse::<Kind>()?;
-            let side = iter
-                .next()
-                .ok_or_else(|| anyhow!("spawn mark {} missing side", spec))?;
-            let side = side.parse::<Side>().with_context(|| {
-                format_compact!("error parsing {} as a side in mark {}", side, spec)
-            })?;
-            let heading = iter
-                .next()
-                .ok_or_else(|| anyhow!("spawn mark {} missing heading", spec))?;
-            let heading = degrees_to_radians(heading.parse::<u32>().with_context(|| {
-                format_compact!("error parsing {} as a heading in mark {}", heading, spec)
-            })? as f64);
-            let name = iter
-                .next()
-                .ok_or_else(|| anyhow!("spawn mark {} missing name of the thing to spawn", spec))?;
-            let pos = Vector2::new(mk.pos.x, mk.pos.z);
-            let loc = SpawnLoc::AtPos {
-                pos,
-                offset_direction: pointing_towards2(heading),
-                group_heading: heading,
+    let spec = mk
+        .text
+        .as_str()
+        .strip_prefix(key)
+        .ok_or_else(|| anyhow!("mark text missing expected prefix"))?;
+    let mut iter = spec.splitn(4, " ");
+    let kind = iter
+        .next()
+        .ok_or_else(|| anyhow!("spawn mark '{}' missing kind expected troop or deployable", spec))?
+        .parse::<Kind>()?;
+    let side = iter
+        .next()
+        .ok_or_else(|| anyhow!("spawn mark {} missing side", spec))?;
+    let side = parse_side(side)
+        .with_context(|| format_compact!("error parsing {} as a side in mark {}", side, spec))?;
+    let heading = iter
+        .next()
+        .ok_or_else(|| anyhow!("spawn mark {} missing heading", spec))?;
+    let heading = degrees_to_radians(heading.parse::<u32>().with_context(|| {
+        format_compact!("error parsing {} as a heading in mark {}", heading, spec)
+    })? as f64);
+    let name = iter
+        .next()
+        .ok_or_else(|| anyhow!("spawn mark {} missing name of the thing to spawn", spec))?;
+    let pos = Vector2::new(mk.pos.x, mk.pos.z);
+    let loc = SpawnLoc::AtPos {
+        pos,
+        offset_direction: pointing_towards2(heading),
+        group_heading: heading,
+    };
+    match kind {
+        Kind::Troop => {
+            let specs = ctx
+                .db
+                .ephemeral
+                .cfg
+                .troops
+                .get(&side)
+                .ok_or_else(|| anyhow!("no troops on {side}"))?;
+            let spec = specs
+                .iter()
+                .find(|tr| tr.name.as_str() == name)
+                .ok_or_else(|| anyhow!("no troop called {name} on {side}"))?
+                .clone();
+            let origin = DeployKind::Troop {
+                player: ucid,
+                moved_by: None,
+                spec: spec.clone(),
+                origin: None,
+                cost_fraction: 1.,
+                jtac: None,
             };
-            match kind {
-                Kind::Troop => {
-                    let specs = ctx
-                        .db
-                        .ephemeral
-                        .cfg
-                        .troops
-                        .get(&side)
-                        .ok_or_else(|| anyhow!("no troops on {side}"))?;
-                    let spec = specs
-                        .iter()
-                        .find(|tr| tr.name.as_str() == name)
-                        .ok_or_else(|| anyhow!("no troop called {name} on {side}"))?
-                        .clone();
-                    let origin = DeployKind::Troop {
+            ctx.db
+                .add_and_queue_group(
+                    spctx,
+                    &ctx.idx,
+                    side,
+                    loc,
+                    &spec.template,
+                    origin,
+                    BitFlags::empty(),
+                    None,
+                )
+                .context("adding group")?;
+        }
+        Kind::Deployable => {
+            let specs = ctx
+                .db
+                .ephemeral
+                .cfg
+                .deployables
+                .get(&side)
+                .ok_or_else(|| anyhow!("no deployables on {side}"))?;
+            let spec = specs
+                .iter()
+                .find(|dp| dp.path.ends_with(&[String::from(name)]))
+                .ok_or_else(|| anyhow!("no deployable called {name} on {side}"))?
+                .clone();
+            match &spec.kind {
+                DeployableKind::Objective(parts) => {
+                    ctx.db
+                        .add_farp(lua, spctx, &ctx.idx, side, pos, &spec, parts)
+                        .context("adding farp")?;
+                }
+                DeployableKind::Group { template } => {
+                    let origin = DeployKind::Deployed {
                         player: ucid,
                         moved_by: None,
                         spec: spec.clone(),
                         origin: None,
                         cost_fraction: 1.,
+                        jtac: None,
                     };
                     ctx.db
                         .add_and_queue_group(
-                            &spctx,
+                            spctx,
                             &ctx.idx,
                             side,
                             loc,
-                            &spec.template,
+                            &template,
                             origin,
                             BitFlags::empty(),
                             None,
                         )
                         .context("adding group")?;
                 }
-                Kind::Deployable => {
-                    let specs = ctx
-                        .db
-                        .ephemeral
-                        .cfg
-                        .deployables
-                        .get(&side)
-                        .ok_or_else(|| anyhow!("no deployables on {side}"))?;
-                    let spec = specs
-                        .iter()
-                        .find(|dp| dp.path.ends_with(&[String::from(name)]))
-                        .ok_or_else(|| anyhow!("no deployable called {name} on {side}"))?
-                        .clone();
-                    match &spec.kind {
-                        DeployableKind::Objective(parts) => {
-                            ctx.db
-                                .add_farp(lua, &spctx, &ctx.idx, side, pos, &spec, parts)
-                                .context("adding farp")?;
-                        }
-                        DeployableKind::Group { template } => {
-                            let origin = DeployKind::Deployed {
-                                player: ucid,
-                                moved_by: None,
-                                spec: spec.clone(),
-                                origin: None,
-                                cost_fraction: 1.,
-                            };
-                            ctx.db
-                                .add_and_queue_group(
-                                    &spctx,
-                                    &ctx.idx,
-                                    side,
-                                    loc,
-                                    &template,
-                                    origin,
-                                    BitFlags::empty(),
-                                    None,
-                                )
-                                .context("adding group")?;
-                        }
-                    }
-                }
             }
         }
-    }
-    for id in to_remove {
-        act.remove_mark(id).context("removing mark")?;
     }
     Ok(())
 }
@@ -537,11 +1029,63 @@ pub(super) fn get_player_ucid<'a>(ctx: &'a Context, key: &str) -> Result<Ucid> {
             .collect()
     };
     if candidates.len() == 1 {
-        return Ok(candidates.pop().unwrap().0.clone());
+        return Ok(candidates.pop()
+            .ok_or_else(|| anyhow!("no candidates"))?.0.clone());
     } else if candidates.len() > 1 {
         bail!("multiple matching candidates {:?}", candidates)
     }
     bail!("no player found for alias, player id, or ucid \"{}\"", key)
+}
+
+/// Resolve a player for a NON-admin command: a connected player id, an exact
+/// name (any of their known aliases, ignoring case), or else a unique name
+/// prefix. Unlike `get_player_ucid` there is no regex, and errors name
+/// players only -- never their ucids.
+pub(super) fn find_player_by_name(ctx: &Context, key: &str) -> Result<Ucid> {
+    let key = key.trim();
+    if key.is_empty() {
+        bail!("no player name given")
+    }
+    if let Ok(id) = key.parse::<PlayerId>() {
+        if let Some(ifo) = ctx.connected.get(&id) {
+            return Ok(ifo.ucid);
+        }
+    }
+    let lkey = key.to_lowercase();
+    let mut exact: SmallVec<[(&Ucid, &String); 4]> = smallvec![];
+    let mut prefix: SmallVec<[(&Ucid, &String); 8]> = smallvec![];
+    for (ucid, player) in ctx.db.persisted.players() {
+        let mut is_exact = false;
+        let mut is_prefix = false;
+        for alt in player.alts.into_iter() {
+            let alt = alt.as_str().to_lowercase();
+            is_exact |= alt == lkey;
+            is_prefix |= alt.starts_with(lkey.as_str());
+        }
+        if is_exact {
+            exact.push((ucid, &player.name));
+        } else if is_prefix {
+            prefix.push((ucid, &player.name));
+        }
+    }
+    let names = |c: &[(&Ucid, &String)]| {
+        c.iter()
+            .take(5)
+            .map(|(_, n)| n.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match (&exact[..], &prefix[..]) {
+        ([(ucid, _)], _) => Ok(**ucid),
+        ([], [(ucid, _)]) => Ok(**ucid),
+        ([], []) => bail!("no player called {key}"),
+        ([], c) | (c, _) => bail!(
+            "{} players match {key} ({}{}), type more of the name",
+            c.len(),
+            names(c),
+            if c.len() > 5 { ", ..." } else { "" }
+        ),
+    }
 }
 
 pub fn get_airbase(db: &Db, name: &str) -> Result<ObjectiveId> {
@@ -571,7 +1115,18 @@ pub fn get_airbase(db: &Db, name: &str) -> Result<ObjectiveId> {
 
 fn admin_sideswitch(ctx: &mut Context, side: Side, name: String) -> Result<()> {
     let ucid = get_player_ucid(ctx, name.as_str())?;
-    ctx.db.force_sideswitch_player(&ucid, side)
+    let slotted = ctx
+        .db
+        .player(&ucid)
+        .is_some_and(|p| p.current_slot.is_some());
+    ctx.db.force_sideswitch_player(&ucid, side)?;
+    // Someone switched while sitting in an aircraft would otherwise keep
+    // flying it for the side they just left. Out to spectators; they pick a
+    // slot on the new side from there.
+    if slotted {
+        ctx.db.ephemeral.force_player_to_spectators(&ucid);
+    }
+    Ok(())
 }
 
 fn with_mut_cfg<F: FnOnce(&mut Cfg) -> Result<()>>(ctx: &mut Context, f: F) -> Result<()> {
@@ -715,17 +1270,31 @@ pub(super) fn admin_shutdown(
             api_perf: (*api_perf.0).clone(),
         }
     };
+    ctx.db.ephemeral.remove_map_layer();
+    // Shutdown ends the slot session for everyone still slotted, but nothing
+    // here runs `player_deslot`, so close the sorties of pilots sitting on the
+    // ground -- otherwise they stay open forever and credit no hours. It has to
+    // come after `return_lives`, which is what marks a just-landed pilot as
+    // being on the ground in the first place.
     if let Some(winner) = reset {
+        ctx.db.close_open_sorties();
         ctx.do_bg_task(Task::ResetState(ctx.miz_state_path.clone()));
         ctx.do_bg_task(Task::Stat(se));
         ctx.do_bg_task(Task::Stat(Stat::RoundEnd { winner }));
     } else {
         return_lives(lua, ctx, DateTime::<Utc>::MAX_UTC);
+        ctx.db.close_open_sorties();
         ctx.do_bg_task(Task::SaveState(
             ctx.miz_state_path.clone(),
             ctx.db.persisted.clone(),
         ));
         ctx.do_bg_task(Task::Stat(se));
+    }
+    if let Some(cfg) = ctx.db.ephemeral.cfg.live_weather.clone() {
+        match ctx.mission_file_path.clone() {
+            Some(miz_path) => ctx.do_bg_task(Task::RewriteMissionWeather { miz_path, cfg }),
+            None => warn!("live_weather is configured but no mission file path is known, skipping"),
+        }
     }
     ctx.do_bg_task(Task::Shutdown(Arc::clone(&wait)));
     let start = Instant::now();
@@ -754,10 +1323,92 @@ fn add_admin(ctx: &mut Context, player: &String) -> Result<()> {
 
 fn remove_admin(ctx: &mut Context, player: &String) -> Result<()> {
     let ucid = get_player_ucid(ctx, player)?;
+    // There is a single flat admin tier (and the list lives in the same
+    // config file this rewrites), so the one thing guarded here is locking
+    // everybody out: the last admin can't be removed, by themselves or over
+    // RPC -- after that only a hand edit of the config gets an admin back.
     with_mut_cfg(ctx, |cfg| {
+        if !cfg.admins.contains_key(&ucid) {
+            bail!("{player} is not an admin")
+        }
+        if cfg.admins.len() <= 1 {
+            bail!("{player} is the last admin; add another admin first")
+        }
         cfg.admins.remove(&ucid);
         Ok(())
     })
+}
+
+/// Point a player's access `rule` at blacklist/whitelist, and persist it.
+///
+/// This used to `Arc::make_mut` the live config and stop there, so a ban from
+/// cargo or JTACs quietly lapsed at the next restart; `with_mut_cfg` also
+/// writes the config file, like every other admin config change.
+fn set_rule(ctx: &mut Context, rule: &str, player: &String, allow: bool) -> Result<()> {
+    let ucid = get_player_ucid(ctx, player)?;
+    let name = ctx
+        .db
+        .player(&ucid)
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
+    let rule = rule.to_ascii_lowercase();
+    with_mut_cfg(ctx, |cfg| {
+        let rules = &mut cfg.rules;
+        let target: &mut Rule = match rule.as_str() {
+            "actions" => &mut rules.actions,
+            "cargo" => &mut rules.cargo,
+            "troops" => &mut rules.troops,
+            "jtac" => &mut rules.jtac,
+            "ca" => &mut rules.ca,
+            _ => bail!("unknown rule {rule}, expected: actions|cargo|troops|jtac|ca"),
+        };
+        if allow {
+            target.whitelist(ucid, name.into())
+        } else {
+            target.blacklist(ucid, name.into())
+        }
+        Ok(())
+    })
+}
+
+fn broadcast(ctx: &mut Context, text: &String) {
+    let msg = format_compact!("ADMIN: {text}");
+    ctx.db.ephemeral.msgs().send(MsgTyp::Chat(None), msg.clone());
+    ctx.db.ephemeral.msgs().panel_to_all(20, false, msg);
+}
+
+/// Set how many lives of `life_type` a player has left. A player's `lives`
+/// map only holds the types they are short of, as (reset clock start,
+/// remaining), so a full count is written as no entry at all.
+fn set_lives(ctx: &mut Context, player: &String, life_type: LifeType, lives: u8) -> Result<u8> {
+    if !ctx.db.ephemeral.cfg.limited_lives {
+        bail!("lives aren't limited on this server")
+    }
+    let max = ctx
+        .db
+        .ephemeral
+        .cfg
+        .default_lives
+        .get(&life_type)
+        .map(|(n, _)| *n)
+        .ok_or_else(|| anyhow!("{life_type} lives aren't configured on this server"))?;
+    let ucid = get_player_ucid(ctx, player)?;
+    let p = ctx
+        .db
+        .player_mut(&ucid)
+        .ok_or_else(|| anyhow!("no such player {player}"))?;
+    let lives = lives.min(max);
+    if lives >= max {
+        p.lives.remove_cow(&life_type);
+    } else {
+        // Keep a running reset clock; a fresh deficit starts one now.
+        let since = p.lives.get(&life_type).map(|(t, _)| *t).unwrap_or_else(Utc::now);
+        p.lives.insert_cow(life_type, (since, lives));
+    }
+    let snapshot = p.lives.clone();
+    ctx.db.ephemeral.dirty();
+    ctx.db.ephemeral.stat(Stat::Life { id: ucid, lives: snapshot });
+    Ok(lives)
 }
 
 fn balance(ctx: &Context, player: &String) -> Result<i32> {
@@ -799,7 +1450,9 @@ fn delete(ctx: &mut Context, id: &GroupId) -> Result<()> {
         DeployKind::Crate { .. }
         | DeployKind::Deployed { .. }
         | DeployKind::Troop { .. }
-        | DeployKind::Action { .. } => ctx.db.delete_group(id),
+        | DeployKind::Action { .. }
+        | DeployKind::DownedPilot { .. }
+        | DeployKind::Dismount { .. } => ctx.db.delete_group(id),
     }
 }
 
@@ -823,64 +1476,1892 @@ fn remark(ctx: &mut Context, objective: &String) -> Result<()> {
     Ok(())
 }
 
+// ==================== Query API Functions ====================
+
+pub(crate) fn query_objectives(ctx: &Context) -> Vec<ObjectiveInfo> {
+    ctx.db
+        .objectives()
+        .map(|(_, obj)| {
+            let mut group_count = HashMap::new();
+            for (side, groups) in obj.groups() {
+                group_count.insert(format!("{:?}", side), groups.len());
+            }
+            ObjectiveInfo {
+                id: obj.id,
+                name: obj.name.to_string(),
+                kind: obj.kind().name().to_string(),
+                owner: obj.owner,
+                pos: (obj.pos().x, obj.pos().y),
+                health: obj.health(),
+                logi: obj.logi(),
+                supply: obj.supply(),
+                fuel: obj.fuel(),
+                threatened: obj.threatened(),
+                captureable: obj.captureable(),
+                group_count,
+                priority: obj.priority(),
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn query_objective_details(ctx: &Context, name: &str) -> Result<ObjectiveDetails> {
+    let oid = get_airbase(&ctx.db, name)?;
+    let obj = ctx
+        .db
+        .persisted
+        .objectives
+        .get(&oid)
+        .ok_or_else(|| anyhow!("no such objective {oid}"))?;
+
+    let mut group_count = HashMap::new();
+    for (side, groups) in obj.groups() {
+        group_count.insert(format!("{:?}", side), groups.len());
+    }
+
+    let mut equipment = HashMap::new();
+    for (item, inv) in obj.warehouse().equipment() {
+        equipment.insert(item.to_string(), inv.stored);
+    }
+
+    let mut liquids = HashMap::new();
+    for (liquid_type, inv) in obj.warehouse().liquids() {
+        liquids.insert(format!("{:?}", liquid_type), inv.stored);
+    }
+
+    Ok(ObjectiveDetails {
+        info: ObjectiveInfo {
+            id: obj.id,
+            name: obj.name.to_string(),
+            kind: obj.kind().name().to_string(),
+            owner: obj.owner,
+            pos: (obj.pos().x, obj.pos().y),
+            health: obj.health(),
+            logi: obj.logi(),
+            supply: obj.supply(),
+            fuel: obj.fuel(),
+            threatened: obj.threatened(),
+            captureable: obj.captureable(),
+            group_count,
+            priority: obj.priority(),
+        },
+        equipment,
+        liquids,
+        points: obj.points(),
+    })
+}
+
+pub(crate) fn query_players(ctx: &Context) -> Vec<PlayerInfo> {
+    ctx.db
+        .persisted
+        .players()
+        .into_iter()
+        .map(|(ucid, player)| {
+            let mut lives = HashMap::new();
+            for (life_type, (_, count)) in &player.lives {
+                lives.insert(format!("{:?}", life_type), *count);
+            }
+
+            let (current_slot, current_unit_type, in_air, position) =
+                match &player.current_slot {
+                    Some((slot, Some(instanced))) => (
+                        Some(slot.to_string()),
+                        Some(instanced.typ.to_string()),
+                        instanced.in_air,
+                        Some((instanced.position.p.0.x, instanced.position.p.0.z)),
+                    ),
+                    Some((slot, None)) => (Some(slot.to_string()), None, false, None),
+                    None => (None, None, false, None),
+                };
+
+            PlayerInfo {
+                ucid: ucid.clone(),
+                name: player.name.to_string(),
+                side: player.side,
+                points: player.points,
+                lives,
+                current_slot,
+                current_unit_type,
+                in_air,
+                position,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn query_player_details(ctx: &Context, name: &str) -> Result<PlayerInfo> {
+    let ucid = get_player_ucid(ctx, name)?;
+    let player = ctx
+        .db
+        .player(&ucid)
+        .ok_or_else(|| anyhow!("no such player {name}"))?;
+
+    let mut lives = HashMap::new();
+    for (life_type, (_, count)) in &player.lives {
+        lives.insert(format!("{:?}", life_type), *count);
+    }
+
+    let (current_slot, current_unit_type, in_air, position) = match &player.current_slot {
+        Some((slot, Some(instanced))) => (
+            Some(slot.to_string()),
+            Some(instanced.typ.to_string()),
+            instanced.in_air,
+            Some((instanced.position.p.0.x, instanced.position.p.0.z)),
+        ),
+        Some((slot, None)) => (Some(slot.to_string()), None, false, None),
+        None => (None, None, false, None),
+    };
+
+    Ok(PlayerInfo {
+        ucid,
+        name: player.name.to_string(),
+        side: player.side,
+        points: player.points,
+        lives,
+        current_slot,
+        current_unit_type,
+        in_air,
+        position,
+    })
+}
+
+pub(crate) fn query_groups(ctx: &Context, side_filter: Option<Side>) -> Vec<GroupInfo> {
+    ctx.db
+        .persisted
+        .groups
+        .into_iter()
+        .filter(|(_, group)| side_filter.map_or(true, |s| group.side == s))
+        .map(|(_, group)| {
+            let alive_count = group
+                .units
+                .into_iter()
+                .filter(|uid| {
+                    ctx.db
+                        .persisted
+                        .units
+                        .get(uid)
+                        .map_or(false, |u| !u.dead)
+                })
+                .count();
+
+            let center = ctx.db.group_center(&group.id).ok().map(|c| (c.x, c.y));
+
+            let (origin_type, deployed_by) = match &group.origin {
+                DeployKind::Objective { .. } | DeployKind::ObjectiveDeprecated => {
+                    ("Objective".to_string(), None)
+                }
+                DeployKind::Deployed { player, .. } => {
+                    ("Deployed".to_string(), Some(player.clone()))
+                }
+                DeployKind::Troop { player, .. } => ("Troop".to_string(), Some(player.clone())),
+                DeployKind::Crate { player, .. } => ("Crate".to_string(), Some(player.clone())),
+                DeployKind::Action { player, .. } => ("Action".to_string(), player.clone()),
+                DeployKind::DownedPilot { ucid, .. } => {
+                    ("DownedPilot".to_string(), Some(ucid.clone()))
+                }
+                DeployKind::Dismount { .. } => ("Dismount".to_string(), None),
+            };
+
+            GroupInfo {
+                id: group.id,
+                name: group.name.to_string(),
+                side: group.side,
+                kind: group.kind.map(|k| format!("{:?}", k)),
+                class: format!("{:?}", group.class),
+                origin_type,
+                deployed_by,
+                alive_count,
+                total_count: group.units.len(),
+                center,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn query_group_details(ctx: &Context, id: &GroupId) -> Result<GroupInfo> {
+    let group = ctx.db.group(id)?;
+    let alive_count = group
+        .units
+        .into_iter()
+        .filter(|uid| {
+            ctx.db
+                .persisted
+                .units
+                .get(uid)
+                .map_or(false, |u| !u.dead)
+        })
+        .count();
+
+    let center = ctx.db.group_center(&group.id).ok().map(|c| (c.x, c.y));
+
+    let (origin_type, deployed_by) = match &group.origin {
+        DeployKind::Objective { .. } | DeployKind::ObjectiveDeprecated => {
+            ("Objective".to_string(), None)
+        }
+        DeployKind::Deployed { player, .. } => ("Deployed".to_string(), Some(player.clone())),
+        DeployKind::Troop { player, .. } => ("Troop".to_string(), Some(player.clone())),
+        DeployKind::Crate { player, .. } => ("Crate".to_string(), Some(player.clone())),
+        DeployKind::Action { player, .. } => ("Action".to_string(), player.clone()),
+        DeployKind::DownedPilot { ucid, .. } => {
+            ("DownedPilot".to_string(), Some(ucid.clone()))
+        }
+        DeployKind::Dismount { .. } => ("Dismount".to_string(), None),
+    };
+
+    Ok(GroupInfo {
+        id: group.id,
+        name: group.name.to_string(),
+        side: group.side,
+        kind: group.kind.map(|k| format!("{:?}", k)),
+        class: format!("{:?}", group.class),
+        origin_type,
+        deployed_by,
+        alive_count,
+        total_count: group.units.len(),
+        center,
+    })
+}
+
+pub(crate) fn query_units(ctx: &Context, group_id: &GroupId) -> Result<Vec<UnitInfo>> {
+    let group = ctx.db.group(group_id)?;
+    let units: Vec<UnitInfo> = group
+        .units
+        .into_iter()
+        .filter_map(|uid| ctx.db.persisted.units.get(uid))
+        .map(|unit| UnitInfo {
+            id: unit.id,
+            group_id: unit.group,
+            name: unit.name.to_string(),
+            typ: unit.typ.to_string(),
+            side: unit.side,
+            pos: (unit.pos.x, unit.pos.y),
+            heading: unit.heading,
+            alive: !unit.dead,
+        })
+        .collect();
+    Ok(units)
+}
+
+/// Resolve an objective by id, then by EXACT name.
+///
+/// Deliberately not `get_airbase`, which falls back to compiling the caller's
+/// string as a regex: fine for an admin typing a prefix in chat, wrong for a
+/// UI passing a name through, where "FOB Alpha (1)" is a regex error and an
+/// ambiguous prefix silently picks the wrong base.
+pub(crate) fn resolve_objective(db: &Db, key: &str) -> Result<ObjectiveId> {
+    if let Ok(id) = key.parse::<ObjectiveId>() {
+        if db.persisted.objectives.get(&id).is_some() {
+            return Ok(id);
+        }
+    }
+    for (oid, obj) in db.objectives() {
+        if obj.name.as_str() == key {
+            return Ok(*oid);
+        }
+    }
+    bail!("no objective with id or exact name {key}")
+}
+
+/// Newest recon contact this side holds within `radius` of a point, if any.
+/// This is what makes an enemy warehouse readout honest: it is dated by when
+/// somebody actually looked, not by when the query ran.
+fn newest_intel_near(
+    ctx: &Context,
+    side: Side,
+    pos: Vector2,
+    radius: f64,
+) -> Option<DateTime<Utc>> {
+    let r2 = radius * radius;
+    ctx.db
+        .ephemeral
+        .intel_db
+        .contacts_for(side)
+        .filter(|c| {
+            let dx = c.pos.x - pos.x;
+            let dy = c.pos.y - pos.y;
+            dx * dx + dy * dy <= r2
+        })
+        .map(|c| c.detected_at)
+        .max()
+}
+
+/// Build a supply-line neighbour entry, flagging a leg an enemy objective is
+/// physically sitting on.
+fn supply_link(ctx: &Context, from: Vector2, side: Side, oid: ObjectiveId) -> Option<SupplyLink> {
+    let obj = ctx.db.persisted.objectives.get(&oid)?;
+    Some(SupplyLink {
+        id: oid,
+        name: obj.name.to_string(),
+        owner: format!("{:?}", obj.owner()),
+        interdicted: crate::db::logistics::route_is_interdicted(
+            &ctx.db.persisted,
+            side,
+            from,
+            obj.pos(),
+        ),
+    })
+}
+
+/// Warehouse state for one objective, scoped to what `for_side` may see.
+///
+/// Pass `for_side: None` for an unscoped/admin query. Anything else gets full
+/// detail only for its own objectives; enemy objectives collapse to whatever
+/// its intel database already knows, with an age stamp, so this cannot be
+/// used to read the other coalition's logistics for free.
+pub(crate) fn query_warehouse(
+    ctx: &Context,
+    key: &str,
+    for_side: Option<Side>,
+) -> Result<WarehouseInfo> {
+    let oid = resolve_objective(&ctx.db, key)?;
+    let obj = ctx
+        .db
+        .persisted
+        .objectives
+        .get(&oid)
+        .ok_or_else(|| anyhow!("no such objective {oid}"))?;
+
+    let own = for_side.map_or(true, |s| s == obj.owner());
+    let pos = obj.pos();
+    let intel_as_of = if own {
+        None
+    } else {
+        for_side.and_then(|s| newest_intel_near(ctx, s, pos, obj.radius().max(8000.0)))
+    };
+    let visibility = if own {
+        WarehouseVisibility::Full
+    } else if intel_as_of.is_some() {
+        WarehouseVisibility::Intel
+    } else {
+        WarehouseVisibility::Hidden
+    };
+
+    let mut equipment = HashMap::new();
+    let mut liquids = HashMap::new();
+    let mut supplier = None;
+    let mut destinations = vec![];
+
+    // Stock lines and topology are the parts worth flying a recon sortie for,
+    // so they are withheld unless this is the asking side's own objective.
+    if visibility == WarehouseVisibility::Full {
+        for (item, inv) in obj.warehouse().equipment() {
+            equipment.insert(
+                item.to_string(),
+                InventoryInfo { stored: inv.stored, capacity: inv.capacity },
+            );
+        }
+        for (liquid_type, inv) in obj.warehouse().liquids() {
+            liquids.insert(
+                format!("{:?}", liquid_type),
+                InventoryInfo { stored: inv.stored, capacity: inv.capacity },
+            );
+        }
+        supplier = obj
+            .warehouse()
+            .supplier()
+            .and_then(|id| supply_link(ctx, pos, obj.owner(), id));
+        destinations = obj
+            .warehouse()
+            .destinations()
+            .filter_map(|id| supply_link(ctx, pos, obj.owner(), id))
+            .collect();
+    }
+
+    Ok(WarehouseInfo {
+        objective_id: oid,
+        objective_name: obj.name.to_string(),
+        kind: format!("{:?}", obj.kind()),
+        owner: format!("{:?}", obj.owner),
+        visibility,
+        intel_as_of,
+        health: obj.health(),
+        logi: obj.logi(),
+        supply: (visibility == WarehouseVisibility::Full).then(|| obj.supply()),
+        fuel: (visibility == WarehouseVisibility::Full).then(|| obj.fuel()),
+        damaged: obj.warehouse().is_damaged(),
+        equipment,
+        liquids,
+        supplier,
+        destinations,
+    })
+}
+
+pub(crate) fn query_logistics(ctx: &Context) -> LogisticsInfo {
+    let stage = format!("{:?}", ctx.db.ephemeral.logistics_stage());
+    LogisticsInfo {
+        stage,
+        next_tick_seconds: None, // Could be computed from logistics timing if needed
+        pending_transfers: vec![], // Would need to track pending transfers
+    }
+}
+
+pub(crate) fn query_campaign_state(ctx: &Context) -> CampaignState {
+    let mut objectives_by_side: HashMap<std::string::String, usize> = HashMap::new();
+    let mut players_by_side: HashMap<std::string::String, usize> = HashMap::new();
+    let mut points_by_side: HashMap<std::string::String, i64> = HashMap::new();
+
+    for (_, obj) in ctx.db.objectives() {
+        *objectives_by_side
+            .entry(format!("{:?}", obj.owner))
+            .or_insert(0) += 1;
+    }
+
+    for (_, player) in ctx.db.persisted.players() {
+        *players_by_side
+            .entry(format!("{:?}", player.side))
+            .or_insert(0) += 1;
+        *points_by_side
+            .entry(format!("{:?}", player.side))
+            .or_insert(0) += player.points as i64;
+    }
+
+    CampaignState {
+        objectives_by_side,
+        players_by_side,
+        points_by_side,
+    }
+}
+
+/// Built-in AGM-88 ALIC / threat codes by DCS emitter type. `cfg.harm_codes`
+/// (exact key match) overrides these; entries here are tried exact-first then
+/// as a substring so a family key ("S-300PS", "Pantsir") still resolves.
+/// Ordered most-specific first. Source: DimOn F/A-18C RWR/HARM reference.
+const DEFAULT_HARM_CODES: &[(&str, &str)] = &[
+    ("SNR_75V", "126"),                 // SA-2 Fan Song
+    ("snr s-125 tr", "123"),            // SA-3 Low Blow
+    ("p-19 s-125 sr", "123"),           // SA-3 / P-19 flat face
+    ("RPC_5N62V", "129"),               // SA-5 Square Pair
+    ("RLS_19J6", "129"),                // SA-5 Tall King
+    ("Kub 1S91 str", "108"),            // SA-6 Straight Flush
+    ("1S91", "108"),
+    ("Osa 9A33 ln", "117"),             // SA-8 Gecko
+    ("S-300PS 40B6MD sr", "103"),       // SA-10 Clam Shell  (before 40B6M!)
+    ("S-300PS 64H6E sr", "104"),        // SA-10 Big Bird
+    ("S-300PS 40B6M tr", "110"),        // SA-10 Flap Lid
+    ("S-300PS", "110"),
+    ("SA-11 Buk LN 9A310M1", "115"),    // SA-11 Fire Dome
+    ("SA-11 Buk SR 9S18M1", "107"),     // SA-11 Snow Drift
+    ("Strela-10M3", "118"),             // SA-13 Gopher
+    ("Tor 9A331", "119"),               // SA-15 Gauntlet
+    ("2S6 Tunguska", "120"),            // SA-19 Grison
+    ("Pantsir", "134"),                 // SA-22 Greyhound
+    ("HQ-7_STR_SP", "128"),
+    ("HQ-7_LN_SP", "127"),
+    ("Gepard", "207"),
+    ("Vulcan", "208"),
+    ("ZSU-23-4 Shilka", "121"),
+    ("Roland ADS", "201"),
+    ("Roland Radar", "205"),
+    ("rapier_fsa_blindfire_radar", "124"),
+    ("rapier_fsa_launcher", "125"),
+    ("Hawk cwar", "206"),
+    ("Hawk sr", "203"),
+    ("Hawk tr", "204"),
+    ("Patriot str", "202"),
+    ("NASAMS_Radar_MPQ64F1", "209"),
+    ("NASAMS", "209"),
+    ("IRIS-T", "135"),
+];
+
+fn harm_code_for(typ: &str, cfg: &Cfg) -> Option<std::string::String> {
+    if let Some(c) = cfg.harm_codes.get(typ) {
+        return Some(c.to_string());
+    }
+    DEFAULT_HARM_CODES
+        .iter()
+        .find(|(needle, _)| typ == *needle || typ.contains(needle))
+        .map(|(_, code)| code.to_string())
+}
+
+/// Assemble the per-side kneeboard briefing (navaids, radios, artillery,
+/// deployables, threats). Positions are converted to lat/lon here since bfdb
+/// has no DCS coord library of its own.
+pub(crate) fn query_briefing(ctx: &Context, lua: MizLua, side: Side) -> Briefing {
+    let db = &ctx.db;
+    let cfg = &db.ephemeral.cfg;
+    let coord = dcso3::coord::Coord::singleton(lua).ok();
+    let to_ll = |p: Vector2| -> (f64, f64) {
+        coord
+            .as_ref()
+            .and_then(|c| {
+                c.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(p.x, 0.0, p.y)))
+                    .ok()
+            })
+            .map(|ll| (ll.latitude, ll.longitude))
+            .unwrap_or((0.0, 0.0))
+    };
+
+    // ── navaids (one row per entry -- one per ground objective, one per ship
+    //    for a carrier task force) ──
+    let mut navaids = vec![];
+    for (oid, navs) in &db.persisted.navaids {
+        let Some(obj) = db.persisted.objectives.get(oid) else { continue };
+        if obj.owner() != side {
+            continue;
+        }
+        let (lat, lon) = to_ll(obj.pos());
+        let brc = if obj.kind().is_carrier_group() {
+            Some(crate::atis::carrier_brc(db, obj.kind()))
+        } else {
+            None
+        };
+        for nav in navs {
+            let tacan = nav
+                .tacan_channel
+                .map(|ch| format!("{ch}{} {}", nav.tacan_band, nav.morse));
+            navaids.push(NavaidEntry {
+                objective: obj.name().to_string(),
+                kind: obj.kind().name().to_string(),
+                deck: nav.label.as_ref().map(|s| s.to_string()),
+                lat,
+                lon,
+                tacan,
+                ndb_khz: nav.ndb_khz,
+                icls: nav.icls_channel,
+                link4_mhz: nav.link4_mhz,
+                acls: nav.acls,
+                brc,
+            });
+        }
+    }
+    navaids.sort_by(|a, b| (a.objective.as_str(), a.deck.as_deref()).cmp(&(b.objective.as_str(), b.deck.as_deref())));
+
+    // ── radios (AWACS / tankers / JTACs) ──
+    let mut radios = vec![];
+    for (_, group) in &db.persisted.groups {
+        if group.side != side {
+            continue;
+        }
+        let DeployKind::Action { spec, name, .. } = &group.origin else { continue };
+        let (kind, plane) = match &spec.kind {
+            ActionKind::Awacs(AwacsCfg { plane, .. }) => ("AWACS", plane),
+            ActionKind::Tanker(plane) => ("TANKER", plane),
+            _ => continue,
+        };
+        let tacan = plane.tacan_channel.map(|ch| {
+            let band = plane
+                .tacan_band
+                .as_ref()
+                .map(|b| format!("{b:?}"))
+                .unwrap_or_else(|| "X".to_string());
+            let cs = plane
+                .tacan_callsign
+                .as_ref()
+                .map(|c| format!(" {c}"))
+                .unwrap_or_default();
+            format!("{ch}{band}{cs}")
+        });
+        radios.push(RadioEntry {
+            label: format!("{kind} {name}"),
+            kind: kind.to_string(),
+            freq_mhz: plane.freq.map(|f| f as f64 / 1_000_000.0),
+            tacan,
+            extra: None,
+        });
+    }
+    for j in ctx.jtac.jtacs().filter(|j| j.side() == side) {
+        let loc = j.location();
+        let near = db
+            .persisted
+            .objectives
+            .get(&loc.oid)
+            .map(|o| o.name().to_string())
+            .unwrap_or_default();
+        radios.push(RadioEntry {
+            label: format!("JTAC {:?}", j.gid()),
+            kind: "JTAC".to_string(),
+            freq_mhz: None,
+            tacan: None,
+            extra: Some(format!("laser {} near {near}", j.code())),
+        });
+    }
+
+    // ── artillery ──
+    let mut artillery = vec![];
+    let art_cfg = cfg.artillery.as_ref();
+    for (gid, group) in &db.persisted.groups {
+        if group.side != side {
+            continue;
+        }
+        let live: Vec<_> = group
+            .units
+            .into_iter()
+            .filter_map(|uid| db.persisted.units.get(uid))
+            .filter(|u| !u.dead)
+            .collect();
+        let Some(arty_unit) = live
+            .iter()
+            .find(|u| u.tags.contains(UnitTag::Artillery))
+        else {
+            continue
+        };
+        let typ = arty_unit.typ.0.to_string();
+        let (max_r, min_r) = crate::unitdb::artillery_range(art_cfg, typ.as_str());
+        let center = db.group_center(gid).unwrap_or(arty_unit.pos);
+        let (lat, lon) = to_ll(center);
+        artillery.push(ArtilleryEntry {
+            group: group.name.to_string(),
+            typ,
+            lat,
+            lon,
+            min_range_m: min_r,
+            max_range_m: max_r,
+            alive: live.len(),
+        });
+    }
+    artillery.sort_by(|a, b| a.group.cmp(&b.group));
+
+    // ── deployables ──
+    let mut deployables = vec![];
+    if let Some(list) = cfg.deployables.get(&side) {
+        for d in list {
+            let full = d.path.join(" / ");
+            let deployed = db
+                .persisted
+                .deployed
+                .into_iter()
+                .filter(|gid| {
+                    db.persisted.groups.get(gid).map_or(false, |g| {
+                        matches!(&g.origin, DeployKind::Deployed { spec, .. } if spec.path == d.path)
+                    })
+                })
+                .count() as u32;
+            let mut tags = vec![];
+            if d.ewr.is_some() {
+                tags.push("EWR".to_string());
+            }
+            if d.jtac.is_some() {
+                tags.push("JTAC".to_string());
+            }
+            if d.gci.is_some() {
+                tags.push("GCI".to_string());
+            }
+            // Total physical crates to build it = sum of each crate type's
+            // `required` count (a deployable may need several of several types).
+            deployables.push(DeployableEntry {
+                name: full,
+                cost: d.cost,
+                crates_required: d.crates.iter().map(|c| c.required.max(1) as usize).sum(),
+                limit: d.limit,
+                deployed,
+                tags,
+            });
+        }
+    }
+
+    // ── threats (enemy SAM / radar types in play) ──
+    let enemy = side.opposite();
+    let mut threat_counts: HashMap<std::string::String, usize> = HashMap::new();
+    for (_, group) in &db.persisted.groups {
+        if group.side != enemy {
+            continue;
+        }
+        if !matches!(
+            group.class,
+            crate::db::objective::ObjGroupClass::Lr
+                | crate::db::objective::ObjGroupClass::Mr
+                | crate::db::objective::ObjGroupClass::Sr
+                | crate::db::objective::ObjGroupClass::Aaa
+        ) {
+            continue;
+        }
+        for uid in group.units.into_iter() {
+            if let Some(u) = db.persisted.units.get(uid) {
+                if u.dead {
+                    continue;
+                }
+                let is_radar = u.tags.contains(UnitTag::SearchRadar)
+                    || u.tags.contains(UnitTag::TrackRadar);
+                if is_radar {
+                    *threat_counts.entry(u.typ.0.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    let mut threats: Vec<ThreatEntry> = threat_counts
+        .into_iter()
+        .map(|(typ, count)| {
+            let ewr = cfg.ground_radar_ewrs.get(typ.as_str());
+            ThreatEntry {
+                harm_code: harm_code_for(&typ, cfg),
+                band: ewr.map(|e| format!("{:?}", e.frequency_band)),
+                max_range_km: ewr.map(|e| e.range as f64 / 1000.0),
+                typ,
+                count,
+            }
+        })
+        .collect();
+    threats.sort_by(|a, b| b.count.cmp(&a.count).then(a.typ.cmp(&b.typ)));
+
+    Briefing {
+        side,
+        generated: Utc::now().to_rfc3339(),
+        navaids,
+        radios,
+        artillery,
+        deployables,
+        threats,
+    }
+}
+
+/// Build one coalition's fog-of-war tactical picture for the dashboard
+/// TACMAP: the air tracks its EWR/AWACS network is painting plus its own
+/// blue-force air, the ground/naval contacts in its ELINT/JTAC intel
+/// database, and its friendly radar coverage rings. Positions are converted
+/// to lat/lon here (bfdb has no DCS coord library). Bullseye is filled in by
+/// bfdb from the `Export.lua` feed.
+pub(crate) fn query_tacmap(ctx: &Context, lua: MizLua, side: Side) -> bfprotocols::tacmap::TacPicture {
+    use bfprotocols::tacmap::{
+        AirClass, AirTrack, GroundClass, GroundContact, GroundSource, Iff, RadarRing, TacPicture,
+        TrackSource,
+    };
+    use crate::db::intel::{IntelSource, IntelUnitClass};
+    use crate::ewr::ContactClass;
+
+    let now = Utc::now();
+    let db = &ctx.db;
+    let coord = dcso3::coord::Coord::singleton(lua).ok();
+    let to_ll = |x: f64, z: f64| -> (f64, f64) {
+        coord
+            .as_ref()
+            .and_then(|c| c.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(x, 0.0, z))).ok())
+            .map(|ll| (ll.latitude, ll.longitude))
+            .unwrap_or((0.0, 0.0))
+    };
+
+    let air: Vec<AirTrack> = ctx
+        .ewr
+        .air_picture_for(side, now, db)
+        .into_iter()
+        .map(|c| {
+            let (lat, lon) = to_ll(c.pos.p.x, c.pos.p.z);
+            let v = c.velocity;
+            let heading = if v.x.abs() > f64::EPSILON || v.z.abs() > f64::EPSILON {
+                (v.z.atan2(v.x).to_degrees() + 360.0) % 360.0
+            } else {
+                0.0
+            };
+            let speed_kts = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt() * 1.94384;
+            let source = if c.friendly && !c.detected_by.is_ground() && !c.detected_by.is_airborne() {
+                TrackSource::Datalink
+            } else if c.detected_by.is_ground() && c.detected_by.is_airborne() {
+                TrackSource::Fused
+            } else if c.detected_by.is_airborne() {
+                TrackSource::Awacs
+            } else {
+                TrackSource::GroundRadar
+            };
+            AirTrack {
+                id: c.id,
+                side: Some(c.side),
+                lat,
+                lon,
+                alt_m: c.pos.p.y,
+                heading,
+                speed_kts,
+                vspd_ms: v.y,
+                iff: if c.friendly { Iff::Friendly } else { Iff::Hostile },
+                class: match c.class {
+                    ContactClass::Fighter => AirClass::Fighter,
+                    ContactClass::Bomber => AirClass::Bomber,
+                    ContactClass::Helicopter => AirClass::Helo,
+                    ContactClass::Unknown => AirClass::Unknown,
+                },
+                unit_type: c.typ.as_ref().map(|t| t.to_string()),
+                age_s: c.age_s,
+                stale: c.stale,
+                jammed: false,
+                source,
+                label: c.player_name.as_ref().map(|n| n.to_string()),
+            }
+        })
+        .collect();
+
+    // Known emitter ranges for auto threat rings: every live enemy SAM/AAA
+    // search-radar unit, as (position, detection-range m). An air-defence
+    // contact inherits the widest range of any such unit inside its
+    // uncertainty bubble — enough to identify the site without leaking its
+    // exact type.
+    let cfg = &db.ephemeral.cfg;
+    let ad_emitters: Vec<(Vector2, f32)> = db
+        .persisted
+        .groups
+        .into_iter()
+        .filter(|(_, g)| g.side == side.opposite())
+        .flat_map(|(_, g)| g.units.into_iter())
+        .filter_map(|uid| db.persisted.units.get(uid))
+        .filter(|u| !u.dead)
+        .filter_map(|u| cfg.ground_radar_ewrs.get(&u.typ).map(|e| (u.pos, e.range as f32)))
+        .collect();
+    let threat_range_for = |cpos: Vector2, uncertainty_m: f32| -> Option<f32> {
+        let r = (uncertainty_m as f64).max(2500.0);
+        let r2 = r * r;
+        ad_emitters
+            .iter()
+            .filter(|(p, _)| {
+                let dx = p.x - cpos.x;
+                let dy = p.y - cpos.y;
+                dx * dx + dy * dy <= r2
+            })
+            .map(|(_, range)| *range)
+            .fold(None, |acc: Option<f32>, v| Some(acc.map_or(v, |a| a.max(v))))
+    };
+
+    let ground: Vec<GroundContact> = db
+        .ephemeral
+        .intel_db
+        .contacts_for(side)
+        .map(|c| {
+            let (lat, lon) = to_ll(c.pos.x, c.pos.y);
+            let threat_range_m = if matches!(c.unit_class, IntelUnitClass::AirDefense) {
+                threat_range_for(c.pos, c.pos_uncertainty_m)
+            } else {
+                None
+            };
+            GroundContact {
+                id: c.id.raw(),
+                side: Some(c.enemy_side),
+                lat,
+                lon,
+                class: match c.unit_class {
+                    IntelUnitClass::Armor => GroundClass::Armor,
+                    IntelUnitClass::AirDefense => GroundClass::AirDefense,
+                    IntelUnitClass::Artillery => GroundClass::Artillery,
+                    IntelUnitClass::Infantry => GroundClass::Infantry,
+                    IntelUnitClass::AirBase => GroundClass::Airbase,
+                    IntelUnitClass::Naval => GroundClass::Naval,
+                    IntelUnitClass::Unknown => GroundClass::Unknown,
+                },
+                count: c.unit_count,
+                confidence: c.confidence,
+                uncertainty_m: c.pos_uncertainty_m,
+                source: match c.source {
+                    IntelSource::ReconFlight => GroundSource::Recon,
+                    IntelSource::SpecialForces => GroundSource::SpecialForces,
+                    IntelSource::Awacs => GroundSource::Awacs,
+                    IntelSource::EwrFusion => GroundSource::EwrFusion,
+                    IntelSource::Jtac => GroundSource::Jtac,
+                    IntelSource::HumanInt => GroundSource::HumanInt,
+                },
+                age_s: (now - c.detected_at).num_seconds().max(0) as u32,
+                threat_range_m,
+            }
+        })
+        .collect();
+
+    let radar_rings: Vec<RadarRing> = db
+        .radar_donors()
+        .filter(|d| d.side == side)
+        .map(|d| {
+            let (lat, lon) = to_ll(d.pos.p.x, d.pos.p.z);
+            RadarRing {
+                lat,
+                lon,
+                range_m: d.range as f64,
+                airborne: d.airborne,
+                alive: true,
+            }
+        })
+        .collect();
+
+    // One diagnostic line per side every ~60s so "the scope is empty" is
+    // debuggable from the engine log. Cheap: just an atomic timestamp check.
+    {
+        use std::sync::atomic::{AtomicI64, Ordering};
+        static LAST: [AtomicI64; 3] = [AtomicI64::new(0), AtomicI64::new(0), AtomicI64::new(0)];
+        let slot = match side {
+            Side::Blue => 0,
+            Side::Red => 1,
+            _ => 2,
+        };
+        let ts = now.timestamp();
+        if ts - LAST[slot].load(Ordering::Relaxed) >= 60 {
+            LAST[slot].store(ts, Ordering::Relaxed);
+            let intel_on = db.ephemeral.cfg.elint.is_some()
+                || db.ephemeral.cfg.player_recon.is_some();
+            log::info!(
+                "query_tacmap({side:?}): {} air, {} ground, {} radar rings; \
+                 intel(elint|recon) {}; {} enemy radar-emitter types in cfg",
+                air.len(),
+                ground.len(),
+                radar_rings.len(),
+                if intel_on { "ENABLED" } else { "DISABLED -> ground picture will always be empty" },
+                cfg.ground_radar_ewrs.len(),
+            );
+        }
+    }
+
+    TacPicture {
+        side: Some(side),
+        time: now,
+        bullseye: vec![],
+        air,
+        ground,
+        radar_rings,
+    }
+}
+
+/// Build one coalition's live GCI controller picture: every airborne human
+/// flight on that side plus, per flight, the hostile groups its coalition's
+/// EWR/AWACS network is currently painting (strict fog of war). Consumed by
+/// bfdb's `gci` module, which diffs successive pictures into spoken SRS
+/// brevity calls. AI slots are never included — `instanced_players()` only
+/// yields human-occupied slots.
+pub(crate) fn query_gci(
+    ctx: &Context,
+    lua: MizLua,
+    side: Side,
+) -> bfprotocols::gci::GciControlPicture {
+    use bfprotocols::cfg::SensorType;
+    use bfprotocols::gci::{
+        GciAspect, GciContact, GciControlPicture, GciFlight, GciRef, GciSamThreat, GciSupport,
+        GciTask,
+        GciUnits,
+    };
+    use crate::ewr::{Aspect, ContactClass, EwrUnits};
+
+    let now = Utc::now();
+    let db = &ctx.db;
+    let coord = dcso3::coord::Coord::singleton(lua).ok();
+    let to_ll = |x: f64, z: f64| -> (f64, f64) {
+        coord
+            .as_ref()
+            .and_then(|c| c.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(x, 0.0, z))).ok())
+            .map(|ll| (ll.latitude, ll.longitude))
+            .unwrap_or((0.0, 0.0))
+    };
+
+    // Coalition bullseye (from the loaded mission), for bullseye-format calls.
+    let bullseye = dcso3::env::miz::Miz::singleton(lua)
+        .ok()
+        .and_then(|miz| miz.coalition(side).ok())
+        .and_then(|c| c.bullseye().ok())
+        .map(|be| to_ll(be.0.x, be.0.y));
+
+    // Live enemy SAM search radars, as (2D pos, engagement range m). Reused
+    // per flight for SAM threat calls.
+    let enemy_sams: Vec<(Vector2, u32)> = db
+        .radar_donors()
+        .filter(|d| d.side == side.opposite())
+        .filter(|d| matches!(d.sensor_type, SensorType::SamSearchRadar))
+        .map(|d| (Vector2::new(d.pos.p.x, d.pos.p.z), d.range))
+        .collect();
+
+    let mut flights: Vec<GciFlight> = vec![];
+    for (ucid, player, inst) in db.instanced_players() {
+        if player.side != side || !inst.in_air {
+            continue;
+        }
+        let (gci_enabled, gci_units, gci_ref) = ctx.ewr.gci_prefs(ucid);
+        if !gci_enabled {
+            continue;
+        }
+        // One lookup for both the spoken callsign and the DCS unit id. The unit
+        // id is what an in-cockpit SRS client reports as `RadioInfo.unitId`, so
+        // it lets a spoken request be tied to this flight exactly, instead of
+        // fuzzy-matching the player's SRS display name against their DCS name.
+        let unit = player
+            .current_slot
+            .as_ref()
+            .and_then(|(slot, _)| db.ephemeral.slot_instance_unit(lua, slot).ok());
+        let unit_id = unit
+            .as_ref()
+            .and_then(|u| u.id().ok())
+            .map(|id| id.inner())
+            .filter(|id| *id > 0)
+            .map(|id| id as u64);
+        let callsign = unit
+            .as_ref()
+            .and_then(|u| u.get_callsign().ok())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| player.name.to_string());
+
+        let mut contacts: Vec<GciContact> = ctx
+            .ewr
+            .gci_contacts(now, db, ucid, player, inst)
+            .into_iter()
+            .map(|(b, cls, typ, vspd)| GciContact {
+                brg: b.bearing,
+                rng_m: b.range,
+                alt_m: b.altitude as i32,
+                hdg: b.heading,
+                spd_ms: b.speed,
+                vspd_ms: vspd,
+                aspect: match b.aspect {
+                    Aspect::Hot => GciAspect::Hot,
+                    Aspect::FlankLeft | Aspect::FlankRight => GciAspect::Flank,
+                    Aspect::BeamLeft | Aspect::BeamRight => GciAspect::Beam,
+                    Aspect::Cold => GciAspect::Cold,
+                },
+                class: match cls {
+                    ContactClass::Unknown => 0,
+                    ContactClass::Fighter => 1,
+                    ContactClass::Bomber => 2,
+                    ContactClass::Helicopter => 3,
+                },
+                type_name: typ.map(|t| t.to_string()),
+                group_size: 1,
+                stale: b.stale,
+            })
+            .collect();
+        cluster_gci_contacts(&mut contacts);
+
+        // SAM threats: any live enemy SAM search radar whose nominal
+        // engagement zone currently covers this flight.
+        let fp = Vector2::new(inst.position.p.x, inst.position.p.z);
+        let mut sam_threats: Vec<GciSamThreat> = enemy_sams
+            .iter()
+            .filter_map(|(sp, range)| {
+                let dn = sp.x - fp.x;
+                let de = sp.y - fp.y;
+                let d = (dn * dn + de * de).sqrt();
+                if d <= *range as f64 {
+                    Some(GciSamThreat {
+                        brg: ((de.atan2(dn).to_degrees() + 360.0) % 360.0) as u16,
+                        rng_m: d as u32,
+                        site_range_m: *range,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        sam_threats.sort_by_key(|t| t.rng_m);
+        sam_threats.truncate(3);
+
+        // SAM launches: enemy SAM missiles fired within ~40 nm in the last few
+        // seconds — a "SAM launch, defend" call.
+        let mut sam_launches: Vec<GciSamThreat> = ctx
+            .ewr
+            .recent_sam_launches_near(fp, side, 74_000.0, now)
+            .into_iter()
+            .map(|sp| {
+                let dn = sp.x - fp.x;
+                let de = sp.y - fp.y;
+                GciSamThreat {
+                    brg: ((de.atan2(dn).to_degrees() + 360.0) % 360.0) as u16,
+                    rng_m: (dn * dn + de * de).sqrt() as u32,
+                    site_range_m: 0,
+                }
+            })
+            .collect();
+        sam_launches.sort_by_key(|t| t.rng_m);
+        sam_launches.truncate(2);
+
+        // Splash: hostile air killed near the flight in the last few seconds.
+        let mut splashes: Vec<GciSamThreat> = ctx
+            .ewr
+            .recent_air_kills_near(fp, side, 74_000.0, now)
+            .into_iter()
+            .map(|kp| {
+                let dn = kp.x - fp.x;
+                let de = kp.y - fp.y;
+                GciSamThreat {
+                    brg: ((de.atan2(dn).to_degrees() + 360.0) % 360.0) as u16,
+                    rng_m: (dn * dn + de * de).sqrt() as u32,
+                    site_range_m: 0,
+                }
+            })
+            .collect();
+        splashes.sort_by_key(|t| t.rng_m);
+        splashes.truncate(2);
+
+        let v = inst.velocity;
+        let heading = if v.x.abs() > f64::EPSILON || v.z.abs() > f64::EPSILON {
+            ((v.z.atan2(v.x).to_degrees() + 360.0) % 360.0) as u16
+        } else {
+            0
+        };
+        let speed_ms = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt() as u16;
+        let (lat, lon) = to_ll(inst.position.p.x, inst.position.p.z);
+        flights.push(GciFlight {
+            ucid: ucid.to_string(),
+            callsign,
+            player_name: player.name.to_string(),
+            unit_id,
+            auto: ctx.ewr.gci_auto(ucid),
+            lat,
+            lon,
+            alt_m: inst.position.p.y as i32,
+            heading,
+            speed_ms,
+            units: gci_units.map(|u| match u {
+                EwrUnits::Metric => GciUnits::Metric,
+                EwrUnits::Imperial => GciUnits::Imperial,
+            }),
+            reference: gci_ref.map(GciRef::from_u8),
+            contacts,
+            sam_threats,
+            sam_launches,
+            splashes,
+            comms_jammed: crate::modern_war::comms_jammed(
+                ctx,
+                side,
+                dcso3::Vector2::new(inst.position.p.x, inst.position.p.z),
+            ),
+        });
+    }
+
+    // Coalition-wide: EWR net health, friendly ejections, support assets.
+    let radar_up = db.radar_donors().any(|d| d.side == side);
+    let ejections: Vec<(f64, f64)> = ctx
+        .ewr
+        .recent_ejections(side, now)
+        .into_iter()
+        .map(|p| to_ll(p.x, p.y))
+        .collect();
+    let support: Vec<GciSupport> = {
+        use bfprotocols::cfg::UnitTag;
+        db.persisted
+            .units
+            .into_iter()
+            .filter(|(_, u)| u.side == side && !u.dead)
+            .filter_map(|(_, u)| {
+                let t = u.typ.to_string();
+                let awacs = db
+                    .ephemeral
+                    .cfg
+                    .unit_classification
+                    .get(&u.typ)
+                    .map(|tags| tags.contains(UnitTag::AWACS))
+                    .unwrap_or(false)
+                    || t.contains("A-50")
+                    || t.contains("E-3")
+                    || t.contains("E-2")
+                    || t.contains("KJ-2000");
+                let tanker = t.contains("KC-")
+                    || t.contains("KC130")
+                    || t.contains("KC135")
+                    || t.contains("IL-78")
+                    || t.contains("S-3B Tanker");
+                let kind = if awacs {
+                    "awacs"
+                } else if tanker {
+                    "tanker"
+                } else {
+                    return None;
+                };
+                let (lat, lon) = to_ll(u.pos.x, u.pos.y);
+                Some(GciSupport {
+                    kind: kind.to_string(),
+                    lat,
+                    lon,
+                    alt_m: u.position.p.y as i32,
+                    callsign: None,
+                })
+            })
+            .collect()
+    };
+
+    // Tasking board entries posted since the last poll, so the controller
+    // can read new tasking out over the voice net.
+    let tasks = db
+        .ephemeral
+        .gci_tasks
+        .iter()
+        .filter(|(_, t)| t.side == side)
+        .map(|(_, t)| {
+            let (lat, lon) = to_ll(t.pos.x, t.pos.y);
+            GciTask {
+                id: t.id.inner(),
+                kind: t.kind.to_string(),
+                location: t.location.to_string(),
+                lat,
+                lon,
+                by: Some(t.created_by_name.to_string()),
+            }
+        })
+        .collect();
+
+    GciControlPicture {
+        side,
+        time: now,
+        bullseye,
+        flights,
+        radar_up,
+        ejections,
+        support,
+        tasks,
+    }
+}
+
+/// Build one coalition's close-air-support picture: every JTAC it owns, what
+/// each is looking at, and the human flights that might work with them.
+///
+/// Everything the spoken controller says is derived from here, so this is
+/// deliberately generous about context (contact breakdown, nearby threats,
+/// nearest friendly) — the voice side does no map queries of its own.
+pub(crate) fn query_cas(ctx: &Context, lua: MizLua, side: Side) -> bfprotocols::cas::CasPicture {
+    use bfprotocols::cas::{CasContactGroup, CasFlight, CasJtac, CasPicture, CasTarget};
+    use bfprotocols::cfg::UnitTag;
+    use std::collections::HashMap;
+    // admin.rs imports dcso3's String at module scope; the protocol types want
+    // the std one.
+    use std::string::String;
+
+    let db = &ctx.db;
+    let coord = dcso3::coord::Coord::singleton(lua).ok();
+    let to_ll = |x: f64, z: f64| -> (f64, f64) {
+        coord
+            .as_ref()
+            .and_then(|c| c.lo_to_ll(dcso3::LuaVec3(dcso3::Vector3::new(x, 0.0, z))).ok())
+            .map(|ll| (ll.latitude, ll.longitude))
+            .unwrap_or((0.0, 0.0))
+    };
+    let bearing_range = |from: Vector2, to: Vector2| -> (u16, u32) {
+        let dn = to.x - from.x;
+        let de = to.y - from.y;
+        (
+            ((de.atan2(dn).to_degrees() + 360.0) % 360.0) as u16,
+            (dn * dn + de * de).sqrt() as u32,
+        )
+    };
+    // Collapse a list of type names into "4 BMP-2, 2 T-72", biggest group first.
+    let summarize = |counts: HashMap<String, u16>| -> Vec<CasContactGroup> {
+        let mut v: Vec<CasContactGroup> = counts
+            .into_iter()
+            .map(|(typ, count)| CasContactGroup { typ, count })
+            .collect();
+        v.sort_by(|a, b| b.count.cmp(&a.count).then(a.typ.cmp(&b.typ)));
+        v.truncate(6);
+        v
+    };
+
+    let mut jtacs: Vec<CasJtac> = vec![];
+    for jt in ctx.jtac.jtacs().filter(|j| j.side() == side) {
+        let loc = jt.location();
+        let (lat, lon) = to_ll(loc.pos.x, loc.pos.y);
+        let location_name = db
+            .objective(&loc.oid)
+            .map(|o| o.name.to_string())
+            .unwrap_or_default();
+
+        let mut all: HashMap<String, u16> = HashMap::new();
+        let mut threat: HashMap<String, u16> = HashMap::new();
+        let mut contact_count: u16 = 0;
+        for ct in jt.visible_contacts() {
+            contact_count += 1;
+            *all.entry(ct.typ.to_string()).or_default() += 1;
+            if ct.tags.contains(UnitTag::SAM) || ct.tags.contains(UnitTag::AAA) {
+                *threat.entry(ct.typ.to_string()).or_default() += 1;
+            }
+        }
+
+        let target = jt.target().as_ref().map(|t| {
+            let tp = Vector2::new(t.pos.x, t.pos.z);
+            let (brg, rng_m) = bearing_range(loc.pos, tp);
+            let (tlat, tlon) = to_ll(t.pos.x, t.pos.z);
+            // Like vehicles within a couple of hundred metres — the difference
+            // between "one tank" and "tank platoon" in the target description.
+            let group_size = jt
+                .visible_contacts()
+                .filter(|c| {
+                    c.typ == t.typ && (Vector2::new(c.pos.x, c.pos.z) - tp).magnitude() < 250.0
+                })
+                .count() as u16;
+            CasTarget {
+                typ: t.typ.to_string(),
+                lat: tlat,
+                lon: tlon,
+                elev_ft: (t.pos.y * 3.28084) as i32,
+                brg,
+                rng_m,
+                lasing: true,
+                group_size: group_size.max(1),
+            }
+        });
+
+        // Nearest friendly ground unit to the target — nine-line line 8, and
+        // the danger-close test.
+        let (nearest_friendly_m, nearest_friendly_brg) = match jt.target().as_ref() {
+            None => (None, 0),
+            Some(t) => {
+                let tp = Vector2::new(t.pos.x, t.pos.z);
+                let mut best: Option<(f64, u16)> = None;
+                for (_, unit) in &db.persisted.units {
+                    if unit.side != side || unit.tags.contains(UnitTag::Aircraft) {
+                        continue;
+                    }
+                    let up = Vector2::new(unit.position.p.x, unit.position.p.z);
+                    let d = (up - tp).magnitude();
+                    if best.map_or(true, |(bd, _)| d < bd) {
+                        let (brg, _) = bearing_range(tp, up);
+                        best = Some((d, brg));
+                    }
+                }
+                match best {
+                    Some((d, brg)) => (Some(d as u32), brg),
+                    None => (None, 0),
+                }
+            }
+        };
+
+        let location_brg = loc.bearing.to_degrees().rem_euclid(360.0) as u16;
+        let location_rng_m = loc.distance as u32;
+
+        jtacs.push(CasJtac {
+            id: format_compact!("{}", jt.gid()).to_string(),
+            callsign: jt
+                .callsign()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format_compact!("{}", jt.gid()).to_string()),
+            lat,
+            lon,
+            alt_m: 0,
+            airborne: false,
+            laser_code: jt.code(),
+            ir_pointer: jt.ir_pointer(),
+            location_name,
+            location_brg,
+            location_rng_m,
+            target,
+            contacts: summarize(all),
+            contact_count,
+            nearest_friendly_m,
+            nearest_friendly_brg,
+            artillery_available: !jt.nearby_artillery().is_empty(),
+            threats: summarize(threat),
+        });
+    }
+
+    // Human flights on this side, with the JTAC nearest to each.
+    let mut flights: Vec<CasFlight> = vec![];
+    for (ucid, player, inst) in db.instanced_players() {
+        if player.side != side || !inst.in_air {
+            continue;
+        }
+        let unit = player
+            .current_slot
+            .as_ref()
+            .and_then(|(slot, _)| db.ephemeral.slot_instance_unit(lua, slot).ok());
+        let unit_id = unit
+            .as_ref()
+            .and_then(|u| u.id().ok())
+            .map(|id| id.inner())
+            .filter(|id| *id > 0)
+            .map(|id| id as u64);
+        let callsign = unit
+            .as_ref()
+            .and_then(|u| u.get_callsign().ok())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| player.name.to_string());
+        let fp = Vector2::new(inst.position.p.x, inst.position.p.z);
+        let v = inst.velocity;
+        let heading = if v.x.abs() > f64::EPSILON || v.z.abs() > f64::EPSILON {
+            ((v.z.atan2(v.x).to_degrees() + 360.0) % 360.0) as u16
+        } else {
+            0
+        };
+        let mut nearest: Option<(u32, u16, String)> = None;
+        for jt in ctx.jtac.jtacs().filter(|j| j.side() == side) {
+            let (brg, rng) = bearing_range(fp, jt.location().pos);
+            if nearest.as_ref().map_or(true, |(r, _, _)| rng < *r) {
+                nearest = Some((rng, brg, format_compact!("{}", jt.gid()).to_string()));
+            }
+        }
+        let (lat, lon) = to_ll(fp.x, fp.y);
+        flights.push(CasFlight {
+            ucid: ucid.to_string(),
+            unit_id,
+            callsign,
+            player_name: player.name.to_string(),
+            lat,
+            lon,
+            alt_m: inst.position.p.y as i32,
+            heading,
+            speed_ms: (v.x * v.x + v.y * v.y + v.z * v.z).sqrt() as u16,
+            nearest_jtac: nearest.as_ref().map(|(_, _, id)| id.clone()),
+            jtac_brg: nearest.as_ref().map_or(0, |(_, b, _)| *b),
+            jtac_rng_m: nearest.as_ref().map_or(0, |(r, _, _)| *r),
+        });
+    }
+
+    let bullseye = dcso3::env::miz::Miz::singleton(lua)
+        .ok()
+        .and_then(|miz| miz.coalition(side).ok())
+        .and_then(|c| c.bullseye().ok())
+        .map(|be| to_ll(be.x, be.y));
+
+    CasPicture {
+        jtacs,
+        flights,
+        bullseye,
+    }
+}
+
+/// Merge hostile contacts within ~9 km and ~25° of heading of each other into a
+/// single called "group", bumping `group_size`. Input must be sorted
+/// nearest-first; output stays sorted. Cheap O(n²) — n is capped at 12.
+fn cluster_gci_contacts(contacts: &mut Vec<bfprotocols::gci::GciContact>) {
+    let mut merged: Vec<bfprotocols::gci::GciContact> = Vec::with_capacity(contacts.len());
+    'next: for c in contacts.drain(..) {
+        for g in merged.iter_mut() {
+            let dr = (g.rng_m as i32 - c.rng_m as i32).abs();
+            let db_ = {
+                let d = (g.brg as i32 - c.brg as i32).abs() % 360;
+                d.min(360 - d)
+            };
+            let dh = {
+                let d = (g.hdg as i32 - c.hdg as i32).abs() % 360;
+                d.min(360 - d)
+            };
+            if dr <= 9000 && db_ <= 10 && dh <= 25 {
+                g.group_size = g.group_size.saturating_add(1);
+                if !c.stale {
+                    g.stale = false;
+                }
+                continue 'next;
+            }
+        }
+        merged.push(c);
+    }
+    *contacts = merged;
+}
+
+/// Snapshots the engine/API perf counters accumulated so far *this session*
+/// (the same globals admin_shutdown reads to build Stat::SessionEnd), so
+/// bfdb's perf endpoint can show live numbers throughout an active round
+/// instead of only after a session ends. Field names deliberately match
+/// bfdb's own `SessionEnd` struct (time/frame/api/engine) so bfdb can
+/// deserialize this JSON straight into it with no translation step.
+pub(crate) fn query_perf() -> serde_json::Value {
+    let perf = unsafe { Perf::get_mut() };
+    let api_perf = unsafe { ApiPerf::get_mut() };
+    let engine = (*perf.inner).clone();
+    let frame = (*perf.frame).clone();
+    let api = (*api_perf.0).clone();
+    serde_json::json!({
+        "time": Utc::now(),
+        "frame": frame,
+        "api": api,
+        "engine": engine,
+    })
+}
+
+// ==================== Action API Functions ====================
+
+pub(crate) fn api_spawn_deployable(
+    ctx: &mut Context,
+    lua: MizLua,
+    side: Side,
+    name: &str,
+    pos: Vector2,
+    heading: f64,
+) -> Result<GroupId> {
+    let spctx = SpawnCtx::new(lua)?;
+    let specs = ctx
+        .db
+        .ephemeral
+        .cfg
+        .deployables
+        .get(&side)
+        .ok_or_else(|| anyhow!("no deployables on {side}"))?;
+
+    let spec = specs
+        .iter()
+        .find(|dp| dp.path.iter().any(|p| p.as_str() == name))
+        .ok_or_else(|| anyhow!("no deployable called {name} on {side}"))?
+        .clone();
+
+    let loc = SpawnLoc::AtPos {
+        pos,
+        offset_direction: pointing_towards2(heading),
+        group_heading: heading,
+    };
+
+    match &spec.kind {
+        DeployableKind::Objective(_) => {
+            bail!("cannot spawn objective deployables via API, use spawn-troop or spawn mark")
+        }
+        DeployableKind::Group { template } => {
+            let origin = DeployKind::Deployed {
+                player: Ucid::default(),
+                moved_by: None,
+                spec: spec.clone(),
+                cost_fraction: 1.0,
+                origin: None,
+                jtac: None,
+            };
+            let gid = ctx.db.add_and_queue_group(
+                &spctx,
+                &ctx.idx,
+                side,
+                loc,
+                template,
+                origin,
+                BitFlags::empty(),
+                None,
+            )?;
+            Ok(gid)
+        }
+    }
+}
+
+pub(crate) fn api_spawn_troop(
+    ctx: &mut Context,
+    lua: MizLua,
+    side: Side,
+    name: &str,
+    pos: Vector2,
+    heading: f64,
+) -> Result<GroupId> {
+    let spctx = SpawnCtx::new(lua)?;
+    let specs = ctx
+        .db
+        .ephemeral
+        .cfg
+        .troops
+        .get(&side)
+        .ok_or_else(|| anyhow!("no troops on {side}"))?;
+
+    let spec = specs
+        .iter()
+        .find(|tr| tr.name.as_str() == name)
+        .ok_or_else(|| anyhow!("no troop called {name} on {side}"))?
+        .clone();
+
+    let loc = SpawnLoc::AtPos {
+        pos,
+        offset_direction: pointing_towards2(heading),
+        group_heading: heading,
+    };
+
+    let origin = DeployKind::Troop {
+        player: Ucid::default(),
+        moved_by: None,
+        spec: spec.clone(),
+        origin: None,
+        cost_fraction: 1.,
+        jtac: None,
+    };
+
+    let gid = ctx.db.add_and_queue_group(
+        &spctx,
+        &ctx.idx,
+        side,
+        loc,
+        &spec.template,
+        origin,
+        BitFlags::empty(),
+        None,
+    )?;
+    Ok(gid)
+}
+
+pub(crate) fn api_move_group(ctx: &mut Context, lua: MizLua, id: &GroupId, pos: Vector2) -> Result<()> {
+    use dcso3::controller::{MissionPoint, PointType, ActionTyp, AltType, Task, VehicleFormation};
+    use dcso3::group::Group;
+    use dcso3::LuaVec2;
+
+    let group = ctx.db.group(id)?;
+    let dcs_group = Group::get_by_name(lua, group.name.as_str())?;
+    let controller = dcs_group.get_controller()?;
+
+    // Create a simple move waypoint for ground units
+    let waypoint = MissionPoint {
+        typ: PointType::TurningPoint,
+        airdrome_id: None,
+        time_re_fu_ar: None,
+        helipad: None,
+        link_unit: None,
+        action: Some(ActionTyp::Ground(VehicleFormation::OnRoad)),
+        pos: LuaVec2(pos),
+        alt: 0., // Ground level
+        alt_typ: Some(AltType::RADIO),
+        speed: 10., // 10 m/s default
+        speed_locked: Some(false),
+        eta: None,
+        eta_locked: None,
+        name: None,
+        task: Box::new(Task::Hold),
+    };
+
+    let task = Task::Mission {
+        airborne: Some(false),
+        route: vec![waypoint],
+    };
+    controller.set_task(task)?;
+    Ok(())
+}
+
+pub(crate) fn api_add_points(ctx: &mut Context, player: &str, amount: i32, reason: &str) -> Result<()> {
+    let ucid = get_player_ucid(ctx, player)?;
+    let player_data = ctx
+        .db
+        .player_mut(&ucid)
+        .ok_or_else(|| anyhow!("no such player {player}"))?;
+
+    player_data.points = player_data.points.saturating_add(amount);
+    ctx.db.ephemeral.dirty();
+
+    // Log the points change
+    ctx.db.ephemeral.stat(Stat::Points {
+        id: ucid,
+        points: amount,
+        reason: String::from(reason),
+    });
+
+    Ok(())
+}
+
 #[derive(Debug)]
 pub(super) enum Caller {
     Player(PlayerId),
     External(oneshot::Sender<NetIdxValue>),
 }
 
-pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<AdminResult> {
-    let mut cmds = mem::take(&mut ctx.admin_commands);
-    while let Some((cmd, ch)) = ctx.external_admin_commands.pop() {
-        cmds.push((Caller::External(ch), cmd));
+/// Admin commands run per event tick. The whole queue used to run in one DCS
+/// frame, so a burst from the dashboard -- or a few mark spawns -- landed as
+/// one long stall; whatever is over the budget waits for the next tick.
+const ADMIN_COMMANDS_PER_TICK: usize = 20;
+
+/// Log target for the admin audit trail, so it can be filtered out of (or
+/// grepped for in) the engine log, which bfdb already tails and archives.
+const AUDIT_TARGET: &str = "bflib::admin_audit";
+
+impl AdminCommand {
+    /// Whether this command goes to the admin audit trail: everything that
+    /// changes the campaign, a player or the config. Reads, and the
+    /// per-player cockpit/dashboard traffic bfdb sends several times a second,
+    /// would only bury the lines that matter.
+    fn audited(&self) -> bool {
+        !matches!(
+            self,
+            Self::Help
+                | Self::Connected
+                | Self::Banned
+                | Self::Search { .. }
+                | Self::Balance { .. }
+                | Self::LogWarehouse { .. }
+                | Self::LogLogistics
+                | Self::Logdesc
+                | Self::WhyThreat { .. }
+                | Self::Ghosts
+                | Self::QueryObjectives
+                | Self::QueryObjective { .. }
+                | Self::QueryPlayers
+                | Self::QueryPlayer { .. }
+                | Self::QueryGroups { .. }
+                | Self::QueryGroup { .. }
+                | Self::QueryUnits { .. }
+                | Self::QueryWarehouse { .. }
+                | Self::QueryLogistics
+                | Self::QueryCampaignState
+                | Self::QueryPerf
+                | Self::QueryBriefing { .. }
+                | Self::QuerySituation { .. }
+                | Self::QueryTacmap { .. }
+                | Self::QueryGroundWar { .. }
+                | Self::QueryHq { .. }
+                | Self::QueryGci { .. }
+                | Self::QueryCas { .. }
+                | Self::QueryAtc { .. }
+                | Self::QueryUnitDb
+                | Self::ResolvePlayerId { .. }
+                | Self::EwrToggle { .. }
+                | Self::EwrReport { .. }
+                | Self::EwrSetUnits { .. }
+                | Self::EwrGroundIntel { .. }
+                | Self::CarpSolve { .. }
+                | Self::CarpSolveLatLon { .. }
+                | Self::CockpitSpawnCrate { .. }
+                | Self::CockpitContext { .. }
+                | Self::CockpitMenu { .. }
+                | Self::CockpitMenuInvoke { .. }
+                | Self::SetServerInfo { .. }
+                | Self::SetCommanders { .. }
+                | Self::QueryCommand { .. }
+                | Self::SetIntelMarks(_)
+        )
     }
+}
+
+/// What one admin command answered.
+#[derive(Default)]
+struct Replies {
+    /// Sent back to an external (RPC) caller.
+    out: SmallVec<[NetIdxValue; 4]>,
+    /// Any reply was an error.
+    failed: bool,
+    /// The first reply, for the audit line.
+    first: Option<compact_str::CompactString>,
+}
+
+fn send_reply(
+    msgs: &mut crate::msgq::MsgQ,
+    caller: &Caller,
+    rep: &mut Replies,
+    err: bool,
+    msg: compact_str::CompactString,
+) {
+    rep.failed |= err;
+    if rep.first.is_none() {
+        rep.first = Some(msg.clone());
+    }
+    match caller {
+        Caller::Player(id) => msgs.send(MsgTyp::Chat(Some(*id)), msg),
+        Caller::External(_) => rep.out.push(if err {
+            NetIdxValue::Error(msg.to_string().into())
+        } else {
+            NetIdxValue::from(msg.to_string())
+        }),
+    }
+}
+
+fn audit_who(ctx: &Context, caller: &Caller) -> std::string::String {
+    match caller {
+        Caller::Player(id) => match ctx.connected.get(id) {
+            Some(ifo) => format!("{} ({})", ifo.name, ifo.ucid),
+            None => format!("player {id}"),
+        },
+        Caller::External(_) => "rpc".into(),
+    }
+}
+
+/// The first few dozen characters of a command's Debug form, for a log line,
+/// without formatting the rest of a large one.
+fn short_debug(cmd: &AdminCommand) -> std::string::String {
+    struct Capped(std::string::String);
+    impl std::fmt::Write for Capped {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            let room = 60usize.saturating_sub(self.0.len());
+            if room == 0 {
+                return Err(std::fmt::Error);
+            }
+            self.0.push_str(&s[..s.len().min(room)]);
+            Ok(())
+        }
+    }
+    let mut w = Capped(std::string::String::new());
+    let _ = std::fmt::Write::write_fmt(&mut w, format_args!("{cmd:?}"));
+    w.0
+}
+
+/// When the last "commands are backing up" line was logged (unix seconds).
+static BACKLOG_SAID: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<AdminResult> {
+    while let Some((cmd, ch)) = ctx.external_admin_commands.pop() {
+        ctx.admin_commands.push((Caller::External(ch), cmd));
+    }
+    // More waiting than one tick takes means bfdb's queries are waiting
+    // seconds for an answer -- and timing out. Say so, once a minute.
+    let waiting = ctx.admin_commands.len();
+    if waiting > ADMIN_COMMANDS_PER_TICK {
+        let now = Utc::now().timestamp();
+        let said = BACKLOG_SAID.load(std::sync::atomic::Ordering::Relaxed);
+        if now - said >= 60 {
+            BACKLOG_SAID.store(now, std::sync::atomic::Ordering::Relaxed);
+            warn!("admin commands backing up: {waiting} waiting, {ADMIN_COMMANDS_PER_TICK} run per tick");
+        }
+    }
+    let n = ctx.admin_commands.len().min(ADMIN_COMMANDS_PER_TICK);
+    let batch: SmallVec<[(Caller, AdminCommand); ADMIN_COMMANDS_PER_TICK]> =
+        ctx.admin_commands.drain(..n).collect();
+    let mut batch = batch.into_iter();
+    while let Some((caller, cmd)) = batch.next() {
+        let audit = cmd.audited().then(|| (audit_who(ctx, &caller), format!("{cmd:?}")));
+        let ends_session = matches!(cmd, AdminCommand::Reset { .. } | AdminCommand::Shutdown);
+        if let (true, Some((who, what))) = (ends_session, &audit) {
+            // Logged up front as well: once this runs the logger may be gone.
+            info!(target: AUDIT_TARGET, "[ADMIN-AUDIT] {who} is running {what}");
+        }
+        let mut rep = Replies::default();
+        let label = short_debug(&cmd);
+        let started = std::time::Instant::now();
+        // Per command, so one failure can't abort the batch: a `?` in here
+        // used to drop every command queued behind it, and an RPC caller in
+        // that batch never got an answer at all.
+        let result = match run_admin_command(ctx, lua, &caller, cmd, &mut rep) {
+            Ok(r) => r,
+            Err(e) => {
+                send_reply(ctx.db.ephemeral.msgs(), &caller, &mut rep, true, format_compact!("{e:?}"));
+                AdminResult::Continue
+            }
+        };
+        // Everything here runs inside one DCS frame, so a slow query stalls
+        // the server and every RPC queued behind it.
+        let took = started.elapsed();
+        if took > std::time::Duration::from_millis(250) {
+            warn!("admin command took {} ms: {label}", took.as_millis());
+        }
+        if let Some((who, what)) = audit {
+            info!(
+                target: AUDIT_TARGET,
+                "[ADMIN-AUDIT] {who} ran {what} -> {}: {}",
+                if rep.failed { "FAILED" } else { "ok" },
+                rep.first.as_deref().unwrap_or("")
+            );
+        }
+        reply_external(caller, rep.out);
+        if let AdminResult::Shutdown = result {
+            // Nothing after a shutdown/reset may run against the state it
+            // just wrote out; tell any RPC callers still waiting.
+            let rest: SmallVec<[(Caller, AdminCommand); 8]> =
+                batch.chain(ctx.admin_commands.drain(..)).collect();
+            for (caller, _) in rest {
+                reply_external(
+                    caller,
+                    smallvec![NetIdxValue::Error("the server is shutting down".into())],
+                );
+            }
+            return Ok(AdminResult::Shutdown);
+        }
+    }
+    Ok(AdminResult::Continue)
+}
+
+fn reply_external(caller: Caller, mut replies: SmallVec<[NetIdxValue; 4]>) {
+    match caller {
+        Caller::Player(_) => (),
+        Caller::External(ch) => {
+            if replies.len() == 1 {
+                if let Some(reply) = replies.pop() {
+                    let _ = ch.send(reply);
+                }
+            } else {
+                let _ = ch.send(NetIdxValue::from(replies));
+            }
+        }
+    }
+}
+
+fn run_admin_command(
+    ctx: &mut Context,
+    lua: MizLua,
+    caller: &Caller,
+    cmd: AdminCommand,
+    rep: &mut Replies,
+) -> Result<AdminResult> {
     let mut result = AdminResult::Continue;
-    for (caller, cmd) in cmds.drain(..) {
-        let mut replies: SmallVec<[NetIdxValue; 4]> = smallvec![];
-        macro_rules! reply_ok {
-            ($($arg:expr),+) => {
-                match caller {
-                    Caller::Player(id) => {
-                        ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), format_compact!($($arg),+))
-                    },
-                    Caller::External(_) => {
-                        replies.push(NetIdxValue::from(format!($($arg),+)));
-                    }
+    macro_rules! reply_ok {
+        ($($arg:expr),+) => {
+            send_reply(ctx.db.ephemeral.msgs(), caller, rep, false, format_compact!($($arg),+))
+        }
+    }
+    macro_rules! reply_err {
+        ($($arg:expr),+) => {
+            send_reply(ctx.db.ephemeral.msgs(), caller, rep, true, format_compact!($($arg),+))
+        }
+    }
+    macro_rules! airbase {
+        ($name:expr) => {
+            match get_airbase(&ctx.db, $name) {
+                Ok(oid) => oid,
+                Err(e) => {
+                    reply_err!("{e:?}");
+                    return Ok(result);
                 }
-
             }
-        }
-        macro_rules! reply_err {
-            ($($arg:expr),+) => {
-                match caller {
-                    Caller::Player(id) => {
-                        ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), format_compact!($($arg),+))
-                    },
-                    Caller::External(_) => {
-                        replies.push(NetIdxValue::Error(format!($($arg),+).into()));
-                    }
-                }
-
-            }
-        }
-        macro_rules! airbase {
-            ($name:expr) => {
-                match get_airbase(&ctx.db, $name) {
-                    Ok(oid) => oid,
-                    Err(e) => {
-                        reply_err!("{e:?}");
-                        continue;
-                    }
-                }
-            };
-        }
-        match cmd {
+        };
+    }
+    match cmd {
             AdminCommand::Help => (),
             AdminCommand::ReduceInventory { airbase, amount } => {
-                match ctx
-                    .db
-                    .admin_reduce_inventory(lua, airbase!(&airbase), amount)
-                {
+                let oid = airbase!(&airbase);
+                match ctx.db.admin_reduce_inventory(lua, oid, amount) {
                     Err(e) => reply_err!("reduce inventory failed: {:?}", e),
                     Ok(()) => reply_ok!("inventory reduced"),
                 }
@@ -893,6 +3374,10 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                     Ok(()) => reply_ok!("transfer complete. disconnect"),
                 }
             }
+            AdminCommand::LogLogistics => match ctx.db.admin_log_logistics() {
+                Ok(()) => reply_ok!("logistics report written to the log"),
+                Err(e) => reply_err!("logistics report failed: {e:?}"),
+            },
             AdminCommand::LogisticsTickNow => {
                 ctx.db.admin_tick_now();
                 reply_ok!("tick scheduled")
@@ -902,39 +3387,79 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 reply_ok!("delivery scheduled")
             }
             AdminCommand::Repair { airbase } => {
-                match ctx.db.repair_objective(airbase!(&airbase), Utc::now()) {
-                    Ok(()) => reply_ok!("repaired {airbase}"),
-                    Err(e) => reply_ok!("failed to repair {e:?}"),
+                let oid = airbase!(&airbase);
+                match ctx.db.admin_repair_objective(oid, Utc::now()) {
+                    Ok(0) => reply_ok!("{airbase} has no damaged groups to repair"),
+                    Ok(1) => reply_ok!("repaired {airbase} (1 group)"),
+                    Ok(n) => reply_ok!("repaired {airbase} ({n} groups)"),
+                    Err(e) => reply_err!("failed to repair {airbase}: {e:?}"),
+                }
+            }
+            AdminCommand::Capture { objective, side } => {
+                let oid = airbase!(&objective);
+                match ctx.db.force_capture(lua, &ctx.idx, oid, side, Utc::now()) {
+                    Ok(prev) => reply_ok!("{objective}: {prev:?} -> {side:?}"),
+                    Err(e) => reply_err!("capture failed: {e:?}"),
                 }
             }
             AdminCommand::Tim { key, size, alt } => {
                 let mut to_remove: SmallVec<[MarkId; 8]> = smallvec![];
                 let act = Trigger::singleton(lua)?.action()?;
+                // Marks that already went bang are removed even when a later
+                // one fails, or the retry would blow them up twice.
+                let mut failed: Option<anyhow::Error> = None;
                 for mk in World::singleton(lua)?
                     .get_mark_panels()
                     .context("getting marks")?
                 {
-                    let mut mk = mk?;
+                    let mut mk = match mk {
+                        Ok(mk) => mk,
+                        Err(e) => {
+                            failed = Some(e.into());
+                            continue;
+                        }
+                    };
                     if mk.text == key {
-                        to_remove.push(mk.id);
                         if let Some(alt) = alt {
                             mk.pos.y = alt as f64;
                         }
-                        act.explosion(mk.pos, size as f32)
-                            .context("making boom beserker!")?;
+                        match act.explosion(mk.pos, size as f32) {
+                            Ok(()) => to_remove.push(mk.id),
+                            Err(e) => failed = Some(e.context("making boom beserker!")),
+                        }
                     }
                 }
+                let n = to_remove.len();
                 for id in to_remove {
                     ctx.db.ephemeral.msgs().delete_mark(id);
                 }
+                match failed {
+                    None => reply_ok!("{n} explosion(s) at {key}"),
+                    Some(e) => reply_err!("{n} explosion(s) at {key}, then failed: {e:?}"),
+                }
             }
             AdminCommand::Spawn { key } => {
-                let id = match &caller {
+                let id = match caller {
                     Caller::Player(id) => Some(*id),
                     Caller::External(_) => None,
                 };
-                if let Err(e) = admin_spawn(ctx, lua, id, key) {
-                    reply_ok!("could not spawn {:?}", e)
+                match admin_spawn(ctx, lua, id, key) {
+                    Ok(n) => reply_ok!("spawned {n}"),
+                    Err(e) => reply_err!("could not spawn {:?}", e),
+                }
+            }
+            AdminCommand::JammerSpawn { key } => match admin_jammer_spawn(ctx, lua, &key) {
+                Ok(gids) if gids.is_empty() => reply_err!("no f10 mark starting with '{key} '"),
+                Ok(gids) => reply_ok!(
+                    "jammer(s) spawned, off: {} -- use jammer_mode <group> ...",
+                    gids.iter().map(|g| g.to_string()).collect::<Vec<_>>().join(", ")
+                ),
+                Err(e) => reply_err!("could not spawn jammer {e:?}"),
+            },
+            AdminCommand::JammerMode { group, gps, glonass, radio, band_mhz } => {
+                match admin_jammer_mode(ctx, lua, group, gps, glonass, radio, band_mhz) {
+                    Ok(msg) => reply_ok!("{msg}"),
+                    Err(e) => reply_err!("could not set jammer {group}: {e:?}"),
                 }
             }
             AdminCommand::SideSwitch { side, player } => {
@@ -975,20 +3500,25 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 }
             }
             AdminCommand::LogWarehouse { kind, airbase } => {
-                match ctx.db.admin_log_inventory(lua, kind, airbase!(&airbase)) {
-                    Ok(()) => reply_err!("{airbase} inventory logged"),
-                    Err(e) => reply_ok!("could not log {airbase} inventory {:?}", e),
+                let oid = airbase!(&airbase);
+                match ctx.db.admin_log_inventory(lua, kind, oid) {
+                    Ok(()) => reply_ok!("{airbase} inventory logged"),
+                    Err(e) => reply_err!("could not log {airbase} inventory {:?}", e),
                 }
             }
-            AdminCommand::Logdesc => match &caller {
+            AdminCommand::Logdesc => match caller {
                 Caller::External(_) => reply_err!("external clients can't be in a plane"),
-                Caller::Player(id) => match ctx.connected.get(&id) {
+                Caller::Player(id) => match ctx.connected.get(id).map(|ifo| ifo.ucid) {
                     None => reply_err!("no player {id}"),
-                    Some(ifo) => match admin_log_desc(ctx, lua, &ifo.ucid) {
-                        Ok(()) => reply_ok!("{} desc logged", ifo.ucid),
+                    Some(ucid) => match admin_log_desc(ctx, lua, &ucid) {
+                        Ok(()) => reply_ok!("{} desc logged", ucid),
                         Err(e) => reply_err!("could not log admin desc {:?}", e),
                     },
                 },
+            },
+            AdminCommand::ResetLivesAll => match ctx.db.reset_all_lives() {
+                Ok(n) => reply_ok!("reset lives for {n} player(s)"),
+                Err(e) => reply_err!("could not reset all lives {:?}", e),
             },
             AdminCommand::ResetLives { player } => match admin_reset_lives(ctx, &player) {
                 Ok(()) => reply_ok!("{player} lives reset"),
@@ -1029,6 +3559,21 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 Ok(()) => reply_ok!("{objective} remark queued"),
                 Err(e) => reply_err!("could not remark {objective} {e:?}"),
             },
+            AdminCommand::WhyThreat { objective } => {
+                let oid = airbase!(&objective);
+                for line in ctx.db.admin_why_threat(lua, &oid) {
+                    reply_ok!("{line}")
+                }
+            }
+            AdminCommand::Ghosts => {
+                for line in ctx.db.admin_ghost_report() {
+                    reply_ok!("{line}")
+                }
+            }
+            AdminCommand::PurgeGhosts => {
+                let (groups, units) = ctx.db.admin_purge_ghosts(lua, Utc::now());
+                reply_ok!("purged {units} ghost unit(s) in {groups} group(s)")
+            }
             AdminCommand::Reset { winner } => match admin_shutdown(ctx, lua, Some(winner)) {
                 Ok(s) => {
                     result = s;
@@ -1036,18 +3581,479 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
                 }
                 Err(e) => reply_err!("the state could not be reset {e:?}"),
             },
-        }
-        match caller {
-            Caller::Player(_) => (),
-            Caller::External(ch) => {
-                if replies.len() == 1 {
-                    let _ = ch.send(replies.pop().unwrap());
-                } else {
-                    let _ = ch.send(NetIdxValue::from(replies));
+            // Query API commands
+            AdminCommand::QueryObjectives => {
+                let objectives = query_objectives(ctx);
+                match serde_json::to_string(&objectives) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize objectives: {e:?}"),
                 }
             }
+            AdminCommand::QueryObjective { name } => {
+                match query_objective_details(ctx, &name) {
+                    Ok(details) => match serde_json::to_string(&details) {
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize objective: {e:?}"),
+                    },
+                    Err(e) => reply_err!("failed to query objective: {e:?}"),
+                }
+            }
+            AdminCommand::QueryPlayers => {
+                let players = query_players(ctx);
+                match serde_json::to_string(&players) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize players: {e:?}"),
+                }
+            }
+            AdminCommand::QueryPlayer { player } => {
+                match query_player_details(ctx, &player) {
+                    Ok(details) => match serde_json::to_string(&details) {
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize player: {e:?}"),
+                    },
+                    Err(e) => reply_err!("failed to query player: {e:?}"),
+                }
+            }
+            AdminCommand::QueryGroups { side } => {
+                let groups = query_groups(ctx, side);
+                match serde_json::to_string(&groups) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize groups: {e:?}"),
+                }
+            }
+            AdminCommand::QueryGroup { id } => {
+                match query_group_details(ctx, &id) {
+                    Ok(details) => match serde_json::to_string(&details) {
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize group: {e:?}"),
+                    },
+                    Err(e) => reply_err!("failed to query group: {e:?}"),
+                }
+            }
+            AdminCommand::QueryUnits { group } => {
+                match query_units(ctx, &group) {
+                    Ok(units) => match serde_json::to_string(&units) {
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize units: {e:?}"),
+                    },
+                    Err(e) => reply_err!("failed to query units: {e:?}"),
+                }
+            }
+            AdminCommand::QueryWarehouse { objective, side } => {
+                match query_warehouse(ctx, &objective, side) {
+                    Ok(warehouse) => match serde_json::to_string(&warehouse) {
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize warehouse: {e:?}"),
+                    },
+                    Err(e) => reply_err!("failed to query warehouse: {e:?}"),
+                }
+            }
+            AdminCommand::QueryLogistics => {
+                let logistics = query_logistics(ctx);
+                match serde_json::to_string(&logistics) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize logistics: {e:?}"),
+                }
+            }
+            AdminCommand::QueryCampaignState => {
+                let state = query_campaign_state(ctx);
+                match serde_json::to_string(&state) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize campaign state: {e:?}"),
+                }
+            }
+            AdminCommand::QueryPerf => {
+                match serde_json::to_string(&query_perf()) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize perf: {e:?}"),
+                }
+            }
+            AdminCommand::QueryBriefing { side } => {
+                let briefing = query_briefing(ctx, lua, side);
+                match serde_json::to_string(&briefing) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize briefing: {e:?}"),
+                }
+            }
+            AdminCommand::QuerySituation { side } => {
+                // Dashboard path: include the positioned objective layer for the
+                // briefing map, and no bearings (there is no single viewer jet
+                // to measure from).
+                let sit = crate::situation::build(
+                    ctx,
+                    lua,
+                    side,
+                    crate::situation::Opts { include_map: true, from: None },
+                );
+                match serde_json::to_string(&sit) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize situation: {e:?}"),
+                }
+            }
+            AdminCommand::QueryTacmap { side } => {
+                let picture = query_tacmap(ctx, lua, side);
+                match serde_json::to_string(&picture) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize tacmap: {e:?}"),
+                }
+            }
+            AdminCommand::QueryGroundWar { side } => {
+                let picture = crate::groundwar::picture(ctx, lua, side);
+                match serde_json::to_string(&picture) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the ground war: {e:?}"),
+                }
+            }
+            AdminCommand::QueryHq { side, ucid } => {
+                let view = crate::hq::view(ctx, lua, side, ucid.as_ref());
+                match serde_json::to_string(&view) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the HQ view: {e:?}"),
+                }
+            }
+            AdminCommand::HqDirective { side, directive } => {
+                let reply = crate::hq::directive(ctx, side, directive);
+                match serde_json::to_string(&reply) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the HQ reply: {e:?}"),
+                }
+            }
+            AdminCommand::HqCommand { side, ucid, cmd } => {
+                let reply = crate::hq::command(lua, ctx, side, ucid, cmd, None);
+                match serde_json::to_string(&reply) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the HQ reply: {e:?}"),
+                }
+            }
+            AdminCommand::QueryCommand { side } => {
+                let picture = crate::command::picture(lua, ctx, side, Utc::now());
+                match serde_json::to_string(&picture) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the command picture: {e:?}"),
+                }
+            }
+            AdminCommand::CommandOrder { side, ucid, order } => {
+                let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+                let reply = crate::command::order(lua, ctx, perf, side, ucid, order, Utc::now());
+                match serde_json::to_string(&reply) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the command reply: {e:?}"),
+                }
+            }
+            AdminCommand::SetCommanders { commanders } => {
+                crate::command::set(ctx, commanders);
+                rep.out.push(NetIdxValue::from("ok"));
+            }
+            AdminCommand::GroundCommand { ucid, cmd } => {
+                let reply = crate::groundwar::dashboard_command(lua, ctx, ucid, cmd);
+                match serde_json::to_string(&reply) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize the ground command reply: {e:?}"),
+                }
+            }
+            AdminCommand::QueryUnitDb => {
+                let db = crate::unitdb::get();
+                if db.is_empty() {
+                    reply_err!(
+                        "the unit db is empty -- the harvest either hasn't run or couldn't reach _G.db"
+                    )
+                } else {
+                    match serde_json::to_string(&*db) {
+                        Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                        Err(e) => reply_err!("failed to serialize the unit db: {e:?}"),
+                    }
+                }
+            }
+            AdminCommand::QueryAtc { side } => {
+                let picture = crate::atis::query_atc(lua, ctx, side);
+                match serde_json::to_string(&picture) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize atc picture: {e:?}"),
+                }
+            }
+            AdminCommand::QueryCas { side } => {
+                let picture = query_cas(ctx, lua, side);
+                match serde_json::to_string(&picture) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize cas picture: {e:?}"),
+                }
+            }
+            AdminCommand::QueryGci { side } => {
+                let picture = query_gci(ctx, lua, side);
+                match serde_json::to_string(&picture) {
+                    Ok(json) => rep.out.push(NetIdxValue::from(json)),
+                    Err(e) => reply_err!("failed to serialize gci picture: {e:?}"),
+                }
+            }
+            // Action API commands
+            AdminCommand::SpawnDeployable { side, name, pos, heading } => {
+                match api_spawn_deployable(ctx, lua, side, &name, pos, heading) {
+                    Ok(gid) => reply_ok!("{{\"success\":true,\"group_id\":{}}}", gid),
+                    Err(e) => reply_err!("failed to spawn deployable: {e:?}"),
+                }
+            }
+            AdminCommand::SpawnTroop { side, name, pos, heading } => {
+                match api_spawn_troop(ctx, lua, side, &name, pos, heading) {
+                    Ok(gid) => reply_ok!("{{\"success\":true,\"group_id\":{}}}", gid),
+                    Err(e) => reply_err!("failed to spawn troop: {e:?}"),
+                }
+            }
+            AdminCommand::MoveGroup { id, pos } => {
+                match api_move_group(ctx, lua, &id, pos) {
+                    Ok(()) => reply_ok!("{{\"success\":true}}"),
+                    Err(e) => reply_err!("failed to move group: {e:?}"),
+                }
+            }
+            AdminCommand::AddPoints { player, amount, reason } => {
+                match api_add_points(ctx, &player, amount, &reason) {
+                    Ok(()) => {
+                        let new_balance = ctx.db.player(&get_player_ucid(ctx, &player).unwrap_or_default())
+                            .map_or(0, |p| p.points);
+                        match caller {
+                            // The chat `addpoints` command; the RPC form keeps
+                            // its JSON answer.
+                            Caller::Player(_) => {
+                                reply_ok!("{player} {amount:+} points, balance now {new_balance}")
+                            }
+                            Caller::External(_) => {
+                                reply_ok!("{{\"success\":true,\"new_balance\":{}}}", new_balance)
+                            }
+                        }
+                    },
+                    Err(e) => reply_err!("failed to add points: {e:?}"),
+                }
+            }
+            AdminCommand::SetObjectivePriority { objective, priority } => {
+                match get_airbase(&ctx.db, &objective) {
+                    Err(e) => reply_err!("objective not found: {e:?}"),
+                    Ok(oid) => match ctx.db.set_objective_priority(&oid, priority) {
+                        Ok(()) => reply_ok!("{{\"success\":true,\"priority\":{}}}", priority),
+                        Err(e) => reply_err!("failed to set priority: {e:?}"),
+                    },
+                }
+            }
+            AdminCommand::Blacklist { rule, player } => match set_rule(ctx, &rule, &player, false) {
+                Ok(()) => reply_ok!("{player} blacklisted from {rule}"),
+                Err(e) => reply_err!("could not blacklist {player} from {rule}: {e:?}"),
+            },
+            AdminCommand::Whitelist { rule, player } => match set_rule(ctx, &rule, &player, true) {
+                Ok(()) => reply_ok!("{player} whitelisted for {rule}"),
+                Err(e) => reply_err!("could not whitelist {player} for {rule}: {e:?}"),
+            },
+            AdminCommand::ReinitWarehouse { airbase } => {
+                match get_airbase(&ctx.db, &airbase) {
+                    Err(e) => reply_err!("airbase not found: {e:?}"),
+                    Ok(oid) => match ctx.db.reinit_objective_warehouse(oid) {
+                        Ok(()) => reply_ok!("warehouse reinitialized for {airbase}"),
+                        Err(e) => reply_err!("failed to reinit warehouse: {e:?}"),
+                    }
+                }
+            }
+            // Cockpit UI API commands
+            // The player id alone is guessable; only the overlay running in
+            // that player's own DCS knows the key it registered over chat.
+            AdminCommand::ResolvePlayerId { id, key } => match ctx.connected.get(&id) {
+                Some(ifo) if crate::cockpit::check_key(id, &ifo.ucid, &key) => {
+                    reply_ok!("{}", ifo.ucid)
+                }
+                Some(_) => reply_err!("bad cockpit key for player {id}"),
+                None => reply_err!("player {id} is not currently connected"),
+            },
+            AdminCommand::EwrToggle { ucid } => {
+                let enabled = crate::menu::ewr::ewr_toggle_for(ctx, &ucid);
+                reply_ok!("{}", if enabled { "enabled" } else { "disabled" })
+            }
+            AdminCommand::EwrReport { ucid, friendly } => {
+                let report = crate::menu::ewr::build_braa_report(ctx, &ucid, friendly);
+                reply_ok!("{report}")
+            }
+            AdminCommand::EwrSetUnits { ucid, imperial } => {
+                crate::menu::ewr::ewr_set_units_for(ctx, &ucid, imperial);
+                reply_ok!("{}", if imperial { "Imperial" } else { "Metric" })
+            }
+            AdminCommand::EwrGroundIntel { ucid } => {
+                let report = crate::menu::ewr::build_ground_intel_report(ctx, &ucid);
+                reply_ok!("{report}")
+            }
+            AdminCommand::CarpSolve { mark_key, drop_altitude_agl_ft } => {
+                match crate::carp::build_carp_solution_from_mark(lua, &mark_key, drop_altitude_agl_ft) {
+                    Ok(solution) => match serde_json::to_string(&solution) {
+                        Ok(json) => reply_ok!("{json}"),
+                        Err(e) => reply_err!("failed to serialize carp solution: {e:?}"),
+                    },
+                    Err(e) => reply_err!("carp solve failed: {:?}", e),
+                }
+            }
+            AdminCommand::CarpSolveLatLon { lat, lon, drop_altitude_agl_ft } => {
+                match crate::carp::build_carp_solution_from_latlon(lua, lat, lon, drop_altitude_agl_ft) {
+                    Ok(solution) => match serde_json::to_string(&solution) {
+                        Ok(json) => reply_ok!("{json}"),
+                        Err(e) => reply_err!("failed to serialize carp solution: {e:?}"),
+                    },
+                    Err(e) => reply_err!("carp solve failed: {:?}", e),
+                }
+            }
+            // The F10 cargo menu is only built for players the cargo rule
+            // allows; the cockpit overlay reaches the same spawn without it.
+            AdminCommand::CockpitSpawnCrate { ucid, .. }
+                if !ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) =>
+            {
+                reply_err!("you are not permitted to spawn cargo on this server")
+            }
+            AdminCommand::CockpitSpawnCrate { ucid, crate_name, qty, c130 } => {
+                let auto_unpack = if c130 {
+                    true
+                } else {
+                    ctx.db.ephemeral.cfg.helo_cargo.as_ref().map(|c| c.auto_unpack).unwrap_or(false)
+                };
+                match crate::menu::cargo::spawn_crates_for_ucid(ctx, lua, &ucid, &crate_name, qty, auto_unpack) {
+                    Ok(msg) => reply_ok!("{msg}"),
+                    Err(e) => reply_err!("{e:?}"),
+                }
+            }
+            AdminCommand::CockpitContext { ucid } => {
+                match crate::cockpit::context(ctx, lua, &ucid)
+                    .and_then(|c| Ok(serde_json::to_string(&c)?))
+                {
+                    Ok(json) => reply_ok!("{json}"),
+                    Err(e) => reply_err!("{e:?}"),
+                }
+            }
+            AdminCommand::CockpitMenu { ucid } => {
+                match crate::cockpit::menu(ctx, lua, &ucid)
+                    .and_then(|m| Ok(serde_json::to_string(&m)?))
+                {
+                    Ok(json) => reply_ok!("{json}"),
+                    Err(e) => reply_err!("{e:?}"),
+                }
+            }
+            AdminCommand::CockpitMenuInvoke { ucid, path } => {
+                match crate::cockpit::invoke(ctx, lua, &ucid, &path) {
+                    Ok(true) => reply_ok!("ok"),
+                    Ok(false) => reply_err!("no such menu item: {}", path.join(" > ")),
+                    Err(e) => reply_err!("{e:?}"),
+                }
+            }
+            AdminCommand::SetServerInfo { restart_at, weather } => {
+                // bfdb pushes this every time anybody loads the dashboard, so
+                // it arrives many times a minute. Rebuilding the countdown on
+                // each push re-armed every warning, which is why the panel
+                // repeated "The server will restart in 30 minutes" forever --
+                // and said 30 even when the real restart was eleven minutes
+                // out. Keep the running countdown unless the time actually
+                // moved; the bot's own value jitters by a second or two
+                // between pushes, so allow a minute of slack.
+                let now = Utc::now();
+                ctx.shutdown = match (restart_at, ctx.shutdown) {
+                    (None, _) => None,
+                    (Some(at), Some(cur))
+                        if (cur.when - at).num_seconds().abs() <= 60 =>
+                    {
+                        Some(cur)
+                    }
+                    (Some(at), _) => Some(crate::AutoShutdown::scheduled(at, now)),
+                };
+                ctx.bot_weather = weather;
+                reply_ok!("server info updated");
+            }
+            AdminCommand::SetIntelMarks(json) => {
+                let (marks, msgs) = ctx.db.ephemeral.intel_marks_and_msgs();
+                match crate::intel_marks::reconcile(marks, msgs, lua, &json) {
+                    Ok(()) => reply_ok!("intel marks updated"),
+                    Err(e) => reply_err!("intel marks: {e:?}"),
+                }
+            }
+            AdminCommand::Broadcast { text } => {
+                broadcast(ctx, &text);
+                reply_ok!("broadcast sent")
+            }
+            AdminCommand::SetLives { player, life_type, lives } => {
+                match set_lives(ctx, &player, life_type, lives) {
+                    Ok(n) => reply_ok!("{player} now has {n} {life_type} lives left"),
+                    Err(e) => reply_err!("could not set {player}'s lives: {e:?}"),
+                }
+            }
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn admin_parsing_is_case_insensitive_and_takes_neutral() {
+        assert!(matches!(
+            "reset blue".parse::<AdminCommand>(),
+            Ok(AdminCommand::Reset { winner: Some(Side::Blue) })
+        ));
+        assert!(matches!(
+            "RESET Red".parse::<AdminCommand>(),
+            Ok(AdminCommand::Reset { winner: Some(Side::Red) })
+        ));
+        assert!(matches!(
+            "reset".parse::<AdminCommand>(),
+            Ok(AdminCommand::Reset { winner: None })
+        ));
+        assert!(matches!(
+            "Shutdown".parse::<AdminCommand>(),
+            Ok(AdminCommand::Shutdown)
+        ));
+        match "capture Batumi Airfield neutral".parse::<AdminCommand>() {
+            Ok(AdminCommand::Capture { objective, side: Side::Neutral }) => {
+                assert_eq!(objective.as_str(), "Batumi Airfield")
+            }
+            r => panic!("{r:?}"),
+        }
+        assert!(matches!(
+            "capture X NEUTRALS".parse::<AdminCommand>(),
+            Ok(AdminCommand::Capture { side: Side::Neutral, .. })
+        ));
+        // Arguments other than keywords keep their case.
+        match "Kick SomePilot".parse::<AdminCommand>() {
+            Ok(AdminCommand::Kick { player }) => assert_eq!(player.as_str(), "SomePilot"),
+            r => panic!("{r:?}"),
         }
     }
-    ctx.admin_commands = cmds;
-    Ok(result)
+
+    #[test]
+    fn new_admin_commands_parse() {
+        match "addpoints Big Bird 250".parse::<AdminCommand>() {
+            Ok(AdminCommand::AddPoints { player, amount: 250, .. }) => {
+                assert_eq!(player.as_str(), "Big Bird")
+            }
+            r => panic!("{r:?}"),
+        }
+        assert!(matches!(
+            "addpoints x -40".parse::<AdminCommand>(),
+            Ok(AdminCommand::AddPoints { amount: -40, .. })
+        ));
+        match "lives Big Bird Attack 1".parse::<AdminCommand>() {
+            Ok(AdminCommand::SetLives { player, life_type: LifeType::Attack, lives: 1 }) => {
+                assert_eq!(player.as_str(), "Big Bird")
+            }
+            r => panic!("{r:?}"),
+        }
+        match "broadcast Restart in 5, land now".parse::<AdminCommand>() {
+            Ok(AdminCommand::Broadcast { text }) => {
+                assert_eq!(text.as_str(), "Restart in 5, land now")
+            }
+            r => panic!("{r:?}"),
+        }
+    }
+
+    #[test]
+    fn ghost_admin_commands_parse() {
+        match "WhyThreat Kutaisi Airfield".parse::<AdminCommand>() {
+            Ok(AdminCommand::WhyThreat { objective }) => {
+                assert_eq!(objective.as_str(), "Kutaisi Airfield")
+            }
+            r => panic!("{r:?}"),
+        }
+        assert!(matches!("Ghosts".parse::<AdminCommand>(), Ok(AdminCommand::Ghosts)));
+        assert!(matches!("purge-ghosts".parse::<AdminCommand>(), Ok(AdminCommand::PurgeGhosts)));
+        // Reads stay out of the audit trail, the purge doesn't.
+        assert!(!AdminCommand::Ghosts.audited());
+        assert!(AdminCommand::PurgeGhosts.audited());
+    }
 }
