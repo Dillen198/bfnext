@@ -180,8 +180,9 @@ pub(crate) struct InstanceCfg {
     /// next to `stats_jsonl` -- see [`InstanceCfg::range_jsonl_path`].
     #[serde(default)]
     pub range_jsonl: Option<PathBuf>,
-    /// Folder holding this instance's Tacview `.acmi` recordings, for the
-    /// range site's "download Tacview" link. Unset disables that route.
+    /// Folder holding this instance's Tacview `.acmi` recordings: the source
+    /// of the dashboard's flight replay (`src/replay`) and of the range
+    /// site's "download Tacview" link. Unset disables both.
     #[serde(default)]
     pub tacview_dir: Option<PathBuf>,
 }

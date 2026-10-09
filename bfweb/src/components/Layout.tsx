@@ -30,6 +30,7 @@ import {
   Server,
   Comms,
   Aircraft,
+  PlayCircle,
   type IconComponent,
   LogOut,
   ChevronRight,
@@ -74,6 +75,7 @@ const STATS_NAV: NavItem[] = [
   { to: '/leaderboard', icon: Rankings,   label: 'RANKINGS'  },
   { to: '/pilots',      icon: Pilot,      label: 'PILOTS'    },
   { to: '/kills',       icon: KillFeed,   label: 'KILL FEED' },
+  { to: '/replay',      icon: PlayCircle, label: 'REPLAY'    },
 ]
 const PROFILE_NAV = (ucid: string): NavItem => ({ to: `/pilots?ucid=${ucid}`, icon: Pilot, label: 'MY PROFILE' })
 

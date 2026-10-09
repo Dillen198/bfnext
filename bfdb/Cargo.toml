@@ -66,3 +66,7 @@ hound = "3"
 # debrief tracks are stored zstd-compressed.
 resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 zstd = { workspace = true }
+# Flight replay (src/replay): Tacview `.zip.acmi` recordings in, gzip'd
+# track files out (served with Content-Encoding: gzip).
+zip = { workspace = true }
+flate2 = "1"

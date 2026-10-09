@@ -2666,6 +2666,28 @@ impl StatsDb {
             .and_then(|p| p.name.last().map(|s| s.to_string()))
     }
 
+    /// Every display name a pilot has flown under, newest last.
+    pub(crate) fn pilot_names(&self, ucid: &Ucid) -> Vec<std::string::String> {
+        self.pilots
+            .pilots
+            .get(ucid)
+            .ok()
+            .flatten()
+            .map(|p| p.name.iter().map(|s| s.to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    /// The pilots that have used exactly this display name.
+    pub(crate) fn ucids_by_name(&self, name: &str) -> Vec<Ucid> {
+        self.pilots
+            .by_name
+            .get(&String::from(name))
+            .ok()
+            .flatten()
+            .map(|ids| ids.to_vec())
+            .unwrap_or_default()
+    }
+
     pub(crate) fn all_pilot_names(&self) -> Result<Vec<(Ucid, String)>> {
         let mut entries = Vec::new();
         for r in self.pilots.pilots.iter() {

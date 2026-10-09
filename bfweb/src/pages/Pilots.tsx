@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import QueryState from '../components/QueryState'
 import { kd, sl, fmtHours, fmtDuration } from '../lib/format'
-import { useSearchParams } from 'react-router-dom'
+import { Link as RouterLink, useSearchParams } from 'react-router-dom'
+import type { FlightRow } from '../replay/data'
 import { api, type Pilot, type PilotSortie, type TheaterBreakdown, type PilotKill, type PilotDeploy } from '../api'
 import PageHeader from '../components/PageHeader'
 import { useAuth } from '../context/AuthContext'
@@ -21,6 +22,7 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronUp,
+  PlayCircle,
 } from '@icons'
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -121,7 +123,17 @@ function SortHeader<T extends string>({
 
 type SortieCol = 'date' | 'aircraft' | 'duration' | 'outcome'
 
-function FlightLog({ sorties, breakdown }: { sorties: PilotSortie[]; breakdown: TheaterBreakdown[] }) {
+/** The recorded flight a sortie happened in: the one whose time in the
+ *  recording spans the takeoff (a minute's slack either side), same airframe
+ *  preferred. */
+function replayFor(s: PilotSortie, replays: FlightRow[]): FlightRow | undefined {
+  const t = Date.parse(s.takeoff)
+  if (Number.isNaN(t)) return undefined
+  const hits = replays.filter(r => t >= r.start_ms - 60_000 && t <= r.end_ms + 60_000)
+  return hits.find(r => r.aircraft === s.aircraft) ?? hits[0]
+}
+
+function FlightLog({ sorties, breakdown, replays }: { sorties: PilotSortie[]; breakdown: TheaterBreakdown[]; replays: FlightRow[] }) {
   const [sort, setSort] = useState<{ col: SortieCol; dir: SortDir }>({ col: 'date', dir: 'desc' })
   const [page, setPage] = useState(0)
   const PER_PAGE = 10
@@ -191,6 +203,7 @@ function FlightLog({ sorties, breakdown }: { sorties: PilotSortie[]; breakdown: 
               <th style={{ padding: '6px 10px', fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600, textAlign: 'left', borderBottom: '1px solid var(--border)' }}>End</th>
               <SortHeader col="duration" label="Duration" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
               <SortHeader col="outcome" label="Outcome" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
+              <th style={{ padding: '6px 10px', fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600, textAlign: 'left', borderBottom: '1px solid var(--border)' }}>Replay</th>
             </tr>
           </thead>
           <tbody>
@@ -208,6 +221,19 @@ function FlightLog({ sorties, breakdown }: { sorties: PilotSortie[]; breakdown: 
                   ) : (
                     <span style={{ color: '#ef4444', fontSize: '0.62rem', letterSpacing: '0.06em' }}>✕ Lost</span>
                   )}
+                </td>
+                <td style={cell}>
+                  {(() => {
+                    const r = replayFor(s, replays)
+                    return r ? (
+                      <RouterLink
+                        to={`/replay/${encodeURIComponent(r.rec)}?focus=${r.i}`}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--accent-bright)', fontSize: '0.62rem', letterSpacing: '0.08em', textDecoration: 'none' }}
+                      >
+                        <PlayCircle size={12} /> WATCH
+                      </RouterLink>
+                    ) : <span style={{ color: 'var(--text-dim)' }}>—</span>
+                  })()}
                 </td>
               </tr>
             ))}
@@ -535,6 +561,13 @@ export default function Pilots() {
     queryFn: () => api.pilotKills(selected!),
     enabled: !!selected,
   })
+  const { data: replays = [] } = useQuery({
+    queryKey: ['pilot-replays', selected],
+    queryFn: () => api.pilotReplays(selected!),
+    enabled: !!selected,
+    // An older bfdb has no replay routes; the Flight Log just shows no links.
+    retry: false,
+  })
   const { data: deploys = [] } = useQuery({
     queryKey: ['pilot-deploys', selected],
     queryFn: () => api.pilotDeploys(selected!),
@@ -762,7 +795,7 @@ export default function Pilots() {
               )}
 
               {/* ── Flight log ── */}
-              <FlightLog sorties={sorties} breakdown={breakdown} />
+              <FlightLog sorties={sorties} breakdown={breakdown} replays={replays} />
 
               {/* ── Kill log ── */}
               <KillLog kills={kills} allPilots={pilots} breakdown={breakdown} />

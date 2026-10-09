@@ -2061,6 +2061,11 @@ export const api = {
     get<Kill[]>(`/kills?limit=${limit}${roundId ? `&round=${roundId}` : ''}`),
   pilot: (ucid: string) => get<Pilot>(`/pilot/${ucid}`),
   pilotSorties: (ucid: string) => get<PilotSortie[]>(`/pilot/${ucid}/sorties`),
+  /** Flight replay (Tacview recordings): a pilot's recorded flights, newest
+   *  first. Not instance-scoped -- one pilot flies on every server. */
+  pilotReplays: (ucid: string) => get<import('./replay/data').FlightRow[]>(`/replay/pilot/${ucid}?instance=all`),
+  replayRecordings: () => get<import('./replay/data').RecSummary[]>('/replay/recordings'),
+  replayStatus: () => get<import('./replay/data').ReplayStatus>('/replay/status'),
   pilotBreakdown: (ucid: string) => get<TheaterBreakdown[]>(`/pilot/${ucid}/breakdown`),
   pilotKills: (ucid: string) => get<PilotKill[]>(`/pilot/${ucid}/kills`),
   pilotDeploys: (ucid: string) => get<PilotDeploy[]>(`/pilot/${ucid}/deploys`),

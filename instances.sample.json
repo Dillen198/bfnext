@@ -22,6 +22,8 @@
 
       "//srs_url": "This instance's SRS: an http(s) URL to proxy, or the local CLIENT_EXPORT_FILE_PATH json.",
       "srs_url": "http://127.0.0.1:5002",
+      "//tacview_dir": "This instance's Tacview recordings folder (Tacview's export path). The dashboard's flight replay is built from it; omit to disable.",
+      "tacview_dir": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Tacview",
       "//gci_config": "This instance's live-GCI config (its own SRS port, freqs and callsigns).",
       "gci_config": "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\gci.json",
 

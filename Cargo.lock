@@ -260,6 +260,7 @@ dependencies = [
  "dcso3",
  "enumflags2",
  "env_logger",
+ "flate2",
  "futures",
  "fxhash",
  "handlebars",
@@ -290,6 +291,7 @@ dependencies = [
  "uuid",
  "warp",
  "yats",
+ "zip",
  "zstd 0.13.3",
 ]
 

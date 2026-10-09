@@ -306,6 +306,11 @@ DEFAULT:
     #     engine_config: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\ODFv2_CFG"
     #     export_port: 42001
     #     srs_url: "http://127.0.0.1:5002"
+    #     # This server's Tacview recordings: the dashboard's flight replay
+    #     # (REPLAY page + "Watch" in each pilot's Flight Log) is built from
+    #     # them. Must match tacviewExportPath of the Tacview extension in
+    #     # nodes.yaml. Unset = no replays for this server.
+    #     tacview_dir: "C:\Users\ATPAdmin\Saved Games\DCS.vectorstrike_1\Tacview"
     #     gci:                     # merged OVER the top-level `gci:` block
     #       srs_port: 5002
     #     # War diary pictures (only with bfdb.news_image_url/key set). Unset,
@@ -351,7 +356,8 @@ DEFAULT:
     #     # graded results. Unset -> range.jsonl next to stats_jsonl (procman
     #     # logs the path it picked); set it anyway so it's explicit.
     #     range_jsonl: "C:\Users\ATPAdmin\Saved Games\DCS.range\Logs\range.jsonl"
-    #     # Tacview recordings, for the range site's "download Tacview" links.
+    #     # Tacview recordings, for the range site's "download Tacview" links
+    #     # (and the dashboard's flight replay, as for a campaign server).
     #     # Must match tacviewExportPath of the Tacview extension in nodes.yaml.
     #     tacview_dir: "C:\Users\ATPAdmin\Saved Games\DCS.range\Tacview"
     #     export_port: 42004             # = Scripts/bf_export_port.lua on that server
