@@ -1,0 +1,10 @@
+3D models used by the dashboard's flight replay (bfweb/src/replay/theater.ts).
+
+F-14.glb, F-15.glb, F-16.glb, F-18.glb, F-22.glb, F-35.glb
+  This work is based on "FREE - Fighter Jet Collection - Low Poly"
+  (https://sketchfab.com/3d-models/free-fighter-jet-collection-low-poly-cb5966c988d9403895be89b364c2252f)
+  by bohmerang (https://sketchfab.com/bohmerang)
+  licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+  Changes: split into one file per aircraft (airframe, canopy, gear-up and
+  weapon-rail parts), re-oriented and scaled to real length, simplified to
+  about 6,000 triangles, materials and normals removed.

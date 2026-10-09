@@ -182,6 +182,14 @@
 .rp-shot-hit { box-shadow: inset 2px 0 0 var(--yellow); }
 .rp-ev-lost .rp-ev-t { color: var(--orange); }
 
+/* model / terrain attribution (CC BY needs it on screen) */
+.rp-credit {
+  position: absolute; z-index: 3; right: 10px; bottom: 6px;
+  font: 0.58rem var(--font-mono); color: rgba(255,255,255,0.75); text-decoration: none;
+  text-shadow: 0 0 3px #000;
+}
+.rp-credit:hover { color: #fff; text-decoration: underline; }
+
 /* bottom: graph + transport */
 .rp-bottom { left: 10px; right: 54px; bottom: 26px; padding: 6px 10px 8px; }
 .rp-transport { display: flex; align-items: center; gap: 10px; }

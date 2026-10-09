@@ -5,6 +5,7 @@
 
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { Kind } from './data'
 
 export type Family =
@@ -195,4 +196,71 @@ export function modelOf(f: Family): THREE.BufferGeometry {
   let g = cache.get(f)
   if (!g) cache.set(f, (g = build(f)))
   return g
+}
+
+// ── real models ────────────────────────────────────────────────────────
+// public/models/*.glb, made by scripts/build-replay-models.mjs (credits in
+// public/models/CREDITS.txt). Aircraft without a model of their own borrow
+// the nearest lookalike; anything else keeps the built-in shapes above.
+
+export type Real = 'F-14' | 'F-15' | 'F-16' | 'F-18' | 'F-22' | 'F-35'
+
+const REAL_RULES: [RegExp, Real][] = [
+  [/F-14/i, 'F-14'],
+  [/F-?A-18|F-18|Hornet|EA-18/i, 'F-18'],
+  [/F-35/i, 'F-35'],
+  [/F-22|Su-57|J-20|J-31|FC-31/i, 'F-22'],
+  [/F-16/i, 'F-16'],
+  [/F-15/i, 'F-15'],
+  // lookalikes until they have their own: twin-tail Flankers and Fulcrums
+  // read as an F-15, single-tail and delta fighters as an F-16
+  [/Su-2[7]|Su-3[0-5]|J-11|J-15|J-16|MiG-29|MiG-3[15]|F-4/i, 'F-15'],
+  [/M-?2000|Mirage|Rafale|Typhoon|Eurofighter|J-10|JF-17|JAS39|Gripen|AJS37|Viggen|MiG-21|J-7|F-5|Kfir|Cheetah|F-86|MiG-19/i, 'F-16'],
+]
+
+export function realOf(kind: Kind, name?: string | null): Real | null {
+  if (kind !== 'air' || !name) return null
+  for (const [re, r] of REAL_RULES) if (re.test(name)) return r
+  return null
+}
+
+const realCache = new Map<Real, THREE.BufferGeometry | null>()
+const realLoading = new Set<Real>()
+const loader = new GLTFLoader()
+
+/** A real model's geometry, merged into one; null until it has loaded (the
+ *  first call starts the load and `onReady` fires when it lands). */
+export function realModel(r: Real, onReady: () => void): THREE.BufferGeometry | null {
+  if (realCache.has(r)) return realCache.get(r) ?? null
+  if (!realLoading.has(r)) {
+    realLoading.add(r)
+    loader.load(
+      `${import.meta.env.BASE_URL}models/${r}.glb`,
+      gltf => {
+        const parts: THREE.BufferGeometry[] = []
+        gltf.scene.updateMatrixWorld(true)
+        gltf.scene.traverse(o => {
+          const m = o as THREE.Mesh
+          if (!m.isMesh) return
+          const g = m.geometry.clone().applyMatrix4(m.matrixWorld)
+          for (const k of Object.keys(g.attributes)) if (k !== 'position') g.deleteAttribute(k)
+          parts.push(g.index ? g.toNonIndexed() : g)
+        })
+        const g = parts.length ? mergeGeometries(parts) : null
+        g?.computeVertexNormals()
+        g?.computeBoundingBox()
+        realCache.set(r, g)
+        onReady()
+      },
+      undefined,
+      () => { realCache.set(r, null); onReady() },
+    )
+  }
+  return null
+}
+
+/** Length (m) of a loaded real model, nose to tail. */
+export function realLength(g: THREE.BufferGeometry): number {
+  const b = g.boundingBox
+  return b ? b.max.y - b.min.y : 15
 }

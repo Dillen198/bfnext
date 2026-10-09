@@ -12,7 +12,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { Kind, State } from './data'
-import { familyOf, modelOf, LENGTH, MIN_PX, type Family } from './models'
+import { familyOf, modelOf, realOf, realModel, realLength, LENGTH, MIN_PX, type Family, type Real } from './models'
 
 export type Cam3D = 'free' | 'follow' | 'chase' | 'cockpit' | 'padlock'
 
@@ -353,15 +353,26 @@ export class Theater {
 
   // ── drawing ──
 
-  private pool(f: Family, color: string, need: number): THREE.InstancedMesh {
-    const key = `${f}|${color}`
-    let m = this.pools.get(key)
+  /** The geometry an object is drawn with: its real model once loaded,
+   *  else the built-in shape for its family. */
+  private shape(f: Family, real: Real | null): { key: string; geo: THREE.BufferGeometry; length: number } {
+    if (real) {
+      const g = realModel(real, () => this.onChange?.())
+      if (g) return { key: `real:${real}`, geo: g, length: realLength(g) }
+    }
+    return { key: f, geo: modelOf(f), length: LENGTH[f] }
+  }
+
+  private pool(key: string, geo: THREE.BufferGeometry, color: string, need: number): THREE.InstancedMesh {
+    const pk = `${key}|${color}`
+    let m = this.pools.get(pk)
     if (!m || m.instanceMatrix.count < need) {
       if (m) { this.scene.remove(m); (m.material as THREE.Material).dispose() }
-      m = new THREE.InstancedMesh(modelOf(f), new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide }), Math.max(16, need * 2))
+      const real = key.startsWith('real:')
+      m = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide, flatShading: real }), Math.max(16, need * 2))
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
       m.frustumCulled = false
-      this.pools.set(key, m)
+      this.pools.set(pk, m)
       this.scene.add(m)
     }
     return m
@@ -439,7 +450,7 @@ export class Theater {
     const w = this.el.clientWidth, h = this.el.clientHeight
 
     // Positions first (the camera follows the focus).
-    const placed: { o: TheaterObject; p: THREE.Vector3; f: Family }[] = []
+    const placed: { o: TheaterObject; p: THREE.Vector3; f: Family; key: string; geo: THREE.BufferGeometry; length: number }[] = []
     let focusPos: THREE.Vector3 | null = null
     let measurePos: THREE.Vector3 | null = null
     for (const o of frame.objects) {
@@ -456,7 +467,7 @@ export class Theater {
         alt = g
       }
       const p = this.toWorld(o.st.lon, o.st.lat, alt, new THREE.Vector3())
-      placed.push({ o, p, f })
+      placed.push({ o, p, f, ...this.shape(f, realOf(o.kind, o.name)) })
       if (o.idx === frame.focus) focusPos = p
       if (o.idx === frame.measure) measurePos = p
     }
@@ -475,7 +486,7 @@ export class Theater {
     for (const m of this.pools.values()) m.count = 0
     const buckets = new Map<string, typeof placed>()
     for (const x of placed) {
-      const key = `${x.f}|${x.o.focus ? FOCUS_HEX : x.o.color}`
+      const key = `${x.key}|${x.o.focus ? FOCUS_HEX : x.o.color}`
       let b = buckets.get(key)
       if (!b) buckets.set(key, (b = []))
       b.push(x)
@@ -484,14 +495,15 @@ export class Theater {
     const s3 = new THREE.Vector3()
     const projected: Projected[] = []
     for (const [key, list] of buckets) {
-      const [f, color] = key.split('|') as [Family, string]
-      const mesh = this.pool(f, color, list.length)
+      const color = key.slice(key.lastIndexOf('|') + 1)
+      const { f, key: shapeKey, geo, length } = list[0]
+      const mesh = this.pool(shapeKey, geo, color, list.length)
       let n = 0
       for (const { o, p } of list) {
         const d = this.camera.position.distanceTo(p)
         // In the cockpit, the own aircraft is not drawn over the view.
         if (frame.cam === 'cockpit' && o.focus) continue
-        const scale = Math.max(1, (MIN_PX[f] * d) / pxPerRad / LENGTH[f])
+        const scale = Math.max(1, (MIN_PX[f] * d) / pxPerRad / length)
         this.tmpE.set(o.st.pitch * DEG, o.st.roll * DEG, -o.st.hdg * DEG, 'ZXY')
         this.tmpQ.setFromEuler(this.tmpE)
         s3.set(scale, scale, scale)

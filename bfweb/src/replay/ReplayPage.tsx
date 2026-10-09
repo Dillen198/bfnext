@@ -228,6 +228,12 @@ function Viewer({ rec, meta }: { rec: string; meta: RecMeta }) {
         </div>
       )}
 
+      {ui?.mode === '3d' && (
+        <a className="rp-credit" href={`${import.meta.env.BASE_URL}models/CREDITS.txt`} target="_blank" rel="noreferrer">
+          3D models: bohmerang, CC BY 4.0 · terrain: Mapzen/AWS · imagery: Esri
+        </a>
+      )}
+
       {/* ── timeline ── */}
       <div className="rp-bottom">
         {fo && focus != null && isAir(fo.k) && (
