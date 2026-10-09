@@ -11,3 +11,6 @@
 *.gif binary
 *.ico binary
 *.webp binary
+*.glb binary
+*.gltf binary
+*.bin binary
