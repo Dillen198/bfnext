@@ -27,7 +27,7 @@ export interface RecObject {
   d?: number | null
 }
 
-export type EventKind = 'fired' | 'kill' | 'destroyed' | 'takeoff' | 'landing'
+export type EventKind = 'fired' | 'kill' | 'destroyed' | 'lost' | 'takeoff' | 'landing'
 
 export interface RecEvent {
   t: number
@@ -36,6 +36,12 @@ export interface RecEvent {
   o?: number | null
   by?: number | null
   w?: number | null
+  /** "fired": the enemy the weapon came closest to, how close (m), whether
+   *  that was within lethal range, and when the weapon ended. */
+  tg?: number | null
+  md?: number | null
+  hit?: boolean
+  te?: number
 }
 
 export interface RecFlight {
@@ -50,6 +56,8 @@ export interface RecFlight {
   start_ms: number
   end_ms: number
   shots: number
+  /** absent in recordings processed before hits were derived */
+  hits?: number
   kills: number
   fate: 'destroyed' | 'landed' | 'left'
 }
@@ -177,6 +185,13 @@ export async function fetchMeta(rec: string): Promise<RecMeta> {
     try { const j = await res.json(); if (j?.error) msg = j.error } catch { /* not JSON */ }
     throw new Error(msg)
   }
+  return res.json()
+}
+
+/** Meta indices of the flights flown by players (the rest are AI). */
+export async function fetchHumans(rec: string): Promise<number[]> {
+  const res = await fetch(`${API_ROOT}/api/replay/rec/${encodeURIComponent(rec)}/humans`, { credentials: 'include' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
 
@@ -395,6 +410,25 @@ export class TrackStore {
     if (now) pts.push([now.lon, now.lat, now.alt])
     return pts
   }
+}
+
+// ── shots ──────────────────────────────────────────────────────────────
+
+export interface Shot {
+  ev: RecEvent
+  result: 'kill' | 'hit' | 'miss' | 'unknown'
+}
+
+/** Every "fired" event, with its outcome. */
+export function shotsOf(meta: RecMeta): Shot[] {
+  const killed = new Set<number>()
+  for (const e of meta.events) if (e.k === 'kill' && e.w != null) killed.add(e.w)
+  return meta.events
+    .filter(e => e.k === 'fired')
+    .map(ev => ({
+      ev,
+      result: ev.w != null && killed.has(ev.w) ? 'kill' : ev.hit ? 'hit' : ev.md != null ? 'miss' : 'unknown',
+    }))
 }
 
 // ── presentation helpers ───────────────────────────────────────────────

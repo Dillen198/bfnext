@@ -66,6 +66,9 @@ struct FileState {
     error: Option<String>,
     #[serde(default)]
     tries: u32,
+    /// `ingest::INGEST_VERSION` it was processed with; older is redone.
+    #[serde(default)]
+    v: u32,
 }
 
 /// One processed recording, as listed.
@@ -102,6 +105,8 @@ pub(crate) struct FlightRow {
     pub(crate) start_ms: i64,
     pub(crate) end_ms: i64,
     pub(crate) shots: u32,
+    #[serde(default)]
+    pub(crate) hits: u32,
     pub(crate) kills: u32,
     pub(crate) fate: String,
 }
@@ -188,6 +193,24 @@ impl ReplayCtx {
         Ok(out)
     }
 
+    /// Meta indices of a recording's flights flown by a player -- a pilot
+    /// name bfdb has seen in the stats. Tacview gives AI flights a pilot name
+    /// too (the group name), so this is what tells the two apart. Worked out
+    /// per request so a name learnt after the recording was read still counts.
+    pub(crate) fn humans(&self, id: &str) -> Result<Vec<u32>> {
+        let mut out = vec![];
+        for r in self.flights.iter() {
+            let (_, v) = r?;
+            let Ok(f) = serde_json::from_slice::<FlightRow>(&v) else { continue };
+            if f.rec == id && (f.ucid.is_some() || !self.db.ucids_by_name(&f.pilot).is_empty()) {
+                out.push(f.i);
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        Ok(out)
+    }
+
     /// How many recordings each instance has, and what the scanner thinks of
     /// its files.
     pub(crate) fn status(&self, cfg: &InstanceCfg) -> Result<Value> {
@@ -243,6 +266,11 @@ impl ReplayCtx {
             let fresh = FileState { size: md.len(), mtime_ms: ms(mtime), ..Default::default() };
             match st {
                 Some(st) if st.size == fresh.size && st.mtime_ms == fresh.mtime_ms => {
+                    if st.v < ingest::INGEST_VERSION {
+                        // Read by older logic: do it again, from a clean slate.
+                        todo.push((mtime, p, name, key, fresh));
+                        continue;
+                    }
                     if st.rec.is_some() || st.tries >= MAX_TRIES {
                         continue;
                     }
@@ -268,9 +296,11 @@ impl ReplayCtx {
                     );
                     st.rec = Some(sum.id);
                     st.error = None;
+                    st.v = ingest::INGEST_VERSION;
                 }
                 Err(e) => {
                     st.tries += 1;
+                    st.v = ingest::INGEST_VERSION;
                     warn!("[{}] replay: {} failed (try {}/{}): {e:#}", cfg.id, name, st.tries, MAX_TRIES);
                     st.error = Some(format!("{e:#}"));
                 }
@@ -322,6 +352,7 @@ impl ReplayCtx {
                 start_ms: f.start_ms,
                 end_ms: f.end_ms,
                 shots: f.shots,
+                hits: f.hits,
                 kills: f.kills,
                 fate: f.fate.to_string(),
             };

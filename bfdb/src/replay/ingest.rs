@@ -196,6 +196,21 @@ struct Obj {
     alive: bool,
     destroyed: Option<(i64, S)>,
     idx: Option<u32>,
+    // ── derived from the track (DCS writes no Destroyed/TakenOff/Landed) ──
+    /// Last position used for ground speed, and that speed (m/s).
+    prev: Option<S>,
+    gs: f64,
+    /// Airborne (aircraft with AGL): settled state, and a pending change
+    /// with when it started.
+    air: Option<bool>,
+    cand: Option<(bool, i64)>,
+    /// Weapons: when the closest-enemy scan last ran, and the closest
+    /// approach so far (distance m, sid, time).
+    scan_t: Option<i64>,
+    best: Option<(f64, u32, i64)>,
+    /// Left the recording before it ended, and whether it was flying then.
+    removed: bool,
+    removed_airborne: bool,
 }
 
 impl Obj {
@@ -209,6 +224,26 @@ impl Obj {
         self.emitted = true;
         self.pending = false;
     }
+}
+
+/// Ingest logic version. Recordings processed by an older one are read again
+/// (bumped when what we derive from a recording changes).
+pub(crate) const INGEST_VERSION: u32 = 2;
+
+/// A weapon whose closest approach to an enemy is within this is a hit.
+fn lethal_radius_m(k: Kind) -> f64 {
+    match k {
+        Kind::Missile => 75.0,
+        Kind::Bomb | Kind::Torpedo => 40.0,
+        _ => 25.0,
+    }
+}
+
+fn dist2d_m(a: &S, b: &S) -> f64 {
+    let lat = ((a.lat + b.lat) / 2.0).to_radians();
+    let dx = (a.lon - b.lon) * 111_320.0 * lat.cos();
+    let dy = (a.lat - b.lat) * 110_540.0;
+    (dx * dx + dy * dy).sqrt()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,6 +276,8 @@ pub(crate) struct Flight {
     pub(crate) start_ms: i64,
     pub(crate) end_ms: i64,
     pub(crate) shots: u32,
+    /// Shots that came within lethal range of an enemy.
+    pub(crate) hits: u32,
     pub(crate) kills: u32,
     /// "destroyed", "landed" or "left".
     pub(crate) fate: &'static str,
@@ -348,12 +385,109 @@ impl<'a> Builder<'a> {
     }
 
     fn remove(&mut self, tid: u64) {
-        if let Some(sid) = self.alive.remove(&tid) {
-            let o = &mut self.objs[sid as usize];
-            o.alive = false;
-            o.t1 = self.now;
-            if o.pending && o.positioned {
-                o.emit();
+        let Some(&sid) = self.alive.get(&tid) else { return };
+        // A weapon's last look for its target, while everything that was
+        // near it is still in the picture.
+        if self.objs[sid as usize].kind.map(Kind::is_weapon).unwrap_or(false) && self.objs[sid as usize].positioned {
+            self.scan(sid, true);
+        }
+        self.alive.remove(&tid);
+        let o = &mut self.objs[sid as usize];
+        o.alive = false;
+        o.removed = true;
+        o.t1 = self.now;
+        o.removed_airborne = o.kind.map(Kind::is_air).unwrap_or(false)
+            && match o.air {
+                Some(a) => a,
+                // No AGL in the recording: flying if it was moving like it.
+                None => o.gs > 50.0,
+            };
+        if o.pending && o.positioned {
+            o.emit();
+        }
+    }
+
+    /// Track an aircraft's ground speed and whether it is flying; a change
+    /// that holds for 3 s is a takeoff or a landing.
+    fn air_state(&mut self, sid: u32) {
+        let now = self.now;
+        let o = &mut self.objs[sid as usize];
+        match o.prev {
+            Some(p) if now - p.t >= 500 => {
+                o.gs = dist2d_m(&p, &o.cur) / ((now - p.t) as f64 / 1000.0);
+                o.prev = Some(o.cur);
+            }
+            Some(_) => (),
+            None => o.prev = Some(o.cur),
+        }
+        if o.flags & F_AGL == 0 {
+            return;
+        }
+        let helo = o.kind == Some(Kind::Helo);
+        let (agl, gs) = (o.cur.agl, o.gs);
+        let up = if helo { agl > 8.0 } else { agl > 15.0 && gs > 25.0 };
+        let down = if helo { agl < 3.5 && gs < 6.0 } else { agl < 4.0 && gs < 40.0 };
+        match o.air {
+            None => {
+                if up {
+                    o.air = Some(true);
+                } else if down {
+                    o.air = Some(false);
+                }
+            }
+            Some(cur) => {
+                let wants = if cur { down } else { up };
+                match (wants, o.cand) {
+                    (false, _) => o.cand = None,
+                    (true, None) => o.cand = Some((!cur, now)),
+                    (true, Some((to, since))) if now - since >= 3_000 => {
+                        o.air = Some(to);
+                        o.cand = None;
+                        let kind = if to { EvKind::TakeOff } else { EvKind::Landing };
+                        self.events.push(Ev { t: since, kind, sid });
+                    }
+                    (true, Some(_)) => (),
+                }
+            }
+        }
+    }
+
+    /// A weapon's closest approach to anything not on its side. Runs every
+    /// second while it is far from everything and on every update once
+    /// within 3 km, so the closest point is not stepped over.
+    fn scan(&mut self, sid: u32, last: bool) {
+        let now = self.now;
+        let w = &self.objs[sid as usize];
+        let close = w.best.map(|b| b.0 < 3_000.0).unwrap_or(false);
+        if !last && !close && w.scan_t.map(|t| now - t < 1_000).unwrap_or(false) {
+            return;
+        }
+        let at = w.cur;
+        let launcher = w.launcher;
+        let side = w.color.clone().or_else(|| launcher.and_then(|l| self.objs[l as usize].color.clone()));
+        let mut best: Option<(f64, u32)> = None;
+        for &c in self.alive.values() {
+            if c == sid || Some(c) == launcher {
+                continue;
+            }
+            let o = &self.objs[c as usize];
+            let Some(k) = o.kind else { continue };
+            if o.skip || !o.positioned || k.is_weapon() {
+                continue;
+            }
+            if side.is_some() && o.color == side {
+                continue;
+            }
+            let d = dist_m(&o.cur, &at);
+            if best.map(|(bd, _)| d < bd).unwrap_or(true) {
+                best = Some((d, c));
+            }
+        }
+        let w = &mut self.objs[sid as usize];
+        w.scan_t = Some(now);
+        if let Some((d, c)) = best {
+            if w.best.map(|(bd, _, _)| d < bd).unwrap_or(true) {
+                w.best = Some((d, c, now));
             }
         }
     }
@@ -450,8 +584,16 @@ impl<'a> Builder<'a> {
         if !o.emitted || now - o.last_emit >= o.interval() {
             o.emit();
         }
-        if first_fix && o.kind.map(Kind::is_weapon).unwrap_or(false) {
+        let kind = o.kind;
+        if first_fix && kind.map(Kind::is_weapon).unwrap_or(false) {
             self.find_launcher(sid);
+        }
+        if tf.is_some() {
+            if kind.map(Kind::is_air).unwrap_or(false) {
+                self.air_state(sid);
+            } else if kind.map(Kind::is_weapon).unwrap_or(false) {
+                self.scan(sid, false);
+            }
         }
     }
 
@@ -559,57 +701,118 @@ impl<'a> Builder<'a> {
 
         let mut events: Vec<Value> = vec![];
         let mut shots: FxHashMap<u32, u32> = FxHashMap::default();
+        let mut hits: FxHashMap<u32, u32> = FxHashMap::default();
         let mut kills: FxHashMap<u32, u32> = FxHashMap::default();
         let mut landed_last: FxHashMap<u32, bool> = FxHashMap::default();
-        let weapons: Vec<&Obj> = self
-            .objs
-            .iter()
-            .filter(|w| w.idx.is_some() && w.kind.map(Kind::is_weapon).unwrap_or(false))
-            .collect();
-        for o in &weapons {
-            let Some(w) = o.idx else { continue };
+        // victim sid -> (time of death, killing weapon sid if known)
+        let mut dead: FxHashMap<u32, (i64, Option<u32>)> = FxHashMap::default();
+
+        // Shots: who fired, at whom (the enemy it came closest to), how close.
+        // A hit whose target leaves the recording soon after is the kill --
+        // within 90 s for an aircraft (a wreck falls for a while), 15 s for
+        // anything on the ground.
+        let mut by_victim: FxHashMap<u32, (i64, u32)> = FxHashMap::default();
+        for (wsid, o) in self.objs.iter().enumerate() {
+            let (Some(w), Some(k)) = (o.idx, o.kind) else { continue };
+            if !k.is_weapon() {
+                continue;
+            }
             let by = o.launcher.and_then(idx_of);
             if let Some(by) = by {
                 *shots.entry(by).or_default() += 1;
             }
-            events.push(json!({ "t": o.t0, "k": "fired", "o": by, "w": w }));
-        }
-        for ev in &self.events {
-            let Some(o) = idx_of(ev.sid) else { continue };
-            match ev.kind {
-                EvKind::TakeOff => {
-                    landed_last.insert(o, false);
-                    events.push(json!({ "t": ev.t, "k": "takeoff", "o": o }));
-                }
-                EvKind::Landing => {
-                    landed_last.insert(o, true);
-                    events.push(json!({ "t": ev.t, "k": "landing", "o": o }));
-                }
-                EvKind::Destroyed => {
-                    let (td, at) = self.objs[ev.sid as usize].destroyed.unwrap_or((ev.t, S::default()));
-                    // The weapon that ended closest to the target around the
-                    // moment it died.
-                    let hit = weapons
-                        .iter()
-                        .filter(|w| w.t1 >= td - 5_000 && w.t1 <= td + 3_000)
-                        .map(|w| (dist_m(&w.cur, &at), w))
-                        .filter(|(d, _)| *d < 300.0)
-                        .min_by(|a, b| a.0.total_cmp(&b.0));
-                    match hit {
-                        Some((_, w)) => {
-                            let by = w.launcher.and_then(idx_of);
-                            if let Some(by) = by {
-                                *kills.entry(by).or_default() += 1;
-                            }
-                            events.push(json!({ "t": td, "k": "kill", "o": o, "by": by, "w": w.idx }));
-                        }
-                        None => events.push(json!({ "t": td, "k": "destroyed", "o": o })),
+            let hit = o.best.filter(|(d, _, _)| *d <= lethal_radius_m(k));
+            if let (Some(by), Some(_)) = (by, hit) {
+                *hits.entry(by).or_default() += 1;
+            }
+            let tg = o.best.and_then(|(_, c, _)| idx_of(c));
+            events.push(json!({
+                "t": o.t0,
+                "k": "fired",
+                "o": by,
+                "w": w,
+                "tg": tg,
+                "md": o.best.map(|(d, _, _)| d.round() as i64),
+                "hit": hit.is_some(),
+                "te": o.t1,
+            }));
+            if let Some((_, vsid, th)) = hit {
+                let v = &self.objs[vsid as usize];
+                let window = if v.kind.map(Kind::is_air).unwrap_or(false) { 90_000 } else { 15_000 };
+                if v.removed && v.t1 >= th - 2_000 && v.t1 <= th + window {
+                    // The hit closest before the death takes the credit.
+                    let e = by_victim.entry(vsid).or_insert((th, wsid as u32));
+                    if th > e.0 && th <= v.t1 + 2_000 {
+                        *e = (th, wsid as u32);
                     }
                 }
             }
         }
+        for (vsid, (_, wsid)) in &by_victim {
+            dead.insert(*vsid, (self.objs[*vsid as usize].t1, Some(*wsid)));
+        }
+        // Recordings that do carry Destroyed events (not DCS today): the
+        // weapon that ended nearest the victim around then.
+        for ev in self.events.iter().filter(|e| e.kind == EvKind::Destroyed) {
+            if dead.contains_key(&ev.sid) {
+                continue;
+            }
+            let (td, at) = self.objs[ev.sid as usize].destroyed.unwrap_or((ev.t, S::default()));
+            let w = self
+                .objs
+                .iter()
+                .enumerate()
+                .filter(|(_, w)| w.idx.is_some() && w.kind.map(Kind::is_weapon).unwrap_or(false))
+                .filter(|(_, w)| w.t1 >= td - 5_000 && w.t1 <= td + 3_000)
+                .map(|(i, w)| (dist_m(&w.cur, &at), i as u32))
+                .filter(|(d, _)| *d < 300.0)
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, i)| i);
+            dead.insert(ev.sid, (td, w));
+        }
+        for (vsid, (td, wsid)) in &dead {
+            let Some(o) = idx_of(*vsid) else { continue };
+            let wobj = wsid.map(|w| &self.objs[w as usize]);
+            let by = wobj.and_then(|w| w.launcher).and_then(idx_of);
+            if let Some(by) = by {
+                *kills.entry(by).or_default() += 1;
+            }
+            match wobj {
+                Some(w) => events.push(json!({ "t": td, "k": "kill", "o": o, "by": by, "w": w.idx })),
+                None => events.push(json!({ "t": td, "k": "destroyed", "o": o })),
+            }
+        }
+        // An aircraft that vanished in flight with nothing on it: shot down
+        // by guns, crashed, collided, or its pilot left mid-air.
+        for (sid, o) in self.objs.iter().enumerate() {
+            if o.removed_airborne && !dead.contains_key(&(sid as u32)) {
+                if let Some(i) = o.idx {
+                    events.push(json!({ "t": o.t1, "k": "lost", "o": i }));
+                }
+            }
+        }
+        let mut nav: Vec<&Ev> = self.events.iter().filter(|e| e.kind != EvKind::Destroyed).collect();
+        nav.sort_by_key(|e| e.t);
+        for ev in nav {
+            let Some(o) = idx_of(ev.sid) else { continue };
+            let landing = ev.kind == EvKind::Landing;
+            landed_last.insert(o, landing);
+            events.push(json!({ "t": ev.t, "k": if landing { "landing" } else { "takeoff" }, "o": o }));
+        }
         events.sort_by_key(|e| e["t"].as_i64().unwrap_or(0));
 
+        // meta index -> time it was destroyed or lost
+        let mut deaths: FxHashMap<u32, i64> = FxHashMap::default();
+        for (sid, (td, _)) in &dead {
+            if let Some(i) = idx_of(*sid) {
+                deaths.insert(i, *td);
+            }
+        }
+        for o in self.objs.iter().filter(|o| o.removed_airborne) {
+            if let Some(i) = o.idx {
+                deaths.entry(i).or_insert(o.t1);
+            }
+        }
         let mut by_idx: Vec<&Obj> = self.objs.iter().filter(|o| o.idx.is_some()).collect();
         by_idx.sort_by_key(|o| o.idx);
         let objects: Vec<Value> = by_idx
@@ -627,7 +830,7 @@ impl<'a> Builder<'a> {
                     "t1": o.t1,
                     "par": o.launcher.and_then(idx_of),
                     "f": o.flags,
-                    "d": o.destroyed.map(|(t, _)| t),
+                    "d": deaths.get(&o.idx.unwrap_or(u32::MAX)).copied(),
                 })
             })
             .collect();
@@ -651,8 +854,9 @@ impl<'a> Builder<'a> {
                 start_ms: start_ms + o.t0,
                 end_ms: start_ms + o.t1,
                 shots: shots.get(&i).copied().unwrap_or(0),
+                hits: hits.get(&i).copied().unwrap_or(0),
                 kills: kills.get(&i).copied().unwrap_or(0),
-                fate: if o.destroyed.is_some() {
+                fate: if deaths.contains_key(&i) {
                     "destroyed"
                 } else if landed_last.get(&i).copied().unwrap_or(false) {
                     "landed"
@@ -663,7 +867,7 @@ impl<'a> Builder<'a> {
         }
 
         let meta = json!({
-            "v": 1,
+            "v": INGEST_VERSION,
             "title": self.title,
             "author": self.author,
             "data_source": self.data_source,
@@ -917,6 +1121,108 @@ mod tests {
         assert_eq!(classify("Ground+Heavy+Armor+Vehicle+Tank"), Some(Kind::Armor));
         assert_eq!(classify("Sea+Watercraft+AircraftCarrier"), Some(Kind::Carrier));
         assert_eq!(classify("Navaid+Static+Bullseye"), None);
+    }
+
+    /// What DCS actually writes: no Destroyed/TakenOff/Landed lines at all.
+    /// Takeoff and landing come from AGL and ground speed, the kill from a
+    /// missile ending on its target followed by the target leaving, a miss
+    /// from a missile ending far from everything, and a loss from an
+    /// aircraft vanishing in flight with nothing on it.
+    #[test]
+    fn derives_events_without_event_lines() {
+        let dir = std::env::temp_dir().join(format!("bfdb-replay-dcs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("dcs.txt.acmi");
+        let mut t = String::from(
+            "FileType=text/acmi/tacview\nFileVersion=2.2\n\
+             0,ReferenceTime=2026-10-08T10:00:00Z,RecordingTime=2026-10-08T12:00:00Z,\
+             ReferenceLongitude=41,ReferenceLatitude=42\n#0\n\
+             a1,T=0.1|0.1|100|0|0|90,Type=Air+FixedWing,Name=F-16C_50,Pilot=Viper,Color=Blue,AGL=1\n\
+             b2,T=0.3|0.1|5000|0|0|270,Type=Air+FixedWing,Name=MiG-29S,Pilot=Ivan,Color=Red,AGL=4800\n\
+             e5,T=0.5|0.3|6000|0|0|270,Type=Air+FixedWing,Name=Su-27,Pilot=Boris,Color=Red,AGL=5800\n",
+        );
+        // 0.5 s frames. F-16: 20 s parked, then rolls and climbs east.
+        let mut lon = 0.1f64;
+        let mut agl = 1.0f64;
+        for i in 1..=400 {
+            let ts = i as f64 * 0.5;
+            if ts > 20.0 && ts < 150.0 {
+                lon += 0.0015; // ~120 m per frame = 240 m/s
+                agl = (agl + 25.0).min(4000.0);
+            } else if ts >= 150.0 && ts < 170.0 {
+                lon += 0.0002; // slowing down on the runway
+                agl = 1.0;
+            }
+            t.push_str(&format!("#{ts}\na1,T={lon}||{}|0|0|90,AGL={agl}\n", agl + 100.0));
+            // Missile 1 at t=60: flies onto the MiG, which is then removed.
+            let alt = agl + 100.0;
+            if i == 120 {
+                t.push_str(&format!("c3,T={lon}|0.1|{alt}|0|0|90,Type=Weapon+Missile,Name=AIM_120C,Color=Blue\n"));
+            }
+            if i > 120 && i <= 130 {
+                let f = (i - 120) as f64 / 10.0;
+                t.push_str(&format!("c3,T={}||{}\n", lon + (0.3 - lon) * f, alt + (5000.0 - alt) * f));
+            }
+            if i == 131 {
+                t.push_str("-c3\n");
+            }
+            if i == 133 {
+                t.push_str("-b2\n");
+            }
+            // Missile 2 at t=70: flies off north and self-destructs far away.
+            if i == 140 {
+                t.push_str(&format!("d4,T={lon}|0.1|{alt}|0|0|0,Type=Weapon+Missile,Name=AIM_120C,Color=Blue\n"));
+            }
+            if i > 140 && i <= 150 {
+                t.push_str(&format!("d4,T=|{}|\n", 0.1 + (i - 140) as f64 * 0.05));
+            }
+            if i == 151 {
+                t.push_str("-d4\n");
+            }
+            // The Su-27 flies west, then vanishes at t=100 with nothing near it.
+            if i < 200 {
+                t.push_str(&format!("e5,T={}||\n", 0.5 - i as f64 * 0.0005));
+            }
+            if i == 200 {
+                t.push_str("-e5\n");
+            }
+        }
+        fs::write(&src, t).unwrap();
+        let out = dir.join("out");
+        let built = build(&src, &out).unwrap();
+        let meta: Value = serde_json::from_slice(&gunzip(&out.join("meta.json.gz"))).unwrap();
+        let objs = meta["objects"].as_array().unwrap();
+        let idx = |name: &str| objs.iter().position(|o| o["n"] == name).unwrap() as u64;
+        let (f16, mig, su) = (idx("F-16C_50"), idx("MiG-29S"), idx("Su-27"));
+        let ev = meta["events"].as_array().unwrap();
+        let find = |k: &str| ev.iter().filter(|e| e["k"] == k).collect::<Vec<_>>();
+
+        let takeoff = find("takeoff");
+        assert_eq!(takeoff.len(), 1, "{ev:?}");
+        assert!(takeoff[0]["t"].as_i64().unwrap() >= 20_000 && takeoff[0]["t"].as_i64().unwrap() < 30_000);
+        assert_eq!(find("landing").len(), 1, "{ev:?}");
+
+        let fired = find("fired");
+        assert_eq!(fired.len(), 2);
+        assert!(fired.iter().all(|e| e["o"] == f16));
+        let hit = fired.iter().find(|e| e["hit"] == true).expect("one hit");
+        assert_eq!(hit["tg"], mig);
+        let miss = fired.iter().find(|e| e["hit"] == false).expect("one miss");
+        assert!(miss["md"].as_i64().unwrap() > 1_000);
+
+        let kill = find("kill");
+        assert_eq!(kill.len(), 1, "{ev:?}");
+        assert_eq!((kill[0]["o"].as_u64(), kill[0]["by"].as_u64()), (Some(mig), Some(f16)));
+        let lost = find("lost");
+        assert_eq!(lost.len(), 1, "{ev:?}");
+        assert_eq!(lost[0]["o"].as_u64(), Some(su));
+
+        let viper = built.flights.iter().find(|f| f.pilot == "Viper").unwrap();
+        assert_eq!((viper.shots, viper.hits, viper.kills, viper.fate), (2, 1, 1, "landed"));
+        assert_eq!(built.flights.iter().find(|f| f.pilot == "Ivan").unwrap().fate, "destroyed");
+        assert_eq!(built.flights.iter().find(|f| f.pilot == "Boris").unwrap().fate, "destroyed");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// A shooter, a target, a missile that ends on the target, a shell, and

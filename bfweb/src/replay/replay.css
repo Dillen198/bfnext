@@ -10,7 +10,13 @@
   font-family: var(--font-body);
   color: var(--text);
 }
-.rp-map { position: absolute; inset: 0; }
+/* Child selectors on purpose: MapLibre's own stylesheet gives the map element
+   `.maplibregl-map { position: relative }`, and in the production bundle it can
+   load after this file -- a single-class rule then loses, the map collapses to
+   zero height and renders nothing. */
+.rp-root > .rp-map { position: absolute; inset: 0; width: 100%; height: 100%; }
+.rp-root > .rp-theater { position: absolute; inset: 0; z-index: 1; }
+.rp-theater canvas { display: block; width: 100%; height: 100%; cursor: grab; }
 .rp-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
 .rp-label {
   position: absolute; left: 0; top: 0;
@@ -135,7 +141,7 @@
 .rp-chip.on { color: var(--accent-bright); border-color: var(--accent-border); background: var(--accent-glow); }
 
 /* focus card */
-.rp-focus { right: 54px; top: 64px; width: 250px; padding: 8px 10px; }
+.rp-focus { right: 54px; top: 64px; width: 270px; padding: 8px 10px; max-height: calc(100% - 230px); overflow-y: auto; }
 .rp-focus-head { display: flex; align-items: center; gap: 7px; }
 .rp-focus-name { flex: 1; font-weight: 700; font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rp-focus-sub { font-size: 0.62rem; color: var(--text-dim); margin-top: 3px; }
@@ -144,6 +150,37 @@
 .rp-telemetry div { display: flex; flex-direction: column; }
 .rp-telemetry span { font-size: 0.55rem; color: var(--text-dim); letter-spacing: 0.12em; }
 .rp-telemetry b { font: 600 0.78rem var(--font-mono); color: var(--text); }
+
+/* focus card: flight summary + BRAA */
+.rp-summary { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border-light); }
+.rp-summary-row { display: flex; flex-wrap: wrap; gap: 4px 10px; font: 0.64rem var(--font-mono); color: var(--text-muted); }
+.rp-summary-row b { color: var(--text); }
+.rp-summary-row b.k { color: var(--yellow); }
+.rp-summary-row .x { color: var(--red); font-weight: 700; }
+.rp-summary-row.dim { color: var(--text-dim); margin-top: 3px; }
+.rp-measure-btn { margin-top: 8px; width: 100%; justify-content: center; }
+.rp-braa { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--border-light); }
+
+/* shots tab */
+.rp-shot-sum { padding: 0 10px 6px; font: 0.64rem var(--font-mono); color: var(--text-dim); }
+.rp-shot-sum b.k { color: var(--red); }
+.rp-shot-sum b.h { color: var(--yellow); }
+.rp-shot {
+  width: 100%; display: block; text-align: left; padding: 6px 10px; cursor: pointer;
+  background: transparent; border: 0; border-bottom: 1px solid var(--border); color: var(--text-muted);
+}
+.rp-shot:hover { background: var(--bg-hover); }
+.rp-shot-head { display: flex; gap: 8px; align-items: baseline; font-size: 0.68rem; }
+.rp-shot-w { flex: 1; color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-shot-res { font: 700 0.6rem var(--font-mono); letter-spacing: 0.08em; }
+.rp-shot-res.kill { color: var(--red); }
+.rp-shot-res.hit { color: var(--yellow); }
+.rp-shot-res.miss { color: var(--text-dim); }
+.rp-shot-who { font-size: 0.66rem; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-shot-geo { display: flex; flex-wrap: wrap; gap: 2px 9px; margin-top: 3px; font: 0.6rem var(--font-mono); color: var(--text-dim); }
+.rp-shot-kill { box-shadow: inset 2px 0 0 var(--red); }
+.rp-shot-hit { box-shadow: inset 2px 0 0 var(--yellow); }
+.rp-ev-lost .rp-ev-t { color: var(--orange); }
 
 /* bottom: graph + transport */
 .rp-bottom { left: 10px; right: 54px; bottom: 26px; padding: 6px 10px 8px; }

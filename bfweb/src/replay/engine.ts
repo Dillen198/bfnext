@@ -9,10 +9,11 @@ import {
   type Kind, type State, type TrackStore,
   isAir, isWeapon, sideHex, M_TO_FT,
 } from './data'
-import { Layer3D, centerMpp, type Drawn3D, type Trail3D } from './layer3d'
+import { Theater, type Cam3D } from './theater'
 
 export type ViewMode = '2d' | '3d'
-export type CamMode = 'free' | 'follow' | 'chase'
+/** follow = keep it centred (2D) / orbit it (3D); chase, cockpit and padlock are 3D only. */
+export type CamMode = Cam3D
 export type Basemap = 'dark' | 'sat'
 
 export interface ViewOpts {
@@ -33,6 +34,11 @@ export interface EngineUi {
   basemap: Basemap
   focus: number | null
   focusState: State | null
+  /** second object for the BRAA tool, and its state */
+  measure: number | null
+  measureState: State | null
+  /** the next map click picks the measured object */
+  measuring: boolean
   opts: ViewOpts
   error: string | null
 }
@@ -44,17 +50,7 @@ const colorKey = (c?: string | null) => (c === 'Blue' ? 'blue' : c === 'Red' ? '
 /** Kinds whose icon turns with the heading. */
 const ROTATES: Partial<Record<Kind, true>> = { air: true, helo: true, missile: true, bomb: true, rocket: true, torpedo: true, ship: true, carrier: true, vehicle: true, armor: true }
 
-const TERRARIUM = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'
-
 function style(): StyleSpecification {
-  const dem = {
-    type: 'raster-dem' as const,
-    tiles: [TERRARIUM],
-    encoding: 'terrarium' as const,
-    tileSize: 256,
-    maxzoom: 13,
-    attribution: 'Terrain: Mapzen/AWS',
-  }
   return {
     version: 8,
     sources: {
@@ -71,17 +67,11 @@ function style(): StyleSpecification {
         maxzoom: 17,
         attribution: 'Esri, Maxar, Earthstar Geographics',
       },
-      dem,
-      'dem-hs': { ...dem },
     },
     layers: [
       { id: 'bg', type: 'background', paint: { 'background-color': '#0a0d07' } },
       { id: 'dark', type: 'raster', source: 'dark', paint: { 'raster-opacity': 0.9 } },
       { id: 'sat', type: 'raster', source: 'sat', layout: { visibility: 'none' }, paint: { 'raster-saturation': -0.25, 'raster-brightness-max': 0.85 } },
-      {
-        id: 'hill', type: 'hillshade', source: 'dem-hs', layout: { visibility: 'none' },
-        paint: { 'hillshade-exaggeration': 0.35, 'hillshade-shadow-color': '#000000', 'hillshade-highlight-color': '#ffffff' },
-      },
     ],
   }
 }
@@ -227,10 +217,14 @@ export class ReplayEngine {
   cam: CamMode = 'free'
   basemap: Basemap = 'dark'
   focus: number | null = null
+  measure: number | null = null
+  measuring = false
   opts: ViewOpts = { ground: true, weapons: true, labels: true, trail: 60_000 }
   onUi: ((ui: EngineUi) => void) | null = null
 
-  private layer3d = new Layer3D()
+  /** The 3D view, made the first time someone switches to it. */
+  private theater: Theater | null = null
+  private mapEl: HTMLDivElement
   private labelsEl: HTMLDivElement
   private labelPool: HTMLDivElement[] = []
   private raf = 0
@@ -249,6 +243,7 @@ export class ReplayEngine {
     this.w1 = w1
     this.t = Math.min(Math.max(t, w0), w1)
     this.labelsEl = labelsEl
+    this.mapEl = container
     this.map = new maplibregl.Map({
       container,
       style: style(),
@@ -268,8 +263,8 @@ export class ReplayEngine {
     })
     // While paused the map still moves under the user; 'render' (not 'move')
     // so 3D labels use the positions the layer has just projected.
-    this.map.on('render', () => { if (!this.playing) this.drawLabels() })
-    this.map.on('click', e => this.pick(e.point.x, e.point.y))
+    this.map.on('render', () => { if (!this.playing && this.mode === '2d') this.drawLabels() })
+    this.map.on('click', e => this.pick(e.point.x, e.point.y, (e.originalEvent as MouseEvent).shiftKey))
     store.onChange = () => { this.slowDirty = true; this.kick() }
   }
 
@@ -277,6 +272,7 @@ export class ReplayEngine {
     this.destroyed = true
     cancelAnimationFrame(this.raf)
     this.store.onChange = null
+    this.theater?.destroy()
     this.map.remove()
   }
 
@@ -286,10 +282,15 @@ export class ReplayEngine {
     map.addSource('rp-trails', { type: 'geojson', data: EMPTY })
     map.addSource('rp-slow', { type: 'geojson', data: EMPTY })
     map.addSource('rp-dyn', { type: 'geojson', data: EMPTY })
+    map.addSource('rp-measure', { type: 'geojson', data: EMPTY })
     map.addLayer({
       id: 'rp-trails', type: 'line', source: 'rp-trails',
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': ['get', 'color'], 'line-opacity': ['get', 'op'], 'line-width': ['get', 'w'] },
+    })
+    map.addLayer({
+      id: 'rp-measure', type: 'line', source: 'rp-measure',
+      paint: { 'line-color': '#ffffff', 'line-width': 1.5, 'line-dasharray': [3, 2], 'line-opacity': 0.9 },
     })
     const symbol = (id: string, source: string) => map.addLayer({
       id, type: 'symbol', source,
@@ -331,6 +332,7 @@ export class ReplayEngine {
   setSpeed(s: number) { this.speed = s; this.changed() }
   setFocus(idx: number | null) {
     this.focus = idx
+    if (idx == null || idx === this.measure) this.measure = null
     if (idx != null) {
       this.store.wholeTrack(idx)
       if (this.cam === 'free') this.cam = 'follow'
@@ -341,15 +343,29 @@ export class ReplayEngine {
     this.slowDirty = true
     this.changed()
   }
+  /** Pick the object the BRAA tool measures to (null clears it). */
+  setMeasure(idx: number | null) {
+    this.measure = idx
+    this.measuring = false
+    if (idx == null && this.cam === 'padlock') this.cam = 'chase'
+    if (idx != null) this.store.wholeTrack(idx)
+    this.changed()
+  }
+  /** The next click on the map picks the measured object. */
+  startMeasuring(on = true) {
+    this.measuring = on
+    this.changed()
+  }
   setCam(c: CamMode) {
     this.cam = this.focus == null ? 'free' : c
+    if (this.cam === 'padlock' && this.measure == null) this.cam = 'chase'
     this.map.scrollZoom.enable(this.cam === 'free' ? undefined : { around: 'center' })
     if (this.cam === 'free') this.map.dragPan.enable()
     this.changed()
   }
   setMode(m: ViewMode) {
     this.mode = m
-    if (m === '2d' && this.cam === 'chase') this.cam = 'follow'
+    if (m === '2d' && this.cam !== 'free') this.cam = 'follow'
     if (this.ready) this.applyMode()
     this.changed()
   }
@@ -378,21 +394,21 @@ export class ReplayEngine {
   }
 
   private applyMode() {
-    const map = this.map
     const three = this.mode === '3d'
-    for (const id of ['rp-trails', 'rp-slow', 'rp-dyn', 'rp-focus']) {
-      map.setLayoutProperty(id, 'visibility', three ? 'none' : 'visible')
+    if (three && !this.theater && this.mapEl.parentElement) {
+      const th = new Theater(this.mapEl.parentElement)
+      // The theatre sits under the panels and the label overlay.
+      this.mapEl.parentElement.insertBefore(th.el, this.mapEl.nextSibling)
+      th.onChange = () => this.kick()
+      th.el.addEventListener('click', ev => {
+        const r = th.el.getBoundingClientRect()
+        this.pick(ev.clientX - r.left, ev.clientY - r.top, ev.shiftKey)
+      })
+      this.theater = th
     }
-    map.setLayoutProperty('hill', 'visibility', three ? 'visible' : 'none')
-    if (three) {
-      map.setTerrain({ source: 'dem', exaggeration: 1 })
-      if (!map.getLayer(this.layer3d.id)) map.addLayer(this.layer3d)
-      if (map.getPitch() < 30) map.easeTo({ pitch: 65, duration: 600 })
-    } else {
-      if (map.getLayer(this.layer3d.id)) map.removeLayer(this.layer3d.id)
-      map.setTerrain(null)
-      map.easeTo({ pitch: 0, duration: 400 })
-    }
+    if (this.theater) this.theater.el.style.display = three ? '' : 'none'
+    this.mapEl.style.visibility = three ? 'hidden' : ''
+    if (!three) this.map.resize()
     this.slowDirty = true
   }
 
@@ -456,6 +472,9 @@ export class ReplayEngine {
       basemap: this.basemap,
       focus: this.focus,
       focusState: this.focus != null ? this.store.state(this.focus, this.t) : null,
+      measure: this.measure,
+      measureState: this.measure != null ? this.store.state(this.measure, this.t) : null,
+      measuring: this.measuring,
       opts: this.opts,
       error: this.store.error,
     })
@@ -508,6 +527,11 @@ export class ReplayEngine {
       const d: Drawn = { idx, kind: o.k, color: sideHex(o.c), ck, st, focus }
       ;(air || weapon ? dyn : slow).push(d)
     }
+    if (this.measure != null && this.measure !== this.focus && !dyn.some(d => d.idx === this.measure)) {
+      const o = objects[this.measure]
+      const st = this.store.state(this.measure, t)
+      if (o && st) (isAir(o.k) || isWeapon(o.k) ? dyn : slow).push({ idx: this.measure, kind: o.k, color: sideHex(o.c), ck: colorKey(o.c), st, focus: false })
+    }
     // The focus always draws, even if its kind is filtered out.
     if (this.focus != null && !dyn.some(d => d.focus)) {
       const o = objects[this.focus]
@@ -537,6 +561,9 @@ export class ReplayEngine {
   private draw(now: number) {
     const { dyn, slow } = this.collect()
     const trails = this.trails(dyn)
+    const fs = this.focus != null ? this.store.state(this.focus, this.t) : null
+    const ms = this.measure != null ? this.store.state(this.measure, this.t) : null
+    const line: [number, number, number][] | null = fs && ms ? [[fs.lon, fs.lat, fs.alt], [ms.lon, ms.lat, ms.alt]] : null
     if (this.mode === '2d') {
       const feat = (d: Drawn): GeoJSON.Feature => ({
         type: 'Feature',
@@ -555,6 +582,9 @@ export class ReplayEngine {
         this.slowDirty = false
         ;(this.map.getSource('rp-slow') as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: slow.map(feat) })
       }
+      ;(this.map.getSource('rp-measure') as GeoJSONSource | undefined)?.setData(line
+        ? { type: 'Feature', geometry: { type: 'LineString', coordinates: line.map(p => [p[0], p[1]]) }, properties: {} }
+        : EMPTY)
       ;(this.map.getSource('rp-trails') as GeoJSONSource | undefined)?.setData({
         type: 'FeatureCollection',
         features: trails.filter(tr => tr.pts.length > 1).map(tr => ({
@@ -563,42 +593,27 @@ export class ReplayEngine {
           properties: { color: tr.color, op: tr.op, w: tr.w },
         })),
       })
-    } else {
-      const objs: Drawn3D[] = [...slow, ...dyn].map(d => ({ idx: d.idx, kind: d.kind, color: d.color, st: d.st, focus: d.focus }))
-      this.layer3d.objects = objs
-      this.layer3d.trails = trails.map<Trail3D>(tr => ({ pts: tr.pts, color: tr.color, opacity: tr.op }))
+    } else if (this.theater) {
+      const { objects } = this.store.meta
+      this.theater.render({
+        objects: [...slow, ...dyn].map(d => ({ idx: d.idx, kind: d.kind, name: objects[d.idx]?.n, color: d.color, st: d.st, focus: d.focus })),
+        trails: trails.map(tr => ({ pts: tr.pts, color: tr.color, opacity: tr.op })),
+        line,
+        focus: this.focus,
+        measure: this.measure,
+        cam: this.cam,
+      })
     }
-    this.camera()
-    if (this.mode === '3d') this.map.triggerRepaint()
+    if (this.mode === '2d') this.camera()
     this.drawLabels(dyn)
   }
 
-  /** Keep the focus aircraft in view. In 3D the map centre is moved along
-   *  the view direction so the aircraft, which is above the ground, sits in
-   *  the middle of the screen rather than the patch of ground under it. */
+  /** 2D: keep the followed aircraft centred (the theatre moves its own
+   *  camera in 3D). */
   private camera() {
     if (this.focus == null || this.cam === 'free') return
     const st = this.store.state(this.focus, this.t)
-    if (!st) return
-    const map = this.map
-    if (this.mode === '2d') {
-      map.jumpTo({ center: [st.lon, st.lat] })
-      return
-    }
-    const bearing = this.cam === 'chase' ? st.hdg : map.getBearing()
-    const pitch = this.cam === 'chase' ? 72 : Math.min(map.getPitch(), 78)
-    const tr = (map as unknown as { transform: { elevation: number; cameraToCenterDistance: number } }).transform
-    const ground = map.queryTerrainElevation([st.lon, st.lat])
-    const groundAbs = ground != null ? ground + (tr.elevation ?? 0) : 0
-    const h = Math.max(0, st.alt - groundAbs)
-    const p = (pitch * Math.PI) / 180
-    const shift = Math.min(h * Math.tan(p), 60_000)
-    const dest = offset(st.lon, st.lat, bearing, shift)
-    // The camera has to stay above the aircraft: zoom out until it does.
-    const mppNeeded = ((h * 1.25 + 60) / Math.cos(p)) / (tr.cameraToCenterDistance || 1)
-    const maxZoom = Math.log2((40075016.686 * Math.cos((dest[1] * Math.PI) / 180)) / (512 * mppNeeded))
-    const zoom = Math.min(map.getZoom(), maxZoom)
-    map.jumpTo({ center: dest, bearing, pitch, zoom })
+    if (st) this.map.jumpTo({ center: [st.lon, st.lat] })
   }
 
   private label(i: number): HTMLDivElement {
@@ -617,9 +632,9 @@ export class ReplayEngine {
     let n = 0
     if (this.opts.labels || this.focus != null) {
       const pos = new Map<number, { x: number; y: number }>()
-      if (this.mode === '3d') for (const p of this.layer3d.projected) pos.set(p.idx, p)
+      if (this.mode === '3d' && this.theater) for (const p of this.theater.projected) pos.set(p.idx, p)
       for (const d of items) {
-        if (!this.opts.labels && !d.focus) continue
+        if (!this.opts.labels && !d.focus && d.idx !== this.measure) continue
         let xy = pos.get(d.idx)
         if (this.mode === '2d') xy = this.map.project([d.st.lon, d.st.lat])
         if (!xy) continue
@@ -638,7 +653,7 @@ export class ReplayEngine {
     for (let i = n; i < this.labelPool.length; i++) this.labelPool[i].style.display = 'none'
   }
 
-  private pick(x: number, y: number) {
+  private pick(x: number, y: number, shift = false) {
     let best: { idx: number; d: number } | null = null
     if (this.mode === '2d') {
       const feats = this.map.queryRenderedFeatures([[x - 12, y - 12], [x + 12, y + 12]], { layers: ['rp-dyn', 'rp-slow'] })
@@ -650,22 +665,13 @@ export class ReplayEngine {
         const d = isAir(o.k) ? 0 : 1
         if (!best || d < best.d) best = { idx, d }
       }
-    } else {
-      for (const p of this.layer3d.projected) {
-        const d = Math.hypot(p.x - x, p.y - y)
-        if (d < 26 && (!best || d < best.d)) best = { idx: p.idx, d }
-      }
+    } else if (this.theater) {
+      const idx = this.theater.pick(x, y)
+      if (idx != null) best = { idx, d: 0 }
     }
-    if (best) this.setFocus(best.idx)
+    if (!best) return
+    if ((shift || this.measuring) && best.idx !== this.focus && this.focus != null) this.setMeasure(best.idx)
+    else this.setFocus(best.idx)
   }
 }
 
-/** The point `m` metres from (lon, lat) along `bearing`. */
-function offset(lon: number, lat: number, bearing: number, m: number): [number, number] {
-  const b = (bearing * Math.PI) / 180
-  const dLat = (m * Math.cos(b)) / 110_540
-  const dLon = (m * Math.sin(b)) / (111_320 * Math.cos((lat * Math.PI) / 180))
-  return [lon + dLon, lat + dLat]
-}
-
-export { centerMpp }

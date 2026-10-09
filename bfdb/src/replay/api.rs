@@ -14,6 +14,10 @@
 //! - `GET /api/replay/rec/<id>/chunk/<n>`          one five-minute track window
 //! - `GET /api/replay/rec/<id>/object/<idx>?t0=&t1=`  one object's whole track
 //!   (its lifetime from the meta, so the server reads only those chunks)
+//! - `GET /api/replay/rec/<id>/humans`            meta indices of the flights
+//!   flown by players (the rest are AI)
+//! - `GET /api/replay/rec/<id>/acmi`              the original Tacview file, for
+//!   anyone who would rather open it in Tacview itself
 //! - `GET /api/replay/pilot/<ucid>?limit=`         a pilot's flights, newest first
 
 use super::ReplayCtx;
@@ -128,6 +132,73 @@ async fn serve(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String, file: String,
     r
 }
 
+async fn h_humans(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String) -> Response {
+    let sum = match block_in_place(|| ctx.summary(&id)) {
+        Ok(Some(s)) => s,
+        Ok(None) => return err(StatusCode::NOT_FOUND, format!("no recording {id:?}")),
+        Err(e) => return internal(e),
+    };
+    if !ctx.db.instances().get(&sum.instance).map(|c| visible(&ctx, c, sid)).unwrap_or(false) {
+        return err(StatusCode::NOT_FOUND, format!("no recording {id:?}"));
+    }
+    match block_in_place(|| ctx.humans(&id)) {
+        Ok(v) => reply_json(StatusCode::OK, &v),
+        Err(e) => internal(e),
+    }
+}
+
+/// Stream the original recording from the instance's Tacview folder.
+async fn h_acmi(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String) -> Response {
+    use tokio::io::AsyncReadExt;
+    let sum = match block_in_place(|| ctx.summary(&id)) {
+        Ok(Some(s)) => s,
+        Ok(None) => return err(StatusCode::NOT_FOUND, format!("no recording {id:?}")),
+        Err(e) => return internal(e),
+    };
+    let Some(cfg) = ctx.db.instances().get(&sum.instance).cloned() else {
+        return err(StatusCode::NOT_FOUND, format!("no recording {id:?}"));
+    };
+    if !visible(&ctx, &cfg, sid) {
+        return err(StatusCode::NOT_FOUND, format!("no recording {id:?}"));
+    }
+    let Some(dir) = cfg.tacview_dir.clone() else {
+        return err(StatusCode::NOT_FOUND, "this server no longer publishes its Tacview folder");
+    };
+    // The name comes from our own index, but never let it leave the folder.
+    if sum.file.contains(['/', '\\']) || sum.file.contains("..") {
+        return err(StatusCode::BAD_REQUEST, "bad file name");
+    }
+    let path = dir.join(&sum.file);
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(f) => f,
+        Err(_) => return err(StatusCode::NOT_FOUND, "the original recording has been deleted from the server"),
+    };
+    let len = file.metadata().await.map(|m| m.len()).ok();
+    let stream = futures::stream::unfold(Some(file), |f| async move {
+        let mut f = f?;
+        let mut buf = vec![0u8; 256 * 1024];
+        match f.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok::<_, std::io::Error>(bytes::Bytes::from(buf)), Some(f)))
+            }
+            Err(e) => Some((Err(e), None)),
+        }
+    });
+    let name = sum.file.replace('"', "");
+    let mut r = Response::new(warp::hyper::Body::wrap_stream(stream));
+    let h = r.headers_mut();
+    h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
+        h.insert(header::CONTENT_DISPOSITION, v);
+    }
+    if let Some(l) = len {
+        h.insert(header::CONTENT_LENGTH, HeaderValue::from(l));
+    }
+    r
+}
+
 /// Stitch (once) and serve one object's whole track.
 async fn h_object(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String, idx: u32, q: Q) -> Response {
     let sum = match block_in_place(|| ctx.summary(&id)) {
@@ -202,10 +273,19 @@ pub(crate) fn routes(ctx: Arc<ReplayCtx>) -> BoxedFilter<(Response,)> {
         .and(sid.clone())
         .and(q.clone())
         .then(|id: String, idx: u32, ctx: Arc<ReplayCtx>, sid: Option<Uuid>, q: Q| h_object(ctx, sid, id, idx, q));
+    let humans = warp::path!("api" / "replay" / "rec" / String / "humans")
+        .and(c.clone())
+        .and(sid.clone())
+        .then(|id: String, ctx: Arc<ReplayCtx>, sid: Option<Uuid>| h_humans(ctx, sid, id));
+    let acmi = warp::path!("api" / "replay" / "rec" / String / "acmi")
+        .and(c.clone())
+        .and(sid.clone())
+        .then(|id: String, ctx: Arc<ReplayCtx>, sid: Option<Uuid>| h_acmi(ctx, sid, id));
     let pilot = warp::path!("api" / "replay" / "pilot" / String).and(c.clone()).and(sid.clone()).and(q.clone()).then(
         |u: String, ctx: Arc<ReplayCtx>, sid: Option<Uuid>, q: Q| h_pilot(ctx, sid, u, q),
     );
-    let reads = status.or(recs).unify().or(meta).unify().or(chunk).unify().or(object).unify().or(pilot).unify().boxed();
+    let reads = status.or(recs).unify().or(meta).unify().or(chunk).unify().or(object).unify().or(humans).unify().boxed();
+    let reads = reads.or(acmi).unify().or(pilot).unify().boxed();
     // Anything else under /api/replay/ is a JSON 404 rather than the SPA.
     let unknown = warp::path!("api" / "replay" / ..)
         .and(warp::path::tail())
