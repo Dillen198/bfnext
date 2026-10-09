@@ -7702,7 +7702,20 @@ async fn main() -> Result<()> {
         .allow_headers(vec!["content-type", "x-intel-filename"])
         .allow_credentials(true);
     let cors = if cross_origin {
-        cors.allow_origins(args.cors_origins.iter().map(|s| s.as_str()))
+        // Our own public origin too. A page bfdb serves itself
+        // (api.vectorstrike.org/map) sends no Origin on a same-origin GET, so
+        // its fetches got through -- but a browser always sends one on a
+        // WebSocket handshake and on a POST, and every one of those was 403'd
+        // ("origin not allowed"): TACMAP, logs, login, admin actions all dead
+        // on that copy of the dashboard. The CSRF policy already trusts it.
+        let own = websec::origin_of(&args.public_api_url);
+        cors.allow_origins(
+            args.cors_origins
+                .iter()
+                .map(|s| s.as_str())
+                .chain(own.as_deref())
+                .collect::<Vec<_>>(),
+        )
     } else {
         cors.allow_any_origin()
     };

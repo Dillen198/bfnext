@@ -341,7 +341,7 @@ pub(crate) struct OriginPolicy {
     allowed: Arc<Vec<std::string::String>>,
 }
 
-fn origin_of(url: &str) -> Option<std::string::String> {
+pub(crate) fn origin_of(url: &str) -> Option<std::string::String> {
     let (scheme, rest) = url.split_once("://")?;
     let host = rest.split(['/', '?', '#']).next()?;
     if host.is_empty() {
