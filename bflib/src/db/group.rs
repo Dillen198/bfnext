@@ -492,6 +492,58 @@ impl Db {
         Ok(())
     }
 
+    /// AI fixed-wing flights still on the ground long after a parking start.
+    /// Something is in their way (another stuck aircraft, a vehicle on the
+    /// taxiway) and DCS AI waits forever: the flight never does its job,
+    /// the side keeps paying for more that queue behind it, and it holds a
+    /// spot the next spawn is put on top of. Remove it, say where, and let
+    /// the field breathe. Seen in the air = off the watch.
+    pub(crate) fn check_ramp_watch(&mut self, lua: MizLua, now: DateTime<Utc>) {
+        const RAMP_LIMIT_SECS: i64 = 15 * 60;
+        let watched: Vec<(GroupId, DateTime<Utc>, Option<ObjectiveId>)> =
+            self.ephemeral.ramp_watch.iter().map(|(g, (t, o))| (*g, *t, *o)).collect();
+        for (gid, since, field) in watched {
+            let Some(group) = self.persisted.groups.get(&gid) else {
+                self.ephemeral.ramp_watch.remove(&gid);
+                continue;
+            };
+            let name = group.name.clone();
+            let dcs = match dcso3::group::Group::get_by_name(lua, name.as_str()) {
+                Ok(g) => g,
+                Err(_) => {
+                    // Gone from DCS (shot down, despawned): not ours to judge.
+                    if now - since > chrono::Duration::seconds(60) {
+                        self.ephemeral.ramp_watch.remove(&gid);
+                    }
+                    continue;
+                }
+            };
+            let airborne = dcs
+                .get_units()
+                .map(|us| us.into_iter().filter_map(|u| u.ok()).any(|u| u.in_air().unwrap_or(false)))
+                .unwrap_or(false);
+            if airborne {
+                self.ephemeral.ramp_watch.remove(&gid);
+                continue;
+            }
+            if now - since < chrono::Duration::seconds(RAMP_LIMIT_SECS) {
+                continue;
+            }
+            self.ephemeral.ramp_watch.remove(&gid);
+            let at = field
+                .and_then(|f| self.persisted.objectives.get(&f))
+                .map(|o| o.name.to_string())
+                .unwrap_or_else(|| "its field".into());
+            warn!(
+                "[RAMP] {name} still on the ground at {at} {} min after starting up -- something blocks the                  taxiway or runway there; removed so it stops holding a parking spot",
+                RAMP_LIMIT_SECS / 60
+            );
+            if let Err(e) = self.delete_group(&gid) {
+                warn!("[RAMP] removing {name}: {e:?}");
+            }
+        }
+    }
+
     pub fn delete_group(&mut self, gid: &GroupId) -> Result<()> {
         let group = self
             .persisted
@@ -2025,11 +2077,16 @@ impl Db {
         let mut unit: Option<Unit> = None;
         let mut moved: SmallVec<[GroupId; 16]> = smallvec![];
         let mut dead: Vec<DcsOid<ClassUnit>> = vec![];
+        let mut unknown: SmallVec<[UnitId; 8]> = smallvec![];
         for uid in units {
             let id = match self.ephemeral.object_id_by_uid.get(&uid) {
                 Some(id) => id,
                 None => {
-                    warn!("update_unit_positions skipping unknown unit {uid}");
+                    // Not in DCS right now (despawned with its base, or not
+                    // spawned yet): nothing to read. Its next birth puts it
+                    // back on the list. This used to warn on every pass,
+                    // thousands of lines a session.
+                    unknown.push(*uid);
                     continue;
                 }
             };
@@ -2074,6 +2131,12 @@ impl Db {
                 });
             }
             unit = Some(instance);
+        }
+        for uid in &unknown {
+            self.ephemeral.units_able_to_move.swap_remove(uid);
+        }
+        if !unknown.is_empty() {
+            log::debug!("update_unit_positions: {} unit(s) not in DCS dropped from tracking", unknown.len());
         }
         // `moved` carries one entry per unit that shifted, so an eight-truck
         // squad used to re-pin itself eight times in a single pass. Collapse it

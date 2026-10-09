@@ -683,10 +683,38 @@ fn dcs_route<'lua>(
 /// enemy came into view and never drove on.
 fn set_march_ai(group: &Group, roe: GroundRoe) -> Result<()> {
     let con = group.get_controller()?;
+    // A formation raised at a base takes over garrison groups already in
+    // DCS, and a base nobody is near has its garrison's AI switched off
+    // (`cull_or_respawn_objectives`). Off, a group takes the route and never
+    // drives: the Oct 9 stall reports read "task yes, lead 0.0 m/s" for
+    // hours. Always switch it back on before giving it orders.
+    con.set_on_off(true)?;
     con.set_option(AiOption::Ground(GroundOption::DisperseOnAttack(0)))?;
     con.set_option(AiOption::Ground(GroundOption::AlarmState(AlarmState::Auto)))?;
     con.set_option(AiOption::Ground(GroundOption::Roe(roe)))?;
     Ok(())
+}
+
+/// Is there runway or taxiway (DCS `SurfaceType::Runway`, which covers the
+/// paved movement areas of an airfield) at `p` or within `r` metres of it?
+/// Ground units parked there stop every AI aircraft that has to taxi past,
+/// and one standing on a parking spot is what the next spawned aircraft
+/// lands on top of.
+pub(crate) fn near_pavement(land: &Land, p: Vector2, r: f64) -> bool {
+    let paved = |q: Vector2| matches!(land.get_surface_type(LuaVec2(q)), Ok(SurfaceType::Runway));
+    if paved(p) {
+        return true;
+    }
+    (0..8).any(|i| {
+        let a = i as f64 * std::f64::consts::TAU / 8.;
+        paved(p + Vector2::new(a.cos(), a.sin()) * r)
+    })
+}
+
+/// Clear of runways and taxiways, and on dry land.
+pub(crate) fn good_ground(land: &Land, p: Vector2) -> bool {
+    !near_pavement(land, p, 150.)
+        && !matches!(land.get_surface_type(LuaVec2(p)), Ok(SurfaceType::Water | SurfaceType::ShallowWater))
 }
 
 /// (vehicles alive, vehicles it set out with) for `f`.
@@ -1248,7 +1276,7 @@ impl Db {
         let target = match order.target() {
             None => None,
             Some(oid) => {
-                let obj = objective!(self, oid)?;
+                let obj = objective!(self, &oid)?;
                 if matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) {
                     bail!("{} is at sea", obj.name)
                 }
@@ -1259,7 +1287,15 @@ impl Db {
                     }
                     _ => (),
                 }
-                Some((obj.zone.pos(), obj.name.clone()))
+                // Defending or falling back to one of our own fields: hold
+                // off its runways and taxiways, on the side we come from,
+                // not on the centre point -- which at an airbase is usually
+                // the runway, where a parked column grounds every AI flight.
+                let at = match order {
+                    Order::Defend(_) | Order::Withdraw(_) => self.holding_point(lua, &oid, from),
+                    _ => obj.zone.pos(),
+                };
+                Some((at, obj.name.clone()))
             }
         };
         let (path, off_road) = match &target {
@@ -1310,6 +1346,37 @@ impl Db {
             rt.event(side, "order", format_compact!("{who}: {what}"), Some(from), Some(id), now);
         }
         Ok(what)
+    }
+
+    /// Where to stand at base `oid`, coming from `from`: its centre if that is
+    /// clear ground, otherwise the nearest clear spot inside it, preferring
+    /// the side we arrive from.
+    pub(crate) fn holding_point(&self, lua: MizLua, oid: &ObjectiveId, from: Vector2) -> Vector2 {
+        let Some(o) = self.persisted.objectives.get(oid) else { return from };
+        let c = o.zone.pos();
+        let Ok(land) = Land::singleton(lua) else { return c };
+        if good_ground(&land, c) {
+            return c;
+        }
+        let r = o.zone.radius().max(800.);
+        let toward = {
+            let d = from - c;
+            if d.norm() > 1. { d.y.atan2(d.x) } else { 0. }
+        };
+        let mut ring = 300.;
+        while ring <= r {
+            // Angles out from the approach side, both ways.
+            for k in 0..16 {
+                let off = ((k + 1) / 2) as f64 * std::f64::consts::TAU / 16. * if k % 2 == 0 { 1. } else { -1. };
+                let a = toward + off;
+                let p = c + Vector2::new(a.cos(), a.sin()) * ring;
+                if good_ground(&land, p) {
+                    return p;
+                }
+            }
+            ring += 250.;
+        }
+        c
     }
 
     /// Send formation `id` to a point of the commander's choosing, to hold

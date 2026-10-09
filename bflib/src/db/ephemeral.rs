@@ -409,6 +409,9 @@ pub struct Ephemeral {
     /// Ground starts asked for by the caller that is about to spawn the
     /// group (see `LaunchRequest`). Consumed by that one `spawn_group`.
     pub(super) launch_requests: FxHashMap<GroupId, LaunchRequest>,
+    /// Fixed-wing AI flights started on a parking spot, and when, until they
+    /// are seen in the air (`Db::check_ramp_watch`).
+    pub(super) ramp_watch: FxHashMap<GroupId, (DateTime<Utc>, Option<ObjectiveId>)>,
     /// Drives for ground groups waiting in the spawn queue (see
     /// `QueuedDrive`). Dropped once the group is in DCS or given up on.
     pub(super) queued_drives: FxHashMap<GroupId, QueuedDrive>,
@@ -541,6 +544,7 @@ impl Default for Ephemeral {
             spawn_failures: FxHashMap::default(),
             despawn_failures: FxHashMap::default(),
             launch_requests: FxHashMap::default(),
+            ramp_watch: FxHashMap::default(),
             queued_drives: FxHashMap::default(),
             restart_notices: Vec::new(),
             last_under_attack_notif: FxHashMap::default(),
@@ -2443,6 +2447,9 @@ impl Ephemeral {
                             first.speed_locked = Some(true);
                             first.eta = Some(dcso3::Time(0.));
                             first.eta_locked = Some(true);
+                            if !helicopter {
+                                self.ramp_watch.insert(group.id, (Utc::now(), launch_oid));
+                            }
                             info!(
                                 "[GROUND_START] {} ground-starting from {cat:?} id {:?} at ({:.0},{:.0}) elev {:.0}, {} assigned parking spot(s)",
                                 group.name,

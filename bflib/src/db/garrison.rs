@@ -24,7 +24,7 @@ details.
 //! quiet.
 
 use super::{
-    formation::{ground_point, FormationId, FormationRt, Order, Posture},
+    formation::{good_ground, ground_point, FormationId, FormationRt, Order, Posture},
     objective::ObjGroupClass,
     Db,
 };
@@ -38,8 +38,8 @@ use dcso3::{
     coalition::Side,
     controller::{AiOption, AlarmState, GroundOption, GroundRoe, Task, VehicleFormation},
     group::{Group, GroupCategory},
-    land::{Land, SurfaceType},
-    LuaVec2, MizLua, Vector2,
+    land::Land,
+    MizLua, Vector2,
 };
 use fxhash::FxHashMap;
 use log::{info, warn};
@@ -156,10 +156,17 @@ impl Db {
         for (gid, to) in legs {
             let Some(g) = self.persisted.groups.get(gid) else { continue };
             let Ok(from) = self.group_center(gid) else { continue };
-            let uids: SmallVec<[_; 16]> = g.units.into_iter().copied().collect();
+            let uids: SmallVec<[_; 16]> = g
+                .units
+                .into_iter()
+                .copied()
+                .filter(|u| self.ephemeral.object_id_by_uid.contains_key(u))
+                .collect();
             let name = g.name.clone();
             let res = Group::get_by_name(lua, name.as_str()).and_then(|group| {
                 let con = group.get_controller()?;
+                // Its AI may have been switched off while the base was quiet.
+                con.set_on_off(true)?;
                 con.set_option(AiOption::Ground(GroundOption::DisperseOnAttack(0)))?;
                 con.set_option(AiOption::Ground(GroundOption::Roe(GroundRoe::WeaponFree)))?;
                 con.set_option(AiOption::Ground(GroundOption::AlarmState(if fight {
@@ -251,11 +258,9 @@ impl Db {
                 if dist(p, center) > inner {
                     continue;
                 }
-                let wet = matches!(
-                    land.get_surface_type(LuaVec2(p)),
-                    Ok(SurfaceType::Water | SurfaceType::ShallowWater)
-                );
-                if !wet {
+                // Dry, and well clear of runways and taxiways: a launcher
+                // parked on one grounds every AI flight at the field.
+                if good_ground(land, p) {
                     to = Some(p);
                     break;
                 }
@@ -377,10 +382,10 @@ impl Db {
             }
         };
         let intruders = self.ground_intruders();
-        let live: SmallVec<[(ObjectiveId, Side, Vector2, f64, dcso3::String); 32]> = self
+        let live: SmallVec<[(ObjectiveId, Side, Vector2, f64, dcso3::String, bool); 32]> = self
             .objectives()
             .filter(|(_, o)| o.spawned && o.owner != Side::Neutral)
-            .map(|(id, o)| (*id, o.owner, o.zone.pos(), o.zone.radius(), o.name.clone()))
+            .map(|(id, o)| (*id, o.owner, o.zone.pos(), o.zone.radius(), o.name.clone(), o.is_airbase()))
             .collect();
         grt.bases.retain(|id, _| live.iter().any(|(l, ..)| l == id));
         grt.sam_shot.retain(|_, t| now - *t < Duration::hours(1));
@@ -393,7 +398,7 @@ impl Db {
                 .count()
         };
         let mut rng = rand::thread_rng();
-        for (oid, side, center, radius, name) in live.iter().cloned() {
+        for (oid, side, center, radius, name, airfield) in live.iter().cloned() {
             if cfg.sam_relocate {
                 self.relocate_sams(grt, lua, &land, &cfg, oid, center, radius, now);
             }
@@ -424,10 +429,22 @@ impl Db {
                     st.out = true;
                     let across = Vector2::new(-dir.y, dir.x);
                     let n = groups.len() as f64;
+                    // Each group's spot, pushed out along the line of
+                    // approach until it is clear of runways and taxiways; a
+                    // group with no such spot within reach stays where it is.
                     let legs: SmallVec<[(GroupId, Vector2); 8]> = groups
                         .iter()
                         .enumerate()
-                        .map(|(i, g)| (*g, aim + across * ((i as f64 - (n - 1.) / 2.) * SPREAD_M)))
+                        .filter_map(|(i, g)| {
+                            let mut p = aim + across * ((i as f64 - (n - 1.) / 2.) * SPREAD_M);
+                            for _ in 0..10 {
+                                if good_ground(&land, p) {
+                                    return Some((*g, p));
+                                }
+                                p += dir * 150.;
+                            }
+                            None
+                        })
                         .collect();
                     let first = !st.announced;
                     st.announced = true;
@@ -495,7 +512,9 @@ impl Db {
                 }
                 continue;
             }
-            if !cfg.patrol {
+            // Not at an airfield: armour wandering about there ends up on a
+            // taxiway, and DCS AI won't taxi past it.
+            if !cfg.patrol || airfield {
                 continue;
             }
             let avg = cfg.patrol_secs.max(60) as f64;
@@ -525,11 +544,7 @@ impl Db {
                     let a = rng.gen_range(0.0..std::f64::consts::TAU);
                     let r = radius * PATROL_RADIUS * rng.gen_range(0.0f64..1.).sqrt();
                     let p = center + Vector2::new(a.cos(), a.sin()) * r;
-                    let wet = matches!(
-                        land.get_surface_type(LuaVec2(p)),
-                        Ok(SurfaceType::Water | SurfaceType::ShallowWater)
-                    );
-                    if !wet {
+                    if good_ground(&land, p) {
                         legs.push((g, p));
                         break;
                     }

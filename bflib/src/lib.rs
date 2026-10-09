@@ -4776,6 +4776,7 @@ fn run_slow_timed_events(
     // EW, SAM magazines, strike raids, sea drones, tempo (`Cfg::modern_war`).
     step(lua, ctx, "modern war", |ctx| modern_war::tick(lua, ctx, perf, start_ts));
     step(lua, ctx, "hunters", |ctx| command::tick_hunters(lua, ctx, start_ts));
+    step(lua, ctx, "ramp watch", |ctx| ctx.db.check_ramp_watch(lua, start_ts));
     // Ground formations, the AI ground commander and players' ground orders
     // (`Cfg::ground_war`).
     step(lua, ctx, "ground war", |ctx| groundwar::tick(lua, ctx, perf, start_ts));
