@@ -256,6 +256,16 @@ pub struct Ephemeral {
     /// destination isn't served by a fresh pair of convoys on every single
     /// logistics tick.
     pub(super) last_dispatch_to: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// (hub, destination) roads a convoy could not drive even after its
+    /// re-routes, and until when the dispatcher treats them as cut.
+    pub(super) impassable_roads: FxHashMap<(ObjectiveId, ObjectiveId), DateTime<Utc>>,
+    /// Ship groups told to fire a naval strike: their cruise-missile count
+    /// then, and when. A count that hasn't dropped by the next strike means
+    /// DCS won't fire those missiles at land (anti-ship weapons reported in
+    /// the cruise category) -- see `naval_no_land_attack`.
+    pub(super) naval_strike_fired: FxHashMap<String, (u32, DateTime<Utc>)>,
+    /// Ship groups found not to fire at land targets; skipped from then on.
+    pub(super) naval_no_land_attack: FxHashSet<String>,
     /// Counter for generating unique convoy IDs
     pub(super) convoy_counter: u32,
     /// Air logistics route tracking: route_id -> AirLogisticsRoute
@@ -371,7 +381,8 @@ pub struct Ephemeral {
     pub(super) last_owner_change: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Throttle for the "captureable but no capturing troops detected" diagnostic
     /// log in check_capture (one line per objective per 15s).
-    pub(super) last_capture_debug: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// When each objective's [CAPTURE_DIAG] was last logged, and what it said.
+    pub(super) last_capture_debug: FxHashMap<ObjectiveId, (DateTime<Utc>, std::string::String)>,
     /// Last time treasury income was deposited (Smart Commander).
     pub(crate) last_treasury_income: DateTime<Utc>,
     /// The mission clock's hour (0-23), sampled each time kills are
@@ -470,6 +481,9 @@ impl Default for Ephemeral {
             active_convoys: FxHashMap::default(),
             last_convoy_spawn: FxHashMap::default(),
             last_dispatch_to: FxHashMap::default(),
+            impassable_roads: FxHashMap::default(),
+            naval_strike_fired: FxHashMap::default(),
+            naval_no_land_attack: FxHashSet::default(),
             convoy_counter: 0,
             active_air_routes: FxHashMap::default(),
             last_air_route_spawn: FxHashMap::default(),
@@ -2270,6 +2284,9 @@ impl Ephemeral {
                 // ground; the group-table fixups below key off it the same way
                 // they key off a parking start.
                 let mut ground_start = false;
+                // Set when a fixed-wing flight's field has nothing it can park
+                // on and it air-starts over the field instead.
+                let mut air_fallback = false;
                 let ab_start = airbase.as_ref().and_then(|ab| {
                     let id = ab.get_id().ok()?;
                     let p = ab.get_point().ok()?;
@@ -2305,7 +2322,7 @@ impl Ephemeral {
                 // open big, helicopters want pads / open ramp, and the runway
                 // "spots" are not parking. Nearest-to-runway first so a flight
                 // isn't strung across the whole field.
-                if let (Some(ab), Some((_, p, _))) = (airbase.as_ref(), ab_start.as_ref()) {
+                if let (Some(ab), Some((_, p, ab_cat))) = (airbase.as_ref(), ab_start.as_ref()) {
                     let want = alive_units.len().max(1);
                     match ab.get_parking_spots(true) {
                         Ok(spots) => {
@@ -2346,7 +2363,18 @@ impl Ephemeral {
                                 let mut types: Vec<(i64, usize)> =
                                     by_type.into_iter().collect();
                                 types.sort_by_key(|(t, _)| *t);
-                                warn!(
+                                // Only worth a warning where nothing else
+                                // catches it: a helicopter lifts off from open
+                                // ground, fixed wing at a pad air-starts.
+                                let level = if helicopter
+                                    || *ab_cat != dcso3::airbase::AirbaseCategory::Airdrome
+                                {
+                                    log::Level::Info
+                                } else {
+                                    log::Level::Warn
+                                };
+                                log::log!(
+                                    level,
                                     "[GROUND_START] {} wanted {want} parking spots, only {} of {total} free spots are usable by this airframe \
                                      (helicopter={helicopter}; rejected: {occupied} occupied by a departing/arriving aircraft (TO_AC=true), \
                                      Term_Type counts {types:?}) -- {}",
@@ -2354,6 +2382,10 @@ impl Ephemeral {
                                     usable.len(),
                                     if helicopter && usable.is_empty() {
                                         "a helicopter starts from open ground instead"
+                                    } else if usable.is_empty()
+                                        && *ab_cat != dcso3::airbase::AirbaseCategory::Airdrome
+                                    {
+                                        "fixed wing air-starts over the field instead"
                                     } else {
                                         "the rest go on the field for DCS to assign"
                                     }
@@ -2390,8 +2422,16 @@ impl Ephemeral {
                         // does not need the pad, so send it to the open-ground
                         // start below instead; fixed wing has no such option
                         // and still has to try the field.
+                        // Fixed wing at a pad or a ship needs a spot it can
+                        // use: parked on a helipad (or a FARP DCS reports as a
+                        // ship) with none, a C-17 sits on it for good -- the
+                        // air logistics flights that all "timed out in
+                        // transit". It air-starts over the field below.
                         (Some((abid, p, cat)), Some(anchor))
-                            if !open_ground || !parking_plan.is_empty() =>
+                            if (!open_ground || !parking_plan.is_empty())
+                                && (helicopter
+                                    || !parking_plan.is_empty()
+                                    || *cat == dcso3::airbase::AirbaseCategory::Airdrome) =>
                         {
                             // The exact shape DCS itself uses when it spawns a
                             // ground-starting flight at runtime (see
@@ -2523,6 +2563,14 @@ impl Ephemeral {
                             group.name,
                             launch_oid
                         ),
+                        (Some((abid, _, cat)), _) if !helicopter => {
+                            info!(
+                                "[GROUND_START] {} is fixed wing and {cat:?} id {abid:?} has no spot it can use -- air-starting over the field",
+                                group.name
+                            );
+                            // Nothing in the group table may claim the field.
+                            air_fallback = true;
+                        }
                         // An action whose spawn location *is* an air start
                         // asked for this. Reporting it as a failure to find an
                         // airbase reads like a broken drone every mission
@@ -2544,7 +2592,7 @@ impl Ephemeral {
                         ),
                     }
 
-                    if ground_start {
+                    if ground_start || air_fallback {
                         // Starting on open ground, not at the field -- so the
                         // rest of the group table has to stop claiming the
                         // field too. Units left sitting on the parking

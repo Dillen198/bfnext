@@ -2605,15 +2605,20 @@ impl Db {
             // on demand from Objectives > Capture Advisor (see capture_diagnosis).
         }
         for (oid, name, lines) in capture_debug {
-            let last = self.ephemeral.last_capture_debug.get(&oid).copied();
-            if last.map(|t| (now - t).num_seconds() < 120).unwrap_or(false) {
-                continue;
+            // Every 2 min while it changes; the same squad parked 3.6 km out
+            // for eleven hours is worth a line every half hour, not 343.
+            let text = lines.join("\n  ");
+            let quiet_secs = match self.ephemeral.last_capture_debug.get(&oid) {
+                Some((_, said)) if *said == text => 1800,
+                _ => 120,
+            };
+            if let Some((t, _)) = self.ephemeral.last_capture_debug.get(&oid) {
+                if (now - *t).num_seconds() < quiet_secs {
+                    continue;
+                }
             }
-            self.ephemeral.last_capture_debug.insert(oid, now);
-            info!(
-                "[CAPTURE_DIAG] {name} is captureable but registered no capturing group. candidates:\n  {}",
-                lines.join("\n  ")
-            );
+            info!("[CAPTURE_DIAG] {name} is captureable but registered no capturing group. candidates:\n  {text}");
+            self.ephemeral.last_capture_debug.insert(oid, (now, text));
         }
         let mut actually_captured = smallvec![];
         let mut to_mark: SmallVec<[GroupId; 32]> = smallvec![];

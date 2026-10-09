@@ -2861,6 +2861,10 @@ impl Jtacs {
             }
         }
         let mut new_contacts: SmallVec<[&Jtac; 32]> = smallvec![];
+        // Drones whose aircraft is no longer in DCS (landed and removed, or
+        // gone without a death event): their group is still on the books, so
+        // they were retried -- and warned about -- every pass for hours.
+        let mut gone_drones: SmallVec<[GroupId; 4]> = smallvec![];
         for j in self.jtacs.values_mut() {
             for (_, jtac) in j.iter_mut() {
                 // Keep the fire-support lists fresh around the JTAC's own
@@ -2877,8 +2881,21 @@ impl Jtacs {
                 match jtac.sort_contacts(db, lua) {
                     Ok(false) => (),
                     Ok(true) => new_contacts.push(jtac),
-                    Err(e) => warn!("could not sort contacts for jtac {}, {:?}", jtac.gid, e),
+                    Err(e) => match jtac.gid {
+                        JtId::Group(gid) if jtac.air && db.first_living_unit(&gid).is_err() => {
+                            gone_drones.push(gid)
+                        }
+                        _ => warn!("could not sort contacts for jtac {}, {:?}", jtac.gid, e),
+                    },
                 }
+            }
+        }
+        // Deleting the group takes it out of `db.jtacs()`, so the next pass
+        // stands the JTAC down and tells its side, as for a shot-down drone.
+        for gid in gone_drones {
+            info!("jtac drone {gid} is no longer in DCS, removing it");
+            if let Err(e) = db.delete_group(&gid) {
+                warn!("could not remove jtac drone {gid}: {e:?}")
             }
         }
         // One line to the players following the JTAC. This was the full

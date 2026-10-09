@@ -1770,8 +1770,12 @@ impl Db {
         self.ephemeral
             .groups_with_move_missions
             .insert(args.group, args.pos);
+        // Only units in DCS: a dead one put back here has no object to read
+        // and was warned about on every position pass.
         for uid in &group.units {
-            self.ephemeral.units_able_to_move.insert(*uid);
+            if self.ephemeral.object_id_by_uid.contains_key(uid) {
+                self.ephemeral.units_able_to_move.insert(*uid);
+            }
         }
         if penalty > 0 {
             match &mut group.origin {
@@ -2342,6 +2346,24 @@ impl Db {
                         }
                     }
                 }
+                // Told to fire last time and still holding the same count: DCS
+                // isn't firing these at land (anti-ship missiles that report
+                // as cruise missiles). Red's ships "fired" 157 times a night
+                // with 48 left every time. Don't count or task them again.
+                let now = Utc::now();
+                if let Some((before, at)) = self.ephemeral.naval_strike_fired.get(&name).copied() {
+                    if cruise >= before && now - at >= chrono::Duration::minutes(3) {
+                        warn!(
+                            "Naval cruise missile strike: {name} was told to fire {} min ago and still has {cruise} cruise missiles -- its missiles don't engage land targets, leaving it out of naval strikes",
+                            (now - at).num_minutes()
+                        );
+                        self.ephemeral.naval_strike_fired.remove(&name);
+                        self.ephemeral.naval_no_land_attack.insert(name.clone());
+                    }
+                }
+                if self.ephemeral.naval_no_land_attack.contains(&name) {
+                    continue;
+                }
                 seen_any += cruise;
                 if cruise < want {
                     continue;
@@ -2356,8 +2378,9 @@ impl Db {
                     counter_battery_radius: None,
                 };
                 dcs_group.get_controller()?.push_task(task)?;
+                self.ephemeral.naval_strike_fired.insert(name.clone(), (cruise, now));
                 info!(
-                    "Naval cruise missile strike: {name} of carrier group {cg_id:?} launching {want} of its                      {cruise} cruise missiles at {target_name} ({:.0} km)",
+                    "Naval cruise missile strike: {name} of carrier group {cg_id:?} launching {want} of its {cruise} cruise missiles at {target_name} ({:.0} km)",
                     dist / 1000.
                 );
                 return Ok(None);
@@ -2365,7 +2388,7 @@ impl Db {
         }
         if seen_any == 0 {
             bail!(
-                "None of our ships in range carries land-attack cruise missiles (a Ticonderoga or an                  Arleigh Burke does)"
+                "None of our ships in range carries land-attack cruise missiles (a Ticonderoga or an Arleigh Burke does)"
             );
         }
         bail!(

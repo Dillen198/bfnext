@@ -2176,7 +2176,9 @@ async fn transmit_worker(
             continue;
         };
         if !client.is_connected() {
-            log::warn!("gci: SRS not connected for {:?}; call dropped", call.side);
+            // The SRS client logs its own connection failures; one line per
+            // dropped call on top of that was ~800 lines a night with SRS down.
+            note_dropped_call(call.side);
             continue;
         }
 
@@ -2568,5 +2570,24 @@ mod tests {
             atc.fields.contains_key("Incirlik"),
             "sample should show a per-field frequency override"
         );
+    }
+}
+
+/// Dropped calls per side since the last report, and when that was.
+static DROPPED_CALLS: std::sync::Mutex<[(u32, Option<std::time::Instant>); 2]> =
+    std::sync::Mutex::new([(0, None), (0, None)]);
+
+/// Count a call that couldn't go out because SRS is down; say so at most
+/// once every ten minutes per side.
+fn note_dropped_call(side: Side) {
+    let i = if side == Side::Red { 0 } else { 1 };
+    let Ok(mut d) = DROPPED_CALLS.lock() else { return };
+    let (n, last) = &mut d[i];
+    *n += 1;
+    let due = last.map_or(true, |t| t.elapsed() >= std::time::Duration::from_secs(600));
+    if due {
+        log::warn!("gci: SRS not connected for {side:?}; {n} call(s) dropped since the last report");
+        *n = 0;
+        *last = Some(std::time::Instant::now());
     }
 }

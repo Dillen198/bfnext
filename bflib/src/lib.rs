@@ -4836,6 +4836,16 @@ fn run_timed_events(
 
     step(lua, ctx, "takeoff holds", |ctx| announce_takeoff_holds(lua, ctx, ts));
 
+    // Admin commands carry every dashboard query (bfdb's RPCs), so they run
+    // every second, not on the slow tick: at slow_timed_events_freq 10 each
+    // query waited up to ten seconds for its turn, bfdb logged the engine as
+    // slow, timed out, and opened its breaker -- the dashboard's 503s.
+    match step(lua, ctx, "admin commands", |ctx| run_admin_commands(ctx, lua)) {
+        Some(Err(e)) => error!("failed to run admin commands {e:?}"),
+        Some(Ok(AdminResult::Continue)) | None => (),
+        Some(Ok(AdminResult::Shutdown)) => return Ok(AdminResult::Shutdown),
+    }
+
     // Its subsystems are guarded one by one inside; this catches the rest.
     match step(lua, ctx, "slow timed events", |ctx| {
         run_slow_timed_events(lua, ctx, perf, path, ts)
@@ -4959,11 +4969,6 @@ fn run_timed_events(
             error!("error running logistics events {e:?}")
         }
     });
-    match step(lua, ctx, "admin commands", |ctx| run_admin_commands(ctx, lua)) {
-        Some(Err(e)) => error!("failed to run admin commands {e:?}"),
-        Some(Ok(AdminResult::Continue)) | None => (),
-        Some(Ok(AdminResult::Shutdown)) => return Ok(AdminResult::Shutdown),
-    }
     // `-hq` / `-request` from chat, which arrive in the hooks state.
     step(lua, ctx, "hq chat", |ctx| hq::run_chat(lua, ctx));
     step(lua, ctx, "action commands", |ctx| {

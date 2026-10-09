@@ -243,6 +243,10 @@ pub(crate) struct PendingEscort {
     pub(crate) since: DateTime<Utc>,
 }
 
+/// How long an operation that would not launch waits before the HQ tries it
+/// on the same target again.
+const FAILED_RETRY_SECS: i64 = 15 * 60;
+
 /// An escort that hasn't joined its flight in this long flies its own sweep.
 const ESCORT_JOIN_SECS: i64 = 20 * 60;
 
@@ -255,6 +259,10 @@ pub(crate) struct SideRt {
     pub(crate) log: VecDeque<(DateTime<Utc>, CompactString)>,
     /// Last time the HQ fired on each target, for the fires cooldown.
     pub(crate) last_fired: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// Operations that would not launch, and when: not tried again on that
+    /// target for `FAILED_RETRY_SECS`. Without it a side with no ships in
+    /// range asked for a naval strike on eleven targets every pass.
+    pub(crate) failed: FxHashMap<(OpKind, ObjectiveId), DateTime<Utc>>,
     pub(crate) last_request: FxHashMap<Ucid, DateTime<Utc>>,
     /// Tasking-board entries the HQ posted.
     pub(crate) tasks: Vec<TaskId>,
@@ -454,13 +462,26 @@ fn think(
         if planner::room(cfg, ctx, side, cand.kind) == 0 {
             continue;
         }
+        let key = (cand.kind, cand.anchor);
+        if ctx.hq.side(side).failed.get(&key).map_or(false, |t| (now - *t).num_seconds() < FAILED_RETRY_SECS) {
+            continue;
+        }
         if dispatch::launch(lua, ctx, perf, cfg, side, cand, now).is_ok() {
             budget -= cand.cost;
             left -= 1;
             done.push((cand.kind.line(), cand.anchor));
-            kinds.push(cand.kind);
+            ctx.hq.side(side).failed.remove(&key);
+        } else {
+            ctx.hq.side(side).failed.insert(key, now);
         }
+        // Tried, either way: what stopped one launch of a kind (no ships, no
+        // guns in range, no money for the airframe) usually stops the next.
+        kinds.push(cand.kind);
     }
+    ctx.hq
+        .side(side)
+        .failed
+        .retain(|_, t| (now - *t).num_seconds() < FAILED_RETRY_SECS);
     // Worth a line when there was money and nothing came of it; a side that
     // is simply broke would say so every pass.
     if left == cfg.max_new_ops_per_think as usize && !ranked.is_empty() && spendable > 0 {

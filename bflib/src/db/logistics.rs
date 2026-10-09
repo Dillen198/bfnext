@@ -540,6 +540,8 @@ const STALL_MOVE_M: f64 = 150.;
 const STALL_SECS: i64 = 300;
 /// Re-routes before a stuck convoy is sent home: the first on a fresh road
 /// route, the second straight across country around whatever blocks the road.
+/// How long a road a convoy got stuck on stays closed to convoys.
+const IMPASSABLE_ROAD_HOURS: i64 = 3;
 const MAX_REROUTES: u8 = 2;
 /// A convoy that stalls this close to its destination has reached the end of
 /// the road there; count it as delivered.
@@ -3651,6 +3653,13 @@ impl Db {
                                     dest_obj.name,
                                     convoy.reroutes
                                 );
+                                // Same hub, same base, same spot every 45 min
+                                // (a river, a broken bridge): stop sending
+                                // trucks down a road DCS can't drive for a while.
+                                self.ephemeral.impassable_roads.insert(
+                                    (convoy.origin, convoy.destination),
+                                    ts + Duration::hours(IMPASSABLE_ROAD_HOURS),
+                                );
                                 finished.push((convoy_id.clone(), side, gid, TransportEnd::Returned));
                             }
                         }
@@ -6037,14 +6046,24 @@ impl Db {
                     // Can a convoy physically get there? If enemy ground
                     // sits astride the route, the road is closed and the only
                     // way in is by air.
-                    let road_cut = front_line_routing
-                        && route_interdicted(
-                            &self.persisted,
-                            obj.owner,
-                            logi.zone.pos(),
-                            obj.zone.pos(),
-                            route_margin,
-                        );
+                    // Or did the last convoy on this road get stuck for good?
+                    let impassable = self
+                        .ephemeral
+                        .impassable_roads
+                        .get(&(lid, *oid))
+                        .map_or(false, |until| now < *until);
+                    if impassable {
+                        debug!("[LOGI_DISPATCH] {} -> {}: road impassable (last convoy stuck)", logi.name, obj.name);
+                    }
+                    let road_cut = impassable
+                        || front_line_routing
+                            && route_interdicted(
+                                &self.persisted,
+                                obj.owner,
+                                logi.zone.pos(),
+                                obj.zone.pos(),
+                                route_margin,
+                            );
                     candidates.push((
                         oid,
                         obj,

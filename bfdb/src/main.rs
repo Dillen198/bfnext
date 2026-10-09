@@ -1666,8 +1666,9 @@ async fn api_situation(
             log::warn!(
                 "api_situation: query-situation RPC timed out after 8s ({side_str}) -- engine unreachable or old bflib.dll"
             );
-            return Err(Error(anyhow::anyhow!(
-                "engine did not answer query-situation (unreachable, or bflib.dll predates this feature)"
+            // 503 like every other "engine didn't answer", not a 500.
+            return Err(Error(websec::unavailable(
+                "engine did not answer query-situation (unreachable, or bflib.dll predates this feature)",
             )));
         }
     };
@@ -2135,8 +2136,8 @@ async fn api_warehouse(
         }
         Err(_) => {
             log::warn!("api_warehouse: query-warehouse timed out after 6s for {objective}");
-            Err(Error(anyhow::anyhow!(
-                "engine did not answer query-warehouse (unreachable, or bflib.dll predates this feature)"
+            Err(Error(websec::unavailable(
+                "engine did not answer query-warehouse (unreachable, or bflib.dll predates this feature)",
             )))
         }
     }

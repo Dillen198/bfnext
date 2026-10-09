@@ -51,7 +51,7 @@ use dcso3::{
     MizLua, Vector2,
 };
 use fxhash::FxHashMap;
-use log::{info, warn};
+use log::{debug, info, warn};
 use rand::{thread_rng, Rng};
 
 #[derive(Debug)]
@@ -249,6 +249,14 @@ pub(crate) fn tick(
                             site.gid = Some(gid);
                             site.pos = at;
                             site.down_since = None;
+                        }
+                        // An unclassified jammer type is a config gap the
+                        // config check already reported once at load; every
+                        // site retrying it was ~400 identical lines a session.
+                        Err(e) if format!("{e:#}").contains("not classified") => {
+                            debug!("ew: jammer at {name} would not spawn: {e:#}");
+                            ctx.modern_war.ew.sites.get_mut(&oid).expect("present").down_since =
+                                Some(now);
                         }
                         Err(e) => {
                             warn!("ew: jammer at {name} would not spawn: {e:?}");
