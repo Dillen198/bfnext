@@ -6051,11 +6051,6 @@
     ],
     "harm_defense_radius_m": 12000,
     "harm_defense_cooldown_secs": 12,
-    "arm_discipline": 0.6,
-    "arm_react_chance": 0.75,
-    "arm_aim_cone_deg": 25,
-    "decoy_weapons": ["ADM_141A", "ADM_141B"],
-    "decoy_saturation": 0.3,
     "min_hot_dwell_secs": 45,
     "reaction_delay_max_secs": 2,
     "track_radar_range_fraction": 0.8,
@@ -6493,7 +6488,7 @@
       { "template": "BCAPF14BU", "weight": 2, "min_threat": 3 },
       { "template": "BCAPF15E", "weight": 5, "min_threat": 5 }
     ],
-    "cap_duration_secs": 1800,
+    "cap_duration_secs": 600,
     "cap_altitude_m": 8000,
     "cap_speed_ms": 250,
     "cap_max_push_m": 60000,
@@ -6503,14 +6498,14 @@
     "cap_trigger_radius_m": 90000,
     "cap_max_concurrent": 3,
     "cap_max_per_side": 2,
-    "cap_min_threat_count": 1,
-    "cap_respawn_cooldown_secs": 900,
+    "cap_min_threat_count": 2,
+    "cap_respawn_cooldown_secs": 1800,
     "_cap_cooldown_note": "cap_respawn_cooldown_secs is now PER AIRFIELD, not per side -- one wave ending on a quiet flank no longer grounds the whole coalition. cap_max_sorties_per_hour is the side-wide throttle that replaces it. cap_engaged_extension_secs keeps a flight that is still in contact from being ordered home mid-merge; it can earn at most cap_duration_secs of overtime.",
     "cap_max_sorties_per_hour": 6,
     "cap_engaged_extension_secs": 180,
     "cap_balance_gap": 2,
     "cap_trigger_on_known_players": true,
-    "cap_cold_start": false,
+    "cap_cold_start": true,
 
     "_helo_patrol_note": "Reactive AI helicopter patrol -- the rotary mirror of reactive CAP. Fixed-wing CAP ignores helicopters on purpose, so a session where only helo pilots fly gets no AI response; this answers helicopter players with armed AI helicopters instead. REQUIRES the groups listed in helo_templates_red / helo_templates_blue to exist in the .miz, copied from RCAP/BCAP but in the HELICOPTER section (a plane-section helo air-starts and the watchdog scraps the event). Late activation on, uncontrolled off, one waypoint is enough -- the engine rewrites waypoint 0 into a ground start at the scrambling field and issues the on-station orbit itself. Every unit type must exist in unit_classification or the spawn errors 'unit type not classified'; Mi-24P and AH-64D_BLK_II already do. Flip enemy_helo_enabled to true once the groups exist, or every scramble just logs 'template not found' and cancels.",
     "enemy_helo_enabled": false,
@@ -6538,7 +6533,7 @@
     "helo_trigger_on_known_players": true,
     "helo_balance_gap": 2,
     "helo_cold_start": true,
-    "cap_probability": 0.5,
+    "cap_probability": 0.35,
     "barrage_enabled": false,
     "ambush_enabled": false,
     "capture_time_secs": 180,
@@ -15542,9 +15537,9 @@
       "cooldown_secs": 300
     },
     "packages": {
-      "max_side_pilots": 8,
+      "max_side_pilots": 3,
       "run_when_empty": false,
-      "launch_interval_secs": 600,
+      "launch_interval_secs": 900,
       "max_active_per_side": 2,
       "lifetime_secs": 1800,
       "treasury_cost": 0
@@ -15623,9 +15618,8 @@
   },
   "ground_war": {
     "enabled": true,
-    "max_formations_per_side": 6,
-    "max_live_formations": 12,
-    "live_only": true,
+    "max_formations_per_side": 5,
+    "max_live_formations": 6,
     "groups_per_formation": 3,
     "keep_home_combat_groups": 1,
     "take_aaa": true,
@@ -15658,21 +15652,5 @@
       "follow_tempo": true,
       "pause_when_empty": true
     }
-  },
-  "garrison": {
-    "enabled": true,
-    "react_m": 5000,
-    "leash_m": 2500,
-    "clear_secs": 120,
-    "qrf": true,
-    "qrf_delay_secs": 60,
-    "qrf_range_m": 40000,
-    "qrf_max": 2,
-    "patrol": true,
-    "patrol_secs": 480,
-    "sam_relocate": true,
-    "sam_scoot_secs": 90,
-    "sam_redeploy_secs": 2700,
-    "sam_move_m": 1500
   }
 }

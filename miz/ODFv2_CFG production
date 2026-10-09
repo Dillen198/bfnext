@@ -1,4 +1,5 @@
 {
+  "_location": "Production",
   "netidx_base": "/local/fowl/modern",
   "admins": {
     "43009af9ad72caf2a3ff31396bed074f": "[.ID] EagleEye",
@@ -15522,17 +15523,7 @@
     "CHAP_IRISTSLM_STR": 40000,
     "CHAP_IRISTSLM_CP": 40000,
     "CHAP_TorM2": 20000,
-    "Roland Radar": 15000,
-    "SA-11 Buk SR 9S18M1": 80000,
-    "SA-11 Buk CC 9S470M1": 80000,
-    "Tor 9A331": 25000,
-    "Osa 9A33 ln": 20000,
-    "snr s-125 tr": 40000,
-    "1L13 EWR": 250000,
-    "55G6 EWR": 350000,
-    "Dog Ear radar": 25000,
-    "Strela-10M3": 15000,
-    "2S6 Tunguska": 20000
+    "Roland Radar": 15000
   },
   "air_life": {
     "wingman": {
