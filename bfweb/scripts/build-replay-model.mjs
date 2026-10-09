@@ -3,7 +3,7 @@
 // on +Z, centred, scaled to the real length, simplified, geometry only.
 //
 //   npm i @gltf-transform/core@4 @gltf-transform/functions@4 @gltf-transform/extensions@4 meshoptimizer
-//   node build-replay-model.mjs <scene.gltf> <out.glb> --length 41.5 [--kind air|helo|ground|ship] [--flip] [--turn 90|-90|180] [--nose -z] [--up +y] [--tris 6000]
+//   node build-replay-model.mjs <scene.gltf> <out.glb> --length 41.5 [--kind air|helo|ground|ship] [--flip] [--turn 90|-90|180] [--error 0.02 (raise for models with many loose parts)] [--nose -z] [--up +y] [--tris 6000]
 //
 // Orientation: glTF is Y-up, so up defaults to +y; the nose defaults to
 // whichever end of the longest horizontal axis looks like the front (the end
@@ -38,18 +38,41 @@ const mul = (a, b) => { // column-major 4x4
 const apply = (m, p) => [0, 1, 2].map(r => m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r])
 
 // Bake world transforms; gather the points.
-const pts = []
-const baked = []
+let pts = []
+let baked = []
 for (const node of root.listNodes()) {
   const mesh = node.getMesh()
   if (!mesh) continue
   const wm = node.getWorldMatrix()
-  baked.push({ mesh, wm })
+  const own = []
   for (const prim of mesh.listPrimitives()) {
     const pos = prim.getAttribute('POSITION')
     const el = [0, 0, 0]
-    for (let i = 0; i < pos.getCount(); i += 3) pts.push(apply(wm, pos.getElement(i, el)))
+    for (let i = 0; i < pos.getCount(); i += 3) own.push(apply(wm, pos.getElement(i, el)))
   }
+  baked.push({ mesh, wm, own })
+  for (const p of own) pts.push(p)
+}
+// --trim: some scenes park extras well away from the model (a parked
+// aircraft or a lone mast beside a carrier), which would set its length.
+// Drop every mesh whose centre lies outside the 2nd-98th percentile box of
+// all the points, grown by a tenth.
+if (args.includes('--trim')) {
+  const lo = [], hi = []
+  for (let k = 0; k < 3; k++) {
+    const v = pts.map(p => p[k]).sort((a, b) => a - b)
+    const a = v[Math.floor(v.length * 0.02)], b = v[Math.floor(v.length * 0.98)]
+    lo.push(a - (b - a) * 0.1); hi.push(b + (b - a) * 0.1)
+  }
+  const inside = own => {
+    if (!own.length) return false
+    const c = [0, 1, 2].map(k => own.reduce((s, p) => s + p[k], 0) / own.length)
+    return c.every((v, k) => v >= lo[k] && v <= hi[k])
+  }
+  const before = baked.length
+  baked = baked.filter(b => inside(b.own))
+  pts = baked.flatMap(b => b.own)
+  console.log(`trim: dropped ${before - baked.length} of ${before} meshes`)
 }
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
@@ -167,6 +190,9 @@ for (const c of scene.listChildren()) scene.removeChild(c)
 scene.addChild(out)
 for (const nd of root.listNodes()) if (nd !== out && nd.getParentNode() !== out) nd.dispose()
 for (const mesh of root.listMeshes()) for (const p of mesh.listPrimitives()) {
+  // triangles only: line and point primitives (wires, antennae) are not
+  // surfaces, and their indices would count as triangles in the budget
+  if (p.getMode() !== 4) { p.dispose(); continue }
   // geometry only (the replay paints by coalition); normals too, so welding works
   for (const sem of p.listSemantics()) if (sem !== 'POSITION') p.setAttribute(sem, null)
   p.setMaterial(null)
@@ -181,7 +207,7 @@ for (const c of root.listCameras()) c.dispose()
 await doc.transform(prune(), dedup(), join(), weld())
 let tris = 0
 for (const mesh of root.listMeshes()) for (const p of mesh.listPrimitives()) tris += (p.getIndices()?.getCount() ?? 0) / 3
-await doc.transform(simplify({ simplifier: MeshoptSimplifier, ratio: Math.min(1, TRIS / Math.max(tris, 1)), error: 0.02 }), prune())
+await doc.transform(simplify({ simplifier: MeshoptSimplifier, ratio: Math.min(1, TRIS / Math.max(tris, 1)), error: Number(opt('error') ?? 0.02) }), prune())
 await io.write(OUT, doc)
 let after = 0
 for (const mesh of root.listMeshes()) for (const p of mesh.listPrimitives()) after += (p.getIndices()?.getCount() ?? 0) / 3

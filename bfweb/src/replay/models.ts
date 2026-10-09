@@ -224,8 +224,8 @@ const AIR: [RegExp, Real][] = [
   [/Su-24/i, 'Su-24'],
   [/Su-25/i, 'Su-25'],
   [/Su-17|Su-22/i, 'Su-17'],
-  // the Su-34 is the Flanker airframe; it stands in for the whole family
-  [/Su-2[7]|Su-3[0-5]|J-11|J-15|J-16/i, 'Su-34'],
+  [/Su-34/i, 'Su-34'],
+  [/Su-2[7]|Su-3[0-5]|J-11|J-15|J-16/i, 'Su-35'],
   [/MiG-29/i, 'MiG-29'],
   [/MiG-31/i, 'MiG-31'],
   [/MiG-25/i, 'MiG-25'],
@@ -233,18 +233,27 @@ const AIR: [RegExp, Real][] = [
   [/MiG-23/i, 'MiG-23'],
   [/MiG-1[579]|F-86/i, 'MiG-17'],
   [/M-?2000|Mirage|MiG-21|J-7|Kfir|Cheetah/i, 'Mirage2000'],
-  [/Typhoon|Eurofighter|EF-?2000|Rafale|J-10|JAS39|Gripen|AJS37|Viggen/i, 'EF2000'],
+  [/Rafale/i, 'Rafale'],
+  [/Typhoon|Eurofighter|EF-?2000|J-10|JAS39|Gripen|AJS37|Viggen/i, 'EF2000'],
+  [/F-5|F-20/i, 'F-5'],
+  [/AV-?8|Harrier/i, 'AV-8B'],
   [/Tornado/i, 'Tornado'],
-  [/Tu-22|Tu-160/i, 'Tu-22M3'],
+  [/Tu-160/i, 'Tu-160'],
+  [/Tu-22/i, 'Tu-22M3'],
+  [/B-52/i, 'B-52'],
   [/B-1/i, 'B-1'],
   [/Tu-95|Tu-142/i, 'Tu-95'],
   [/E-3|A-50|KJ-2000/i, 'E-3'],
   [/E-2/i, 'E-2'],
-  // jet transports and tankers read as the KC-135, props as the C-130
-  [/KC-?135|KC-?10|KC-?46|Il-7[68]|C-17|C-5|Yak-40|A_?3[23]0|B_?7[0-9]7|Boeing|Airbus|A400|IL-62|Tu-154/i, 'KC-135'],
-  [/C-?130|KC-?130|An-2[0-9]|An-30|An-12|Y-8|C-47|Hercules/i, 'C-130'],
+  [/Il-7[68]|IL-7[68]|Y-20|C-17/i, 'Il-76'],
+  [/Yak-4[02]/i, 'Yak-40'],
+  [/An-2[0-9]|An-30|An-32/i, 'An-26'],
+  [/MQ-?[19]|RQ-?1|Predator|Reaper|Wing ?Loong|TB2|Bayraktar|CH-4|UAV|drone/i, 'MQ-1'],
+  // other jet transports and tankers read as the KC-135, props as the C-130
+  [/KC-?135|KC-?10|KC-?46|C-5|A_?3[23]0|B_?7[0-9]7|Boeing|Airbus|IL-62|Tu-154/i, 'KC-135'],
+  [/C-?130|KC-?130|An-12|Y-8|C-47|Hercules|A400/i, 'C-130'],
   // lookalikes for fighters without a model yet
-  [/JF-17|F-5|L-39|C-101|MB-339|Hawk|T-45|AV-?8|Harrier|F-20|Yak-130|K-8/i, 'F-16'],
+  [/JF-17|L-39|C-101|MB-339|Hawk|T-45|Yak-130|K-8/i, 'F-16'],
 ]
 const HELO: [RegExp, Real][] = [
   [/CH-47|CH-46/i, 'CH-47'],
@@ -259,15 +268,20 @@ const HELO: [RegExp, Real][] = [
 const GROUND: [RegExp, Real][] = [
   // launchers (not their radars)
   [/NASAMS_LN|IRISTSLM_LN/i, 'NASAMS'],
-  [/Osa|9A33|\bTor\b|TorM2|Pantsir|Tunguska|2S6|Strela|Shilka|ZSU|Gepard|Roland|HQ-7_STR_SP|M6 Linebacker|M1097 Avenger|Vulcan/i, 'Osa'],
+  [/Shilka|ZSU|ZU-23|Gepard|Vulcan/i, 'Shilka'],
+  [/Osa|9A33|\bTor\b|TorM2|Pantsir|Tunguska|2S6|Strela|Roland|HQ-7_STR_SP|M6 Linebacker|M1097 Avenger/i, 'Osa'],
+  [/M142|HIMARS|MLRS|M270|Smerch|Uragan|Grad|BM-2[17]|BM-30|9A52|PHL/i, 'HIMARS'],
   [/\bln\b|_LN\b|LN_|Launcher|Volhov|S_75|5P85|9A310|RAPIER_FSA/i, 'Patriot'],
   [/M-?1 Abrams|M1A[12]|Leopard|Leclerc|Challenger|Merkava|Chieftain|M-60|ZTZ96/i, 'M1A2'],
   [/T-?72|T-?8[04]|T-?90|T-?55|T-?62|T-?64|Type 59|Oplot/i, 'T-90'],
   [/M-?109|SAU|2S1|2S3|2S9|2S19|Msta|Akatsia|Gvozdika|Dana|PLZ05|Firtina|SpGH|M-?110/i, 'M109'],
-  [/ZIL|Ural|KAMAZ|GAZ-66|KrAZ|HEMTT|M 818|M818|M978|ATZ|ATMZ|TZ-22|Truck|truck|HX7|HX8|M1083|M142|Tractor|Trailer|Tigr|Blitz|Opel|Spoofer|_CP\b|Command_Post/i, 'ZIL-131'],
+  [/ZIL|Ural|KAMAZ|GAZ-66|KrAZ|HEMTT|M 818|M818|M978|ATZ|ATMZ|TZ-22|Truck|truck|HX7|HX8|M1083|Tractor|Trailer|Tigr|Blitz|Opel|Spoofer|_CP\b|Command_Post/i, 'ZIL-131'],
 ]
 const SEA: [RegExp, Real][] = [
-  [/CVN|Stennis|CV_?1143|Kuznetsov|KUZNECOW|Forrestal|Nimitz|Ford|LHA|Tarawa|Carrier/i, 'CVN'],
+  [/CV_?1143|Kuznetsov|KUZNECOW/i, 'Kuznetsov'],
+  [/CVN|Stennis|Forrestal|Nimitz|Ford|LHA|Tarawa|Carrier/i, 'CVN'],
+  [/TICONDEROG|CG-?47/i, 'CG-47'],
+  [/Arleigh|DDG/i, 'DDG-51'],
   [/Type_?05[24]|Type_?071|NEUSTRASH|REZKY|MOLNIYA|ALBATROS|MOSCOW|PIOTR|BDK|Grisha|Krivak/i, 'Type054'],
   // warships only: a cargo ship or tanker keeps the plain hull
   [/USS|Arleigh|PERRY|TICONDEROG|FFG|DDG|frigate|destroyer|cruiser|La_Combattante|HMS/i, 'FFG-7'],

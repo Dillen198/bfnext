@@ -230,7 +230,7 @@ function Viewer({ rec, meta }: { rec: string; meta: RecMeta }) {
 
       {ui?.mode === '3d' && (
         <a className="rp-credit" href={`${import.meta.env.BASE_URL}models/CREDITS.txt`} target="_blank" rel="noreferrer">
-          3D models: bohmerang, Muhamad Mirza Arrafi, manilov.ap, Jeyhun1985 (CC BY 4.0) · terrain: Mapzen/AWS · imagery: Esri
+          3D models by Sketchfab artists, CC BY 4.0 (full credits) · terrain: Mapzen/AWS · imagery: Esri
         </a>
       )}
 

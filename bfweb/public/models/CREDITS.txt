@@ -9,9 +9,33 @@ F-14.glb, F-15.glb, F-16.glb, F-18.glb, F-22.glb, F-35.glb
   weapon-rail parts), re-oriented and scaled to real length, simplified to
   about 6,000 triangles, materials and normals removed.
 
+An-26.glb
+  This work is based on "Antonov An-26 - full interior" (https://sketchfab.com/3d-models/antonov-an-26-full-interior-df3d6b1359144a459d170abef262211d)
+  by 42manako (https://sketchfab.com/42manako) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+Su-35.glb
+  This work is based on "Sukhoi Su-35 Flanker-E (Сухой Су-35)" (https://sketchfab.com/3d-models/sukhoi-su-35-flanker-e-35-c98cf9b3b3e04017a04732798a31888a)
+  by andertan (https://sketchfab.com/andertan) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+B-52.glb
+  This work is based on "Boeing B-52 Stratofortress" (https://sketchfab.com/3d-models/boeing-b-52-stratofortress-38b0c64bd552431394efa8625d7f5144)
+  by bohmerang (https://sketchfab.com/bohmerang) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+CG-47.glb
+  This work is based on "Ticonderoga cg-47" (https://sketchfab.com/3d-models/ticonderoga-cg-47-c2bea45cffdd48e7badaedb041805980)
+  by David Dugan (https://sketchfab.com/duncans) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+F-5.glb
+  This work is based on "F-5 Gear Up Opaque Cockpit" (https://sketchfab.com/3d-models/f-5-gear-up-opaque-cockpit-08160f9f334649769e2385e119f629c9)
+  by David.Von.Raesfeld (https://sketchfab.com/David.Von.Raesfeld) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+Kuznetsov.glb
+  This work is based on "Admiral Kuznetsov Aircraft Carrier (Prop)" (https://sketchfab.com/3d-models/admiral-kuznetsov-aircraft-carrier-prop-825917092d784fc285bc6c31d2b6e7d8)
+  by DerpDude (https://sketchfab.com/mansoorsajidp) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+MQ-1.glb
+  This work is based on "MQ-1 Predator UAV" (https://sketchfab.com/3d-models/mq-1-predator-uav-7f70ef747e6d4c27a9555cfff0671923)
+  by Jeyhun1985 (https://sketchfab.com/Jeyhun1985) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
 Osa.glb
   This work is based on "Osa-AKM SAM system" (https://sketchfab.com/3d-models/osa-akm-sam-system-485a4207e55545188e93bef5f1e2413f)
   by Jeyhun1985 (https://sketchfab.com/Jeyhun1985) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+Il-76.glb
+  This work is based on "IL-76" (https://sketchfab.com/3d-models/il-76-7827dd2d5d0b479ea4f46bf67c279d6c)
+  by mamont nikita (https://sketchfab.com/mamontnikita62) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
 A-10.glb
   This work is based on "A10" (https://sketchfab.com/3d-models/a10-8fec9884fe07476bbcaa34d9521726c4)
   by manilov.ap (https://sketchfab.com/manilov.ap) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
@@ -90,6 +114,12 @@ Tu-95.glb
 UH-1.glb
   This work is based on "Uh1" (https://sketchfab.com/3d-models/uh1-3131460d00184d90855e4988c7d54101)
   by manilov.ap (https://sketchfab.com/manilov.ap) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+Yak-40.glb
+  This work is based on "Yak40" (https://sketchfab.com/3d-models/yak40-96ec4aa169e14c49ae7c268954bd0c21)
+  by manilov.ap (https://sketchfab.com/manilov.ap) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+Shilka.glb
+  This work is based on "tank shilka" (https://sketchfab.com/3d-models/tank-shilka-1d432618b2794f89b275a6b76a6a4935)
+  by mebelain2020 (https://sketchfab.com/mebelain2020) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
 AH-64.glb
   This work is based on "Boeing AH-64D Apache Combat Helicopter" (https://sketchfab.com/3d-models/boeing-ah-64d-apache-combat-helicopter-c3b58008c46b45048fdd7dd283a3c8c8)
   by Muhamad Mirza Arrafi (https://sketchfab.com/nazidefenseforceofficial) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
@@ -141,6 +171,21 @@ Type054.glb
 ZIL-131.glb
   This work is based on "ZIL-131 RSP" (https://sketchfab.com/3d-models/zil-131-rsp-6fb7b346161b46c8bf3013db18e20365)
   by Muhamad Mirza Arrafi (https://sketchfab.com/nazidefenseforceofficial) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+Rafale.glb
+  This work is based on "Rafale - colored edition" (https://sketchfab.com/3d-models/rafale-colored-edition-cf523560d22349adb5678117de6b1f4f)
+  by NoctisX8 (https://sketchfab.com/NoctisX8) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+HIMARS.glb
+  This work is based on "Himars M142 lowpoly" (https://sketchfab.com/3d-models/himars-m142-lowpoly-6f390f6e4aa84f149f0e353802305d79)
+  by Patrush (https://sketchfab.com/Patrush) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+AV-8B.glb
+  This work is based on "av-8b-harrier-ii" (https://sketchfab.com/3d-models/av-8b-harrier-ii-e66ee8672f244cca8deb6989ab9c28a3)
+  by ruslangidziak (https://sketchfab.com/ruslangidziak) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+DDG-51.glb
+  This work is based on "1:1 Low poly US NAVY DDG-51 USS Arleigh Burke." (https://sketchfab.com/3d-models/11-low-poly-us-navy-ddg-51-uss-arleigh-burke-17be09c31c6047e4a5969b68c29eba03)
+  by Yi Tsung Lee (https://sketchfab.com/WTigerTw) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
+Tu-160.glb
+  This work is based on "Tupolev TU-160" (https://sketchfab.com/3d-models/tupolev-tu-160-87eb1bf61b5648e4a6c0335ac4fc7fa8)
+  by Yo Boy (https://sketchfab.com/jratanatharathorn) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/).
 
   Changes to all of the above: every mesh baked into one, re-oriented and
   scaled to real length, simplified to a few thousand triangles; materials,
