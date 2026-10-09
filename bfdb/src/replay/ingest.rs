@@ -227,8 +227,9 @@ impl Obj {
 }
 
 /// Ingest logic version. Recordings processed by an older one are read again
-/// (bumped when what we derive from a recording changes).
-pub(crate) const INGEST_VERSION: u32 = 2;
+/// (bumped when what we derive from a recording changes, or when a file an
+/// older one gave up on can now be read -- 3: cut-off zips).
+pub(crate) const INGEST_VERSION: u32 = 3;
 
 /// A weapon whose closest approach to an enemy is within this is a hit.
 fn lethal_radius_m(k: Kind) -> f64 {

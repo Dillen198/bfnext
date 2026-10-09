@@ -246,14 +246,26 @@ pub(crate) fn open<T>(path: &Path, f: impl FnOnce(&mut Reader<Box<dyn BufRead + 
     drop(file);
     if n == 4 && &magic == b"PK\x03\x04" {
         let file = File::open(path)?;
-        let mut zip = zip::ZipArchive::new(BufReader::new(file)).context("reading the zip")?;
-        if zip.is_empty() {
-            bail!("the zip is empty");
+        match zip::ZipArchive::new(BufReader::new(file)) {
+            Ok(mut zip) => {
+                if zip.is_empty() {
+                    bail!("the zip is empty");
+                }
+                let entry = zip.by_index(0)?;
+                let rd: Box<dyn BufRead + '_> = Box::new(BufReader::with_capacity(1 << 20, entry));
+                let mut r = Reader::new(rd)?;
+                f(&mut r)
+            }
+            Err(_) => {
+                // No central directory: Tacview writes the zip as it records,
+                // and a mission that ends in a hard restart never gets it
+                // closed. The first entry is still all there up to the cut.
+                log::info!("replay: {} has no zip directory (recording cut off); reading what is there", path.display());
+                let rd = truncated_entry(path)?;
+                let mut r = Reader::new(rd)?;
+                f(&mut r)
+            }
         }
-        let entry = zip.by_index(0)?;
-        let rd: Box<dyn BufRead + '_> = Box::new(BufReader::with_capacity(1 << 20, entry));
-        let mut r = Reader::new(rd)?;
-        f(&mut r)
     } else {
         let file = File::open(path)?;
         let rd: Box<dyn BufRead + '_> = Box::new(BufReader::with_capacity(1 << 20, file));
@@ -262,9 +274,88 @@ pub(crate) fn open<T>(path: &Path, f: impl FnOnce(&mut Reader<Box<dyn BufRead + 
     }
 }
 
+/// Read the first entry of a zip whose end is missing, straight from its
+/// local header: stored or deflated, as far as the data goes.
+fn truncated_entry(path: &Path) -> Result<Box<dyn BufRead>> {
+    use std::io::{Seek, SeekFrom};
+    let mut f = File::open(path)?;
+    let mut h = [0u8; 30];
+    f.read_exact(&mut h).context("zip local header")?;
+    if &h[..4] != b"PK\x03\x04" {
+        bail!("not a zip");
+    }
+    let method = u16::from_le_bytes([h[8], h[9]]);
+    let name_len = u16::from_le_bytes([h[26], h[27]]) as u64;
+    let extra_len = u16::from_le_bytes([h[28], h[29]]) as u64;
+    f.seek(SeekFrom::Start(30 + name_len + extra_len))?;
+    let raw = BufReader::with_capacity(1 << 20, f);
+    let inner: Box<dyn Read> = match method {
+        0 => Box::new(raw),
+        8 => Box::new(flate2::bufread::DeflateDecoder::new(raw)),
+        m => bail!("zip compression method {m} is not supported"),
+    };
+    Ok(Box::new(BufReader::with_capacity(1 << 20, UntilCut(inner, false))))
+}
+
+/// A reader that ends quietly at the first error -- the point where a
+/// cut-off recording's data stops.
+struct UntilCut<R>(R, bool);
+
+impl<R: Read> Read for UntilCut<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.1 {
+            return Ok(0);
+        }
+        match self.0.read(buf) {
+            Ok(n) => Ok(n),
+            Err(_) => {
+                self.1 = true;
+                Ok(0)
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A recording cut off mid-write (no central directory, the deflate
+    /// stream ends early) still yields everything before the cut.
+    #[test]
+    fn reads_a_cut_off_zip() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("bfdb-acmi-cut-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("cut.zip.acmi");
+        let mut text = String::from("FileType=text/acmi/tacview\nFileVersion=2.2\n");
+        for i in 0..20_000 {
+            text.push_str(&format!("#{i}\n1,T={}|0|1000\n", i as f64 * 0.001));
+        }
+        {
+            let mut z = zip::ZipWriter::new(File::create(&path).unwrap());
+            z.start_file("cut.txt.acmi", zip::write::FileOptions::default()).unwrap();
+            z.write_all(text.as_bytes()).unwrap();
+            z.finish().unwrap();
+        }
+        let len = std::fs::metadata(&path).unwrap().len();
+        let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        f.set_len(len * 2 / 3).unwrap();
+        drop(f);
+        assert!(zip::ZipArchive::new(File::open(&path).unwrap()).is_err(), "really cut");
+        let frames = open(&path, |r| {
+            let mut n = 0;
+            while let Some(l) = r.next_line()? {
+                if matches!(l, Line::Frame(_)) {
+                    n += 1;
+                }
+            }
+            Ok(n)
+        })
+        .unwrap();
+        assert!(frames > 5_000 && frames < 20_000, "{frames} frames recovered");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn lines(text: &str) -> Vec<String> {
         let mut r = Reader::new(std::io::Cursor::new(text.as_bytes().to_vec())).unwrap();
