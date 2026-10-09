@@ -3,7 +3,7 @@
 // on +Z, centred, scaled to the real length, simplified, geometry only.
 //
 //   npm i @gltf-transform/core@4 @gltf-transform/functions@4 @gltf-transform/extensions@4 meshoptimizer
-//   node build-replay-model.mjs <scene.gltf> <out.glb> --length 41.5 [--kind air|helo|ground|ship] [--flip] [--turn 90|-90|180] [--error 0.02 (raise for models with many loose parts)] [--nose -z] [--up +y] [--tris 6000]
+//   node build-replay-model.mjs <scene.gltf> <out.glb> --length 41.5 [--kind air|helo|ground|ship] [--flip] [--turn 90|-90|180] [--error 0.02 (raise for models with many loose parts)] [--node <name> (one object from a pack)] [--trim] [--nose -z] [--up +y] [--tris 6000]
 //
 // Orientation: glTF is Y-up, so up defaults to +y; the nose defaults to
 // whichever end of the longest horizontal axis looks like the front (the end
@@ -40,9 +40,16 @@ const apply = (m, p) => [0, 1, 2].map(r => m[r] * p[0] + m[4 + r] * p[1] + m[8 +
 // Bake world transforms; gather the points.
 let pts = []
 let baked = []
+// --node <name>: one object out of a pack (a node whose name starts with it)
+const ONLY_NODE = opt('node')
+const underNode = node => {
+  for (let n = node; n; n = n.getParentNode()) if (n.getName().startsWith(ONLY_NODE)) return true
+  return false
+}
 for (const node of root.listNodes()) {
   const mesh = node.getMesh()
   if (!mesh) continue
+  if (ONLY_NODE && !underNode(node)) continue
   const wm = node.getWorldMatrix()
   const own = []
   for (const prim of mesh.listPrimitives()) {

@@ -287,8 +287,39 @@ const SEA: [RegExp, Real][] = [
   [/USS|Arleigh|PERRY|TICONDEROG|FFG|DDG|frigate|destroyer|cruiser|La_Combattante|HMS/i, 'FFG-7'],
 ]
 
+// Weapons in flight. DCS names them with underscores (AIM_120C, GBU_12).
+const MISSILE: [RegExp, Real][] = [
+  [/TY-?90/i, 'TY-90'],
+  [/HJ-?10|AKD/i, 'HJ-10'],
+  [/AGM[_-]?114|Hellfire|Ataka|9M120|TOW|Vikhr|9M127|Kornet|\bHOT|Spike|Brimstone/i, 'AGM-114'],
+  [/Kh[_-]?29/i, 'Kh-29'],
+  // cruise missiles and other big strike weapons
+  [/BGM[_-]?109|Tomahawk|AGM[_-]?158|JASSM|Kh[_-]?(101|55|65|59)|Kalibr|3M14|P[_-]?800|Storm|SCALP|Taurus|\bM48\b|ATACMS|Iskander|9M723|Scud|R-17/i, 'Kh-29'],
+  [/AGM[_-]?(65|88|84|154)|HARM|Harpoon|JSOW|Kh[_-]?(25|31|35|58)|ALARM|BK[_-]?90|Maverick/i, 'AGM-65'],
+  [/PL-?11/i, 'PL-11'],
+  [/R[_-]?77|P[_-]?77|RVV|R[_-]?37/i, 'R-77'],
+  [/R[_-]?27|P[_-]?27|R[_-]?24|R[_-]?40|R[_-]?33/i, 'R-27'],
+  [/AIM[_-]?(7|120)|MICA|Meteor|PL-?1[25]|SD-10|Super[_-]?530|Skyflash|Aspide|SeaSparrow|ESSM/i, 'AIM-7'],
+  [/AIM[_-]?9|R[_-]?73|P[_-]?73|R[_-]?60|R[_-]?74|PL-?[589]\b|Magic|IRIS|ASRAAM|Python|Stinger|Igla|9M3[1-9]|SA9M3|Strela|Mistral|Rapier|Roland|RAM\b/i, 'AIM-9'],
+  // long-range SAMs: the biggest missile shape we have
+  [/SA5B|SA5V|48N6|5V55|HHQ|HQ-|MIM[_-]?(104|23)|PAC|Patriot|SA57E6|SA9M38|9M3[18]|SM[_-]?[26]|RIM|S-?75|V-?75|5V2|SA-?\d/i, 'R-27'],
+]
+const BOMB: [RegExp, Real][] = [
+  [/KAB|UPAB/i, 'KAB-500L'],
+  [/GBU[_-]?(10|12|16|24|27|28)|Paveway|LGB/i, 'GBU-12'],
+  [/./, 'JDAM'],
+]
+
 export function realOf(kind: Kind, name?: string | null): Real | null {
   if (!name) return null
+  if (kind === 'missile' || kind === 'torpedo') {
+    for (const [re, r] of MISSILE) if (re.test(name)) return r
+    return null
+  }
+  if (kind === 'bomb') {
+    for (const [re, r] of BOMB) if (re.test(name)) return r
+    return null
+  }
   const rules =
     kind === 'air' ? AIR
     : kind === 'helo' ? HELO

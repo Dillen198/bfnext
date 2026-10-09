@@ -1,5 +1,15 @@
 3D models used by the dashboard's flight replay (bfweb/src/replay/theater.ts).
 
+AGM-114.glb, AGM-65.glb, AIM-7.glb, AIM-9.glb, GBU-12.glb, HJ-10.glb, JDAM.glb,
+KAB-500L.glb, Kh-29.glb, PL-11.glb, R-27.glb, R-77.glb, TY-90.glb
+  This work is based on "Missile & Bomb Collection - Fighter Jets - Free"
+  (https://sketchfab.com/3d-models/missile-bomb-collection-fighter-jets-free-d203b678424a43568703bf85ba680f47)
+  by bohmerang (https://sketchfab.com/bohmerang)
+  licensed under CC-BY-NC-SA-4.0 (http://creativecommons.org/licenses/by-nc-sa/4.0/).
+  Changes: split into one file per weapon, re-oriented and scaled to real
+  length, materials removed. These thirteen files are themselves licensed
+  under CC BY-NC-SA 4.0 and may only be used non-commercially.
+
 F-14.glb, F-15.glb, F-16.glb, F-18.glb, F-22.glb, F-35.glb
   This work is based on "FREE - Fighter Jet Collection - Low Poly"
   (https://sketchfab.com/3d-models/free-fighter-jet-collection-low-poly-cb5966c988d9403895be89b364c2252f)

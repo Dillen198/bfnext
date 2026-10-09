@@ -44,6 +44,17 @@ describe('realOf', () => {
     expect(realOf('sam', 'S-300PS 40B6MD sr_19J6')).toBeNull()
     expect(realOf('sam', 'S_75M_Volhov')).toBe('Patriot')
     expect(realOf('air', 'AJS37')).toBe('EF2000')
+    expect(realOf('missile', 'AIM_120C')).toBe('AIM-7')
+    expect(realOf('missile', 'AIM_9M')).toBe('AIM-9')
+    expect(realOf('missile', 'R_27ER')).toBe('R-27')
+    expect(realOf('missile', 'AGM_88')).toBe('AGM-65')
+    expect(realOf('missile', 'BGM_109B')).toBe('Kh-29')
+    expect(realOf('missile', 'SA5B55')).toBe('R-27')
+    expect(realOf('missile', 'SA_IRIS_T_SL')).toBe('AIM-9')
+    expect(realOf('missile', 'Ataka_9M120')).toBe('AGM-114')
+    expect(realOf('bomb', 'GBU_12')).toBe('GBU-12')
+    expect(realOf('bomb', 'GBU_38')).toBe('JDAM')
+    expect(realOf('bomb', 'KAB_500Kr')).toBe('KAB-500L')
   })
 
   it('reports how the live server types map', () => {
