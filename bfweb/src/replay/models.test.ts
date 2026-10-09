@@ -1,0 +1,45 @@
+import { describe, expect, it } from 'vitest'
+import { realOf } from './models'
+import live from './live-types.json'
+
+describe('realOf', () => {
+  it('maps the common DCS types to their models', () => {
+    expect(realOf('air', 'KC135MPRS')).toBe('KC-135')
+    expect(realOf('air', 'KC-135')).toBe('KC-135')
+    expect(realOf('air', 'E-3A')).toBe('E-3')
+    expect(realOf('air', 'A-50')).toBe('E-3')
+    expect(realOf('air', 'Su-27')).toBe('Su-34')
+    expect(realOf('air', 'MiG-29S')).toBe('MiG-29')
+    expect(realOf('air', 'FA-18C_hornet')).toBe('F-18')
+    expect(realOf('air', 'F-16C_50')).toBe('F-16')
+    expect(realOf('air', 'An-26B')).toBe('C-130')
+    expect(realOf('air', 'IL-76MD')).toBe('KC-135')
+    expect(realOf('helo', 'UH-60A')).toBe('SH-60')
+    expect(realOf('helo', 'Mi-8MT')).toBe('Mi-8')
+    expect(realOf('helo', 'CH-47Fbl1')).toBe('CH-47')
+    expect(realOf('helo', 'AH-64D_BLK_II')).toBe('AH-64')
+    expect(realOf('armor', 'T-72B')).toBe('T-90')
+    expect(realOf('armor', 'M-1 Abrams')).toBe('M1A2')
+    expect(realOf('vehicle', 'Ural-4320T')).toBe('ZIL-131')
+    expect(realOf('sam', 'S-300PS 5P85C ln')).toBe('Patriot')
+    expect(realOf('sam', 'S-300PS 40B6M tr')).toBeNull()
+    expect(realOf('sam', 'Osa 9A33 ln')).toBe('Osa')
+    expect(realOf('vehicle', 'CHAP_M1083')).toBe('ZIL-131')
+    expect(realOf('sam', 'Strela-1 9P31')).toBe('Osa')
+    expect(realOf('sam', 'p-19 s-125 sr')).toBeNull()
+    expect(realOf('sam', '5p73 s-125 ln')).toBe('Patriot')
+    expect(realOf('ship', 'HandyWind')).toBeNull()
+    expect(realOf('carrier', 'KUZNECOW')).toBe('CVN')
+    expect(realOf('carrier', 'CVN_71')).toBe('CVN')
+    expect(realOf('armor', 'CHAP_M142_ATACMS_M48')).toBe('ZIL-131')
+    expect(realOf('sam', 'CHAP_TorM2')).toBe('Osa')
+    expect(realOf('sam', 'S-300PS 40B6MD sr_19J6')).toBeNull()
+    expect(realOf('sam', 'S_75M_Volhov')).toBe('Patriot')
+    expect(realOf('air', 'AJS37')).toBe('EF2000')
+  })
+
+  it('reports how the live server types map', () => {
+    const rows = (live as [string, string, number][]).map(([k, n, c]) => `${c}\t${k}\t${n}\t-> ${realOf(k as never, n) ?? 'built-in'}`)
+    console.log(rows.join('\n'))
+  })
+})

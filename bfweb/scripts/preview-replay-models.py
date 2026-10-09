@@ -54,12 +54,13 @@ def view(t, axes, flip_y=True, size=220, label=''):
     return img
 
 
-models = sorted(Path(sys.argv[1]).glob('*.glb'))
-sheet = Image.new('RGB', (660, 220 * len(models)), (0, 0, 0))
-for i, m in enumerate(models):
-    t = load_glb(m)
-    sheet.paste(view(t, [0, 1], label=f'{m.stem} top (nose up)'), (0, i * 220))
-    sheet.paste(view(t, [1, 2], label=f'{m.stem} side (nose right)'), (220, i * 220))
-    sheet.paste(view(t, [0, 2], label=f'{m.stem} front'), (440, i * 220))
-sheet.save(sys.argv[2])
-print('saved', sys.argv[2])
+if __name__ == '__main__':
+    models = sorted(Path(sys.argv[1]).glob('*.glb'))
+    sheet = Image.new('RGB', (660, 220 * len(models)), (0, 0, 0))
+    for i, m in enumerate(models):
+        t = load_glb(m)
+        sheet.paste(view(t, [0, 1], label=f'{m.stem} top (nose up)'), (0, i * 220))
+        sheet.paste(view(t, [1, 2], label=f'{m.stem} side (nose right)'), (220, i * 220))
+        sheet.paste(view(t, [0, 2], label=f'{m.stem} front'), (440, i * 220))
+    sheet.save(sys.argv[2])
+    print('saved', sys.argv[2])
