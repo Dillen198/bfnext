@@ -28,6 +28,7 @@ const CockpitPage      = lazy(() => import('./pages/CockpitPage'))
 const IntelPage        = lazy(() => import('./pages/IntelPage'))
 const IntelTestPage    = lazy(() => import('./pages/IntelTestPage'))
 const ScopePage        = lazy(() => import('./scope/ScopePage'))
+const TacMapPage       = lazy(() => import('./pages/TacMapPage'))
 const SnapshotPage     = lazy(() => import('./pages/SnapshotPage'))
 const GroundWarPage    = lazy(() => import('./pages/GroundWarPage'))
 const HqPage           = lazy(() => import('./pages/HqPage'))
@@ -106,8 +107,9 @@ export default function App() {
               {import.meta.env.DEV && <Route path="/inteltest" element={<IntelTestPage />} />}
               <Route path="/" element={<Layout />}>
                 <Route index element={<Dashboard />} />
-                <Route path="map" element={<ScopePage />} />
-                <Route path="scope" element={<Navigate to="/map" replace />} />
+                <Route path="map" element={<TacMapPage />} />
+                {/* The radar scope (raw contacts, BRAA, bullseye, GCI seat), linked from the TacMap. */}
+                <Route path="scope" element={<ScopePage />} />
                 <Route path="news" element={<NewsPage />} />
                 <Route path="objectives" element={<Objectives />} />
                 <Route path="briefing" element={<RequireCoalition what="briefing"><BriefingPage /></RequireCoalition>} />

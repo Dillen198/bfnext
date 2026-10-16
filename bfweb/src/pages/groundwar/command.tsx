@@ -8,7 +8,7 @@
 // enemy only from the fog-of-war feeds. Orders go to /api/command/order and
 // the engine checks every one: the asset is ours, the treasury can pay, the
 // battery is in range and reloaded.
-import { memo, useMemo, type MouseEvent, type ReactElement } from 'react'
+import { memo, useMemo, type MouseEvent, type ReactElement, type ReactNode } from 'react'
 import { Layer, Marker, Source } from 'react-map-gl/maplibre'
 import type { Feature, FeatureCollection } from 'geojson'
 import { X } from '@icons'
@@ -198,14 +198,9 @@ const VERB: Record<AssetVerb, { label: string; key: string; mode: AssetMode | nu
   rtb: { label: 'RTB', key: 'B', mode: null, hint: '' },
 }
 
-export function AssetPanel({ a, canCommand, mode, setMode, onRtb, onClose }: {
-  a: Asset
-  canCommand: boolean
-  mode: AssetMode
-  setMode: (m: AssetMode) => void
-  onRtb: () => void
-  onClose: () => void
-}): ReactElement {
+/** What one of our assets is and what it is doing: the panel without the
+ *  orders, for maps that only watch (the TacMap). */
+export function AssetCard({ a, onClose, children }: { a: Asset; onClose: () => void; children?: ReactNode }): ReactElement {
   return (
     <aside className="gw-drawer cm-panel">
       <button className="gw-drawer-x" onClick={onClose} title="Deselect (Esc)"><X size={14} /></button>
@@ -222,6 +217,21 @@ export function AssetPanel({ a, canCommand, mode, setMode, onRtb, onClose }: {
         {a.range_m != null && (<><dt>REACH</dt><dd>{(a.range_m / 1000).toFixed(1)} KM</dd></>)}
         <dt>STATUS</dt><dd>{a.live ? 'LIVE IN DCS' : 'NOT SPAWNED'}</dd>
       </dl>
+      {children}
+    </aside>
+  )
+}
+
+export function AssetPanel({ a, canCommand, mode, setMode, onRtb, onClose }: {
+  a: Asset
+  canCommand: boolean
+  mode: AssetMode
+  setMode: (m: AssetMode) => void
+  onRtb: () => void
+  onClose: () => void
+}): ReactElement {
+  return (
+    <AssetCard a={a} onClose={onClose}>
       {a.orders.length > 0 ? (
         <div className="cm-orders">
           {a.orders.map((v) => {
@@ -240,7 +250,7 @@ export function AssetPanel({ a, canCommand, mode, setMode, onRtb, onClose }: {
         <p className="gw-drawer-note">Runs itself: nothing to order.</p>
       )}
       {mode !== 'none' && mode !== 'barrage' && mode !== 'fmove' && <p className="gw-drawer-note">{a.orders.map((v) => VERB[v]).find((d) => d.mode === mode)?.hint}</p>}
-    </aside>
+    </AssetCard>
   )
 }
 

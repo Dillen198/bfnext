@@ -1,0 +1,80 @@
+/* The TacMap: the command map's chrome without the command card, so the
+   bottom bar is only the roster and can be shorter. */
+
+.tm-root { --gw-bar-h: 132px; }
+/* The roster scrolls inside the bar rather than spilling over the map. */
+.tm-root .gw-bar { overflow: hidden; }
+.tm-root .gw-bar-sel { min-height: 0; }
+
+.tm-tool {
+  font: 700 9px var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--gw-dim);
+  text-decoration: none;
+  border: 1px solid var(--gw-line);
+  padding: 4px 7px;
+}
+.tm-tool:hover { color: var(--gw-ink); border-color: var(--gw-line-hi); }
+
+/* ── Base drawer ─────────────────────────────────────────────────────── */
+
+.tm-base { width: 312px; }
+.gw-drawer.tm-base ~ .cm-layers { right: 334px; }
+.tm-base-head { display: flex; align-items: center; gap: 10px; padding-right: 26px; color: var(--oc); }
+.tm-base-head h2 { color: var(--gw-ink); margin: 0; }
+.tm-status.ok { color: var(--gw-good); }
+.tm-status.warn { color: var(--gw-warn); }
+.tm-status.bad { color: var(--gw-bad); }
+.tm-status.hot { color: var(--gw-fire); }
+.tm-unknown b { color: var(--gw-dim); }
+.tm-flags { margin: 8px 0 0; }
+.tm-dl { margin-top: 0; }
+.tm-h3-note { float: right; letter-spacing: 0.08em; }
+
+.tm-stock { display: grid; grid-template-columns: 1fr 70px 46px; gap: 6px; align-items: center; margin: 3px 0; font: 9px var(--font-mono); }
+.tm-stock span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gw-ink-2); }
+.tm-stock div { height: 5px; background: rgba(0, 0, 0, 0.55); outline: 1px solid rgba(255, 255, 255, 0.05); }
+.tm-stock i { display: block; height: 100%; }
+.tm-stock b { text-align: right; color: var(--gw-ink); }
+.tm-stock small { color: var(--gw-dim); font-weight: 400; }
+
+.tm-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin: 2px 0;
+  padding: 4px 7px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--gw-line);
+  color: var(--gw-ink);
+  font: 9px var(--font-mono) !important;
+  letter-spacing: 0.06em;
+  text-align: left;
+}
+button.tm-row { cursor: pointer; }
+button.tm-row:hover { border-color: var(--gw-pencil); }
+.tm-row > i { width: 6px; height: 6px; flex-shrink: 0; }
+.tm-row b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.tm-row span { flex-shrink: 0; color: var(--gw-dim); }
+.tm-row span.bad { color: var(--gw-bad); }
+.tm-row .tm-by { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Phones: the command map hides its drawers; here they are the point, so
+   they come up as a sheet over the roster. */
+@media (max-width: 900px) {
+  .tm-root { --gw-bar-h: 118px; }
+  .tm-root .gw-drawer {
+    display: block;
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: var(--gw-bar-h);
+    width: auto;
+    max-height: 52%;
+    border-left: 0;
+    border-right: 0;
+  }
+  .tm-root .gw-drawer ~ .cm-layers { display: none; }
+}
+.tm-flags .gw-chip { padding: 2px 7px; color: var(--gw-pencil); }

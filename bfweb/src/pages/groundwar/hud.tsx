@@ -17,7 +17,7 @@ import type { Link } from './useGroundFeed'
 
 // ── Bits ─────────────────────────────────────────────────────────────────
 
-function Gauge({ label, pct, warn = 50, bad = 25, title }: { label: string; pct: number; warn?: number; bad?: number; title?: string }) {
+export function Gauge({ label, pct, warn = 50, bad = 25, title }: { label: string; pct: number; warn?: number; bad?: number; title?: string }) {
   const v = Math.max(0, Math.min(100, pct))
   const col = v < bad ? '#ff5b45' : v < warn ? '#e8c547' : '#8ec83f'
   return (
@@ -76,6 +76,7 @@ function Clock({ base, at }: { base: number; at: number }) {
 
 export function TopHud({
   pic, link, frameAt, look, setLook, fog, setFog, territory, setTerritory, onHelp, adminPick, viewSide, setViewSide,
+  title = 'COMMAND', tools,
 }: {
   pic: GroundPicture
   link: Link
@@ -90,6 +91,10 @@ export function TopHud({
   adminPick: boolean
   viewSide: Side
   setViewSide: (s: Side) => void
+  /** The screen's name beside the side (the TacMap shares this bar). */
+  title?: string
+  /** Extra buttons ahead of the link light. */
+  tools?: ReactNode
 }): ReactElement {
   const side = pic.side as Side
   const ourPower = pic.formations.reduce((a, f) => a + f.power, 0)
@@ -113,7 +118,7 @@ export function TopHud({
     <header className="gw-hud" style={{ ['--own' as string]: SIDE_COLOR[side] }}>
       <div className="gw-hud-id">
         <span className="gw-hud-side">{side === 'Blue' ? 'BLUE FORCES' : 'RED FORCES'}</span>
-        <span className="gw-hud-title">COMMAND</span>
+        <span className="gw-hud-title">{title}</span>
       </div>
       <div className="gw-hud-stats">
         <div className="gw-stat"><span>ZULU</span><b><Clock base={pic.time} at={frameAt} /></b></div>
@@ -150,6 +155,7 @@ export function TopHud({
           <button className={fog ? 'on' : ''} title="Shade what our forces can't see" onClick={() => setFog(!fog)}>FOG</button>
           <button className={territory ? 'on' : ''} title="Frontline and territory wash" onClick={() => setTerritory(!territory)}>TERR</button>
         </div>
+        {tools}
         <span className="gw-link" style={{ color: lc }} title={link === 'polling' ? 'Live feed unavailable; polling every 5 s' : undefined}>
           <i style={{ background: lc }} />{lt}
         </span>
@@ -315,7 +321,7 @@ function FormationCard({ f, side, group, onPick, compact }: { f: GroundFormation
 }
 
 export function CommandBar({
-  pic, side, selected, selObj, selEnemy, groups, buttons, locked, onSelect, onFocusObj, baseExtra,
+  pic, side, selected, selObj, selEnemy, groups, buttons, locked, onSelect, onFocusObj, baseExtra, readOnly = false,
 }: {
   pic: GroundPicture
   side: Side
@@ -323,12 +329,15 @@ export function CommandBar({
   selObj: GroundObjective | null
   selEnemy: GroundEnemyContact | null
   groups: Record<number, number[]>
-  buttons: CmdButton[]
+  /** The command card; none on a read-only map. */
+  buttons?: CmdButton[]
   locked: string | null
   onSelect: (id: number, add: boolean) => void
   onFocusObj: (o: GroundObjective) => void
   /** Shown beside a selected base's card: the orders that go to it. */
   baseExtra?: ReactNode
+  /** A map that only watches (the TacMap): no order hints. */
+  readOnly?: boolean
 }): ReactElement {
   const groupOf = (id: number): number | null => {
     for (const [k, ids] of Object.entries(groups)) if (ids.includes(id)) return Number(k)
@@ -373,7 +382,7 @@ export function CommandBar({
           ) : (
             <div className="gw-ocard-body">
               <div className="gw-ocard-line">
-                {selObj.being_captured ? 'OUR TROOPS ARE ASSAULTING IT. ' : ''}Select formations, then right-click it to attack.
+                {selObj.being_captured ? 'OUR TROOPS ARE ASSAULTING IT. ' : ''}{readOnly ? '' : 'Select formations, then right-click it to attack.'}
               </div>
             </div>
           )}
@@ -397,7 +406,11 @@ export function CommandBar({
             </div>
           </div>
           <div className="gw-ocard-body">
-            <div className="gw-ocard-line">Orders go to bases: right-click the nearest one with your formations selected.</div>
+            <div className="gw-ocard-line">
+              {readOnly
+                ? ghost ? 'Where it was last seen: it may have moved since.' : 'In sight of our forces now.'
+                : 'Orders go to bases: right-click the nearest one with your formations selected.'}
+            </div>
           </div>
         </div>
       </>
@@ -405,10 +418,10 @@ export function CommandBar({
   } else {
     body = (
       <>
-        <div className="gw-bar-title">FORMATIONS · CLICK, TAB OR 1-9 TO SELECT</div>
+        <div className="gw-bar-title">{readOnly ? 'OUR FORMATIONS · CLICK OR TAB TO SELECT' : 'FORMATIONS · CLICK, TAB OR 1-9 TO SELECT'}</div>
         <div className="gw-cards roster">
           {pic.formations.length === 0 && (
-            <div className="gw-empty">No formations in the field. Select one of our bases and press R to raise one.</div>
+            <div className="gw-empty">{readOnly ? 'No formations of ours in the field.' : 'No formations in the field. Select one of our bases and press R to raise one.'}</div>
           )}
           {pic.formations.map((f) => (
             <FormationCard key={f.id} f={f} side={side} group={groupOf(f.id)} compact onPick={() => onSelect(f.id, false)} />
@@ -420,7 +433,7 @@ export function CommandBar({
   return (
     <footer className="gw-bar">
       <div className="gw-bar-sel">{body}</div>
-      <CommandCard buttons={buttons} locked={locked} />
+      {buttons && <CommandCard buttons={buttons} locked={locked} />}
     </footer>
   )
 }
@@ -514,7 +527,7 @@ export function Drawer({ f, side, pic, lockMins, onClose, canOrder = false, onPo
       </dl>
       {!f.has_infantry && <p className="gw-drawer-note">No infantry or troop carriers left: it can break a base but not take it.</p>}
       {f.broken && <p className="gw-drawer-note bad">Morale has collapsed. It is falling back whatever its orders until it rallies.</p>}
-      <p className="gw-drawer-note">Your orders keep the AI off it for {lockMins} min.</p>
+      {onPosture && <p className="gw-drawer-note">Your orders keep the AI off it for {lockMins} min.</p>}
     </aside>
   )
 }
@@ -565,7 +578,20 @@ const KEYS: [string, string][] = [
   ['?', 'This overlay'],
 ]
 
-export function HelpOverlay({ onClose, canCommand }: { onClose: () => void; canCommand: boolean }): ReactElement {
+/** The TacMap's controls: it watches, so there is nothing to order. */
+const VIEW_KEYS: [string, string][] = [
+  ['Click', 'A formation, base, asset or contact: what we know about it'],
+  ['Shift + drag', 'Box-select formations to compare them'],
+  ['Double-click', 'Every formation of that kind on screen'],
+  ['Click the log', 'Fly to where it happened'],
+  ['Space', 'Centre on the selection'],
+  ['Tab', 'Next formation (Shift + Tab: previous)'],
+  ['F', 'Follow your own aircraft'],
+  ['Esc', 'Deselect'],
+  ['?', 'This overlay'],
+]
+
+export function HelpOverlay({ onClose, canCommand, readOnly = false }: { onClose: () => void; canCommand: boolean; readOnly?: boolean }): ReactElement {
   return (
     <div className="gw-help" onClick={onClose}>
       <div className="gw-help-card" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Controls">
@@ -575,13 +601,20 @@ export function HelpOverlay({ onClose, canCommand }: { onClose: () => void; canC
           <button onClick={onClose} title="Close (Esc)"><X size={14} /></button>
         </div>
         <dl>
-          {KEYS.map(([k, v]) => (<div key={k}><dt><kbd>{k}</kbd></dt><dd>{v}</dd></div>))}
+          {(readOnly ? VIEW_KEYS : KEYS).map(([k, v]) => (<div key={k}><dt><kbd>{k}</kbd></dt><dd>{v}</dd></div>))}
         </dl>
+        {readOnly ? (
+          <p>
+            The tactical map shows our side's picture: our formations, assets and pilots where they really are, the
+            enemy only where we have seen it, and every base we know of. Orders are given from the command map.
+          </p>
+        ) : (
         <p>
           Orders go to bases: attack, defend or withdraw to an objective, hold, release, or raise a new company at
           one of ours. {canCommand ? '' : 'You are in view-only mode, so the orders are switched off.'} Every order
           is checked again by the engine against the side your pilot is on.
         </p>
+        )}
         <p className="gw-help-foot"><Helicopter size={14} /> Live pilots on our side are drawn in real time; yours is marked YOU.</p>
       </div>
     </div>
