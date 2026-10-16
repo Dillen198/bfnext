@@ -321,7 +321,7 @@ function FormationCard({ f, side, group, onPick, compact }: { f: GroundFormation
 }
 
 export function CommandBar({
-  pic, side, selected, selObj, selEnemy, groups, buttons, locked, onSelect, onFocusObj, baseExtra, readOnly = false,
+  pic, side, selected, selObj, selEnemy, groups, buttons, locked, onSelect, onFocusObj, baseExtra,
 }: {
   pic: GroundPicture
   side: Side
@@ -329,15 +329,12 @@ export function CommandBar({
   selObj: GroundObjective | null
   selEnemy: GroundEnemyContact | null
   groups: Record<number, number[]>
-  /** The command card; none on a read-only map. */
-  buttons?: CmdButton[]
+  buttons: CmdButton[]
   locked: string | null
   onSelect: (id: number, add: boolean) => void
   onFocusObj: (o: GroundObjective) => void
   /** Shown beside a selected base's card: the orders that go to it. */
   baseExtra?: ReactNode
-  /** A map that only watches (the TacMap): no order hints. */
-  readOnly?: boolean
 }): ReactElement {
   const groupOf = (id: number): number | null => {
     for (const [k, ids] of Object.entries(groups)) if (ids.includes(id)) return Number(k)
@@ -382,7 +379,7 @@ export function CommandBar({
           ) : (
             <div className="gw-ocard-body">
               <div className="gw-ocard-line">
-                {selObj.being_captured ? 'OUR TROOPS ARE ASSAULTING IT. ' : ''}{readOnly ? '' : 'Select formations, then right-click it to attack.'}
+                {selObj.being_captured ? 'OUR TROOPS ARE ASSAULTING IT. ' : ''}Select formations, then right-click it to attack.
               </div>
             </div>
           )}
@@ -406,11 +403,7 @@ export function CommandBar({
             </div>
           </div>
           <div className="gw-ocard-body">
-            <div className="gw-ocard-line">
-              {readOnly
-                ? ghost ? 'Where it was last seen: it may have moved since.' : 'In sight of our forces now.'
-                : 'Orders go to bases: right-click the nearest one with your formations selected.'}
-            </div>
+            <div className="gw-ocard-line">Orders go to bases: right-click the nearest one with your formations selected.</div>
           </div>
         </div>
       </>
@@ -418,10 +411,10 @@ export function CommandBar({
   } else {
     body = (
       <>
-        <div className="gw-bar-title">{readOnly ? 'OUR FORMATIONS · CLICK OR TAB TO SELECT' : 'FORMATIONS · CLICK, TAB OR 1-9 TO SELECT'}</div>
+        <div className="gw-bar-title">FORMATIONS · CLICK, TAB OR 1-9 TO SELECT</div>
         <div className="gw-cards roster">
           {pic.formations.length === 0 && (
-            <div className="gw-empty">{readOnly ? 'No formations of ours in the field.' : 'No formations in the field. Select one of our bases and press R to raise one.'}</div>
+            <div className="gw-empty">No formations in the field. Select one of our bases and press R to raise one.</div>
           )}
           {pic.formations.map((f) => (
             <FormationCard key={f.id} f={f} side={side} group={groupOf(f.id)} compact onPick={() => onSelect(f.id, false)} />
@@ -433,7 +426,7 @@ export function CommandBar({
   return (
     <footer className="gw-bar">
       <div className="gw-bar-sel">{body}</div>
-      {buttons && <CommandCard buttons={buttons} locked={locked} />}
+      <CommandCard buttons={buttons} locked={locked} />
     </footer>
   )
 }
@@ -581,8 +574,6 @@ const KEYS: [string, string][] = [
 /** The TacMap's controls: it watches, so there is nothing to order. */
 const VIEW_KEYS: [string, string][] = [
   ['Click', 'A formation, base, asset or contact: what we know about it'],
-  ['Shift + drag', 'Box-select formations to compare them'],
-  ['Double-click', 'Every formation of that kind on screen'],
   ['Click the log', 'Fly to where it happened'],
   ['Space', 'Centre on the selection'],
   ['Tab', 'Next formation (Shift + Tab: previous)'],

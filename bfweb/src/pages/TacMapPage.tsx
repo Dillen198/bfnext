@@ -27,7 +27,7 @@ import { useAuth } from '../context/AuthContext'
 import { useInstance } from '../context/InstanceContext'
 import { useTheme } from '../context/ThemeContext'
 import { BattlefieldEngine } from './groundwar/engine'
-import { CommandBar, Drawer, EventFeed, HelpOverlay, TopHud } from './groundwar/hud'
+import { Drawer, EventFeed, HelpOverlay, TopHud } from './groundwar/hud'
 import { attachInput, type InputHandle } from './groundwar/input'
 import { BattlefieldLayers } from './groundwar/layers'
 import { styleFor, type MapLook } from './groundwar/mapStyles'
@@ -39,7 +39,7 @@ import { visibleNames } from './groundwar/declutter'
 import { AssetCard, AssetLines, AssetMarker, EnemyAirMarker, LayerToggles, type AssetNote } from './groundwar/command'
 import { ALL_LAYERS, enemyAirOf, shown, useCommandFeed, useTacPicture, type Layers } from './groundwar/commandFeed'
 import { Coverage, SupplyNetwork, Territory, Threats } from './groundwar/overlays'
-import { BaseDrawer } from './groundwar/baseDrawer'
+import { BaseDrawer, ContactDrawer } from './groundwar/baseDrawer'
 import { createGroundwarMock } from './groundwarMock'
 import { createCommandMock } from './commandMock'
 import { mockCaptures, mockObjectives, mockWarehouse } from './tacmapMock'
@@ -281,20 +281,7 @@ export default function TacMapPage(): ReactElement {
   const pickFormation = (e: MouseEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
-    if (e.shiftKey) {
-      setSelObjId(null)
-      setSelEnemyId(null)
-      setSelAssetId(null)
-      setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
-    } else selectOnly([id])
-  }
-  const pickKind = (e: MouseEvent, id: number) => {
-    const map = getMap()
-    const f = pic?.formations.find((x) => x.id === id)
-    if (!map || !f || !pic) return
-    e.stopPropagation()
-    const b = map.getBounds()
-    selectOnly(pic.formations.filter((x) => x.kind === f.kind && b.contains([x.pos[1], x.pos[0]])).map((x) => x.id))
+    selectOnly([id])
   }
   const pickObjective = (e: MouseEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
@@ -334,9 +321,9 @@ export default function TacMapPage(): ReactElement {
   }
 
   // ── Live state for the listeners ───────────────────────────────────────
-  const live = useRef({ pic, selIds, help, follow, selObjId, pickFormation, pickKind, pickObjective, pickEnemy, pickAsset, clearAll, selectOnly, centre, toggleFollow, cycle })
+  const live = useRef({ pic, help, follow, selObjId, pickFormation, pickObjective, pickEnemy, pickAsset, clearAll, selectOnly, centre, toggleFollow, cycle })
   useEffect(() => {
-    live.current = { pic, selIds, help, follow, selObjId, pickFormation, pickKind, pickObjective, pickEnemy, pickAsset, clearAll, selectOnly, centre, toggleFollow, cycle }
+    live.current = { pic, help, follow, selObjId, pickFormation, pickObjective, pickEnemy, pickAsset, clearAll, selectOnly, centre, toggleFollow, cycle }
   })
 
   const declutter = useCallback(() => {
@@ -355,7 +342,6 @@ export default function TacMapPage(): ReactElement {
   useEffect(() => { declutter() }, [declutter, objKey, selObjId])
 
   const onPickFormation = useCallback((e: MouseEvent, id: number) => live.current.pickFormation(e, id), [])
-  const onPickKind = useCallback((e: MouseEvent, id: number) => live.current.pickKind(e, id), [])
   const onPickObjective = useCallback((e: MouseEvent, id: number) => live.current.pickObjective(e, id), [])
   const onPickEnemy = useCallback((e: MouseEvent, id: number) => live.current.pickEnemy(e, id), [])
   const onPickAsset = useCallback((e: MouseEvent, id: number) => live.current.pickAsset(e, id), [])
@@ -381,10 +367,7 @@ export default function TacMapPage(): ReactElement {
       leave: () => {},
       click: () => live.current.clearAll(),
       context: () => {},
-      box: (ids, add) => {
-        const L = live.current
-        L.selectOnly(add ? [...new Set([...L.selIds, ...ids])] : ids)
-      },
+      box: () => {},
     })
   }
   const onZoom = (e: ViewStateChangeEvent) => {
@@ -440,7 +423,7 @@ export default function TacMapPage(): ReactElement {
     return {
       bounds: [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]] as [[number, number], [number, number]],
       fitBoundsOptions: {
-        padding: window.innerWidth > 900 ? { top: 80, bottom: 170, left: 330, right: 70 } : { top: 70, bottom: 150, left: 30, right: 30 },
+        padding: window.innerWidth > 900 ? { top: 80, bottom: 40, left: 330, right: 70 } : { top: 70, bottom: 30, left: 30, right: 30 },
       },
     }
     // Only the first picture sets the view.
@@ -496,7 +479,7 @@ export default function TacMapPage(): ReactElement {
         ))}
         {pic.formations.map((f) => (
           <FormationMarker key={`f${f.id}`} f={f} side={side} selected={selSet.has(f.id)} near={near} group={null}
-            onPick={onPickFormation} onDouble={onPickKind} />
+            onPick={onPickFormation} />
         ))}
         {pic.battles.map((b) => <BattleLabel key={`b${b.id}`} b={b} onPick={onBattle} />)}
         {cp && <AssetLines assets={shownAssets} sel={selAsset} side={side} />}
@@ -564,19 +547,8 @@ export default function TacMapPage(): ReactElement {
           }}
         />
       )}
+      {selEnemy && <ContactDrawer e={selEnemy} side={side} onClose={clearAll} />}
       <LayerToggles layers={layers} set={setLayers} note={assetNote} />
-      <CommandBar
-        pic={pic}
-        side={side}
-        selected={selForms}
-        selObj={null}
-        selEnemy={selEnemy}
-        groups={{}}
-        locked={null}
-        readOnly
-        onSelect={(id) => { selectOnly([id]); const f = pic.formations.find((x) => x.id === id); if (f) flyTo(f.pos) }}
-        onFocusObj={(o) => flyTo(o.pos)}
-      />
       {help && <HelpOverlay onClose={() => setHelp(false)} canCommand={false} readOnly />}
     </div>
   )

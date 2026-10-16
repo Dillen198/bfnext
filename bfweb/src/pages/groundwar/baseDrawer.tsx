@@ -10,13 +10,13 @@
 import { useMemo, type ReactElement } from 'react'
 import { Objective as ObjIcon, X } from '@icons'
 import type {
-  Asset, CaptureEvent, GroundObjective, GroundPicture, Objective, SupplyLink, Warehouse, WarehouseItem,
+  Asset, CaptureEvent, GroundEnemyContact, GroundObjective, GroundPicture, Objective, SupplyLink, Warehouse, WarehouseItem,
 } from '../../api'
 import { ago } from '../../lib/format'
 import { fmtAge, km } from './geo'
 import { Gauge } from './hud'
-import { OBJ_ICON, shortName } from './sprites'
-import { SIDE_COLOR, type Side } from './theme'
+import { OBJ_ICON, natoSymbol, shortName } from './sprites'
+import { SIDE_COLOR, other, type Side } from './theme'
 
 /** The warehouse read for the selected base, and how it is going. */
 export interface BaseIntel {
@@ -43,15 +43,66 @@ function Level({ label, pct, why }: { label: string; pct: number | null | undefi
   return <Gauge label={label} pct={pct} />
 }
 
+/** Fuel is kept in litres (a full tank reads 100000): shorten the big ones,
+ *  per line, so a fraction never mixes units. Counts stay exact. */
+function amount(n: number, big: boolean): string {
+  if (!big) return String(n)
+  return n < 1_000_000 ? `${Math.round(n / 100) / 10}k` : `${Math.round(n / 100_000) / 10}M`
+}
+
 function Stock({ name, item }: { name: string; item: WarehouseItem }) {
   const p = fill(item) * 100
   const col = p < 20 ? 'var(--gw-bad)' : p < 50 ? 'var(--gw-warn)' : 'var(--gw-good)'
+  const big = Math.max(item.stored, item.capacity) >= 10_000
   return (
-    <div className="tm-stock" title={`${name}: ${item.stored} of ${item.capacity || 'unlimited'}`}>
+    <div className="tm-stock" title={`${name}: ${item.stored.toLocaleString()} of ${item.capacity ? item.capacity.toLocaleString() : 'no limit'}`}>
       <span>{name}</span>
       <div><i style={{ width: `${item.capacity > 0 ? p : 100}%`, background: item.capacity > 0 ? col : 'var(--gw-dim)' }} /></div>
-      <b>{item.stored}{item.capacity > 0 && <small>/{item.capacity}</small>}</b>
+      <b>{amount(item.stored, big)}{item.capacity > 0 && <small>/{amount(item.capacity, big)}</small>}</b>
     </div>
+  )
+}
+
+type Family = [string, [string, WarehouseItem][]]
+
+/** The warehouse split into the families DCS names imply, each sorted by how
+ *  depleted a line is (what is about to run out comes first; lines with no
+ *  capacity have no fill and sink). */
+function families(w: Warehouse): Family[] {
+  const by: Record<string, [string, WarehouseItem][]> = { AIRFRAMES: [], VEHICLES: [], WEAPONS: [], FORTIFICATIONS: [], LIQUIDS: [] }
+  for (const [k, v] of Object.entries(w.equipment)) {
+    if (k.startsWith('weapons.')) by.WEAPONS.push([k.slice(8), v])
+    else if (k.startsWith('vehicles.')) by.VEHICLES.push([k.slice(9), v])
+    else if (k.startsWith('Fortifications.')) by.FORTIFICATIONS.push([k.slice(15), v])
+    else by.AIRFRAMES.push([k, v])
+  }
+  for (const [k, v] of Object.entries(w.liquids)) by.LIQUIDS.push([k, v])
+  for (const l of Object.values(by)) l.sort((a, b) => fill(a[1]) - fill(b[1]) || a[0].localeCompare(b[0]))
+  return Object.entries(by).filter(([, l]) => l.length > 0)
+}
+
+const lowIn = (l: [string, WarehouseItem][]) => l.filter(([, i]) => i.capacity > 0 && fill(i) <= 0.2).length
+
+function WarehouseStock({ w }: { w: Warehouse }) {
+  const fams = useMemo(() => families(w), [w])
+  const low = fams.reduce((n, [, l]) => n + lowIn(l), 0)
+  return (
+    <>
+      <h3>WAREHOUSE{low > 0 && <span className="tm-h3-note bad">{low} LINE{low === 1 ? '' : 'S'} UNDER 20%</span>}</h3>
+      {fams.length === 0 && <p className="gw-drawer-note">Nothing in store.</p>}
+      {fams.map(([name, items]) => {
+        const n = lowIn(items)
+        return (
+          <details key={name} className="tm-fam" open={name === 'AIRFRAMES' || name === 'LIQUIDS'}>
+            <summary>
+              <span>{name} <small>{items.length}</small></span>
+              {n > 0 && <span className="bad">{n} LOW</span>}
+            </summary>
+            {items.map(([k, v]) => <Stock key={k} name={k} item={v} />)}
+          </details>
+        )
+      })}
+    </>
   )
 }
 
@@ -102,17 +153,6 @@ export function BaseDrawer({ o, pub, side, pic, assets, captures, intel, onClose
       : (o.threatened ?? pub?.threatened)
         ? ['THREATENED', 'warn']
         : neutral ? ['UNCLAIMED', ''] : ours ? ['SECURE', 'ok'] : ['ENEMY HELD', '']
-
-  const airframes = useMemo(() => {
-    if (!w || !full) return []
-    return Object.entries(w.equipment)
-      .filter(([k]) => !k.startsWith('weapons.') && !k.startsWith('vehicles.') && !k.startsWith('Fortifications.'))
-      .sort((a, b) => fill(a[1]) - fill(b[1]) || a[0].localeCompare(b[0]))
-  }, [w, full])
-  const lowLines = useMemo(() => {
-    if (!w || !full) return 0
-    return [...Object.values(w.equipment), ...Object.values(w.liquids)].filter((i) => i.capacity > 0 && fill(i) <= 0.2).length
-  }, [w, full])
 
   const based = pic.formations.filter((f) => f.home === o.id)
   const defending = pic.formations.filter((f) => f.order === 'defend' && f.target === o.id && f.home !== o.id)
@@ -186,14 +226,7 @@ export function BaseDrawer({ o, pub, side, pic, assets, captures, intel, onClose
         </>
       )}
 
-      {full && (airframes.length > 0 || lowLines > 0) && (
-        <>
-          <h3>{airframes.length > 0 ? 'AIRCRAFT' : 'STOCK'}{lowLines > 0 && <span className="tm-h3-note bad">{lowLines} STOCK LINE{lowLines === 1 ? '' : 'S'} UNDER 20%</span>}</h3>
-          {airframes.length === 0 && <p className="gw-drawer-note">No airframes kept here.</p>}
-          {airframes.slice(0, 10).map(([k, v]) => <Stock key={k} name={k} item={v} />)}
-          {airframes.length > 10 && <p className="gw-drawer-note">+ {airframes.length - 10} more types</p>}
-        </>
-      )}
+      {full && w && <WarehouseStock w={w} />}
 
       {full && w && (
         <>
@@ -252,6 +285,35 @@ export function BaseDrawer({ o, pub, side, pic, assets, captures, intel, onClose
           )}
         </>
       )}
+    </aside>
+  )
+}
+
+/** An enemy ground contact: what our forces have seen of it. */
+export function ContactDrawer({ e, side, onClose }: { e: GroundEnemyContact; side: Side; onClose: () => void }): ReactElement {
+  const ghost = e.last_seen_secs > 0
+  const s = natoSymbol({ kind: e.kind, hostile: true, ghost, size: 30, fill: SIDE_COLOR[other(side)] })
+  return (
+    <aside className="gw-drawer">
+      <button className="gw-drawer-x" onClick={onClose} title="Deselect (Esc)"><X size={14} /></button>
+      <div className="gw-drawer-head"><img src={s.url} width={s.w} height={s.h} alt="" /></div>
+      <h2>Hostile {e.kind}</h2>
+      <div className="gw-drawer-sub">ENEMY CONTACT</div>
+      <div className={`gw-drawer-order tm-status ${ghost ? 'warn' : 'bad'}`}>{ghost ? `LAST SEEN ${fmtAge(e.last_seen_secs)} AGO` : 'IN SIGHT'}</div>
+      <dl className="gw-dl">
+        <dt>SIZE</dt><dd>~{e.approx_vehicles} VEHICLES</dd>
+        <dt>MOVING</dt><dd>{e.moving ? `YES · HDG ${String(Math.round(e.heading)).padStart(3, '0')}` : 'NO'}</dd>
+      </dl>
+      {e.units.length > 0 && (
+        <>
+          <h3>SEEN UP CLOSE</h3>
+          <div className="gw-chips">
+            {Object.entries(e.units.reduce<Record<string, number>>((m, u) => ({ ...m, [u.typ]: (m[u.typ] ?? 0) + 1 }), {}))
+              .map(([t, n]) => <span key={t} className="gw-chip tm-chip">{n} × {t}</span>)}
+          </div>
+        </>
+      )}
+      <p className="gw-drawer-note">{ghost ? 'Where it was last seen: it may have moved since.' : 'In sight of our forces now.'}</p>
     </aside>
   )
 }

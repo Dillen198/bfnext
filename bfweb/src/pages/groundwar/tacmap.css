@@ -1,10 +1,7 @@
-/* The TacMap: the command map's chrome without the command card, so the
-   bottom bar is only the roster and can be shorter. */
+/* The TacMap: the command map's chrome without the command bar, so the log
+   and drawers run down to the bottom edge. */
 
-.tm-root { --gw-bar-h: 132px; }
-/* The roster scrolls inside the bar rather than spilling over the map. */
-.tm-root .gw-bar { overflow: hidden; }
-.tm-root .gw-bar-sel { min-height: 0; }
+.tm-root { --gw-bar-h: 0px; }
 
 .tm-tool {
   font: 700 9px var(--font-mono);
@@ -31,7 +28,7 @@
 .tm-dl { margin-top: 0; }
 .tm-h3-note { float: right; letter-spacing: 0.08em; }
 
-.tm-stock { display: grid; grid-template-columns: 1fr 70px 46px; gap: 6px; align-items: center; margin: 3px 0; font: 9px var(--font-mono); }
+.tm-stock { display: grid; grid-template-columns: 1fr 60px 62px; gap: 6px; align-items: center; margin: 3px 0; font: 9px var(--font-mono); }
 .tm-stock span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gw-ink-2); }
 .tm-stock div { height: 5px; background: rgba(0, 0, 0, 0.55); outline: 1px solid rgba(255, 255, 255, 0.05); }
 .tm-stock i { display: block; height: 100%; }
@@ -61,9 +58,9 @@ button.tm-row:hover { border-color: var(--gw-pencil); }
 .tm-row .tm-by { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Phones: the command map hides its drawers; here they are the point, so
-   they come up as a sheet over the roster. */
+   they come up as a sheet from the bottom. */
 @media (max-width: 900px) {
-  .tm-root { --gw-bar-h: 118px; }
+  .tm-root { --gw-bar-h: 0px; }
   .tm-root .gw-drawer {
     display: block;
     left: 0;
@@ -78,3 +75,24 @@ button.tm-row:hover { border-color: var(--gw-pencil); }
   .tm-root .gw-drawer ~ .cm-layers { display: none; }
 }
 .tm-flags .gw-chip { padding: 2px 7px; color: var(--gw-pencil); }
+.tm-chip { padding: 2px 6px; }
+
+/* Warehouse families: airframes and liquids open, the long lists folded. */
+.tm-fam { margin: 2px 0; }
+.tm-fam summary {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 2px;
+  cursor: pointer;
+  font: 700 8.5px var(--font-mono);
+  letter-spacing: 0.16em;
+  color: var(--gw-ink-2);
+  list-style: none;
+}
+.tm-fam summary::-webkit-details-marker { display: none; }
+.tm-fam summary::before { content: '▸'; margin-right: 6px; color: var(--gw-dim); }
+.tm-fam[open] summary::before { content: '▾'; }
+.tm-fam summary > span:first-child { flex: 1; }
+.tm-fam summary small { color: var(--gw-dim); font-weight: 400; margin-left: 4px; }
+.tm-fam summary .bad { color: var(--gw-bad); }
+.tm-fam .tm-stock { padding-left: 12px; }

@@ -53,7 +53,10 @@ const AIRFRAMES: Record<string, string[]> = {
 }
 const KIT = [
   'weapons.missiles.AIM_120C', 'weapons.missiles.AIM_9X', 'weapons.bombs.Mk_82', 'weapons.bombs.GBU_12',
-  'weapons.missiles.AGM_65D', 'weapons.nurs.HYDRA_70_M151', 'vehicles.M-113', 'vehicles.Hummer',
+  'weapons.missiles.AGM_65D', 'weapons.nurs.HYDRA_70_M151', 'weapons.missiles.AGM_88C', 'weapons.bombs.GBU_38',
+  'weapons.missiles.AIM_7M', 'weapons.droptanks.FuelTank_370', 'weapons.shells.M61_20_HE', 'weapons.nurs.C_8OFP2',
+  'vehicles.M-113', 'vehicles.Hummer', 'vehicles.M1043 HMMWV Armament', 'vehicles.Ural-375',
+  'Fortifications.Sandbox', 'Fortifications.Barracks 2',
 ]
 
 function stock(name: string, keys: string[], cap: number, salt: number): Record<string, WarehouseItem> {
@@ -95,7 +98,12 @@ export function mockWarehouse(pic: GroundPicture, name: string): Warehouse {
       ...stock(o.name, AIRFRAMES[kind] ?? [], kind === 'airbase' ? 12 : 4, 7),
       ...stock(o.name, KIT, 80, 11),
     },
-    liquids: { jet_fuel: { capacity: 100_000, stored: Math.round(1000 * (o.fuel ?? 0)) } },
+    liquids: {
+      jet_fuel: { capacity: 100_000, stored: Math.round(1000 * (o.fuel ?? 0)) },
+      gasoline: { capacity: 40_000, stored: Math.round(400 * pct(o.name, 8)) },
+      diesel: { capacity: 40_000, stored: Math.round(400 * pct(o.name, 9)) },
+      methanol_mixture: { capacity: 8_000, stored: Math.round(80 * pct(o.name, 10, 5)) },
+    },
     supplier: o.name === 'Kharagauli' ? null : link(hub, o.name === 'Sachkhere'),
     destinations: fed,
   }
