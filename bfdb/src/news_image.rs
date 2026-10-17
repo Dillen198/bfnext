@@ -5,13 +5,17 @@
 //! dispatch. It is decoration, so everything about it is conservative:
 //!
 //!  * **Off unless configured.** No provider / account id / url / key, no calls.
-//!  * **One image per dispatch, made once.** Only a *filed* day (`final_`) is
-//!    illustrated -- the running day's headline still moves. Once stored an
-//!    image is never replaced by the generator; only an admin's explicit
-//!    regenerate does that.
+//!  * **One picture per day, drawn at most twice.** The running day gets an
+//!    early-edition picture once it is `EARLY_AFTER` old, so today's paper is
+//!    not bare; it is marked `provisional`. When the day is filed (`final_`)
+//!    that picture is redrawn once against the finished story -- and kept if
+//!    the redraw fails. A filed day's picture is never replaced by the
+//!    generator after that; only an admin's explicit regenerate does that.
 //!  * **Bounded cost.** A per-instance and a process-wide daily cap on calls,
 //!    a short backfill window, and a dispatch whose calls keep failing is given
-//!    up on after `MAX_ATTEMPTS` (one WARN, then silence).
+//!    up on after `MAX_ATTEMPTS` (one WARN) -- for `GIVE_UP_RETRY`, after
+//!    which it gets one more round, so a provider outage does not leave a
+//!    day bare for good. The running day's early picture is tried once.
 //!  * **Nothing private leaves.** Pilots are real people. Their names (and
 //!    anything that looks like a callsign or a quote) are stripped from the
 //!    story before it becomes a prompt, and the prompt forbids identifiable
@@ -92,7 +96,12 @@ const MAX_ATTEMPTS: u32 = 3;
 /// Filed days this far back are illustrated when missing. Turning images on
 /// mid-campaign should picture the last few days, not spend the daily cap on
 /// a season of history.
-pub const BACKFILL_DAYS: i64 = 3;
+pub const BACKFILL_DAYS: i64 = 7;
+/// How far into the running day its early-edition picture is drawn: late
+/// enough that the day has a story, early enough that it runs most of the day.
+const EARLY_AFTER: ChronoDuration = ChronoDuration::hours(3);
+/// A filed day that used up its attempts is tried again this long after.
+const GIVE_UP_RETRY: ChronoDuration = ChronoDuration::hours(24);
 /// With a writer configured, a filed day still carrying template prose is
 /// usually about to be rewritten (new headline). Wait this long for that
 /// before illustrating the template version anyway.
@@ -2113,6 +2122,14 @@ pub struct ImageMeta {
     pub gave_up: bool,
     #[serde(default)]
     pub last_error: Option<String>,
+    /// The stored picture is the running day's early edition, to be redrawn
+    /// once the day is filed.
+    #[serde(default)]
+    pub provisional: bool,
+    /// The running day's one early-edition attempt failed; the day waits for
+    /// filing instead of trying again.
+    #[serde(default)]
+    pub early_failed: bool,
 }
 
 /// Calls in flight, so the generator tick and an admin regenerate never pay
@@ -2175,6 +2192,32 @@ pub fn eligible(d: &NewsDigest, writer_on: bool, now: DateTime<Utc>) -> bool {
     d.final_ && (!writer_on || !d.body.is_empty() || now.signed_duration_since(d.generated) >= WRITER_GRACE)
 }
 
+/// Is the running day ready for its early-edition picture? Old enough to
+/// have a story -- and, with a writer on, written, unless it is well past
+/// the point it should have been.
+pub fn early_eligible(d: &NewsDigest, writer_on: bool, now: DateTime<Utc>) -> bool {
+    let Ok(date) = chrono::NaiveDate::parse_from_str(&d.day, "%Y-%m-%d") else {
+        return false;
+    };
+    let Some(start) = date.and_hms_opt(0, 0, 0).map(|t| t.and_utc()) else {
+        return false;
+    };
+    let age = now.signed_duration_since(start);
+    !d.final_ && age >= EARLY_AFTER && (!writer_on || !d.body.is_empty() || age >= EARLY_AFTER * 2)
+}
+
+/// Which kind of picture a call is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Draw {
+    /// The generator, for a filed day.
+    Filed,
+    /// The generator, for the running day: one try, stored as provisional.
+    Early,
+    /// The admin route: ignores a stored image, a give-up and the retry
+    /// backoff -- not the caps.
+    Forced,
+}
+
 /// What happened to one attempt, for the caller's log line / reply.
 #[derive(Debug, PartialEq)]
 pub enum Outcome {
@@ -2184,16 +2227,15 @@ pub enum Outcome {
     Failed(String),
 }
 
-/// Generate and store the picture for one dispatch. `forced` (the admin
-/// route) ignores a stored image, a give-up and the retry backoff -- not the
-/// caps. On failure the old image, if any, stays.
+/// Generate and store the picture for one dispatch. On failure the old
+/// image, if any, stays.
 pub fn illustrate(
     db: &StatsDb,
     inst: &InstanceCfg,
     rid: RoundId,
     d: &NewsDigest,
     cfg: &ImageCfg,
-    forced: bool,
+    kind: Draw,
 ) -> Result<Outcome> {
     let Some(_guard) = FlightGuard::take(&inst.id, rid, &d.day) else {
         return Ok(Outcome::Busy);
@@ -2204,7 +2246,9 @@ pub fn illustrate(
         return Ok(Outcome::Capped(why));
     }
     let mut meta = db.news_image_meta(&inst.id, rid, &d.day)?.unwrap_or_default();
-    if forced {
+    // The admin always starts afresh; the generator only reaches a given-up
+    // day once `GIVE_UP_RETRY` has passed, and then it gets a new round.
+    if kind == Draw::Forced || (kind == Draw::Filed && meta.gave_up) {
         meta.attempts = 0;
         meta.gave_up = false;
         meta.next_try = None;
@@ -2224,6 +2268,8 @@ pub fn illustrate(
             meta.next_try = None;
             meta.gave_up = false;
             meta.last_error = None;
+            meta.provisional = kind == Draw::Early;
+            meta.early_failed = false;
             db.news_image_put(&inst.id, rid, &d.day, &bytes, &meta)?;
             Ok(Outcome::Stored { version: meta.version })
         }
@@ -2231,7 +2277,11 @@ pub fn illustrate(
             if e.billed {
                 count_call(db, &inst.id, &today)?;
             }
-            if e.rate_limited {
+            if kind == Draw::Early {
+                // The early edition is a nicety: one try, and the day's
+                // attempts are kept for the picture drawn when it is filed.
+                meta.early_failed = true;
+            } else if e.rate_limited {
                 // The quota's fault, not the dispatch's: try again in an hour
                 // without spending an attempt.
                 meta.next_try = Some(now + ChronoDuration::hours(1));
@@ -2241,8 +2291,9 @@ pub fn illustrate(
                     Some(now + ChronoDuration::minutes(30 * (1i64 << (meta.attempts - 1).min(4))));
                 if meta.attempts >= MAX_ATTEMPTS && !meta.gave_up {
                     meta.gave_up = true;
+                    meta.next_try = Some(now + GIVE_UP_RETRY);
                     log::warn!(
-                        "[{}] news image: giving up on {} after {} failed attempts: {e}",
+                        "[{}] news image: giving up on {} for a day after {} failed attempts: {e}",
                         inst.id,
                         d.day,
                         meta.attempts
@@ -2256,8 +2307,10 @@ pub fn illustrate(
     }
 }
 
-/// The generator's pass: illustrate at most one filed day per tick, newest
-/// first, within the backfill window. Returns whether a call was made.
+/// The generator's pass: at most one call per tick. Filed days come first,
+/// newest first, within the backfill window -- a missing or provisional
+/// picture there is the paper's record. Then the running day's early edition.
+/// Returns whether a call was made.
 pub fn tick(
     db: &StatsDb,
     inst: &InstanceCfg,
@@ -2267,61 +2320,93 @@ pub fn tick(
 ) -> Result<bool> {
     let now = Utc::now();
     let oldest = (now - ChronoDuration::days(BACKFILL_DAYS)).format("%Y-%m-%d").to_string();
-    for d in db.news_history(rid, (BACKFILL_DAYS + 2) as usize)? {
-        if d.day < oldest || !eligible(&d, writer_on, now) {
+    let history = db.news_history(rid, (BACKFILL_DAYS + 2) as usize)?;
+    for d in &history {
+        if d.day < oldest || !eligible(d, writer_on, now) {
             continue;
         }
         let meta = db.news_image_meta(&inst.id, rid, &d.day)?.unwrap_or_default();
-        if meta.has_image || meta.gave_up || meta.next_try.map(|t| now < t).unwrap_or(false) {
+        // `next_try` also covers a give-up: it is set `GIVE_UP_RETRY` ahead.
+        if (meta.has_image && !meta.provisional) || meta.next_try.map(|t| now < t).unwrap_or(false) {
             continue;
         }
-        return match illustrate(db, inst, rid, &d, cfg, false)? {
-            Outcome::Stored { .. } => {
-                log::info!("[{}] news image: stored for {}", inst.id, d.day);
-                Ok(true)
-            }
-            Outcome::Busy => Ok(false),
-            Outcome::Capped(why) => {
-                log::debug!("[{}] news image for {} deferred: {why}", inst.id, d.day);
-                Ok(false)
-            }
-            Outcome::Failed(e) => {
-                if !db.news_image_meta(&inst.id, rid, &d.day)?.map(|m| m.gave_up).unwrap_or(false) {
-                    log::info!("[{}] news image for {} failed (will retry): {e}", inst.id, d.day);
-                }
-                Ok(true)
-            }
-        };
+        return run(db, inst, rid, d, cfg, Draw::Filed);
+    }
+    for d in &history {
+        if !early_eligible(d, writer_on, now) {
+            continue;
+        }
+        let meta = db.news_image_meta(&inst.id, rid, &d.day)?.unwrap_or_default();
+        if meta.has_image || meta.early_failed {
+            continue;
+        }
+        return run(db, inst, rid, d, cfg, Draw::Early);
     }
     Ok(false)
 }
 
-/// The `/api/news` fields for one day: the image URL (versioned, so a
-/// regenerated picture is not served from cache) and whether one is still
-/// expected -- which is what the Discord feed waits on.
-pub fn api_fields(
-    db: &StatsDb,
-    inst: &str,
-    rid: RoundId,
-    d: &NewsDigest,
-    enabled: bool,
-) -> Result<(Option<String>, bool)> {
-    let meta = db.news_image_meta(inst, rid, &d.day)?;
-    let url = meta.as_ref().filter(|m| m.has_image).map(|m| {
+/// One generator call, logged. Returns whether a call was made.
+fn run(db: &StatsDb, inst: &InstanceCfg, rid: RoundId, d: &NewsDigest, cfg: &ImageCfg, kind: Draw) -> Result<bool> {
+    let what = if kind == Draw::Early { "early picture" } else { "picture" };
+    match illustrate(db, inst, rid, d, cfg, kind)? {
+        Outcome::Stored { .. } => {
+            log::info!("[{}] news image: {what} stored for {}", inst.id, d.day);
+            Ok(true)
+        }
+        Outcome::Busy => Ok(false),
+        Outcome::Capped(why) => {
+            log::debug!("[{}] news image: {what} for {} deferred: {why}", inst.id, d.day);
+            Ok(false)
+        }
+        Outcome::Failed(e) => {
+            let gave_up = db.news_image_meta(&inst.id, rid, &d.day)?.map(|m| m.gave_up).unwrap_or(false);
+            if kind == Draw::Early {
+                log::info!(
+                    "[{}] news image: {what} for {} failed (waiting for the day to be filed): {e}",
+                    inst.id,
+                    d.day
+                );
+            } else if !gave_up {
+                log::info!("[{}] news image: {what} for {} failed (will retry): {e}", inst.id, d.day);
+            }
+            Ok(true)
+        }
+    }
+}
+
+/// What `/api/news` says about one day's picture.
+#[derive(Debug, PartialEq)]
+pub struct ApiImage {
+    /// The image URL, versioned so a regenerated picture is not served from
+    /// cache.
+    pub url: Option<String>,
+    /// A picture -- or, for a filed day showing its early edition, the final
+    /// one -- is still expected. This is what the Discord feed waits on.
+    pub pending: bool,
+    /// The picture is the running day's early edition and will be redrawn.
+    pub provisional: bool,
+}
+
+/// The `/api/news` fields for one day.
+pub fn api_fields(db: &StatsDb, inst: &str, rid: RoundId, d: &NewsDigest, enabled: bool) -> Result<ApiImage> {
+    let meta = db.news_image_meta(inst, rid, &d.day)?.unwrap_or_default();
+    let url = meta.has_image.then(|| {
         format!(
             "/api/news/image/{}?instance={}&v={}",
             d.day,
             urlencoding::encode(inst),
-            m.version
+            meta.version
         )
     });
+    let provisional = url.is_some() && meta.provisional;
     let oldest = (Utc::now() - ChronoDuration::days(BACKFILL_DAYS)).format("%Y-%m-%d").to_string();
     let pending = enabled
-        && url.is_none()
-        && d.final_
-        && d.day >= oldest
-        && !meta.map(|m| m.gave_up).unwrap_or(false);
-    Ok((url, pending))
+        && if d.final_ {
+            d.day >= oldest && !meta.gave_up && (url.is_none() || provisional)
+        } else {
+            url.is_none() && !meta.early_failed
+        };
+    Ok(ApiImage { url, pending, provisional })
 }
 
 /// A dispatch id as the routes take it: `YYYY-MM-DD`.
@@ -3055,6 +3140,27 @@ Connection: close
     }
 
     #[test]
+    fn the_running_day_gets_an_early_picture_a_few_hours_in() {
+        let mut d = digest("X", &[], None);
+        d.day = "2026-10-17".into();
+        let at = |h: u32| {
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 17).unwrap().and_hms_opt(h, 0, 0).unwrap().and_utc()
+        };
+        d.final_ = true;
+        assert!(!early_eligible(&d, false, at(12)), "a filed day is not an early edition");
+        d.final_ = false;
+        assert!(!early_eligible(&d, false, at(2)));
+        assert!(early_eligible(&d, false, at(3)));
+        // Writer on: wait for the prose, but not past twice the delay.
+        assert!(!early_eligible(&d, true, at(4)));
+        assert!(early_eligible(&d, true, at(6)));
+        d.body = vec!["written".into()];
+        assert!(early_eligible(&d, true, at(4)));
+        d.day = "not-a-day".into();
+        assert!(!early_eligible(&d, false, at(12)));
+    }
+
+    #[test]
     fn day_ids_are_checked() {
         assert!(valid_day("2026-09-27"));
         assert!(!valid_day("2026-9-27"));
@@ -3098,15 +3204,25 @@ Connection: close
         let rid = RoundId(7);
         let mut d = digest("X", &["y"], None);
         d.day = Utc::now().format("%Y-%m-%d").to_string();
-        let (url, pending) = api_fields(&db, "vs1", rid, &d, true).unwrap();
-        assert!(url.is_none() && pending);
-        let (_, pending) = api_fields(&db, "vs1", rid, &d, false).unwrap();
-        assert!(!pending);
+        let a = api_fields(&db, "vs1", rid, &d, true).unwrap();
+        assert!(a.url.is_none() && a.pending);
+        assert!(!api_fields(&db, "vs1", rid, &d, false).unwrap().pending);
+        // An early-edition picture on a filed day: shown, and the final one
+        // still expected.
+        let meta = ImageMeta { has_image: true, version: 1, provisional: true, ..Default::default() };
+        db.news_image_put("vs1", rid, &d.day, b"\x89PNG\r\n\x1a\n", &meta).unwrap();
+        let a = api_fields(&db, "vs1", rid, &d, true).unwrap();
+        assert!(a.url.is_some() && a.pending && a.provisional);
+        // On the running day the early picture is all there is to wait for.
+        d.final_ = false;
+        let a = api_fields(&db, "vs1", rid, &d, true).unwrap();
+        assert!(a.url.is_some() && !a.pending && a.provisional);
+        d.final_ = true;
         let meta = ImageMeta { has_image: true, version: 2, ..Default::default() };
         db.news_image_put("vs1", rid, &d.day, b"\x89PNG\r\n\x1a\n", &meta).unwrap();
-        let (url, pending) = api_fields(&db, "vs1", rid, &d, true).unwrap();
-        assert_eq!(url.unwrap(), format!("/api/news/image/{}?instance=vs1&v=2", d.day));
-        assert!(!pending);
+        let a = api_fields(&db, "vs1", rid, &d, true).unwrap();
+        assert_eq!(a.url.unwrap(), format!("/api/news/image/{}?instance=vs1&v=2", d.day));
+        assert!(!a.pending && !a.provisional);
         assert_eq!(db.news_image_get("vs1", rid, &d.day).unwrap().unwrap(), b"\x89PNG\r\n\x1a\n");
         assert!(db.news_image_get("vs2", rid, &d.day).unwrap().is_none());
     }
@@ -3123,19 +3239,47 @@ Connection: close
         let d = digest("X", &["y"], None);
         // The real callers run this off the runtime (block_in_place /
         // spawn_blocking); the blocking HTTP client insists on the same.
-        let run = |forced| tokio::task::block_in_place(|| illustrate(&db, &ic, rid, &d, &cfg, forced).unwrap());
+        let run = |kind| tokio::task::block_in_place(|| illustrate(&db, &ic, rid, &d, &cfg, kind).unwrap());
         for n in 1..=MAX_ATTEMPTS {
-            assert!(matches!(run(false), Outcome::Failed(_)));
+            assert!(matches!(run(Draw::Filed), Outcome::Failed(_)));
             let m = db.news_image_meta("vs1", rid, &d.day).unwrap().unwrap();
             assert_eq!(m.attempts, n);
             assert!(m.next_try.is_some());
             assert_eq!(m.gave_up, n == MAX_ATTEMPTS);
         }
+        // Given up for a day, not for good.
+        let m = db.news_image_meta("vs1", rid, &d.day).unwrap().unwrap();
+        assert!(m.next_try.unwrap() > Utc::now() + ChronoDuration::hours(23));
+        // When the generator comes back to it, it starts a fresh round.
+        run(Draw::Filed);
+        let m = db.news_image_meta("vs1", rid, &d.day).unwrap().unwrap();
+        assert_eq!((m.attempts, m.gave_up), (1, false));
+        for _ in 1..MAX_ATTEMPTS {
+            run(Draw::Filed);
+        }
+        assert!(db.news_image_meta("vs1", rid, &d.day).unwrap().unwrap().gave_up);
         // A connection failure is not billed, so it did not eat the caps.
         assert_eq!(db.news_image_count("vs1", &Utc::now().format("%Y-%m-%d").to_string()).unwrap(), 0);
         // A forced retry clears the give-up (and fails again here).
-        run(true);
+        run(Draw::Forced);
         let m = db.news_image_meta("vs1", rid, &d.day).unwrap().unwrap();
         assert_eq!((m.attempts, m.gave_up), (1, false));
+    }
+
+    /// The running day's early edition is tried once and never spends the
+    /// attempts the filed picture will need.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_early_picture_is_tried_once() {
+        let db = temp_db();
+        let cfg = cfg(ImageArgs { url: Some("http://127.0.0.1:9/v1/images".into()), ..Default::default() });
+        let ic = inst(serde_json::json!({"id": "vs1"}));
+        let rid = RoundId(4);
+        let mut d = digest("X", &["y"], None);
+        d.final_ = false;
+        let out = tokio::task::block_in_place(|| illustrate(&db, &ic, rid, &d, &cfg, Draw::Early).unwrap());
+        assert!(matches!(out, Outcome::Failed(_)));
+        let m = db.news_image_meta("vs1", rid, &d.day).unwrap().unwrap();
+        assert!(m.early_failed && m.attempts == 0 && !m.gave_up && m.next_try.is_none());
+        assert!(!api_fields(&db, "vs1", rid, &d, true).unwrap().pending);
     }
 }

@@ -3965,7 +3965,9 @@ fn wiki_summarize_actions(actions: &serde_json::Value) -> serde_json::Value {
 ///
 /// Each day also carries `image` (a `/api/news/image/...` path, or null) and
 /// `image_pending` (pictures are on and this day is still expected to get
-/// one) -- the latter is what the Discord feed waits on.
+/// one, or a filed day its final one) -- the latter is what the Discord feed
+/// waits on -- and `image_provisional` (the picture is the running day's
+/// early edition, redrawn once the day is filed).
 async fn api_news(
     db: StatsDb,
     limit: Option<usize>,
@@ -3979,10 +3981,11 @@ async fn api_news(
         };
         let mut days = Vec::new();
         for d in db.news_history(rid, limit.unwrap_or(30))? {
-            let (image, pending) = news_image::api_fields(&db, &inst.id, rid, &d, enabled)?;
+            let img = news_image::api_fields(&db, &inst.id, rid, &d, enabled)?;
             let mut v = serde_json::to_value(&d)?;
-            v["image"] = serde_json::json!(image);
-            v["image_pending"] = serde_json::json!(pending);
+            v["image"] = serde_json::json!(img.url);
+            v["image_pending"] = serde_json::json!(img.pending);
+            v["image_provisional"] = serde_json::json!(img.provisional);
             days.push(v);
         }
         Ok(serde_json::json!({ "days": days, "images": enabled }))
@@ -4066,7 +4069,7 @@ async fn api_admin_news_regenerate_image(
     let inst_id = inst.id.clone();
     let day2 = day.clone();
     tokio::task::spawn_blocking(move || {
-        match news_image::illustrate(&db, &inst_cfg, rid, &digest, &cfg, true) {
+        match news_image::illustrate(&db, &inst_cfg, rid, &digest, &cfg, news_image::Draw::Forced) {
             Ok(news_image::Outcome::Stored { version }) => {
                 log::info!("ADMIN: [{inst_id}] news image for {day2} regenerated (v{version})")
             }

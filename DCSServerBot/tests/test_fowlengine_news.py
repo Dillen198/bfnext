@@ -27,14 +27,14 @@ log = logging.getLogger("test-news")
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
 
 
-def day(d, *, final=True, image=None, pending=False, rnd=5, headline=None, body=None):
+def day(d, *, final=True, image=None, pending=False, provisional=False, rnd=5, headline=None, body=None):
     return {
         "day": d, "round": rnd, "final_": final,
         "headline": headline or f"HEADLINE {d}",
         "body": body if body is not None else [f"First paragraph for {d}.", "Second."],
         "items": [{"angle": "x", "subject": "y", "weight": 50, "text": f"Template for {d}."}],
         "facts": {"campaign_day": 3, "theatre": "Caucasus"},
-        "image": image, "image_pending": pending,
+        "image": image, "image_pending": pending, "image_provisional": provisional,
     }
 
 
@@ -96,6 +96,21 @@ def test_waits_for_a_pending_picture_then_posts_without():
     # or it did not: bounded wait, then out it goes without one
     to_post, _ = nf.plan(pending, st, 1000.0 + nf.IMAGE_WAIT_SECS)
     assert len(to_post) == 1 and not to_post[0]["image"]
+
+
+def test_an_early_edition_picture_waits_for_the_final_one():
+    st = {"posted": [], "seen": {}}
+    early = "/api/news/image/2026-09-28?instance=vs1&v=1"
+    waiting = news(day("2026-09-28", image=early, pending=True, provisional=True))
+    to_post, st = nf.plan(waiting, st, 1000.0)
+    assert to_post == []
+    # the final picture landed
+    final = news(day("2026-09-28", image="/api/news/image/2026-09-28?instance=vs1&v=2"))
+    to_post, _ = nf.plan(final, st, 1100.0)
+    assert len(to_post) == 1 and to_post[0]["image"].endswith("v=2")
+    # or it did not: the early picture goes out after the same bounded wait
+    to_post, _ = nf.plan(waiting, st, 1000.0 + nf.IMAGE_WAIT_SECS)
+    assert len(to_post) == 1 and to_post[0]["image"] == early
 
 
 def test_no_wait_when_pictures_are_off_or_given_up():

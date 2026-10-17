@@ -92,7 +92,9 @@ def plan(data, state: dict | None, now: float, image_wait: float = IMAGE_WAIT_SE
         if did in done:
             continue
         first = seen.setdefault(did, now)
-        if not d.get("image") and d.get("image_pending") and now - first < image_wait:
+        # Waits for a picture, or for the final one when the day still shows
+        # its early-edition picture (`image_provisional`).
+        if (not d.get("image") or d.get("image_provisional")) and d.get("image_pending") and now - first < image_wait:
             break
         to_post.append(d)
     # Only ids still in play keep a first-seen time.

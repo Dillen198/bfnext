@@ -1984,12 +1984,17 @@ export interface NewsDay {
   /**
    * The picture filed with this dispatch, as a path under the API root
    * (`/api/news/image/<day>?instance=..&v=..`), or null when there is none.
-   * Pictures are only drawn once a day is filed, and only when bfdb has an
-   * image endpoint configured.
+   * The running day gets an early-edition picture a few hours in, redrawn
+   * when the day is filed; only when bfdb has an image endpoint configured.
    */
   image?: string | null
-  /** Pictures are on and this day is still expected to get one. */
+  /**
+   * Pictures are on and this day is still expected to get one -- or, for a
+   * filed day still showing its early-edition picture, its final one.
+   */
   image_pending?: boolean
+  /** `image` is the running day's early-edition picture, redrawn once filed. */
+  image_provisional?: boolean
 }
 
 export interface NewsArchive {
