@@ -1531,7 +1531,7 @@ DEFAULT:
         // the Manager's own tauri-wrapped key file parses to its RW line
         let (line, id) = parse_public_key(crate::update::UPDATER_PUBKEY).unwrap();
         assert!(line.starts_with("RW") && line.len() == 56, "{line}");
-        assert_eq!(id, "E3B1C9E95405E24F");
+        assert_eq!(id, "D9C1F7EAC00B6354");
         let plain = format!("untrusted comment: minisign public key: {id}\n{line}\n");
         assert_eq!(parse_public_key(&plain).unwrap().0, line);
         assert_eq!(parse_public_key(&line).unwrap().0, line);
