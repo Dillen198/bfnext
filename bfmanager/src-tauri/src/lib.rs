@@ -6,6 +6,7 @@
 //!   --console    the service loop in a terminal, for testing
 
 pub mod agent;
+pub mod autostart;
 pub mod backup;
 pub mod bot;
 pub mod botcfg;
@@ -60,6 +61,8 @@ struct AppState {
     autologon: desktop::Autologon,
     /// Signed-in user sessions (the bot runs in one of them).
     sessions: Vec<desktop::Session>,
+    /// The logon task that starts this app with Windows.
+    autostart: autostart::AutostartStatus,
 }
 
 #[tauri::command]
@@ -126,6 +129,7 @@ async fn get_state() -> CmdResult<serde_json::Value> {
             ops_error,
             autologon: desktop::autologon_status(),
             sessions: desktop::sessions(),
+            autostart: autostart::status(),
         };
         Ok(serde_json::to_value(st)?)
     })
@@ -160,7 +164,8 @@ async fn save_config(config: ManagerConfig) -> CmdResult<()> {
                 anyhow::bail!("{} is not a DCSServerBot folder (no run.py / core / plugins)", d.display());
             }
         }
-        config.save()
+        config.save()?;
+        autostart::sync(config.start_with_windows).map_err(|e| e.context("start with Windows"))
     })
     .await
 }
@@ -646,9 +651,26 @@ pub fn run() {
     let _ = config::ensure_dirs();
     tauri::Builder::default()
         // must be the first plugin: a second launch hands over and exits
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+        // (the logon task's `--tray` start finding it already running stays quiet)
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|a| a == autostart::TRAY_ARG) {
+                show_main(app)
+            }
+        }))
         .setup(|app| {
             setup_tray(app)?;
+            // The window starts hidden (tauri.conf.json): shown now, unless
+            // Windows started us at sign-in, which goes to the tray only.
+            if !std::env::args().any(|a| a == autostart::TRAY_ARG) {
+                show_main(app.handle());
+            }
+            // Keep the logon task in line with the setting, and pointing at
+            // this exe (the installer may have moved it).
+            std::thread::spawn(|| {
+                if let Err(e) = autostart::sync(ManagerConfig::load().start_with_windows) {
+                    eprintln!("start with Windows: {e:#}");
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -12,7 +12,7 @@ export default function Settings({ state: s }: { state: AppState }) {
   const set = <K extends keyof ManagerConfig>(k: K, v: ManagerConfig[K]) => setDraft({ ...draft, [k]: v })
   const dirty = JSON.stringify(draft) !== JSON.stringify(s.config)
   const busy = act.busy !== null
-  const check = (k: 'sync_plugin' | 'auto_update', label: string) => (
+  const check = (k: 'sync_plugin' | 'auto_update' | 'start_with_windows', label: string) => (
     <label className="flex items-center gap-2" style={{ fontSize: '0.72rem', cursor: 'pointer' }}>
       <input type="checkbox" checked={draft[k]} onChange={e => set(k, e.target.checked)} /> {label}
     </label>
@@ -33,6 +33,10 @@ export default function Settings({ state: s }: { state: AppState }) {
           </div>
           {check('sync_plugin', 'Keep the Fowl Engine plugin in DCSServerBot synced to this app\'s bundle')}
           {check('auto_update', 'Install new Fowl Engine Manager releases automatically')}
+          {check('start_with_windows', 'Start Fowl Engine Manager (in the tray) when Windows starts and an administrator signs in')}
+          {s.config.start_with_windows && s.autostart && !(s.autostart.installed && s.autostart.current) && (
+            <Note tone="warn">The start-with-Windows task isn't registered{s.autostart.installed ? ' for this copy of the app' : ''}. The app tries again every time it starts. (The FowlEngine service starts the server at boot either way.)</Note>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
             <Field label="Channel">
               <select style={input} value={draft.channel} onChange={e => set('channel', e.target.value as 'stable' | 'beta')}>

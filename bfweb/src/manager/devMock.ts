@@ -17,6 +17,7 @@ const state = {
     bot_dir: 'E:\\Github\\DCSServerBot', bot_command: null, sync_plugin: true, auto_update: true,
     channel: 'stable', repo: 'Dillen198/bfnext', check_hours: 6, update_window: '04:00-08:00', github_token: null,
     desktop_session: true, desktop_user: '.\\ATPAdmin', lock_after_autologon: true,
+    start_with_windows: true,
   },
   service: {
     name: 'FowlEngine', installed: true, state: 'running', start_type: 'automatic', account: 'LocalSystem',
@@ -49,6 +50,7 @@ const state = {
   ops_target: 'http://127.0.0.1:9876/stats/fowlengine/ops',
   ops_error: null as string | null,
   autologon: { enabled: false, account: null as string | null, password_stored: false, broken: false },
+  autostart: { installed: true, current: true },
   sessions: [] as { id: number; user: string; domain: string; state: 'active' | 'disconnected'; logon_age_secs: number | null }[],
 }
 

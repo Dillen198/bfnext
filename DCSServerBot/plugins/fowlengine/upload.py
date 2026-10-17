@@ -1,22 +1,32 @@
 """
 Discord drag-and-drop upload of new engine binaries (bflib.dll / bfrange.dll /
-bfdb.exe).
+bftools.exe / bfdb.exe).
 
 An admin drops a binary into the bot's admin channel; this stages it as
 `<staging_dir>/<name>.pending` (+ a `.pending.json` sidecar with
-uploader/time/size/sha/targets). The actual swap happens later,
-backup-and-replace, on the next DCS restart -- see extensions/bfbinaries for
-the engine DLLs and plugins/fowlengine/procman.py for bfdb.exe.
+uploader/time/size/sha/targets), then deletes the Discord message so the
+channel doesn't fill up with old builds (the bot's reply keeps who/what/sha).
 
-Where each file goes:
+Where each file goes, and when it lands:
 
   bfdb.exe     once, into the global `bfdb.staging_dir` -- one bfdb serves
-               every DCS server on the box.
+               every DCS server on the box -- and applied STRAIGHT AWAY:
+               procman cycles bfdb, which swaps it in on the way up (DB
+               snapshot + probation as usual). Nothing waits on a restart.
   bflib.dll    into the staging dir of every DCS instance that runs the
   bfrange.dll  campaign engine (bflib) / the training range (bfrange), i.e.
                whose BFBinaries `dll_name` (or `kind:` in bfdb.instances) says
                so. Each instance's own BFBinaries `staging_dir` from nodes.yaml,
                falling back to the global `bfdb.staging_dir`.
+  bftools.exe  into the same staging dir, for every instance with a BFWeather
+               `bftools` path; swapped in over that path at DCS start, before
+               BFWeather builds the mission with it.
+
+The DLLs and bftools.exe are swapped by extensions/bfbinaries on the server's
+next DCS start. The reply carries buttons to pick when that is: "Apply when
+empty" (the bot restarts DCS once nobody is on it -- the choice is kept in the
+plugin state, so it survives a bot restart or a crash of the whole box),
+"Restart now", or leave it for the next scheduled restart.
 
 Which instances: dropped into a server's own channel -> that server only (and
 only if it runs that engine); dropped into the bot's common admin channel ->
@@ -43,12 +53,16 @@ __all__ = [
     "BFBINARY_PATTERNS", "ENGINE_DLLS", "KIND_DLL", "handle_bfbinary_upload",
     "global_staging_dir", "resolve_engine_binaries", "engine_binaries",
     "pick_targets", "group_by_staging_dir", "is_remote_node",
+    "BFTOOLS", "SWAPPED_AT_START", "bftools_path_of", "pick_bftools_targets",
 ]
 
 # exact-match filenames we accept (matched case-insensitively by is_valid)
-BFBINARY_PATTERNS = [r"^bflib\.dll$", r"^bfrange\.dll$", r"^bfdb\.exe$"]
+BFBINARY_PATTERNS = [r"^bflib\.dll$", r"^bfrange\.dll$", r"^bfdb\.exe$", r"^bftools\.exe$"]
 ENGINE_DLLS = ("bflib.dll", "bfrange.dll")
-ACCEPTED = ENGINE_DLLS + ("bfdb.exe",)
+BFTOOLS = "bftools.exe"
+# what extensions/bfbinaries swaps in when a DCS server starts
+SWAPPED_AT_START = ENGINE_DLLS + (BFTOOLS,)
+ACCEPTED = SWAPPED_AT_START + ("bfdb.exe",)
 # instance kind (bfdb.instances `kind:`) -> the engine DLL it loads
 KIND_DLL = {"campaign": "bflib.dll", "range": "bfrange.dll"}
 
@@ -157,6 +171,28 @@ def pick_targets(dll_name: str, servers: Iterable, binaries_of: Callable[[object
         return [], (f"no server here runs `{dll_name}` (check `dll_name` on the BFBinaries "
                     f"extension in nodes.yaml, or `kind:` in bfdb.instances).")
     return out, None
+
+
+def bftools_path_of(cog, server) -> Optional[str]:
+    """The live bftools.exe a server's BFWeather extension runs, or None."""
+    try:
+        return _clean((cog._ext_cfg(server, "BFWeather") or {}).get("bftools"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def pick_bftools_targets(servers: Iterable, binaries_of: Callable[[object], dict],
+                         tools_of: Callable[[object], Optional[str]],
+                         scoped=None) -> tuple[list, Optional[str]]:
+    """The (server, binaries) pairs a dropped bftools.exe is staged for: every
+    server with a BFWeather `bftools` path (or just `scoped`), or ([], why)."""
+    pool = [scoped] if scoped is not None else list(servers)
+    out = [(s, binaries_of(s)) for s in pool if tools_of(s)]
+    if out:
+        return out, None
+    if scoped is not None:
+        return [], f"**{scoped.name}** has no BFWeather `bftools` path in nodes.yaml, so nothing would run it."
+    return [], "no server here has a BFWeather `bftools` path in nodes.yaml."
 
 
 def group_by_staging_dir(targets: list) -> dict:
@@ -293,44 +329,69 @@ async def handle_bfbinary_upload(cog, message) -> bool:
     lines: list[str] = []
     warnings: list[str] = []
     audit: list[str] = []
-    staged_any = False
+    staged_for: list[str] = []   # servers with a DLL / bftools.exe waiting on a DCS start
+    failed = False
+
+    async def refuse(text: str) -> None:
+        nonlocal failed
+        failed = True
+        await message.channel.send(text)
 
     for att in message.attachments:
         name = (att.filename or "").lower()
         if name not in ACCEPTED:
             continue
         if att.size > _MAX_SIZE:
-            await message.channel.send(
-                f"{icon('bad')} `{name}` is {att.size / 1024 / 1024:.0f} MB -- refusing, that's not a real engine binary."
-            )
+            await refuse(f"{icon('bad')} `{name}` is {att.size / 1024 / 1024:.0f} MB -- refusing, "
+                         f"that's not a real engine binary.")
             continue
 
         if name == "bfdb.exe":
             staging = procman.staging_dir if procman else global_staging_dir(cog.get_config() or {})
             if not staging:
-                await message.channel.send(
-                    f"{icon('bad')} `bfdb.staging_dir` (or `bfdb.home`) is not configured in fowlengine.yaml.")
+                await refuse(f"{icon('bad')} `bfdb.staging_dir` (or `bfdb.home`) is not configured in fowlengine.yaml.")
                 continue
             node = local_node or (scoped.node if scoped else (servers[0].node if servers else None))
             sidecar, err = await _stage_one(node, staging, name, att, notes, message.author, ["bfdb"])
             if err:
-                await message.channel.send(f"{icon('bad')} Failed to stage `{name}`: {err}")
+                await refuse(f"{icon('bad')} Failed to stage `{name}`: {err}")
                 continue
-            staged_any = True
-            lines.append(f"• `{name}` — {sidecar['size'] / 1024 / 1024:.1f} MB, "
-                         f"`sha256:{(sidecar['sha256'] or '')[:12]}` → bfdb (applies on its next restart)")
+            head = (f"• `{name}` — {sidecar['size'] / 1024 / 1024:.1f} MB, "
+                    f"`sha256:{(sidecar['sha256'] or '')[:12]}` → bfdb")
+            # No waiting for a restart: bfdb is ours to cycle, and its start
+            # swaps the staged exe in (DB snapshot + probation) on the way up.
+            if procman is not None and procman.enabled:
+                healthy = None
+                try:
+                    await procman.restart_if_pending(getattr(cog, "_bfdb_admin_password", None) or "")
+                    healthy = await procman.health_ok()
+                except Exception as ex:  # noqa: BLE001
+                    warnings.append(f"{icon('warning')} bfdb restart to apply `{name}` failed: {ex} -- "
+                                    f"it is still staged; `/feops stage_apply` retries.")
+                if procman.pending_info(name):
+                    lines.append(head + " — **still staged**: the swap did not happen, see the ops channel")
+                else:
+                    lines.append(head + (" — applied, bfdb restarted" if healthy
+                                         else " — applied, bfdb restarting (not answering yet)"))
+            else:
+                lines.append(head + " — staged only: `bfdb.manage` is off, so the bot can't restart bfdb; "
+                                    "it swaps in the next time the bot starts it")
             audit.append(f"`{name}` → bfdb, sha256 `{sidecar['sha256'] or '?'}`")
-            await bot.audit(f'staged engine binary "{name}"', server=scoped, user=message.author)
+            await bot.audit(f'uploaded engine binary "{name}"', server=scoped, user=message.author)
             continue
 
-        targets, why = pick_targets(name, servers, lambda s: engine_binaries(cog, s), scoped)
+        if name == BFTOOLS:
+            targets, why = pick_bftools_targets(servers, lambda s: engine_binaries(cog, s),
+                                                lambda s: bftools_path_of(cog, s), scoped)
+        else:
+            targets, why = pick_targets(name, servers, lambda s: engine_binaries(cog, s), scoped)
         if not targets:
-            await message.channel.send(f"{icon('bad')} Not staging `{name}`: {why}")
+            await refuse(f"{icon('bad')} Not staging `{name}`: {why}")
             continue
         for (_node_name, staging), group in group_by_staging_dir(targets).items():
             names = [s.name for s, _ in group]
             if not group[0][1]["staging_dir"]:
-                await message.channel.send(
+                await refuse(
                     f"{icon('bad')} No staging dir for {', '.join(names)}: set `staging_dir` on its BFBinaries "
                     f"extension in nodes.yaml (or `bfdb.staging_dir` in fowlengine.yaml).")
                 continue
@@ -338,9 +399,8 @@ async def handle_bfbinary_upload(cog, message) -> bool:
             node = getattr(group[0][0], "node", None) or local_node
             sidecar, err = await _stage_one(node, staging_dir, name, att, notes, message.author, names)
             if err:
-                await message.channel.send(f"{icon('bad')} Failed to stage `{name}` for {', '.join(names)}: {err}")
+                await refuse(f"{icon('bad')} Failed to stage `{name}` for {', '.join(names)}: {err}")
                 continue
-            staged_any = True
             when = _next_restart_hint(group[0][0])
             on_node = f" on node `{sidecar['node']}`" if sidecar.get("node") else ""
             lines.append(f"• `{name}` — {sidecar['size'] / 1024 / 1024:.1f} MB, "
@@ -350,33 +410,62 @@ async def handle_bfbinary_upload(cog, message) -> bool:
             if len(group) > 1:
                 warnings.append(
                     f"{icon('warning')} {', '.join(names)} share one staging dir, so whichever restarts first "
-                    f"takes `{name}` and the other keeps its old engine. Give each its own "
+                    f"takes `{name}` and the other keeps its old one. Give each its own "
                     f"BFBinaries `staging_dir` in nodes.yaml.")
             for s, b in group:
                 if not b["has_extension"]:
                     warnings.append(
                         f"{icon('warning')} **{s.name}** has no BFBinaries extension, so nothing swaps `{name}` in "
                         f"on restart -- use `/feops stage_apply` once it is shut down.")
+                elif s.name not in staged_for:
+                    staged_for.append(s.name)
             for s, _ in group:
                 await bot.audit(f'staged engine binary "{name}"', server=s, user=message.author)
 
-    if not staged_any:
+    if not lines:
         return True
 
-    out = [f"{icon('good')} Staged -- each server swaps it in on its own next DCS restart:"]
+    by = f"from {getattr(message.author, 'mention', None) or message.author}"
+    if staged_for:
+        out = [f"{icon('good')} Uploaded {by} -- staged, each server swaps it in on its next DCS start:"]
+    else:
+        out = [f"{icon('good')} Uploaded {by}:"]
     out += lines
+    if notes:
+        out.append(f"notes: {notes[:300]}")
     out += warnings
-    out.append("Use `/feops stage_apply` to swap it in now, or `/feops stage_cancel` to discard.")
-    await message.channel.send("\n".join(out)[:1990])
+    view = None
+    if staged_for:
+        out.append("Pick when below -- **Apply when empty** restarts DCS as soon as nobody is on it. "
+                   "Or later: `/feops stage_apply` / `/feops stage_cancel`.")
+        make_view = getattr(cog, "staged_apply_view", None)
+        if make_view:
+            try:
+                view = make_view(staged_for, roles)
+            except Exception:  # noqa: BLE001 - the buttons are a convenience
+                view = None
+    if view is not None:
+        await message.channel.send("\n".join(out)[:1990], view=view)
+    else:
+        await message.channel.send("\n".join(out)[:1990])
     # An audit line in the ops channel with the FULL sha256, so any staged
     # binary can be traced back to who dropped it and matched to a build.
     notify = getattr(cog, "notify_ops", None)
     if notify and audit:
         try:
-            await notify(f"{icon('upload')} **{message.author}** (`{getattr(message.author, 'id', '?')}`) staged an engine "
+            await notify(f"{icon('upload')} **{message.author}** (`{getattr(message.author, 'id', '?')}`) uploaded an engine "
                          f"binary from Discord:\n" + "\n".join(audit))
         except Exception:  # noqa: BLE001 - the audit notice is best-effort
             pass
+    # Keep the channel clean: the file is on disk now and the reply above
+    # says who sent what. If anything in it was refused, leave it for a retry.
+    if not failed:
+        try:
+            await message.delete()
+        except Exception as ex:  # noqa: BLE001 - no Manage Messages permission, or already gone
+            log = getattr(cog, "log", None)
+            if log:
+                log.info(f"FowlEngine: could not delete the binary upload message: {ex}")
     return True
 
 

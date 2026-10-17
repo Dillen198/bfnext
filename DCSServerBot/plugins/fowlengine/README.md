@@ -21,7 +21,7 @@ The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaig
 - **GCI transcript relay:** set `gci_transcript_channel` and the bot tails bfdb's `/ws/gci`, posting every AWACS call to that channel prefixed 🔵/🔴 (replaces the raw `discord_webhook_url`).
 - **War diary feed:** set `news_channel` (per server) and each newly *filed* daily dispatch of the war diary (bfdb's `GET /api/news`, filed a little after 00:00 UTC) is posted once: headline, the dispatch, a "Read more" link to the dashboard's War Diary, and the day's picture attached when bfdb draws them (`bfdb.news_image_*`). A picture still being drawn is waited for up to 10 minutes, then the dispatch goes out without one. Posted ids live in the state file, so restarts never repost; switching it on posts only the latest dispatch.
 - **Comms, Rules & Links embed:** set `server_info_channel` for one auto-updating embed with the GCI/AWACS frequencies, each side's planned comms channels, the campaign rules (lives, side lock, what earns and costs points) and the dashboard (and optional `wiki_url`) links — only what DCSServerBot's own server-status embed doesn't already show. Comms and rules are the static config from bfdb's public `/api/wiki/facts` (`serverinfo.py` formats them); the live comms overlay stays in the per-side briefing channels. `/fe_gci` gives any player the current GCI freqs on demand.
-- **Staged engine updates:** drag `bflib.dll` or `bfdb.exe` into the bot's admin channel -> staged, then swapped in (after a timestamped backup) on the next scheduled DCS restart. `bflib.dll` via the `BFBinaries` extension, `bfdb.exe` via this plugin. `/feops stage_status | stage_cancel | stage_apply` to control it. No manual server shutdown needed to stage.
+- **Staged engine updates:** drag `bflib.dll`, `bfrange.dll`, `bftools.exe` or `bfdb.exe` into the bot's admin channel. `bfdb.exe` is applied straight away (bfdb is cycled). The DLLs and `bftools.exe` are staged and swapped in (after a timestamped backup) by the `BFBinaries` extension at the server's next DCS start; buttons on the reply pick **Apply when empty** (the bot restarts DCS once nobody is on it), **Restart now**, or the next scheduled restart. The upload message is deleted once its files are on disk. An "apply when empty" survives a bot restart or a crash of the box, and a staged build that a DCS start missed (e.g. after a crash) is queued to apply when empty automatically. `/feops stage_status | stage_cancel | stage_apply` to control it.
 - **Engine Error Feed:** bfdb keeps a rolling buffer of ERROR/WARN lines from the live engine log and exposes it at the admin-only `/api/admin/engine-errors` endpoint, shown as a persistent panel on the `bfweb` admin page -- so recent errors are visible even if nobody had the dashboard or Discord open when they happened, alongside the existing Discord relay (Live Engine Log Relay, above).
 
 ## Installation
@@ -89,6 +89,8 @@ swap) is configured in `nodes.yaml`, not here.
 - `/fe_objective <name>` - owner / health / priority for one objective (substring match).
 - `/fe_gci` - current GCI (AWACS) frequencies, callsigns and usage.
 - `/fe_briefing <server>` - your own coalition's live situation report, privately. Side comes from your in-game registration; there is no way to ask for the other one.
+- `/fe_card [member]` - a pilot card image (level, XP, squadron and headline stats) from bfdb's `/api/pilot/<ucid>/card.png`. Needs a linked game account (`/linkme`).
+- `/fe_rotation <server>` - the theatre rotation: what is flying now and what comes next (see `rotation:` in the sample config).
 
 Live stats, the leaderboard, who's online and the full objective list all
 live on the web dashboard now -- `/fe_dashboard` points there.
@@ -96,12 +98,14 @@ live on the web dashboard now -- `/fe_dashboard` points there.
 ### Commander & Admin (`DCS Admin`)
 - `/fe_terminal` - interactive Commander Terminal: drop cargo/infantry at an airbase, and set/clear objective priority.
 - `/fe_ban <ucid> <name> [reason] [until]` / `/fe_unban <ucid>` - campaign ban management.
+- `/fe_rotation_vote <server> [hours]` - open a Discord poll on the next theatre (default 24 h, max 168).
+- `/fe_rotation_advance <server>` - record that the server has moved on to the next theatre, once its mission and config are switched.
 - `/feops bfdb_restart` - restart bfdb (re-renders `gci.json`, picks up a staged `bfdb.exe`).
 - `/feops gci_show` - print the effective `gci.json` (secrets masked).
-- `/feops stage_status | stage_cancel <which> | stage_apply <server> <which>` - manage staged engine binaries.
+- `/feops stage_status | stage_cancel <which> | stage_apply <server> <which> [when]` - manage staged engine binaries (`when`: now / when empty / restart DCS now).
 - `/feops briefing_lock <server> [confirm]` - show, then apply, the channel overwrites that lock each briefing channel to its coalition role. Dry-run unless `confirm: True`.
 - `/feops icons_install` / `icons_status` / `icons_uninstall` - manage the custom emoji set. `icons_install` uploads only the icons that are missing and says what it added, skipped and failed; safe to re-run.
-- **Upload:** drop `bflib.dll` / `bfdb.exe` into the admin channel (the bot's `Admin` role only; `binary_upload_role` changes it) to stage it. Each staged file is posted to `ops_channel` with its sha256.
+- **Upload:** drop `bflib.dll` / `bfrange.dll` / `bftools.exe` / `bfdb.exe` into the admin channel (the bot's `Admin` role only; `binary_upload_role` changes it) to stage it. Each staged file is posted to `ops_channel` with its sha256.
 
 ## Icon Set
 
@@ -165,7 +169,7 @@ silently drops back to unicode until the new name is installed).
   The key goes to bfdb through its environment, never the command line, and is masked in logs. Paid OpenAI-compatible endpoints (`news_image_provider: openai`) work too; see `fowlengine.sample.yaml`.
 - **War diary** (`newsfeed.py`): public `GET /api/news?instance=…` (each filed day carries `image` / `image_pending`) and `GET /api/news/image/<day>`; the picture is downloaded from bfdb and uploaded as an attachment, so Discord never needs bfdb's public URL. Pictures themselves are drawn by bfdb (`bfdb/src/news_image.rs`), never by the bot.
 - **Process ownership** (`bfdb.manage`, `procman.py`): the bot runs `bfdb.exe` + the netidx resolver as children, health-checks bfdb, renders `gci.json` from YAML.
-- **Restart-cycle binary swap** (`extensions/bfbinaries`): `prepare()` swaps a staged `bflib.dll` while DCS is down; a staged `bfdb.exe` is applied by procman on its next restart. Both back up the previous binary and never block a restart.
+- **Restart-cycle binary swap** (`extensions/bfbinaries`): `prepare()` swaps a staged `bflib.dll` / `bfrange.dll` / `bftools.exe` while DCS is down; a staged `bfdb.exe` is applied by procman when it (re)starts bfdb. Both back up the previous binary and never block a restart.
 - **View lock** (`extensions/bfviewlock`): `prepare()` writes the camera restrictions DCS only reads from the *server's* `Config/options.lua` -- F5 nearest-aircraft, F11 free camera and spectator external views, all off by default. These cannot go in a mission's `forcedOptions` (they are not enforceable there), unlike the per-role F10 map view, which `bftools miz` bakes into every generated mission. Re-applied on every restart, idempotent, and never blocks a start.
 
 - **Multiple DCS servers on one machine:** one bfdb fronts them all. Add a

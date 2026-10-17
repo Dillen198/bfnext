@@ -122,6 +122,11 @@ pub struct ManagerConfig {
     /// Lock the desktop right after Windows signed that user in by itself.
     #[serde(default = "default_true")]
     pub lock_after_autologon: bool,
+    /// Start this app (in the tray) when an administrator signs in to
+    /// Windows -- a logon task, see autostart.rs. The service runs from boot
+    /// either way.
+    #[serde(default = "default_true")]
+    pub start_with_windows: bool,
 }
 
 impl Default for ManagerConfig {
@@ -205,7 +210,7 @@ mod tests {
     #[test]
     fn defaults() {
         let c = ManagerConfig::default();
-        assert!(c.auto_update && c.sync_plugin);
+        assert!(c.auto_update && c.sync_plugin && c.start_with_windows);
         assert_eq!(c.channel, "stable");
         assert_eq!(c.bot_command(), "run.cmd");
     }

@@ -20,7 +20,8 @@ from .procman import Procman, BFDB_HEALTH_CHECK_SECS, sha256_of, effective_insta
 from .autoupdate import Updater
 from .opsapi import OpsApi
 from .loganalyzer import LogAnalyzer
-from .upload import handle_bfbinary_upload, engine_binaries, ENGINE_DLLS, is_remote_node
+from .upload import (handle_bfbinary_upload, engine_binaries, ENGINE_DLLS, is_remote_node,
+                     BFTOOLS, SWAPPED_AT_START, bftools_path_of)
 from .briefing import build_briefing_embed
 from .icons import IconSet, icon, icon_emoji, render as render_icons
 from . import rangefeed
@@ -409,6 +410,56 @@ class CommanderTerminalView(discord.ui.View):
         else:
             await interaction.followup.send(f"{icon('bad')} Failed to spawn: HTTP {status}")
 
+class StagedApplyView(discord.ui.View):
+    """Buttons under a staged-binary reply (upload.py): when the servers it
+    was staged for should swap it in. The choice is the cog's; this only asks.
+    Gone after `timeout` -- `/feops stage_apply` does the same later."""
+
+    def __init__(self, cog, server_names: list, roles):
+        super().__init__(timeout=6 * 3600)
+        self.cog = cog
+        self.server_names = list(server_names)
+        self.roles = [str(r) for r in (roles or [])]
+
+    def _allowed(self, member) -> bool:
+        have = set()
+        for r in getattr(member, "roles", None) or []:
+            have.add(str(getattr(r, "name", "")))
+            have.add(str(getattr(r, "id", "")))
+        return any(r in have for r in self.roles)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self._allowed(interaction.user):
+            return True
+        await interaction.response.send_message("Only the role that can stage a binary can pick when it applies.",
+                                                ephemeral=True)
+        return False
+
+    async def _done(self, interaction: discord.Interaction, text: str):
+        for child in self.children:
+            child.disabled = True
+        self.stop()
+        try:
+            await interaction.response.edit_message(view=self)
+        except Exception:  # noqa: BLE001 - message gone; still answer below
+            pass
+        await interaction.followup.send(text)
+
+    @discord.ui.button(label="Apply when empty", style=discord.ButtonStyle.primary)
+    async def when_empty_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        text = self.cog.schedule_apply_when_empty(self.server_names, str(interaction.user))
+        await self._done(interaction, text)
+
+    @discord.ui.button(label="Restart now", style=discord.ButtonStyle.danger)
+    async def now_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._done(interaction, await self.cog.restart_to_apply(self.server_names, str(interaction.user)))
+
+    @discord.ui.button(label="Next restart", style=discord.ButtonStyle.secondary)
+    async def later_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._done(interaction, f"{icon('pending')} Left staged -- swaps in on the next DCS restart of "
+                                      f"{', '.join(self.server_names)}.")
+
+
 class FowlEngine(Plugin):
     """
     Fowl Engine plugin for DCSServerBot.
@@ -444,6 +495,14 @@ class FowlEngine(Plugin):
         # War diary feed: server name -> {"posted": [ids], "seen": {id: ts}}.
         # Persisted, so a restart never posts a dispatch twice.
         self.news_feed_state = {}
+        # Staged DLL / bftools.exe an admin asked to "apply when empty":
+        # server name -> {"by", "utc", "attempts", "why"}. Persisted (fsync'd),
+        # so a bot restart or a crash of the whole box doesn't drop the ask.
+        self.stage_apply_when_empty = {}
+        self._stage_empty_since = {}    # server name -> ts it was first seen empty
+        self._stage_restarting = {}     # server name -> ts of the restart we started
+        self._stage_missed_seen = set()  # (server name, DCS start ts) already checked
+        self._stage_parts_swept = False
         # Status-embed map snapshot per server: {"sig", "at", "png",
         # "failed_at"}. Memory only -- after a restart the first tick captures
         # afresh (and re-uploads), which is also what re-binds the image.
@@ -476,6 +535,7 @@ class FowlEngine(Plugin):
                     self.range_status_msg_ids = state.get('range_status_msg_ids') or {}
                     self.range_feed_cursors = state.get('range_feed_cursors') or {}
                     self.news_feed_state = state.get('news_feed_state') or {}
+                    self.stage_apply_when_empty = state.get('stage_apply_when_empty') or {}
             except Exception as ex:
                 self.log.error(f"Failed to load Fowl Engine state: {ex}")
         # rendered instances.json, cached by (path, mtime) -- see _instances_list
@@ -656,6 +716,7 @@ class FowlEngine(Plugin):
         utils.safe_start(self.post_news)
         utils.safe_start(self.autoupdate_loop)
         utils.safe_start(self.status_watch)
+        utils.safe_start(self.stage_apply_watch)
         self._warn_shared_channels()
 
     # Channels that must not be shared between DCS servers: each carries a
@@ -756,6 +817,7 @@ class FowlEngine(Plugin):
         await utils.safe_cancel(self.post_news)
         await utils.safe_cancel(self.autoupdate_loop)
         await utils.safe_cancel(self.status_watch)
+        await utils.safe_cancel(self.stage_apply_watch)
         if self.opsapi:
             try:
                 self.opsapi.unregister()
@@ -849,6 +911,242 @@ class FowlEngine(Plugin):
     async def before_status_watch(self):
         await self.bot.wait_until_ready()
 
+    # ── staged DLL / bftools.exe: apply when empty, and catch-up after a crash ─
+
+    def staged_apply_view(self, server_names: list, roles):
+        """The buttons under a staged-binary reply (upload.py)."""
+        return StagedApplyView(self, server_names, roles)
+
+    def _stage_dir_of(self, server) -> str:
+        b = self._engine_binaries(server)
+        return b["staging_dir"] or (self.procman.staging_dir if self.procman else "")
+
+    def _swap_names_of(self, server) -> list:
+        """What BFBinaries swaps in at this server's DCS start: its engine DLL,
+        and bftools.exe when it has a BFWeather `bftools` path."""
+        names = [self._engine_binaries(server)["dll_name"]]
+        if bftools_path_of(self, server):
+            names.append(BFTOOLS)
+        return names
+
+    async def _pending_swaps(self, server, manual_only: bool = False) -> list:
+        """[(name, pending path)] staged for this server's next DCS start.
+        `manual_only` leaves out what the auto-updater staged (it applies its
+        own on its own policy)."""
+        sdir = self._stage_dir_of(server)
+        if not sdir:
+            return []
+        out = []
+        for name in self._swap_names_of(server):
+            path = os.path.join(sdir, f"{name}.pending")
+            if self._on_remote_node(server):
+                try:
+                    _, files = await server.node.list_directory(sdir, pattern=f"{name}.pending")
+                except Exception:  # noqa: BLE001 - node down / dir missing
+                    continue
+                if files:
+                    out.append((name, path))
+                continue
+            if not os.path.exists(path):
+                continue
+            if manual_only:
+                try:
+                    with open(path + ".json", encoding="utf-8") as fh:
+                        if (json.load(fh) or {}).get("source") == "autoupdate":
+                            continue
+                except (OSError, ValueError):
+                    pass
+            out.append((name, path))
+        return out
+
+    def _stage_empty_minutes(self) -> float:
+        cfg = (self.get_config() or {}).get("stage_apply") or {}
+        try:
+            return max(0.0, float(cfg.get("empty_minutes", 3)))
+        except (TypeError, ValueError):
+            return 3.0
+
+    def schedule_apply_when_empty(self, server_names: list, by: str, why: str = "") -> str:
+        """Remember that these servers should restart DCS to swap in what is
+        staged as soon as nobody is on them. Kept in the plugin state."""
+        now = datetime.now(timezone.utc).isoformat()
+        for name in server_names:
+            self.stage_apply_when_empty[name] = {"by": by, "utc": now, "attempts": 0, "why": why}
+            self._stage_empty_since.pop(name, None)
+        self.save_state()
+        mins = self._stage_empty_minutes()
+        return (f"{icon('pending')} **{', '.join(server_names)}**: DCS restarts to apply the staged build once "
+                f"it has been empty for {mins:g} min (a server that is down takes it on its next start).")
+
+    async def restart_to_apply(self, server_names: list, by: str) -> str:
+        """Restart DCS now on each named server (BFBinaries swaps on the way up)."""
+        out = []
+        for name in server_names:
+            server = self.bot.servers.get(name)
+            if server is None:
+                out.append(f"{name}: not known to the bot.")
+                continue
+            if server.status not in (Status.RUNNING, Status.PAUSED):
+                out.append(f"{name}: is `{server.status.name}` -- it swaps the build in on its next start.")
+                continue
+            self.stage_apply_when_empty.pop(name, None)
+            self.save_state()
+            asyncio.create_task(self._restart_for_stage(server, f"applying a staged build (asked by {by})"))
+            out.append(f"{icon('restart')} {name}: restarting DCS now.")
+        return "\n".join(out) or "Nothing to restart."
+
+    async def _restart_for_stage(self, server, why: str) -> None:
+        self._stage_restarting[server.name] = time.time()
+        try:
+            if self.updater:
+                # records it as an orderly restart, so it is never taken for a crash
+                await self.updater.restart_dcs(server, why)
+            else:
+                await self.notify_ops(f"{icon('restart')} **{server.name}**: restarting DCS -- {why}.")
+                await server.shutdown()
+                await server.startup()
+        except Exception as ex:  # noqa: BLE001
+            self.log.error(f"FowlEngine: restart of {server.name} to apply a staged build failed: {ex}")
+        finally:
+            self._stage_restarting.pop(server.name, None)
+
+    def _sweep_part_files(self) -> None:
+        """A crash mid-download leaves `<name>.pending.part` behind; it never
+        swaps in (only a complete .pending does) but it would sit there."""
+        dirs = set()
+        if self.procman and self.procman.staging_dir:
+            dirs.add(self.procman.staging_dir)
+        for server in self.bot.servers.values():
+            if self._on_remote_node(server):
+                continue
+            try:
+                d = self._stage_dir_of(server)
+            except Exception:  # noqa: BLE001
+                continue
+            if d:
+                dirs.add(d)
+        for d in dirs:
+            try:
+                names = os.listdir(d)
+            except OSError:
+                continue
+            for f in names:
+                if f.endswith(".pending.part"):
+                    try:
+                        os.remove(os.path.join(d, f))
+                        self.log.info(f"FowlEngine: removed an interrupted upload {os.path.join(d, f)}")
+                    except OSError:
+                        pass
+
+    async def _check_missed_stage(self, server) -> None:
+        """DCS is up, but on a start that should have swapped a staged build in
+        and didn't -- the box came back from a crash and DCS was started before
+        the swap could run, or by something other than the bot. The file is
+        older than the DCS process, so that start missed it: queue it to apply
+        when the server is empty instead of leaving it for a restart nobody
+        knows is needed."""
+        if server.name in self.stage_apply_when_empty or self._on_remote_node(server):
+            return
+        proc = getattr(server, "process", None)
+        try:
+            started = float(proc.create_time()) if proc else None
+        except Exception:  # noqa: BLE001 - process gone / no access
+            started = None
+        if not started:
+            return
+        key = (server.name, int(started))
+        if key in self._stage_missed_seen:
+            return
+        self._stage_missed_seen.add(key)
+        if not self._engine_binaries(server).get("has_extension"):
+            return  # nothing would swap it at a restart either
+        missed = []
+        for name, path in await self._pending_swaps(server, manual_only=True):
+            try:
+                if os.path.getmtime(path) < started - 5:
+                    missed.append(name)
+            except OSError:
+                continue
+        if not missed:
+            return
+        self.schedule_apply_when_empty([server.name], "crash recovery", why="missed at the last DCS start")
+        await self.notify_ops(
+            f"{icon('warning')} **{server.name}**: {', '.join(f'`{n}`' for n in missed)} was staged before this "
+            f"DCS start but did not get swapped in (the box or the bot went down in between?). It applies "
+            f"automatically once the server has been empty for {self._stage_empty_minutes():g} min -- "
+            f"`/feops stage_cancel` to drop it.")
+
+    @tasks.loop(seconds=30.0)
+    async def stage_apply_watch(self):
+        """Runs "apply when empty" for staged DLLs / bftools.exe, and spots a
+        staged build a DCS start missed (see _check_missed_stage)."""
+        if not self._stage_parts_swept:
+            self._stage_parts_swept = True
+            try:
+                self._sweep_part_files()
+            except Exception as ex:  # noqa: BLE001
+                self.log.debug(f"FowlEngine: .part sweep failed: {ex}")
+        for server in list(self.bot.servers.values()):
+            if server.status in (Status.RUNNING, Status.PAUSED):
+                try:
+                    await self._check_missed_stage(server)
+                except Exception as ex:  # noqa: BLE001 - one server never stops the rest
+                    self.log.debug(f"FowlEngine: {server.name}: missed-stage check failed: {ex}")
+        now = time.time()
+        wait = self._stage_empty_minutes() * 60
+        for name, ent in list(self.stage_apply_when_empty.items()):
+            server = self.bot.servers.get(name)
+            if server is None:
+                continue  # not registered (yet) -- keep the ask
+            try:
+                pending = await self._pending_swaps(server)
+            except Exception as ex:  # noqa: BLE001
+                self.log.debug(f"FowlEngine: {name}: staged lookup failed: {ex}")
+                continue
+            if not pending:
+                # swapped in (by our restart, a scheduled one, or a manual
+                # start) or discarded -- either way, done
+                self.stage_apply_when_empty.pop(name, None)
+                self._stage_empty_since.pop(name, None)
+                self.save_state()
+                if ent.get("attempts"):
+                    await self.notify_ops(f"{icon('good')} **{name}**: staged build applied.")
+                continue
+            if name in self._stage_restarting:
+                continue
+            if server.status not in (Status.RUNNING, Status.PAUSED):
+                self._stage_empty_since.pop(name, None)
+                continue  # down: BFBinaries swaps it in on its next start
+            populated = False
+            try:
+                populated = bool(server.is_populated())
+            except Exception:  # noqa: BLE001
+                pass
+            if populated:
+                self._stage_empty_since.pop(name, None)
+                continue
+            since = self._stage_empty_since.setdefault(name, now)
+            if now - since < wait:
+                continue
+            if int(ent.get("attempts") or 0) >= 2:
+                self.stage_apply_when_empty.pop(name, None)
+                self.save_state()
+                await self.notify_ops(
+                    f"{icon('warning')} **{name}**: {', '.join(f'`{n}`' for n, _ in pending)} is still staged after "
+                    f"two restarts -- giving up on applying it when empty. Check the BFBinaries lines in the "
+                    f"DCSServerBot log, then `/feops stage_apply` or `/feops stage_cancel`.")
+                continue
+            ent["attempts"] = int(ent.get("attempts") or 0) + 1
+            self.save_state()
+            self._stage_empty_since.pop(name, None)
+            what = ", ".join(n for n, _ in pending)
+            asyncio.create_task(self._restart_for_stage(
+                server, f"server empty, applying staged {what} (asked by {ent.get('by', '?')})"))
+
+    @stage_apply_watch.before_loop
+    async def before_stage_apply_watch(self):
+        await self.bot.wait_until_ready()
+
     # ── Discord message hook: engine-binary drag-and-drop upload ─────────────
 
     @commands.Cog.listener()
@@ -889,6 +1187,7 @@ class FowlEngine(Plugin):
                     'range_status_msg_ids': self.range_status_msg_ids,
                     'range_feed_cursors': self.range_feed_cursors,
                     'news_feed_state': self.news_feed_state,
+                    'stage_apply_when_empty': self.stage_apply_when_empty,
                 }, f)
                 f.flush()
                 os.fsync(f.fileno())
@@ -1364,6 +1663,8 @@ class FowlEngine(Plugin):
             b = self._engine_binaries(server) if server and not self._on_remote_node(server) else None
             if b and self.procman.pending_info(b["dll_name"], b["staging_dir"] or None):
                 out.append(b["dll_name"])
+            if b and bftools_path_of(self, server) and self.procman.pending_info(BFTOOLS, b["staging_dir"] or None):
+                out.append(BFTOOLS)
         except Exception as ex:  # noqa: BLE001
             self.log.debug(f"FowlEngine: staged-DLL lookup failed: {ex}")
         if self.procman.pending_info("bfdb.exe"):
@@ -2000,6 +2301,7 @@ class FowlEngine(Plugin):
             self._kill_cursor.pop(server_name, None)
             self._kill_streaks.setdefault(server_name, {}).clear()
             self._kill_announced.setdefault(server_name, {}).clear()
+
 
     async def _campaign_event_poll(self, server: Server):
         config = self.get_config(server) or {}
@@ -3290,7 +3592,31 @@ class FowlEngine(Plugin):
                 f"`sha256:{(info.get('sha256') or '')[:12]}` · by {info.get('uploader', '?')} "
                 f"at {info.get('utc', '?')}" + (f"\n   notes: {info['notes']}" if info.get('notes') else ""))
 
-    @feops.command(name="stage_status", description="Show any staged bflib.dll / bfrange.dll / bfdb.exe waiting to be applied.")
+    def _staged_bftools(self, only=None) -> list:
+        """[(staging dir, [server names], pending info)] for hand-staged
+        bftools.exe on this PC, one entry per staging dir."""
+        pm = self.procman
+        if not pm:
+            return []
+        seen: dict = {}
+        servers = [only] if only is not None else list(self.bot.servers.values())
+        for server in servers:
+            if self._on_remote_node(server) or not bftools_path_of(self, server):
+                continue
+            try:
+                sdir = self._stage_dir_of(server)
+            except Exception:  # noqa: BLE001
+                continue
+            if not sdir:
+                continue
+            key = os.path.normcase(os.path.normpath(sdir))
+            if key in seen:
+                seen[key][1].append(server.name)
+                continue
+            seen[key] = (sdir, [server.name], pm.pending_info(BFTOOLS, sdir))
+        return [v for v in seen.values() if v[2] and v[2].get("source") != "autoupdate"]
+
+    @feops.command(name="stage_status", description="Show any staged bflib.dll / bfrange.dll / bftools.exe / bfdb.exe waiting to be applied.")
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')
     async def feops_stage_status(self, interaction: discord.Interaction):
@@ -3302,6 +3628,8 @@ class FowlEngine(Plugin):
         for dll, sdir, names, info in self._staged_engine_dlls():
             where = f" → {', '.join(names)}" if names else f" in `{sdir}` (no server reads this dir)"
             lines.append(self._fmt_pending(dll, info, where))
+        for sdir, names, info in self._staged_bftools():
+            lines.append(self._fmt_pending(BFTOOLS, info, f" → {', '.join(names)}"))
         for server, dll, path in await self._remote_staged():
             lines.append(f"• `{dll}` → {server.name} (on node `{server.node.name}`: `{path}`)")
         info = pm.pending_info("bfdb.exe")
@@ -3309,8 +3637,12 @@ class FowlEngine(Plugin):
             lines.append(self._fmt_pending("bfdb.exe", info, " → bfdb"))
         if not lines:
             await interaction.followup.send(
-                "Nothing staged. Drop `bflib.dll`, `bfrange.dll` or `bfdb.exe` into the admin channel to stage one.")
+                "Nothing staged. Drop `bflib.dll`, `bfrange.dll`, `bftools.exe` or `bfdb.exe` into the admin "
+                "channel to stage one.")
             return
+        if self.stage_apply_when_empty:
+            lines.append(f"\n{icon('pending')} applies when empty: "
+                         + ", ".join(f"**{n}** (by {e.get('by', '?')})" for n, e in self.stage_apply_when_empty.items()))
         next_at = ""
         for server in self.bot.servers.values():
             rt = getattr(server, "restart_time", None)
@@ -3325,6 +3657,7 @@ class FowlEngine(Plugin):
     @app_commands.choices(which=[
         app_commands.Choice(name="bflib.dll", value="bflib.dll"),
         app_commands.Choice(name="bfrange.dll", value="bfrange.dll"),
+        app_commands.Choice(name="bftools.exe", value="bftools.exe"),
         app_commands.Choice(name="bfdb.exe", value="bfdb.exe"),
         app_commands.Choice(name="all", value="all"),
     ])
@@ -3349,29 +3682,59 @@ class FowlEngine(Plugin):
                 removed.append(f"`{dll}` ({srv.name}, node `{srv.node.name}`)")
             except Exception as ex:  # noqa: BLE001
                 self.log.warning(f"FowlEngine: could not discard {path} on {srv.node.name}: {ex}")
+        if which.value in (BFTOOLS, "all"):
+            for sdir, names, _info in self._staged_bftools(only=server):
+                if pm.cancel_pending(BFTOOLS, sdir):
+                    removed.append(f"`{BFTOOLS}` ({', '.join(names)})")
         if which.value in ("bfdb.exe", "all") and pm.cancel_pending("bfdb.exe"):
             removed.append("`bfdb.exe`")
+        # nothing left to apply -> drop the "apply when empty" asks it leaves
+        for name in list(self.stage_apply_when_empty):
+            srv = self.bot.servers.get(name)
+            if srv is not None and (server is None or srv is server) and not await self._pending_swaps(srv):
+                self.stage_apply_when_empty.pop(name, None)
+        self.save_state()
         await interaction.followup.send(
             f"{icon('discard')} Discarded: {', '.join(removed)}" if removed else "Nothing to discard.")
 
-    @feops.command(name="stage_apply", description="Apply a staged binary now instead of waiting for the next restart.")
+    @feops.command(name="stage_apply", description="Apply a staged binary now, or as soon as the server is empty.")
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')
     @app_commands.choices(which=[
         app_commands.Choice(name="engine DLL (bflib.dll / bfrange.dll)", value="dll"),
+        app_commands.Choice(name="bftools.exe", value="bftools.exe"),
         app_commands.Choice(name="bfdb.exe", value="bfdb.exe"),
         app_commands.Choice(name="all", value="all"),
+    ], when=[
+        app_commands.Choice(name="now (the server must be shut down)", value="now"),
+        app_commands.Choice(name="when empty (restarts DCS once nobody is on)", value="when_empty"),
+        app_commands.Choice(name="restart DCS now (kicks anyone on)", value="restart"),
     ])
     async def feops_stage_apply(self, interaction: discord.Interaction,
                                 server: app_commands.Transform[Server, utils.ServerTransformer()],
-                                which: app_commands.Choice[str]):
+                                which: app_commands.Choice[str],
+                                when: Optional[app_commands.Choice[str]] = None):
         await interaction.response.defer(ephemeral=True)
         pm = await self._procman_or_warn(interaction)
         if not pm:
             return
         want_dll = which.value in ("dll", "all", "bflib.dll", "bfrange.dll")
+        want_tools = which.value in (BFTOOLS, "all")
         want_bfdb = which.value in ("bfdb.exe", "all")
         msgs = []
+        mode = when.value if when else "now"
+        if mode in ("when_empty", "restart") and (want_dll or want_tools):
+            if want_bfdb and pm.pending_info("bfdb.exe"):
+                await pm.restart(self._bfdb_admin_password)
+                msgs.append("bfdb.exe: swapped and bfdb restarted.")
+            if not await self._pending_swaps(server):
+                msgs.append(f"Nothing staged for **{server.name}** that a DCS restart would swap in.")
+            elif mode == "when_empty":
+                msgs.append(self.schedule_apply_when_empty([server.name], str(interaction.user)))
+            else:
+                msgs.append(await self.restart_to_apply([server.name], str(interaction.user)))
+            await interaction.followup.send("\n".join(msgs))
+            return
 
         if want_bfdb and pm.pending_info("bfdb.exe"):
             await pm.restart(self._bfdb_admin_password)  # start() applies the staged exe
@@ -3380,6 +3743,22 @@ class FowlEngine(Plugin):
 
         b = self._engine_binaries(server)
         dll, sdir = b["dll_name"], (b["staging_dir"] or None)
+        # bftools.exe first: the DLL branch below may start the server. DCS
+        # never holds bftools open, so it can go in whatever the server's
+        # state; it is used from the next mission build on. (Mid-build, the
+        # swap fails safe and keeps the old one.)
+        tools_live = bftools_path_of(self, server)
+        if want_tools and self._on_remote_node(server):
+            msgs.append(f"{BFTOOLS}: **{server.name}** is on node `{server.node.name}` -- BFBinaries there swaps it "
+                        f"in on its next start (use `when: when empty`).")
+        elif want_tools and tools_live and pm.pending_info(BFTOOLS, sdir):
+            note = pm.apply_staged(BFTOOLS, tools_live, staging_dir=sdir)
+            msgs.append(f"{BFTOOLS}: {note} -- used from the next mission build." if note
+                        else f"{BFTOOLS}: nothing staged.")
+        elif want_tools:
+            msgs.append(f"{BFTOOLS}: nothing staged for **{server.name}**"
+                        + ("" if tools_live else " (it has no BFWeather `bftools` path)") + ".")
+
         if want_dll and self._on_remote_node(server):
             # Its staging dir is on that PC. The BFBinaries extension there
             # swaps the DLL in when DCS starts, so applying it is a start.
@@ -3388,7 +3767,7 @@ class FowlEngine(Plugin):
                             f"`{server.node.name}`).")
             elif server.status not in (Status.SHUTDOWN, Status.STOPPED):
                 msgs.append(f"{dll}: **{server.name}** is `{server.status.name}` -- shut it down first, "
-                            f"then it applies automatically on startup (or run this again).")
+                            f"then it applies automatically on startup (or use `when: when empty`).")
             else:
                 try:
                     await server.startup()
@@ -3403,7 +3782,7 @@ class FowlEngine(Plugin):
                             f"BFBinaries extension in nodes.yaml).")
             elif server.status not in (Status.SHUTDOWN, Status.STOPPED):
                 msgs.append(f"{dll}: **{server.name}** is `{server.status.name}` -- shut it down first, "
-                            f"then it applies automatically on startup (or run this again).")
+                            f"then it applies automatically on startup (or use `when: when empty`).")
             else:
                 note = pm.apply_staged(dll, live, staging_dir=sdir)
                 msgs.append(f"{dll}: {note}" if note else f"{dll}: nothing staged.")

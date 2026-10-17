@@ -51,6 +51,8 @@ export interface ManagerConfig {
   /** Whose desktop; null = whoever is signed in at the console. */
   desktop_user: string | null
   lock_after_autologon: boolean
+  /** Start this app in the tray when an administrator signs in (a logon task). */
+  start_with_windows: boolean
 }
 
 export interface ServiceStatus {
@@ -139,6 +141,8 @@ export interface AppState {
   ops_error: string | null
   autologon: Autologon
   sessions: UserSession[]
+  /** The logon task that starts this app with Windows; `current` = it starts this exe. */
+  autostart: { installed: boolean; current: boolean }
 }
 
 export interface Autologon {

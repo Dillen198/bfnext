@@ -415,21 +415,31 @@ DEFAULT:
     # discord_webhook_url: ""  # legacy -- prefer gci_transcript_channel above (bot-managed)
 
   # ---------------------------------------------
-  # Staged engine binaries  (drag-and-drop, applied on the next DCS restart)
+  # Staged engine binaries  (drag-and-drop)
   # ---------------------------------------------
-  # Drop `bflib.dll`, `bfrange.dll` or `bfdb.exe` into the bot's admin
-  # channel and it is staged, then swapped in (after a timestamped backup):
-  #   bfdb.exe    -> bfdb.staging_dir, applied by procman on the next bfdb restart
+  # Drop `bflib.dll`, `bfrange.dll`, `bftools.exe` or `bfdb.exe` into the
+  # bot's admin channel; it is swapped in after a timestamped backup and the
+  # upload message is deleted once the file is on disk:
+  #   bfdb.exe    -> applied STRAIGHT AWAY: procman cycles bfdb
   #   bflib.dll   -> the staging_dir of EVERY campaign server's BFBinaries
   #   bfrange.dll -> the staging_dir of every range server's BFBinaries
   #                  (dll_name: bfrange.dll)
-  # each applied by that server's BFBinaries extension on its own next DCS
-  # restart. Dropped into ONE server's own channel instead, it is staged for
-  # that server only. An instance whose BFBinaries has no staging_dir falls
+  #   bftools.exe -> the staging_dir of every server with a BFWeather
+  #                  `bftools` path, swapped over that path
+  # the last three applied by that server's BFBinaries extension on its own
+  # next DCS start. Buttons on the bot's reply: "Apply when empty" restarts
+  # DCS once the server has had nobody on it for stage_apply.empty_minutes
+  # (kept across bot restarts and crashes), "Restart now", or "Next restart".
+  # A staged file that a DCS start missed (the box crashed, DCS started
+  # before the bot) is queued to apply when empty automatically.
+  # Dropped into ONE server's own channel instead, it is staged for that
+  # server only. An instance whose BFBinaries has no staging_dir falls
   # back to bfdb.staging_dir -- give each its own, or two servers race for one
   # file. Control with /feops stage_status | stage_cancel | stage_apply, and
   # swap bfdb by hand with /feops bfdb_restart. BFBinaries is configured in
   # nodes.yaml (dll_name / dll_path / staging_dir), NOT here.
+  # How long a server must be empty before "apply when empty" restarts it:
+  # `stage_apply` -> `empty_minutes` in this section, default 3 (minutes).
 
   # ---------------------------------------------
   # Automatic engine updates  (autoupdate.py -- see deploy/auto-update.md)
@@ -574,6 +584,21 @@ DEFAULT:
   # /api/situation is coalition-locked and will not answer without them.
   blue_briefing_channel: 123456789012345678
   red_briefing_channel: 123456789012345678
+
+  # ---------------------------------------------
+  # Theatre rotation
+  # ---------------------------------------------
+  # (Optional) The order theatres are flown in. At every new round the bot
+  # posts what is flying now and what comes next to `channel`; /fe_rotation
+  # shows it, /fe_rotation_vote opens a Discord poll on the next one, and
+  # /fe_rotation_advance records the move once an admin has switched the
+  # base mission and campaign config (the bot does not switch them itself).
+  # Per server. Unset = no rotation.
+  # rotation:
+  #   channel: 123456789012345678
+  #   theatres:
+  #     - "Syria -- Operation Fowl Intent"
+  #     - "Caucasus -- Northern Front"
 
   # ---------------------------------------------
   # War diary feed

@@ -817,6 +817,71 @@ def test_bfbinaries_extension_starts_probation(world, monkeypatch):
     assert any("ROLLED BACK" in n for n in world.cog.notices)
 
 
+def test_bfbinaries_extension_swaps_a_staged_bftools(world, monkeypatch):
+    import importlib.util
+
+    class Extension:
+        def __init__(self, server, config):
+            self.server, self.config = server, config
+            self.name = "BFBinaries"
+            self.log = log
+            self.version = "1"
+
+    core.Extension = Extension
+    core.Server = object
+    te = types.ModuleType("typing_extensions")
+    te.override = lambda f: f
+    monkeypatch.setitem(sys.modules, "typing_extensions", te)
+    spec = importlib.util.spec_from_file_location("bfb_ext", EXT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    s1 = world.servers[0]
+    b = s1.instance.locals["extensions"]["BFBinaries"]
+    tools = world.tmp / "s1" / "Missions" / "bftools" / "bftools.exe"
+    tools.parent.mkdir(parents=True, exist_ok=True)
+    tools.write_bytes(b"bftools-v1")
+    s1.instance.locals["extensions"]["BFWeather"] = {"bftools": str(tools)}
+    os.makedirs(b["staging_dir"], exist_ok=True)
+    pend = Path(b["staging_dir"], "bftools.exe.pending")
+
+    # the auto-updater's own is left to the updater
+    pend.write_bytes(b"bftools-auto")
+    Path(str(pend) + ".json").write_text(json.dumps({"source": "autoupdate", "tag": "engine-9"}))
+    ext = mod.BFBinaries(s1, dict(b))
+    monkeypatch.setattr(ext, "_fowlengine_cog", lambda: world.cog)
+    asyncio.run(ext.prepare())
+    assert tools.read_bytes() == b"bftools-v1" and pend.exists()
+
+    # a hand-staged one goes in at DCS start, with a backup
+    pend.write_bytes(b"bftools-v2")
+    Path(str(pend) + ".json").write_text(json.dumps({"uploader": "admin"}))
+    asyncio.run(ext.prepare())
+    assert tools.read_bytes() == b"bftools-v2"
+    assert not pend.exists() and not Path(str(pend) + ".json").exists()
+    assert [f for f in os.listdir(tools.parent) if f.startswith("bftools.exe.backup-")]
+    assert any("bftools.exe" in n for n in world.cog.notices)
+
+
+def test_bftools_upload_targets():
+    from fe import upload as up
+
+    class S:
+        def __init__(self, name, tools):
+            self.name, self.tools = name, tools
+
+    a, b, c = S("A", "C:/a/bftools.exe"), S("B", None), S("C", "C:/c/bftools.exe")
+    binaries = lambda s: {"staging_dir": f"C:/{s.name}/_staging", "has_extension": True}  # noqa: E731
+    tools_of = lambda s: s.tools  # noqa: E731
+    targets, why = up.pick_bftools_targets([a, b, c], binaries, tools_of)
+    assert [s.name for s, _ in targets] == ["A", "C"] and why is None
+    targets, why = up.pick_bftools_targets([a, b, c], binaries, tools_of, scoped=b)
+    assert targets == [] and "bftools" in why
+    assert "bftools.exe" in up.ACCEPTED and "bftools.exe" in up.SWAPPED_AT_START
+    import re
+    assert any(re.match(p, "bftools.exe") for p in up.BFBINARY_PATTERNS)
+
+
 # ---- the GitHub source, against a local fake of the GitHub API ---------------------
 
 

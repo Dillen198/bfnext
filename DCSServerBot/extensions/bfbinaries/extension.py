@@ -23,9 +23,14 @@ A campaign pack (the server's <sortie>_CFG + mission files, from an engine
 release; `autoupdate.campaigns` in fowlengine.yaml) is written at the same
 moment, by the updater, with its own backup and probation.
 
+A staged `bftools.exe` (the mission generator, dropped into Discord like
+the DLL) is swapped in here too, over the instance's BFWeather `bftools` path
+-- before BFWeather runs it to build the mission this start loads.
+
 A staged `bfdb.exe` is handled by plugins/fowlengine/procman.py on its own
-bfdb restarts; if one is pending when DCS restarts, this extension nudges the
-FowlEngine plugin to cycle bfdb so the new build lands promptly.
+bfdb restarts (a Discord upload applies it straight away); if one is still
+pending when DCS restarts, this extension nudges the FowlEngine plugin to
+cycle bfdb so the new build lands promptly.
 
 nodes.yaml:
   MyNode:
@@ -70,6 +75,10 @@ DEFAULT_DLL_NAME = "bflib.dll"
 # Every engine DLL name upload.py knows how to stage. Used to spot a pending
 # file for the wrong engine in this instance's staging dir.
 ENGINE_DLL_NAMES = ("bflib.dll", "bfrange.dll")
+BFTOOLS = "bftools.exe"
+# sidecar `source` of a file the FowlEngine auto-updater staged; it swaps its
+# own bftools.exe (autoupdate.py, _apply_bftools) and records it in its history
+AUTOUPDATE_SOURCE = "autoupdate"
 
 
 def _now_tag() -> str:
@@ -146,6 +155,19 @@ class BFBinaries(Extension):
 
     def _pending(self, name: str) -> str:
         return os.path.join(self._staging_dir, f"{name}.pending")
+
+    @property
+    def _bftools_path(self) -> str:
+        """The live bftools.exe: this instance's BFWeather `bftools` key."""
+        merged: dict = {}
+        for holder in (getattr(self.server, "node", None), getattr(self.server, "instance", None)):
+            loc = getattr(holder, "locals", None)
+            if isinstance(loc, dict):
+                ext = (loc.get("extensions") or {}).get("BFWeather")
+                if isinstance(ext, dict):
+                    merged.update(ext)
+        raw = str(merged.get("bftools") or "").strip()
+        return os.path.expandvars(raw) if raw else ""
 
     @override
     def is_available(self) -> bool:
@@ -248,6 +270,59 @@ class BFBinaries(Extension):
                            "sidecar": sidecar}
         return note
 
+    def _swap_bftools(self) -> str | None:
+        """A hand-staged bftools.exe over this instance's BFWeather `bftools`.
+        DCS doesn't hold it, but BFWeather runs it to build the mission this
+        very start loads, so it goes in here, first. An auto-updater one is
+        left to the updater."""
+        pending = self._pending(BFTOOLS)
+        if not os.path.exists(pending):
+            return None
+        sidecar: dict = {}
+        try:
+            with open(pending + ".json", "r", encoding="utf-8") as fh:
+                sidecar = json.load(fh) or {}
+        except (OSError, ValueError):
+            pass
+        if sidecar.get("source") == AUTOUPDATE_SOURCE:
+            return None
+        live = self._bftools_path
+        if not live:
+            self.log.warning(f"{self.name}: {pending} is staged, but this instance has no BFWeather "
+                             f"`bftools` path -- left in place.")
+            return None
+        backup = f"{live}.backup-{_now_tag()}"
+        try:
+            if os.path.exists(live):
+                shutil.copy2(live, backup)
+            os.makedirs(os.path.dirname(live), exist_ok=True)
+            os.replace(pending, live)
+        except OSError as ex:
+            self.log.error(f"{self.name}: staged {BFTOOLS} swap failed ({ex}) -- restoring")
+            if os.path.exists(backup) and not os.path.exists(live):
+                try:
+                    shutil.copy2(backup, live)
+                except OSError:
+                    pass
+            return f"{self._icon('warning')} staged `{BFTOOLS}` swap FAILED ({ex}); kept the previous one.".lstrip()
+        try:
+            os.remove(pending + ".json")
+        except OSError:
+            pass
+        d, base = os.path.dirname(live), os.path.basename(live)
+        try:
+            old = sorted((f for f in os.listdir(d) if f.startswith(f"{base}.backup-")), reverse=True)
+        except OSError:
+            old = []
+        for stale in old[self._keep:]:
+            try:
+                os.remove(os.path.join(d, stale))
+            except OSError:
+                pass
+        note = f"mission generator updated: swapped in staged `{BFTOOLS}` (backup `{os.path.basename(backup)}`)."
+        self.log.warning(f"{self.name}: {note}")
+        return note
+
     def _begin_probation(self) -> None:
         """Hand the swap to the FowlEngine auto-updater, which watches the new
         engine load and rolls it back if DCS crashes on it. Only possible on
@@ -324,16 +399,19 @@ class BFBinaries(Extension):
             note = self._swap_engine()
             if note:
                 self._begin_probation()
+            tools_note = self._swap_bftools()
             self._nudge_bfdb_if_pending()
+        else:
+            tools_note = None
         campaign_note = self._apply_campaign()
-        for n in (note, campaign_note):
+        for n in (note, tools_note, campaign_note):
             if n:
                 await self._announce(n)
         return True
 
     @override
     async def render(self, param: dict | None = None) -> dict:
-        pending = [self._dll_name] if os.path.exists(self._pending(self._dll_name)) else []
+        pending = [n for n in (self._dll_name, BFTOOLS) if os.path.exists(self._pending(n))]
         if self._bfdb_pending():
             pending.append("bfdb.exe")
         return {

@@ -45,5 +45,8 @@
     DetailPrint "Removing the FowlEngine service..."
     nsExec::Exec `sc.exe delete FowlEngine`
     Pop $0
+    DetailPrint "Removing the start-with-Windows task..."
+    nsExec::Exec `schtasks.exe /Delete /TN "Fowl Engine Manager" /F`
+    Pop $0
   ${EndIf}
 !macroend
