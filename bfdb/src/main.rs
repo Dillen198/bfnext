@@ -2115,33 +2115,64 @@ async fn api_warehouse(
         }
     };
 
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(6),
-        call_engine_rpc_str(
-            &db,
-            &inst,
-            "query-warehouse",
-            vec![
-                ("objective", Value::from(objective.clone())),
-                ("side", Value::from(side.to_string())),
-            ],
-        ),
-    )
-    .await
-    {
-        Ok(Ok(data)) => Ok(json_response(data)),
-        Ok(Err(e)) => {
-            log::warn!("api_warehouse: query-warehouse failed for {objective}: {}", e.0);
-            Err(e)
+    // A person is waiting on this (the TacMap's base drawer, the objectives
+    // page), so it goes the patient way, like /api/command: on a busy engine
+    // (vs1) the background pollers open the breaker while the engine still
+    // answers in a few seconds, and a counted call was refused outright. One
+    // read per instance, side and base serves everyone looking at it for a
+    // while; the key carries the side, so a side only ever gets its own read.
+    let key = format!("{}:{side}:{objective}", inst.id);
+    let fresh = WAREHOUSE_CACHE
+        .entry(&key)
+        .get_or_refresh(WAREHOUSE_TTL, || async {
+            call_engine_rpc_str_patient(
+                &db,
+                &inst,
+                "query-warehouse",
+                vec![
+                    ("objective", Value::from(objective.clone())),
+                    ("side", Value::from(side.to_string())),
+                ],
+            )
+            .await
+            .map(Arc::new)
+        })
+        .await;
+    let mut last = WAREHOUSE_LAST_GOOD.lock().unwrap_or_else(|e| e.into_inner());
+    match fresh {
+        Ok(raw) => {
+            // Caller-chosen keys (`?objective=`): keep the map bounded.
+            if last.len() > 512 {
+                last.clear();
+            }
+            last.insert(key, (std::time::Instant::now(), raw.clone()));
+            Ok(json_response(raw.to_string()))
         }
-        Err(_) => {
-            log::warn!("api_warehouse: query-warehouse timed out after 6s for {objective}");
-            Err(Error(websec::unavailable(
-                "engine did not answer query-warehouse (unreachable, or bflib.dll predates this feature)",
-            )))
-        }
+        // A missed refresh serves the last read the engine did send for a
+        // while: stock moves slowly, and a drawer going blank helps nobody.
+        Err(e) => match last.get(&key) {
+            Some((at, raw)) if at.elapsed() < WAREHOUSE_STALE_MAX => {
+                log::debug!("api_warehouse: {objective}: {}; serving the read from {}s ago", e.0, at.elapsed().as_secs());
+                Ok(json_response(raw.to_string()))
+            }
+            _ => {
+                log::warn!("api_warehouse: query-warehouse failed for {objective}: {}", e.0);
+                Err(e)
+            }
+        },
     }
 }
+
+/// How long one engine read of a base's warehouse serves every viewer.
+const WAREHOUSE_TTL: std::time::Duration = std::time::Duration::from_secs(20);
+static WAREHOUSE_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Arc<std::string::String>>> =
+    std::sync::LazyLock::new(websec::CacheMap::new);
+/// The last read the engine did send, per instance, side and base, served
+/// when a refresh fails -- for this long, after which the error shows.
+static WAREHOUSE_LAST_GOOD: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<std::string::String, (std::time::Instant, Arc<std::string::String>)>>,
+> = std::sync::LazyLock::new(Default::default);
+const WAREHOUSE_STALE_MAX: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// Whether the engine still needs to be told about this server info.
 ///

@@ -382,7 +382,9 @@ export class BattlefieldEngine {
     const dpr = window.devicePixelRatio || 1
     c.setTransform(1, 0, 0, 1, 0, 0)
     c.clearRect(0, 0, cv.width, cv.height)
-    if (!pic) return
+    // A container laid out at 0 px (mid-resize, a hidden tab) leaves the fog
+    // canvas 0 x 0, and drawImage throws on that: nothing to paint anyway.
+    if (!pic || !cv.width || !cv.height) return
     c.setTransform(dpr, 0, 0, dpr, 0, 0)
     const W = cv.width / dpr
     const H = cv.height / dpr

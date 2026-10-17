@@ -204,7 +204,13 @@ export function BaseDrawer({ o, pub, side, pic, assets, captures, intel, onClose
           )}
           {w?.damaged && <p className="gw-drawer-note bad">Warehouse knocked out: it can't store or issue anything.</p>}
           {intel.loading && !w && <p className="gw-drawer-note">Asking the engine for its stock…</p>}
-          {intel.error && !w && <p className="gw-drawer-note">Stock and supply line unavailable: {intel.error}</p>}
+          {intel.error && !w && (
+            <p className="gw-drawer-note" title={intel.error}>
+              {/busy|did not answer|not answering|not reachable|breaker/i.test(intel.error)
+                ? "The game server didn't answer for this base's stock: it may be busy. Asking again every minute."
+                : `Stock and supply line unavailable: ${intel.error}`}
+            </p>
+          )}
           {w && w.visibility === 'intel' && !ours && (
             <p className="gw-drawer-note">From recon, last seen {w.intel_as_of ? ago(w.intel_as_of) : 'at an unknown time'}. Stock and supply routing need a closer look.</p>
           )}

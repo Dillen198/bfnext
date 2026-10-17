@@ -230,7 +230,9 @@ export default function TacMapPage(): ReactElement {
     queryFn: () => (mock && pic ? Promise.resolve(mockWarehouse(pic, selObj!.name)) : api.warehouse(selObj!.name)),
     enabled: !!selObj,
     refetchInterval: 60_000,
-    retry: false,
+    // A busy engine misses one now and then; once more after a pause.
+    retry: 1,
+    retryDelay: 4000,
   })
   const { data: captures = NO_CAPTURES } = useQuery({
     queryKey: ['capture-events', instance, mock ? 'mock' : ''],
