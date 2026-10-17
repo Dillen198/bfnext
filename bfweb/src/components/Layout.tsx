@@ -62,9 +62,10 @@ const OPS_NAV: NavItem[] = [
   { to: '/',            icon: Sitrep,          label: 'SITREP'     },
   { to: '/map',         icon: Tacmap,          label: 'TACMAP'     },
   { to: '/objectives',  icon: Objective,       label: 'OBJECTIVES' },
+  // Public on purpose: one paper both coalitions read, no fog of war.
+  { to: '/news',        icon: Briefing,        label: 'WAR DIARY'  },
 ]
 const COALITION_NAV: NavItem[] = [
-  { to: '/news',     icon: Briefing,   label: 'WAR DIARY'    },
   { to: '/briefing', icon: Briefing,   label: 'BRIEFING'     },
   { to: '/intel',    icon: ReconIntel, label: 'RECON INTEL'  },
   { to: '/hq',       icon: CommandCenter, label: 'THEATRE HQ' },
