@@ -13,6 +13,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { Kind, State } from './data'
 import { familyOf, modelOf, realOf, realModel, realLength, LENGTH, MIN_PX, type Family, type Real } from './models'
+import { drawHud, type HudData, type Vec3 } from './hud'
 
 export type Cam3D = 'free' | 'follow' | 'chase' | 'cockpit' | 'padlock'
 
@@ -33,6 +34,8 @@ export interface TheaterFrame {
   focus: number | null
   measure: number | null
   cam: Cam3D
+  /** the cockpit camera's HUD (null: none) */
+  hud?: HudData | null
 }
 
 export interface Projected { idx: number; x: number; y: number }
@@ -134,6 +137,8 @@ export class Theater {
   /** the user dragged the view while following: hand over to free */
   onUserMove: (() => void) | null = null
   private disposed = false
+  private hudCanvas: HTMLCanvasElement | null = null
+  private hudOn = false
 
   constructor(parent: HTMLElement) {
     this.el = document.createElement('div')
@@ -195,6 +200,7 @@ export class Theater {
     for (const t of this.tiles.values()) this.disposeTile(t)
     for (const m of this.pools.values()) (m.material as THREE.Material).dispose()
     this.renderer.dispose()
+    this.hudCanvas?.remove()
     this.el.remove()
   }
 
@@ -559,6 +565,49 @@ export class Theater {
     setLine(this.braa, frame.line ? focusPos : null, frame.line ? measurePos : null)
 
     this.renderer.render(this.scene, this.camera)
+    this.drawHud(frame, w, h, measurePos)
+  }
+
+  // ── the HUD (cockpit camera) ──
+
+  private drawHud(frame: TheaterFrame, w: number, h: number, measurePos: THREE.Vector3 | null) {
+    const want = frame.cam === 'cockpit' && !!frame.hud
+    if (!want) {
+      if (this.hudOn && this.hudCanvas) {
+        this.hudCanvas.style.display = 'none'
+        this.hudOn = false
+      }
+      return
+    }
+    if (!this.hudCanvas) {
+      const c = document.createElement('canvas')
+      c.className = 'rp-hud'
+      this.el.appendChild(c)
+      this.hudCanvas = c
+    }
+    const c = this.hudCanvas
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) {
+      c.width = Math.round(w * dpr)
+      c.height = Math.round(h * dpr)
+    }
+    c.style.display = ''
+    this.hudOn = true
+    const ctx = c.getContext('2d')
+    if (!ctx) return
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    const cam = this.camera
+    const inv = cam.matrixWorldInverse
+    const p = new THREE.Vector3()
+    const toScreen = (q: THREE.Vector3): [number, number] | null => {
+      p.copy(q).applyMatrix4(inv)
+      if (p.z >= -1e-3) return null // behind the camera
+      p.copy(q).project(cam)
+      return [((p.x + 1) / 2) * w, ((1 - p.y) / 2) * h]
+    }
+    const far = new THREE.Vector3()
+    const project = (d: Vec3) => toScreen(far.set(cam.position.x + d[0] * 10_000, cam.position.y + d[1] * 10_000, cam.position.z + d[2] * 10_000))
+    drawHud(ctx, w, h, frame.hud!, project, measurePos ? toScreen(measurePos) : null)
   }
 
   /** The drawn aircraft/weapon nearest a screen point, within 26 px. */

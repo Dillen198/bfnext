@@ -10,6 +10,8 @@ import {
   isAir, isWeapon, sideHex, M_TO_FT,
 } from './data'
 import { Theater, type Cam3D } from './theater'
+import { gAt, iasOf, machOf, nearest, velAt } from './analysis'
+import type { HudData } from './hud'
 
 export type ViewMode = '2d' | '3d'
 /** follow = keep it centred (2D) / orbit it (3D); chase, cockpit and padlock are 3D only. */
@@ -22,6 +24,8 @@ export interface ViewOpts {
   labels: boolean
   /** Trail length behind each aircraft, ms (0 = off). */
   trail: number
+  /** the HUD over the cockpit camera */
+  hud: boolean
 }
 
 export interface EngineUi {
@@ -219,7 +223,7 @@ export class ReplayEngine {
   focus: number | null = null
   measure: number | null = null
   measuring = false
-  opts: ViewOpts = { ground: true, weapons: true, labels: true, trail: 60_000 }
+  opts: ViewOpts = { ground: true, weapons: true, labels: true, trail: 60_000, hud: true }
   onUi: ((ui: EngineUi) => void) | null = null
 
   /** The 3D view, made the first time someone switches to it. */
@@ -602,10 +606,35 @@ export class ReplayEngine {
         focus: this.focus,
         measure: this.measure,
         cam: this.cam,
+        hud: this.cam === 'cockpit' && this.opts.hud && fs ? this.hudData(fs, ms) : null,
       })
     }
     if (this.mode === '2d') this.camera()
     this.drawLabels(dyn)
+  }
+
+  /** What the cockpit HUD shows for the followed aircraft at t. */
+  private hudData(fs: State, ms: State | null): HudData {
+    const whole = this.focus != null ? this.store.wholeTrack(this.focus) : null
+    const i = whole ? nearest(whole, this.t) : -1
+    const ground = this.theater?.heightAt(fs.lon, fs.lat)
+    let target: HudData['target'] = null
+    if (ms && this.measure != null) {
+      const o = this.store.meta.objects[this.measure]
+      const dx = (ms.lon - fs.lon) * 111_320 * Math.cos(((fs.lat + ms.lat) / 2) * (Math.PI / 180))
+      const dy = (ms.lat - fs.lat) * 110_540
+      target = { label: (o?.p ?? o?.n ?? 'TGT').replace(/_/g, ' ').toUpperCase().slice(0, 18), range: Math.hypot(dx, dy, ms.alt - fs.alt) }
+    }
+    return {
+      st: fs,
+      ias: iasOf(fs),
+      iasRecorded: fs.ias != null,
+      mach: machOf(fs),
+      g: whole ? gAt(whole, i) : null,
+      vel: whole ? velAt(whole, this.t) : null,
+      agl: fs.agl ?? (ground != null ? fs.alt - ground : null),
+      target,
+    }
   }
 
   /** 2D: keep the followed aircraft centred (the theatre moves its own

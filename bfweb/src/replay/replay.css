@@ -17,6 +17,8 @@
 .rp-root > .rp-map { position: absolute; inset: 0; width: 100%; height: 100%; }
 .rp-root > .rp-theater { position: absolute; inset: 0; z-index: 1; }
 .rp-theater canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+/* the cockpit HUD, over the scene; clicks go through to the scene */
+.rp-theater canvas.rp-hud { position: absolute; inset: 0; pointer-events: none; cursor: default; }
 .rp-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
 .rp-label {
   position: absolute; left: 0; top: 0;

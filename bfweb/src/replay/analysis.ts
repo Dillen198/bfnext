@@ -34,6 +34,20 @@ function vel(s: Seg, i: number): [number, number, number] | null {
   ]
 }
 
+/** Velocity (m/s, east/north/up) at time t (ms), between the samples
+ *  either side: where the aircraft is going, for the HUD's flight path marker. */
+export function velAt(s: Seg, t: number): [number, number, number] | null {
+  const n = s.t.length
+  if (n < 2) return null
+  let i = nearest(s, t)
+  if (s.t[i] > t && i > 0) i--
+  const a = vel(s, i), b = vel(s, Math.min(n - 1, i + 1))
+  if (!a || !b) return a ?? b
+  const span = s.t[Math.min(n - 1, i + 1)] - s.t[i]
+  const f = span > 0 ? Math.min(1, Math.max(0, (t - s.t[i]) / span)) : 0
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]
+}
+
 /** Load factor (G) at sample i: |acceleration + gravity| / g. Smoothed over
  *  ~2 s, because the track is sampled twice a second. */
 export function gAt(s: Seg, i: number): number | null {

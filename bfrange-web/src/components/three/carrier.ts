@@ -9,10 +9,21 @@
  * landing area and its edge lines, the centreline, the foul line, the four
  * wires, the bow catapults and the hull number; the island, the lens
  * (IFLOLS) and the LSO platform sit where the deck plan puts them.
+ *
+ * Where the dashboard has a real model of the class (Nimitz: its CVN, the
+ * Enterprise; Kuznetsov), `dressCarrier` swaps our hull and island for it,
+ * fitted to the plan: stern on the stern, keel on the keel, flight deck at
+ * the deck height, scaled to the plan's length. The painted deck, the wires,
+ * the lens and the LSO platform stay ours, on top, so the track still meets
+ * the deck where the engine graded it. Forrestal, the LHA and Charles de
+ * Gaulle have no model of their own and keep the one built here.
  */
 import * as THREE from 'three'
 import { landingPointFromStern, shipToModel, type DeckGeom } from '../../lib/carrierDeck'
 import { MATS } from './models'
+import { realGeometry } from './real'
+import { SHIP_FIT, type Real } from '../../../../shared/models/catalog'
+import type { DeckKind } from '../../lib/carrierDeck'
 import { LENS_CELLS, ballPos, litCells } from '../../lib/lens'
 
 type P = [number, number]
@@ -135,14 +146,17 @@ export function carrier(g: DeckGeom, name: string | undefined): THREE.Group {
   const [minX, maxX, minY, maxY] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)]
   const shape = new THREE.Shape(pts)
 
+  // parts tagged `ours` give way to a real model (dressCarrier)
+  const ours = (m: THREE.Object3D) => { m.userData.ours = true; return m }
   const slab = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: 1.4, bevelEnabled: false }), MATS.navyDark)
   slab.position.z = H - 1.4
-  grp.add(slab)
+  grp.add(ours(slab))
   const top = new THREE.Mesh(
     new THREE.ShapeGeometry(shape),
     new THREE.MeshStandardMaterial({ map: deckTexture(g, hullNumber(name), minX, maxX, minY, maxY), roughness: 0.95, metalness: 0 }),
   )
   top.position.z = H + 0.02
+  top.userData.deckPaint = true
   grp.add(top)
 
   // the hull: the plan's waterline, up to the gallery deck under the flight deck overhang
@@ -150,11 +164,11 @@ export function carrier(g: DeckGeom, name: string | undefined): THREE.Group {
   const hullShape = new THREE.Shape(wl)
   const hull = new THREE.Mesh(new THREE.ExtrudeGeometry(hullShape, { depth: H - 1.4 + 3, bevelEnabled: false }), MATS.hull)
   hull.position.z = -3
-  grp.add(hull)
+  grp.add(ours(hull))
   const boot = new THREE.Mesh(new THREE.ExtrudeGeometry(hullShape, { depth: 3.2, bevelEnabled: false }), MATS.hullLow)
   boot.position.z = -3.1
   boot.scale.set(1.005, 1.002, 1)
-  grp.add(boot)
+  grp.add(ours(boot))
 
   // a ski jump: the bow ramp rising to about 6 m
   if (g.ski_jump) {
@@ -167,26 +181,26 @@ export function carrier(g: DeckGeom, name: string | undefined): THREE.Group {
     ramp.rotation.order = 'ZXY'
     ramp.rotation.set(Math.PI / 2, 0, Math.PI / 2)
     ramp.position.set(-13, 0, H + 0.03)
-    grp.add(ramp)
+    grp.add(ours(ramp))
   }
 
   // island: the base block from its footprint, the upper block, the mast
   const isl = g.island.map(([f, r]) => { const [y, x] = shipToModel(g, f, r); return new THREE.Vector2(x, y) })
   const islandBase = new THREE.Mesh(new THREE.ExtrudeGeometry(new THREE.Shape(isl), { depth: 14, bevelEnabled: false }), MATS.island)
   islandBase.position.z = H
-  grp.add(islandBase)
+  grp.add(ours(islandBase))
   if (g.island_top.length > 2) {
     const top = g.island_top.map(([f, r]) => { const [y, x] = shipToModel(g, f, r); return new THREE.Vector2(x, y) })
     const upper = new THREE.Mesh(new THREE.ExtrudeGeometry(new THREE.Shape(top), { depth: 7, bevelEnabled: false }), MATS.island)
     upper.position.z = H + 14
-    grp.add(upper)
+    grp.add(ours(upper))
   }
   const ix = isl.map(p => p.x), iy = isl.map(p => p.y)
   const ic = new THREE.Vector2((Math.min(...ix) + Math.max(...ix)) / 2, (Math.min(...iy) + Math.max(...iy)) / 2)
   const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.7, 16, 6), MATS.island)
   mast.rotation.x = Math.PI / 2
   mast.position.set(ic.x, ic.y, H + 21 + 8)
-  grp.add(mast)
+  grp.add(ours(mast))
 
   // wires: steel across the landing area, a hand's breadth off the deck
   const hw = g.landing_half_w_m + 1
@@ -270,4 +284,34 @@ export function carrier(g: DeckGeom, name: string | undefined): THREE.Group {
   }
   grp.userData.landingFromStern = landingPointFromStern(g)
   return grp
+}
+
+/** The dashboard model of each class we have one for. */
+export const CARRIER_MODEL: Partial<Record<DeckKind, Real>> = { nimitz: 'CVN', kuznetsov: 'Kuznetsov' }
+
+const SHIP_GREY = new THREE.MeshStandardMaterial({ color: '#7d868f', roughness: 0.75, metalness: 0.15, flatShading: true })
+
+/**
+ * Swap our hull and island for the real model of the class, once it has
+ * loaded, fitted to the plan (see the header). Resolves true when it did.
+ */
+export async function dressCarrier(grp: THREE.Group, g: DeckGeom): Promise<boolean> {
+  const r = CARRIER_MODEL[g.kind]
+  const fit = r ? SHIP_FIT[r] : undefined
+  if (!r || !fit) return false
+  const geo = await realGeometry(r)
+  if (!geo) return false
+  const s = g.length_m / (fit.bow_y - fit.stern_y)
+  const [sternY] = shipToModel(g, 0, 0)
+  const [, keelX] = shipToModel(g, g.length_m / 2, 0)
+  const H = g.deck_height_m
+  const m = new THREE.Mesh(geo, SHIP_GREY)
+  m.scale.setScalar(s)
+  // its flight deck a hand's breadth under our painted one
+  m.position.set(keelX - fit.keel_x * s, sternY - fit.stern_y * s, H - 0.12 - fit.deck_z * s)
+  m.userData.real = r
+  for (const c of grp.children) if (c.userData.ours) c.visible = false
+  for (const c of grp.children) if (c.userData.deckPaint) c.position.z = H + 0.06
+  grp.add(m)
+  return true
 }

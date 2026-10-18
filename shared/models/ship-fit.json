@@ -1,0 +1,56 @@
+{
+ "CVN": {
+  "stern_y": -171,
+  "bow_y": 170.22,
+  "keel_x": 3.45,
+  "deck_z": -11.5,
+  "bottom_z": -42.12,
+  "top_z": 40.16,
+  "deck_area_m2": 17329
+ },
+ "Kuznetsov": {
+  "stern_y": -152.5,
+  "bow_y": 152.54,
+  "keel_x": 2.33,
+  "deck_z": -10,
+  "bottom_z": -35.83,
+  "top_z": 35.83,
+  "deck_area_m2": 5321
+ },
+ "CG-47": {
+  "stern_y": -86.5,
+  "bow_y": 86.5,
+  "keel_x": 0.26,
+  "deck_z": -14.5,
+  "bottom_z": -24.71,
+  "top_z": 24.71,
+  "deck_area_m2": 1492
+ },
+ "DDG-51": {
+  "stern_y": -76.99,
+  "bow_y": 77,
+  "keel_x": 0.08,
+  "deck_z": -11,
+  "bottom_z": -26.76,
+  "top_z": 24.24,
+  "deck_area_m2": 1597
+ },
+ "FFG-7": {
+  "stern_y": -66.74,
+  "bow_y": 67.87,
+  "keel_x": -0.3,
+  "deck_z": -5,
+  "bottom_z": -17.26,
+  "top_z": 16.14,
+  "deck_area_m2": 657
+ },
+ "Type054": {
+  "stern_y": -66.14,
+  "bow_y": 67,
+  "keel_x": -0.03,
+  "deck_z": -2.5,
+  "bottom_z": -16.88,
+  "top_z": 16.71,
+  "deck_area_m2": 371
+ }
+}

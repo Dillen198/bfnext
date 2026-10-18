@@ -210,6 +210,7 @@ function Viewer({ rec, meta }: { rec: string; meta: RecMeta }) {
               <Toggle on={ui.opts.weapons} label="Weapons" onClick={() => e?.setOpts({ weapons: !ui.opts.weapons })} />
               <Toggle on={ui.opts.ground} label="Ground" onClick={() => e?.setOpts({ ground: !ui.opts.ground })} />
               <Toggle on={ui.opts.trail > 0} label="Trails" onClick={() => e?.setOpts({ trail: ui.opts.trail > 0 ? 0 : 60_000 })} />
+              {ui.mode === '3d' && ui.cam === 'cockpit' && <Toggle on={ui.opts.hud} label="HUD" onClick={() => e?.setOpts({ hud: !ui.opts.hud })} />}
             </div>
           )}
         </aside>

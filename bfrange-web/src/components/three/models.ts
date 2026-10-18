@@ -1,6 +1,7 @@
 /**
- * The 3D debrief's models, all ours: built from primitives to each type's
- * published length, span and height (no model files to license or load).
+ * The 3D debrief's own models: built from primitives to each type's
+ * published length, span and height. They draw every type that has no real
+ * model of its own (see real.ts), and every type while its model loads.
  * Every model faces +Y (forward), Z up, X to starboard, origin at the
  * middle of the aircraft (for a ship: its reference point, the position DCS
  * and Tacview report), sized in metres.

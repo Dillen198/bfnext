@@ -1,4 +1,6 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
+import fs from 'node:fs'
+import path from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -13,11 +15,39 @@ import tailwindcss from '@tailwindcss/vite'
  * `npm run dev:mock` (`--mode mock`, see .env.mock) serves everything from
  * the fixtures in src/mock/ -- no backend at all.
  */
+/**
+ * The 3D debrief draws the dashboard's real models: one copy of the files,
+ * in bfweb/public/models (credits and licences in CREDITS.txt there). This
+ * serves them at /models/ in dev and copies them into the build.
+ */
+function sharedModels(): Plugin {
+  const dir = fileURLToPath(new URL('../bfweb/public/models', import.meta.url))
+  const types: Record<string, string> = { '.glb': 'model/gltf-binary', '.txt': 'text/plain; charset=utf-8' }
+  return {
+    name: 'shared-models',
+    configureServer(server) {
+      server.middlewares.use('/models', (req, res, next) => {
+        const name = decodeURIComponent((req.url ?? '').split('?')[0]).replace(/^\/+/, '')
+        const file = path.join(dir, name)
+        if (!name || name.includes('..') || !fs.existsSync(file) || !types[path.extname(file)]) return next()
+        res.setHeader('Content-Type', types[path.extname(file)])
+        res.setHeader('Cache-Control', 'public, max-age=3600')
+        fs.createReadStream(file).pipe(res)
+      })
+    },
+    writeBundle(opts) {
+      const out = path.join(opts.dir ?? 'dist', 'models')
+      fs.mkdirSync(out, { recursive: true })
+      for (const f of fs.readdirSync(dir)) if (types[path.extname(f)]) fs.copyFileSync(path.join(dir, f), path.join(out, f))
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const target = env.VITE_BFDB_URL || 'http://localhost:8880'
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), sharedModels()],
     // A literal true/false, so a normal build drops the mock client and its
     // fixtures entirely instead of shipping them as an unused chunk.
     define: { __RANGE_MOCK__: JSON.stringify(env.VITE_MOCK === '1') },

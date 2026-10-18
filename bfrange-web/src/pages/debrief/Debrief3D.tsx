@@ -175,7 +175,7 @@ function Player({ clip, rec }: { clip: Clip; rec: RangeRecord }) {
         <label className="d3-check"><input type="checkbox" checked={opts.trails} onChange={() => setOpts(o => ({ ...o, trails: !o.trails }))} /> Trails</label>
         <label className="d3-check"><input type="checkbox" checked={opts.labels} onChange={() => setOpts(o => ({ ...o, labels: !o.labels }))} /> Labels</label>
         {hasBoat && <label className="d3-check"><input type="checkbox" checked={opts.glide} onChange={() => setOpts(o => ({ ...o, glide: !o.glide }))} /> Glideslope</label>}
-        <span className="ml-auto dim text-[11.5px]">{clip.objects.length} objects from {clip.source || 'the recording'} · models to scale, small ones drawn larger far away</span>
+        <span className="ml-auto dim text-[11.5px]">{clip.objects.length} objects from {clip.source || 'the recording'} · models to scale, small ones drawn larger far away · <a className="underline" href={`${import.meta.env.BASE_URL}models/CREDITS.txt`} target="_blank" rel="noreferrer">3D model credits</a></span>
       </div>
     </div>
   )

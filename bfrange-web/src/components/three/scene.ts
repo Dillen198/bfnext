@@ -21,7 +21,9 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { deckFor } from '../../lib/carrierDeck'
 import { frameFor, passRead, stateAt, type Frame, type PassRead, type State } from '../../lib/clipPlay'
 import type { Clip, ClipObj } from '../../types'
-import { carrier, deckSpots } from './carrier'
+import { carrier, deckSpots, dressCarrier } from './carrier'
+import { realGeometry, realLength, ownModelOf } from './real'
+import { waterlineZ } from '../../../../shared/models/catalog'
 import { MATS, aircraft, groundUnit, ship, weapon } from './models'
 
 export type CamMode = 'chase' | 'cockpit' | 'lso' | 'deck' | 'target' | 'free'
@@ -60,6 +62,8 @@ interface Item {
 const ROLE_COLOR: Record<ClipObj['role'], string> = {
   self: '#ffb23e', weapon: '#ffd27a', threat: '#ff5147', boat: '#e4ebf2', air: '#5aa9ff', ground: '#c9ab6f',
 }
+
+const SHIP_SKIN = new THREE.MeshStandardMaterial({ color: '#7d868f', roughness: 0.75, metalness: 0.15, flatShading: true })
 
 function skinFor(o: ClipObj): THREE.Material {
   if (o.role === 'self') return MATS.self
@@ -118,6 +122,7 @@ export class DebriefScene {
   private items: Item[] = []
   private self: Item | null = null
   private boat: Item | null = null
+  private disposed = false
   private target: [number, number, number] | null = null
   private glide: THREE.Group | null = null
   private labelsEl: HTMLDivElement
@@ -152,6 +157,38 @@ export class DebriefScene {
     this.ro = new ResizeObserver(() => this.resize())
     this.ro.observe(el)
     this.resize()
+  }
+
+  /**
+   * Swap the model built from primitives for the dashboard's real one, once
+   * it has loaded: the carrier fitted under its own painted deck
+   * (dressCarrier), ships set on the water by their draft, everything else
+   * as it is (the models are real size, nose on +Y like ours).
+   */
+  private upgrade(it: Item) {
+    const o = it.o
+    if (o.kind === 'carrier') {
+      void dressCarrier(it.node as THREE.Group, deckFor(o.name))
+      return
+    }
+    const r = ownModelOf(o.kind, o.name)
+    if (!r) return
+    void realGeometry(r).then(geo => {
+      if (!geo || this.disposed) return
+      const skin = o.kind === 'ship' ? SHIP_SKIN : skinFor(o)
+      const m = new THREE.Mesh(geo, skin)
+      if (o.kind === 'ship') {
+        const wz = waterlineZ(r)
+        const b = geo.boundingBox!
+        // without a draft for it: a third of the hull under water
+        m.position.z = -(wz ?? b.min.z + (b.max.z - b.min.z) * 0.18)
+      }
+      const node = it.node as THREE.Group
+      node.clear()
+      node.add(m)
+      node.userData.length = realLength(geo)
+      it.length = realLength(geo)
+    })
   }
 
   private build() {
@@ -199,6 +236,7 @@ export class DebriefScene {
         it.label = l
       }
       this.items.push(it)
+      this.upgrade(it)
       if (o.role === 'self') this.self = it
       if (o.kind === 'carrier' && !this.boat) this.boat = it
     }
@@ -397,6 +435,7 @@ export class DebriefScene {
   }
 
   dispose() {
+    this.disposed = true
     this.ro.disconnect()
     this.controls.dispose()
     this.scene.traverse(o => {

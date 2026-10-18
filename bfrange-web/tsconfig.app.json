@@ -32,5 +32,5 @@
     "noUncheckedSideEffectImports": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "../shared/icons", "../shared/carriers/decks.json"]
+  "include": ["src", "../shared/icons", "../shared/carriers/decks.json", "../shared/models"]
 }

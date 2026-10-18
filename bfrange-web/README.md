@@ -226,9 +226,22 @@ aircraft that came within 15 km and what they fired, ground units around the
 impacts. Cameras: chase, cockpit, LSO (carrier passes, with the lens and
 the LSO's numbers on the HUD), target (ground attack, with time to impact),
 free orbit. Over land the ground is Esri imagery laid flat at the targets'
-height (no terrain relief yet); at sea it is the sea. Every model is built
-from primitives to the type's published length, span and height: no model
-files. three.js is only loaded when the 3D view is opened. In mock mode the
+height (no terrain relief yet); at sea it is the sea. Aircraft, helicopters,
+weapons, escorts and ground units are the dashboard's real models
+(`bfweb/public/models`, one copy served here at `/models/` by
+`vite.config.ts`; credits and licences in `CREDITS.txt` there, linked
+from the 3D view), picked by the shared catalogue
+(`shared/models/catalog.ts`) -- but only a type's own model: where the
+dashboard lends a lookalike (a T-45 as an F-16), the range keeps its own
+build to the type's published length, span and height, as it does while a
+model loads. The carrier you land on keeps its traced, graded deck (paint,
+wires, lens, LSO platform); for Nimitz class (the dashboard's CVN, the
+Enterprise) and Kuznetsov the real hull and island go under it, fitted
+stern to stern, keel to keel and flight deck to deck height from
+`shared/models/ship-fit.json` (`bfweb/scripts/fit-ship-models.mjs`).
+Forrestal, the LHA and Charles de Gaulle have no model of their own and
+keep the traced build. The weapon models are CC BY-NC-SA (non-commercial).
+three.js is only loaded when the 3D view is opened. In mock mode the
 clip is made from the record's track (`src/mock/clip.ts`), attitude worked
 out from the path.
 
