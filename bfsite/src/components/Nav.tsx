@@ -1,142 +1,86 @@
-import React from 'react'
-import { campaign } from '../config/campaign'
-import {
-  Menu,
-  Support as Zap,
-  Wiki as BookOpen,
-  X,
-} from '@icons'
+import { useEffect, useState } from 'react'
+import { Menu, X, Wiki, Sitrep } from '@icons'
+import { links } from '../config/campaign'
 import ThemeToggle from './ThemeToggle'
 import LogoMark from './LogoMark'
 
-const links = [
-  { href: '#about',    label: 'ABOUT' },
-  { href: '#features', label: 'FEATURES' },
-  { href: '#join',     label: 'HOW TO JOIN' },
-  { href: '#stats',    label: 'LIVE STATS' },
-  { href: '#manual',   label: 'MANUAL' },
+const SECTIONS = [
+  { href: '#situation', label: 'Situation' },
+  { href: '#mission', label: 'Mission' },
+  { href: '#join', label: 'Join' },
+  { href: '#intel', label: 'Intel' },
+  { href: '#community', label: 'Community' },
 ]
 
 export default function Nav() {
-  const [open, setOpen] = React.useState(false)
-  const [scrolled, setScrolled] = React.useState(false)
+  const [open, setOpen] = useState(false)
+  const [scrolled, setScrolled] = useState(false)
 
-  React.useEffect(() => {
+  useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40)
-    window.addEventListener('scroll', onScroll)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
+  const solid = scrolled || open
   return (
-    <header
-      // Until it's scrolled, the bar is transparent over the always-dark hero,
-      // so pin it to the dark palette (theme-locked-dark) even in light theme —
-      // otherwise the links, buttons and logo wash out. Once scrolled it gets a
-      // solid themed background and follows the site theme normally.
-      className={`fixed top-0 inset-x-0 z-50 transition-all duration-300${scrolled ? '' : ' theme-locked-dark'}`}
-      style={{
-        background: scrolled ? 'var(--nav-bg)' : 'transparent',
-        backdropFilter: scrolled ? 'blur(12px)' : 'none',
-        borderBottom: scrolled ? '1px solid var(--border)' : '1px solid transparent',
-      }}
-    >
-      <div className="max-w-7xl mx-auto px-6 flex items-center justify-between h-16">
-
-        {/* Logo */}
-        <a href="#" className="flex items-center gap-3 no-underline" style={{ textShadow: scrolled ? 'none' : '0 1px 4px rgba(0,0,0,0.7)' }}>
-          <LogoMark size={52} alt={campaign.name} />
+    // Over the hero the bar is transparent on a dark picture, so it keeps the
+    // dark palette in either theme until it turns solid.
+    <header className={`nav${solid ? ' is-solid' : ' theme-locked-dark'}`}>
+      <div className="wrap nav-bar">
+        <a href="#top" className="nav-brand" onClick={() => setOpen(false)}>
+          <LogoMark size={40} alt="" />
           <div>
-            <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1rem', letterSpacing: '0.2em', color: 'var(--text)', lineHeight: 1 }}>
-              {campaign.name}
-            </div>
-            <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', letterSpacing: '0.18em', textTransform: 'uppercase', marginTop: '2px' }}>
-              Dynamic DCS Campaign
-            </div>
+            <div className="nav-brand-name">Vector Strike</div>
+            <div className="nav-brand-sub">Persistent DCS campaign</div>
           </div>
         </a>
 
-        {/* Desktop nav */}
-        <nav className="hidden md:flex items-center gap-8">
-          {links.map(l => (
-            <a
-              key={l.href}
-              href={l.href}
-              style={{
-                fontFamily: "'Bebas Neue', sans-serif",
-                fontSize: '0.82rem',
-                letterSpacing: '0.18em',
-                color: 'var(--text-muted)',
-                textDecoration: 'none',
-                transition: 'color 0.15s',
-              }}
-              onMouseEnter={e => (e.currentTarget.style.color = 'var(--text)')}
-              onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
-            >
-              {l.label}
+        <nav className="nav-links" aria-label="Sections">
+          {SECTIONS.map((s, i) => (
+            <a key={s.href} href={s.href} className="nav-link">
+              <span className="n">{i + 1}</span>
+              {s.label}
             </a>
           ))}
         </nav>
 
-        {/* CTA */}
-        <div className="hidden md:flex items-center gap-3">
+        <div className="nav-actions">
           <ThemeToggle />
-          <a href={campaign.dashboardUrl} className="vs-btn" style={{ padding: '0.45rem 1rem', fontSize: '0.78rem' }}>
-            <Zap size={12} />
-            OPS DASHBOARD
-          </a>
-          <a href={campaign.wikiUrl} className="vs-btn vs-btn-outline" style={{ padding: '0.45rem 1rem', fontSize: '0.78rem' }}>
-            <BookOpen size={12} />
-            WIKI
-          </a>
-          <a
-            href={campaign.discord}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="vs-btn vs-btn-outline"
-            style={{ padding: '0.45rem 1rem', fontSize: '0.78rem' }}
-          >
-            JOIN DISCORD
-          </a>
+          <a href={links.wiki} className="vs-btn vs-btn-ghost vs-btn-sm"><Wiki size={13} />Wiki</a>
+          <a href={links.dashboard} className="vs-btn vs-btn-outline vs-btn-sm"><Sitrep size={13} />Dashboard</a>
+          <a href={links.discord} target="_blank" rel="noopener noreferrer" className="vs-btn vs-btn-sm">Join Discord</a>
         </div>
 
-        {/* Mobile hamburger */}
-        <div className="md:hidden flex items-center gap-2">
+        <div className="nav-burger">
           <ThemeToggle />
           <button
+            type="button"
+            className="icon-btn"
+            aria-label={open ? 'Close menu' : 'Open menu'}
+            aria-expanded={open}
             onClick={() => setOpen(o => !o)}
-            style={{ background: 'none', border: 'none', color: 'var(--text)', cursor: 'pointer', padding: '0.25rem' }}
           >
-            {open ? <X size={22} /> : <Menu size={22} />}
+            {open ? <X size={18} /> : <Menu size={18} />}
           </button>
         </div>
       </div>
 
-      {/* Mobile menu */}
       {open && (
-        <div style={{ background: 'var(--nav-bg-mobile)', borderBottom: '1px solid var(--border)', padding: '1rem 1.5rem' }}>
-          {links.map(l => (
-            <a
-              key={l.href}
-              href={l.href}
-              onClick={() => setOpen(false)}
-              style={{
-                display: 'block',
-                padding: '0.75rem 0',
-                fontFamily: "'Bebas Neue', sans-serif",
-                fontSize: '1rem',
-                letterSpacing: '0.18em',
-                color: 'var(--text-muted)',
-                textDecoration: 'none',
-                borderBottom: '1px solid var(--border)',
-              }}
-            >
-              {l.label}
-            </a>
-          ))}
-          <div className="flex gap-3 mt-4">
-            <a href={campaign.discord} target="_blank" rel="noopener noreferrer" className="vs-btn" style={{ fontSize: '0.82rem' }}>JOIN DISCORD</a>
-            <a href={campaign.dashboardUrl} className="vs-btn vs-btn-outline" style={{ fontSize: '0.82rem' }}>DASHBOARD</a>
-            <a href={campaign.wikiUrl} className="vs-btn vs-btn-outline" style={{ fontSize: '0.82rem' }}>WIKI</a>
+        <div className="nav-drawer">
+          <div className="wrap">
+            {SECTIONS.map((s, i) => (
+              <a key={s.href} href={s.href} className="nav-link" onClick={() => setOpen(false)}>
+                <span className="n">{i + 1}</span>
+                {s.label}
+              </a>
+            ))}
+            <div className="nav-drawer-actions">
+              <a href={links.discord} target="_blank" rel="noopener noreferrer" className="vs-btn vs-btn-sm">Join Discord</a>
+              <a href={links.dashboard} className="vs-btn vs-btn-outline vs-btn-sm"><Sitrep size={13} />Dashboard</a>
+              <a href={links.wiki} className="vs-btn vs-btn-ghost vs-btn-sm"><Wiki size={13} />Wiki</a>
+            </div>
           </div>
         </div>
       )}

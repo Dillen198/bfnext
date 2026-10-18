@@ -10,15 +10,12 @@ import { useEffect, useRef, useState } from 'react'
 // 0 so a single visible pixel is enough, independent of the element's size.
 export function useInView<T extends HTMLElement>(threshold = 0) {
   const ref = useRef<T | null>(null)
-  const [inView, setInView] = useState(false)
+  // Without IntersectionObserver there is nothing to wait for: start visible.
+  const [inView, setInView] = useState(() => typeof IntersectionObserver === 'undefined')
 
   useEffect(() => {
     const el = ref.current
-    if (!el) return
-    if (typeof IntersectionObserver === 'undefined') {
-      setInView(true)
-      return
-    }
+    if (!el || inView) return
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
@@ -30,7 +27,7 @@ export function useInView<T extends HTMLElement>(threshold = 0) {
     )
     observer.observe(el)
     return () => observer.disconnect()
-  }, [threshold])
+  }, [threshold, inView])
 
   return { ref, inView }
 }

@@ -1,126 +1,146 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Vector Strike — Campaign Configuration
-// Edit this file to customise all branding, links, and copy on the website.
+// Vector Strike — site copy and links
+// The site sells the campaign and gets people flying. Anything that explains
+// *how* something works belongs in the wiki: link to a page there (see `wiki`
+// below) rather than copying it here, so there is one copy to keep current.
 // ─────────────────────────────────────────────────────────────────────────────
+
+export const links = {
+  discord: 'https://discord.gg/XyGkb3WAXS',
+  dashboard: 'https://dashboard.vectorstrike.org',
+  wiki: 'https://wiki.vectorstrike.org',
+  dcs: 'https://www.digitalcombatsimulator.com',
+} as const
+
+/** A page on the wiki, by its slug (bfdb's seed_wiki path without `.md`). */
+export const wiki = (slug: string) => `${links.wiki}/${slug}`
+
+/** A page on the ops dashboard (bfweb routes). */
+export const dashboard = (path = '') => `${links.dashboard}${path}`
 
 export const campaign = {
   name: 'Vector Strike',
-  shortName: 'VS',
   tagline: 'Where every sortie shapes the war.',
-  version: 'v3.0',
-  description:
-    'Vector Strike is a dynamic, persistent multiplayer campaign for DCS World. ' +
-    'Coalition forces battle for territory control across multiple theaters. ' +
-    'Every mission matters — capture objectives, destroy logistics, defend your ' +
-    'airfields, and tip the balance of power. Your kills are tracked, your ' +
-    'achievements recorded. The war never stops.',
-  discord: 'https://discord.gg/XyGkb3WAXS',
-  // Kept for copy that reads naturally with one name. Anything that lists
-  // the servers should use `servers` (and the Field Manual's own selector,
-  // which is driven by config/servers.ts).
-  server: 'Vector Strike',
-  servers: [
-    '[VS] Vector Strike | Dynamic Campaign PVP Modern',
-    '[VS] Vector Strike | Dynamic Campaign PVP 2008',
-  ],
-  dashboardUrl: 'https://dashboard.vectorstrike.org',
-  wikiUrl: 'https://wiki.vectorstrike.org',
-  blueLabel: 'BLUFOR',
-  redLabel: 'REDFOR',
-
-  features: [
-    {
-      icon: 'Map',
-      title: 'Dynamic Territory',
-      description: 'Objectives change hands in real time. Capture airbases, FARPs, and logistics hubs to shift the front line.',
-    },
-    {
-      icon: 'Package',
-      title: 'Persistent Logistics',
-      description: 'Supply chains fuel the war effort. Interdict enemy convoys, protect your own, and watch the resource economy evolve.',
-    },
-    {
-      icon: 'Radio',
-      title: 'Commander System',
-      description: 'Coordinate with a dedicated commander role that allocates points, assigns objectives, and directs coalition strategy.',
-    },
-    {
-      icon: 'Crosshair',
-      title: 'Kill Tracking',
-      description: 'Every air kill, ground kill, and friendly fire incident is recorded and attributed. Real-time kill feed for both sides.',
-    },
-    {
-      icon: 'Layers',
-      title: 'Interactive Tactical Map',
-      description: 'Full-featured ops dashboard with NATO symbology, threat rings, mission planning tools, and live unit positions.',
-    },
-    {
-      icon: 'BarChart3',
-      title: 'Pilot Leaderboards',
-      description: 'Comprehensive stats for every pilot: air kills, ground kills, K/D, logistics support, score ranking, and more.',
-    },
-    {
-      icon: 'Truck',
-      title: 'Cargo Transport',
-      description: 'Helicopter crews can sling-load and transport supplies between FARPs and objectives, keeping the front line stocked.',
-    },
-    {
-      icon: 'Users',
-      title: 'Troop Deployments',
-      description: 'Deploy infantry squads to hold objectives, defend positions, or assault enemy-held ground in combined arms operations.',
-    },
-    {
-      icon: 'Radar',
-      title: 'JTAC System',
-      description: 'Dedicated JTAC units provide real-time targeting data, laser designation, and 9-line briefs to attack aircraft.',
-    },
-    {
-      icon: 'Eye',
-      title: 'Early Warning Radar',
-      description: 'EWR networks detect and report enemy air contacts, feeding threat data directly into the coalition picture.',
-    },
-    {
-      icon: 'Radio',
-      title: 'Live Voice GCI',
-      description: 'A controller works the coalition radar picture over SRS — proactive threat, SAM launch and picture calls in NATO brevity, plus bogey dope, declare and intercept vectors when you key up and ask.',
-    },
-    {
-      icon: 'Antenna',
-      title: 'Networked SAM Defense',
-      description: 'SAM sites share a live sensor picture, go dark until there\'s a real threat, and defend each other from anti-radiation missiles.',
-    },
-    {
-      icon: 'Shield',
-      title: 'Pilot Lives & Slots',
-      description: 'Slot authorisation and a persistent lives system tie pilot actions to real consequences — losses actually matter.',
-    },
-    {
-      icon: 'Menu',
-      title: 'F10 Radio Menus',
-      description: 'All campaign actions — deploying units, calling missions, managing cargo — are accessible through in-game F10 menus.',
-    },
-  ],
-
-  joinSteps: [
-    {
-      number: '01',
-      title: 'Own DCS World',
-      description: 'Download DCS World from Eagle Dynamics. Any module on either server’s roster will get you in the fight — and the free Su-25T is on the Red roster on both.',
-    },
-    {
-      number: '02',
-      title: 'Join Our Discord',
-      description: 'Hit the Discord link below. Find the server details, current theater briefing, and connect with other pilots.',
-    },
-    {
-      number: '03',
-      title: 'Connect to the Server',
-      description: 'Search for "[VS] Vector Strike" in the DCS multiplayer browser — there are two: the modern campaign, and the 2008 Russo-Georgian War in the Caucasus. Either one, or use the direct IP from Discord.',
-    },
-    {
-      number: '04',
-      title: 'Pick a Side & Fly',
-      description: 'Choose BLUFOR or REDFOR, take a slot, and enter the AO. The campaign is persistent — your actions matter.',
-    },
-  ],
+  pitch:
+    'A persistent, player-versus-player campaign for DCS World. The front line ' +
+    'moves when you move it, the supply you haul keeps it there, and the war ' +
+    'is still running when you log off.',
 } as const
+
+export interface Capability {
+  icon: 'Comms' | 'Sam' | 'Supply' | 'Health' | 'CommandCenter' | 'Rankings'
+  title: string
+  body: string
+  wiki: string
+}
+
+/** What sets the campaign apart -- the hook, not the manual. */
+export const capabilities: Capability[] = [
+  {
+    icon: 'Comms',
+    title: 'Live voice GCI',
+    body: 'A controller works the radar picture over SRS: threat calls, SAM launches, bogey dope and vectors in NATO brevity.',
+    wiki: 'gameplay/gci',
+  },
+  {
+    icon: 'Sam',
+    title: 'Air defence that thinks',
+    body: 'SAM sites share one sensor picture, stay dark until they have a shot, and cover each other against anti-radiation missiles.',
+    wiki: 'advanced/modern-war',
+  },
+  {
+    icon: 'Supply',
+    title: 'A war economy',
+    body: 'Convoys, factories and airlifted crates feed the front. Starve the enemy’s supply and their objectives start to fall.',
+    wiki: 'gameplay/war-economy',
+  },
+  {
+    icon: 'Health',
+    title: 'Losses that count',
+    body: 'Points buy your support and deployables. Where lives are enforced, each role flies from a limited pool, and a rescue crew can win a lost life back.',
+    wiki: 'gameplay/points-and-lives',
+  },
+  {
+    icon: 'CommandCenter',
+    title: 'An HQ that fights back',
+    body: 'Each side has an AI theatre commander running air packages, fires, convoys and troop lifts, and filling whatever gaps the players leave.',
+    wiki: 'advanced/theatre-hq',
+  },
+  {
+    icon: 'Rankings',
+    title: 'Every sortie on record',
+    body: 'Kills, captures and cargo runs build a pilot career, with sortie debriefs and flight replays to fly back through.',
+    wiki: 'playbooks/flight-replay',
+  },
+]
+
+export interface Role {
+  icon: 'Intercept' | 'Cas' | 'Logistics' | 'Csar' | 'Capture' | 'CommandCenter'
+  tag: string
+  title: string
+  body: string
+  image: string
+  alt: string
+  wiki: string
+}
+
+export const roles: Role[] = [
+  {
+    icon: 'Intercept',
+    tag: 'Air war',
+    title: 'Own the sky',
+    body: 'Fly CAP over your front, take vectors from GCI, and dig out the SAM sites that wait for you to come close.',
+    image: '/media/air-war.jpg',
+    alt: 'A camouflaged SAM battery hidden in a canyon at dusk',
+    wiki: 'advanced/modern-war',
+  },
+  {
+    icon: 'Cas',
+    tag: 'Strike & CAS',
+    title: 'Work with a JTAC',
+    body: 'Copy the 9-line, find the laser and break up the armour pushing on your objective before it gets there.',
+    image: '/media/cas.jpg',
+    alt: 'A JTAC calling in an A-10 strike from a ridge line',
+    wiki: 'playbooks/cas-with-jtac',
+  },
+  {
+    icon: 'Logistics',
+    tag: 'Airlift',
+    title: 'Move the front',
+    body: 'C-130 airdrops, helicopter crate runs and troop lifts. Every FARP and every rebuilt base starts in a cargo bay.',
+    image: '/media/airlift.jpg',
+    alt: 'A C-130 dropping supply crates under parachutes',
+    wiki: 'playbooks/running-crates',
+  },
+  {
+    icon: 'Csar',
+    tag: 'Rescue',
+    title: 'Bring them home',
+    body: 'A downed pilot is a life lost until someone lands beside the green smoke. Pick them up and the life comes back.',
+    image: '/media/csar.jpg',
+    alt: 'A Huey hoisting a downed pilot out of a valley',
+    wiki: 'f10-menu/csar',
+  },
+  {
+    icon: 'Capture',
+    tag: 'Ground',
+    title: 'Take the objective',
+    body: 'Insert troops, deploy units and hold the ground until a contested FARP becomes your FARP.',
+    image: '/media/capture.jpg',
+    alt: 'Troops fast-roping from a helicopter onto an outpost',
+    wiki: 'playbooks/capturing-a-base',
+  },
+  {
+    icon: 'CommandCenter',
+    tag: 'Command',
+    title: 'Run the war',
+    body: 'Set the coalition’s priorities on a live map, spend its points, and move formations against the enemy line.',
+    image: '/media/command.jpg',
+    alt: 'An officer at a desk covered in maps and a glowing laptop',
+    wiki: 'advanced/command',
+  },
+]
+
+export const credits = {
+  developers: ['No15 | KillerDog', '[.ID] EagleEye'],
+}

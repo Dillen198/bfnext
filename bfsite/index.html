@@ -5,11 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/vs-vectorstrike_hd-white.png" />
     <link rel="apple-touch-icon" href="/vs-vectorstrike_hd-white.png" />
-    <title>Vector Strike — Dynamic Persistent DCS Campaign</title>
-    <meta name="description" content="Vector Strike is a dynamic, persistent multiplayer campaign for DCS World. Join the fight — every sortie shapes the war." />
+    <title>Vector Strike — Persistent PvP Campaign for DCS World</title>
+    <meta name="description" content="Vector Strike is a persistent, 24/7 player-versus-player campaign for DCS World. Two theatres, a live front line, and a war that remembers every sortie." />
+    <meta name="theme-color" content="#080b06" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Vector Strike — Persistent PvP Campaign for DCS World" />
+    <meta property="og:description" content="Two theatres, a live front line, and a war that remembers every sortie." />
+    <meta property="og:image" content="/media/hero.jpg" />
+    <!-- Set the theme before first paint so a light-theme visitor doesn't get a dark flash. -->
+    <script>
+      try {
+        var t = localStorage.getItem('bfsite-theme')
+        if (t !== 'dark' && t !== 'light') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+        document.documentElement.setAttribute('data-theme', t)
+      } catch (e) {}
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+    <!-- The War Diary card borrows the dashboard paper's newsprint faces. -->
+    <link href="https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&family=Old+Standard+TT:wght@700&family=IM+Fell+English&display=swap" rel="stylesheet" />
+    <link rel="preload" as="image" href="/media/hero.jpg" />
   </head>
   <body>
     <div id="root"></div>
