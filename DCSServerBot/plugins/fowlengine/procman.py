@@ -1149,7 +1149,10 @@ class Procman:
                 "--discord-guild-id", str(c.get("discord_guild_id", "")),
                 "--discord-admin-role-id", str(c.get("discord_admin_role_id", "")),
             ]
-        return args
+        # Every value as text: an id YAML read as a number (`discord_client_id:
+        # 1561...` unquoted) is an int, which neither the command line nor the
+        # log redaction can take -- bfdb then never starts.
+        return [str(a) for a in args]
 
     def _supported_flags(self, exe: str) -> Optional[set]:
         """The long flags `exe --help` lists, cached per exe file (path, size,

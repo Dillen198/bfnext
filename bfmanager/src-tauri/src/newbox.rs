@@ -904,6 +904,20 @@ fn instance_folder(o: &NewBoxOptions, home: &Path) -> Result<()> {
     }
     std::fs::write(home.join("Scripts").join("bf_export_port.lua"), format!("return {RANGE_EXPORT_PORT}\n"))?;
 
+    // The bot's SRS extension reads these sections and keys from SRS.cfg and
+    // fails every minute without them; an SRS 2.4 install has no server.cfg
+    // for it to copy, so the file is written here.
+    let srs_cfg = format!(
+        "[General Settings]\r\nCLIENT_EXPORT_ENABLED=true\r\nEXTERNAL_AWACS_MODE=false\r\nLOTATC_EXPORT_ENABLED=false\r\n\
+         LOTATC_EXPORT_PORT=10712\r\nALLOW_INSTRUCTOR_MODE=false\r\nSPECTATORS_AUDIO_DISABLED=false\r\nRADIO_EFFECT_OVERRIDE=false\r\n\r\n\
+         [Server Settings]\r\nSERVER_PORT={port}\r\nSERVER_IP=0.0.0.0\r\nCLIENT_EXPORT_FILE_PATH={export}\r\n\
+         HTTP_SERVER_ENABLED=false\r\nHTTP_SERVER_PORT=8090\r\nUPNP_ENABLED=false\r\n\r\n\
+         [External AWACS Mode Settings]\r\nEXTERNAL_AWACS_MODE_BLUE_PASSWORD=\r\nEXTERNAL_AWACS_MODE_RED_PASSWORD=\r\n",
+        port = o.srs_port,
+        export = home.join("Config").join("clients-list.json").display(),
+    );
+    write_new(&home.join("Config").join("SRS.cfg"), &srs_cfg)?;
+
     let settings = home.join("Config").join("serverSettings.lua");
     let text = format!(
         r#"cfg =

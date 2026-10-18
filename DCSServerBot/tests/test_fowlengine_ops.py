@@ -1896,3 +1896,20 @@ def test_netidx_exe_is_opt_in():
     assert "netidx.exe" not in au.UpdateConfig().files
     c = au.UpdateConfig.from_dicts({"files": ["bfrange.dll", "bfdb.exe", "netidx.exe"]})
     assert c.files == ("bfrange.dll", "bfdb.exe", "netidx.exe")
+
+
+def test_unquoted_discord_ids_still_launch(tmp_path):
+    # `discord_client_id: 1561...` unquoted is an int in YAML: it must still
+    # make a command line (and a redacted log line) instead of crashing start
+    cfg = {"bfdb": {"manage": True, "home": str(tmp_path), "discord_client_id": 1561347344409034872,
+                    "discord_client_secret": "s", "discord_guild_id": 1450815563524866144,
+                    "dcsserverbot_url": "http://127.0.0.1:9876/stats", "dcsserverbot_api_key": "k"}}
+
+    async def notify(msg):
+        pass
+    pm = pmmod.Procman(log, cfg, notify)
+    args = pm._build_args("pw", False, instances_file=str(tmp_path / "instances.json"))
+    assert all(isinstance(a, str) for a in args)
+    assert args[args.index("--discord-client-id") + 1] == "1561347344409034872"
+    line = pm._redact(args)
+    assert "--discord-client-secret ***" in line and "--admin-password ***" in line
