@@ -1,8 +1,15 @@
 import type { FlagId } from '../config/servers'
 
-// Flags drawn as plain SVG at 3:2, so they need no image files and stay crisp
-// at any card size. They are backdrop art, blended in at low opacity: close
-// to the real proportions, not a vexillology reference.
+// Country flags are drawn as plain SVG at 3:2, so they stay crisp at any card
+// size. The coalition flags are cloth pictures (public/media/flag-*.png), the
+// red one mirrored so both fly toward the middle. All of them are backdrop
+// art, blended in at low opacity: close to the real thing, not a reference.
+
+/** Coalitions have no national flag; these fly plain blue and red cloth. */
+const CLOTH: Partial<Record<FlagId, string>> = {
+  blufor: '/media/flag-blufor.png',
+  redfor: '/media/flag-redfor.png',
+}
 
 function Georgia() {
   // The five-cross flag: a red St George's cross with a smaller cross in each quarter.
@@ -32,49 +39,30 @@ function Russia() {
   )
 }
 
-/** Coalition banner: field colour plus a NATO frame -- rectangle for friendly, diamond for hostile. */
-function Coalition({ side }: { side: 'blue' | 'red' }) {
-  const field = side === 'blue' ? '#1d4f8c' : '#8c1d1d'
-  const mark = side === 'blue' ? '#9cc3ef' : '#f0a0a0'
-  return (
-    <>
-      <rect width="300" height="200" fill={field} />
-      <g fill="none" stroke={mark} strokeWidth="7">
-        {side === 'blue' ? (
-          <>
-            <rect x="95" y="62" width="110" height="76" />
-            <path d="M95 62 L205 138 M205 62 L95 138" />
-          </>
-        ) : (
-          <>
-            <path d="M150 40 L215 100 L150 160 L85 100 Z" />
-            <path d="M118 70 L182 130 M182 70 L118 130" />
-          </>
-        )}
-      </g>
-    </>
-  )
-}
-
 function FlagArt({ id }: { id: FlagId }) {
   switch (id) {
     case 'georgia': return <Georgia />
     case 'russia': return <Russia />
-    case 'blufor': return <Coalition side="blue" />
-    case 'redfor': return <Coalition side="red" />
+    default: return null
   }
+}
+
+function Flag({ id, side }: { id: FlagId; side: 'left' | 'right' }) {
+  const cloth = CLOTH[id]
+  if (cloth) return <img className={`flag flag-${side} flag-cloth`} src={cloth} alt="" />
+  return (
+    <svg className={`flag flag-${side}`} viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice">
+      <FlagArt id={id} />
+    </svg>
+  )
 }
 
 /** Two flags blended into a card's background, one from each edge, with a fabric sheen. */
 export default function FlagBackdrop({ flags }: { flags: [FlagId, FlagId] }) {
   return (
     <div className="flag-backdrop" aria-hidden="true">
-      <svg className="flag flag-left" viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice">
-        <FlagArt id={flags[0]} />
-      </svg>
-      <svg className="flag flag-right" viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice">
-        <FlagArt id={flags[1]} />
-      </svg>
+      <Flag id={flags[0]} side="left" />
+      <Flag id={flags[1]} side="right" />
       <div className="flag-sheen" />
     </div>
   )
