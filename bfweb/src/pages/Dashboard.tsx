@@ -22,7 +22,9 @@ import { api, type OnlinePilot, type Objective, type Pilot, type Kill, type Pilo
 import { campaign } from '../config/campaign'
 import PanelBase from '../components/Panel'
 import TacMap from '../components/TacMap'
-import { OBJ_ICON } from '../lib/objIcon'
+import ObjectiveDrawer from '../components/ObjectiveDrawer'
+import { attentionList, TONE, type Attention } from '../lib/objectives'
+import { ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts'
 import { classifyTargetClass, TARGET_CLASS_COLOR, fmtTimeZ, windDir, visStr, cloudStr } from '../lib/format'
 import { useRound } from '../context/RoundContext'
 
@@ -107,120 +109,6 @@ function TerritoryBar({ objectives }: { objectives: Objective[] }) {
         ))}
       </div>
     </div>
-  )
-}
-
-// ── Critical objectives ───────────────────────────────────────────────────────
-
-/** Icon for an objective kind, defaulting to a plain pin for anything unmapped. */
-function ObjIcon({ kind, size, color, style }: { kind: string; size: number; color: string; style?: React.CSSProperties }) {
-  const Icon = OBJ_ICON[kind] ?? Pin
-  return <Icon size={size} color={color} style={style} />
-}
-const OBJ_KIND_SHORT: Record<string, string> = {
-  Airbase: 'AB', FARP: 'FARP', FOB: 'FOB', Factory: 'FAC',
-  'Logistics Hub': 'LOG', 'Naval Base': 'NB', 'Carrier Group': 'CVN', 'Command Center': 'CC',
-}
-
-function CriticalObjectives({ objectives }: { objectives: Objective[] }) {
-  const crit = useMemo(() =>
-    [...objectives].filter(o => o.health < 60).sort((a, b) => a.health - b.health).slice(0, 7),
-    [objectives]
-  )
-  if (!crit.length) return (
-    <div style={{ padding: '10px 14px', fontSize: '0.62rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', textAlign: 'center' }}>
-      NO CRITICAL ASSETS
-    </div>
-  )
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
-      {crit.map(obj => {
-        const oc  = obj.owner === 'Blue' ? campaign.blueColor : obj.owner === 'Red' ? campaign.redColor : '#4a5240'
-        const hc  = obj.health < 30 ? 'var(--red)' : obj.health < 55 ? 'var(--yellow)' : 'var(--accent)'
-        return (
-          <div key={obj.id} style={{ padding: '6px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <ObjIcon kind={obj.kind} size={14} color={oc} style={{ width: 16, flexShrink: 0 }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
-                <span style={{ fontSize: '0.74rem', fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 130 }}>
-                  {obj.name}
-                </span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-                  <span style={{ fontSize: '0.6rem', color: oc, fontFamily: 'var(--font-mono)', fontWeight: 700, letterSpacing: '0.1em' }}>
-                    {obj.owner === 'Neutral' ? 'NEUT' : obj.owner.toUpperCase()}
-                  </span>
-                  <span className="font-mono-vs" style={{ fontSize: '0.72rem', color: hc, fontWeight: 700 }}>{obj.health}%</span>
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ flex: 1, height: 4, background: 'var(--bg-elevated)', overflow: 'hidden' }}>
-                  <div style={{ width: `${obj.health}%`, height: '100%', background: hc, transition: 'width 0.4s' }} />
-                </div>
-                <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>
-                  L{obj.logi}·S{obj.supply}·F{obj.fuel}
-                </span>
-              </div>
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-// ── Objective roster (all, scrollable) ───────────────────────────────────────
-
-function ObjectiveRoster({ objectives }: { objectives: Objective[] }) {
-  const sorted = useMemo(() =>
-    [...objectives].filter(o => o.lat !== 0 || o.lon !== 0)
-      .sort((a, b) => {
-        const order: Record<string, number> = { Airbase: 0, 'Naval Base': 1, 'Carrier Group': 2, Factory: 3, 'Logistics Hub': 4, FARP: 5, FOB: 6, 'Command Center': 7 }
-        return (order[a.kind] ?? 9) - (order[b.kind] ?? 9) || a.name.localeCompare(b.name)
-      }),
-    [objectives]
-  )
-  if (!sorted.length) return null
-
-  const blue = sorted.filter(o => o.owner === 'Blue')
-  const red  = sorted.filter(o => o.owner === 'Red')
-  const neu  = sorted.filter(o => o.owner === 'Neutral')
-
-  function ObjRow({ obj }: { obj: Objective }) {
-    const oc = obj.owner === 'Blue' ? campaign.blueColor : obj.owner === 'Red' ? campaign.redColor : '#4a5240'
-    const hc = obj.health < 30 ? 'var(--red)' : obj.health < 60 ? 'var(--yellow)' : 'var(--accent)'
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 14px', borderBottom: '1px solid var(--border)' }}>
-        <ObjIcon kind={obj.kind} size={13} color={oc} style={{ width: 14, flexShrink: 0 }} />
-        <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', width: 34, flexShrink: 0 }}>{OBJ_KIND_SHORT[obj.kind] ?? '—'}</span>
-        <span style={{ fontSize: '0.75rem', color: 'var(--text)', fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{obj.name}</span>
-        <div style={{ width: 50, height: 3, background: 'var(--bg-elevated)', flexShrink: 0, overflow: 'hidden' }}>
-          <div style={{ width: `${obj.health}%`, height: '100%', background: hc }} />
-        </div>
-        <span className="font-mono-vs" style={{ fontSize: '0.68rem', color: hc, width: 30, textAlign: 'right', flexShrink: 0 }}>{obj.health}%</span>
-        {obj.health < 40 && <Alert size={8} style={{ color: 'var(--yellow)', flexShrink: 0 }} />}
-      </div>
-    )
-  }
-
-  function Section({ label, items, color }: { label: string; items: Objective[]; color: string }) {
-    if (!items.length) return null
-    return (
-      <>
-        <div style={{ padding: '3px 14px', background: `${color}08`, borderBottom: `1px solid ${color}18`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '0.62rem', color, letterSpacing: '0.18em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', fontWeight: 700 }}>{label}</span>
-          <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{items.length}</span>
-        </div>
-        {items.map(o => <ObjRow key={o.id} obj={o} />)}
-      </>
-    )
-  }
-
-  return (
-    <>
-      <Section label={campaign.blueLabel} items={blue} color={campaign.blueColor} />
-      <Section label={campaign.redLabel}  items={red}  color={campaign.redColor}  />
-      <Section label="NEUTRAL"            items={neu}  color="#4a5240"            />
-    </>
   )
 }
 
@@ -449,6 +337,51 @@ function LiveBadge() {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+/** Objectives that need a look, most urgent first; opens the drawer. */
+function FrontLine({ items, onOpen }: { items: Attention[]; onOpen: (name: string) => void }) {
+  if (items.length === 0) {
+    return <div style={{ padding: '12px 14px', fontSize: '0.66rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>QUIET FRONT — NOTHING UNDER ATTACK OR FAILING</div>
+  }
+  return (
+    <>
+      {items.map(({ obj, reasons }) => (
+        <button key={obj.id} type="button" onClick={() => onOpen(obj.name)}
+          style={{ all: 'unset', boxSizing: 'border-box', width: '100%', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', borderBottom: '1px solid var(--border)' }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: obj.owner === 'Blue' ? campaign.blueColor : obj.owner === 'Red' ? campaign.redColor : 'var(--text-dim)' }} />
+          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: '0 1 auto' }}>{obj.name}</span>
+          <span className="flex flex-wrap justify-end" style={{ gap: 4, marginLeft: 'auto' }}>
+            {reasons.slice(0, 2).map(r => (
+              <span key={r.text} style={{ fontSize: '0.56rem', padding: '1px 5px', borderRadius: 2, whiteSpace: 'nowrap', color: TONE[r.tone].fg, background: TONE[r.tone].bg }}>{r.text}</span>
+            ))}
+          </span>
+        </button>
+      ))}
+    </>
+  )
+}
+
+/** Objectives held per side over the round, from the round report. Absent
+ *  (renders nothing) on a bfdb without /rounds/:id/report. */
+function TerritoryTrend({ roundId }: { roundId: number | null }) {
+  const { data: rep } = useQuery({
+    queryKey: ['round-report', roundId], queryFn: () => api.roundReport(roundId!),
+    enabled: roundId != null, refetchInterval: 5 * 60_000, retry: false,
+  })
+  if (!rep || rep.buckets.length < 2) return null
+  return (
+    <div style={{ padding: '0 14px 8px' }}>
+      <div style={{ fontSize: '0.56rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', letterSpacing: '0.12em', marginBottom: 2 }}>THIS ROUND</div>
+      <ResponsiveContainer width="100%" height={46}>
+        <AreaChart data={rep.buckets} margin={{ left: 0, right: 0, top: 2, bottom: 0 }}>
+          <YAxis hide domain={[0, rep.objectives || 'auto']} />
+          <Area type="stepAfter" dataKey="blue_held" stackId="t" stroke={campaign.blueColor} strokeWidth={1.5} fill={campaign.blueColor} fillOpacity={0.15} isAnimationActive={false} />
+          <Area type="stepAfter" dataKey="red_held" stackId="t" stroke={campaign.redColor} strokeWidth={1.5} fill={campaign.redColor} fillOpacity={0.15} isAnimationActive={false} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  )
+}
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const { selectedRound } = useRound()
@@ -462,6 +395,11 @@ export default function Dashboard() {
   const { data: fronts = { mid: [], blue: [], red: [] } } = useQuery<Frontlines>({ queryKey: ['frontline', selectedRound], queryFn: () => api.frontline(selectedRound), refetchInterval: 30_000 })
   const { data: kills      = [] } = useQuery({ queryKey: ['kills-dash', selectedRound], queryFn: () => api.kills(selectedRound, campaign.dashboardKillFeedCount + 20), refetchInterval: 15_000 })
   const { data: stats            } = useQuery({ queryKey: ['stats'],                    queryFn: api.stats,                                                            refetchInterval: 60_000 })
+  // Shares the Kill Feed's cache; the KPI counts the last hour from it.
+  const { data: feed = [] } = useQuery({ queryKey: ['kills-feed', selectedRound], queryFn: () => api.kills(selectedRound, 500), refetchInterval: 30_000 })
+  const { data: captures = [] } = useQuery({ queryKey: ['capture-events', selectedRound], queryFn: () => api.captureEvents(selectedRound, 200), refetchInterval: 60_000 })
+  const { data: rounds = [] } = useQuery({ queryKey: ['rounds'], queryFn: () => api.rounds(), refetchInterval: 5 * 60_000 })
+  const [drawer, setDrawer] = useState<string | null>(null)
   const { data: news, error: newsErr } = useQuery({ queryKey: ['news'],                   queryFn: () => api.news(5),                                                    refetchInterval: 5 * 60_000 })
 
   const nameMap = useMemo(() => {
@@ -476,7 +414,15 @@ export default function Dashboard() {
   const blueObj = objectives.filter(o => o.owner === 'Blue').length
   const redObj  = objectives.filter(o => o.owner === 'Red').length
   const total   = objectives.length
-  const critCount = objectives.filter(o => o.health < 40).length
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t) }, [])
+  const attention = useMemo(() => attentionList(objectives, captures, now), [objectives, captures, now])
+  const atRisk = attention.filter(a => a.rank <= 2).length
+  const lastHour = useMemo(() => {
+    const recent = feed.filter(k => now - Date.parse(k.time) < 3_600_000)
+    return { all: recent.length, blue: recent.filter(k => k.killer?.side === 'Blue').length, red: recent.filter(k => k.killer?.side === 'Red').length }
+  }, [feed, now])
+  const roundId = selectedRound ?? rounds.find(r => r.active)?.id ?? null
 
   const blueDelta = useDelta(blueObj)
   const redDelta  = useDelta(redObj)
@@ -535,11 +481,11 @@ export default function Dashboard() {
         <KpiCell label={`${campaign.redLabel} OBJ`} value={redObj}
           icon={Shield} color={campaign.redColor} delta={redDelta}
           sub={`${total > 0 ? Math.round(redObj / total * 100) : 0}% territory`} />
-        <KpiCell label="CRITICAL" value={critCount} icon={Alert}
-          color={critCount > 0 ? 'var(--red)' : 'var(--text-dim)'}
-          sub="obj below 40% HP" />
-        <KpiCell label="KILLS" value={kills.length} icon={KillIcon} color="var(--red)"
-          sub="this session" />
+        <KpiCell label="AT RISK" value={atRisk} icon={Alert}
+          color={atRisk > 0 ? 'var(--red)' : 'var(--text-dim)'}
+          sub="falling or under attack" />
+        <KpiCell label="KILLS · 1H" value={lastHour.all} icon={KillIcon} color="var(--red)"
+          sub={`${lastHour.blue} blu · ${lastHour.red} red`} />
         <KpiCell label="TOTAL PILOTS" value={stats?.total_pilots ?? '—'}
           sub={`${stats?.blue_registered ?? 0} blu · ${stats?.red_registered ?? 0} red`} />
       </div>
@@ -597,28 +543,26 @@ export default function Dashboard() {
           overflow: isMobile ? 'visible' : 'hidden',
         }}>
 
-          {/* Weather */}
-          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="WEATHER BRIEF" icon={Wind} iconColor="var(--cyan)" style={{ flexShrink: 0 }}>
-            <WeatherBrief stats={stats} />
-          </PanelBase>
+          {/* Weather -- only when the server reported a METAR. */}
+          {stats?.weather && (
+            <PanelBase size="sm" bodyStyle={PANEL_BODY} title="WEATHER BRIEF" icon={Wind} iconColor="var(--cyan)" style={{ flexShrink: 0 }}>
+              <WeatherBrief stats={stats} />
+            </PanelBase>
+          )}
 
           {/* Territory */}
           <PanelBase size="sm" bodyStyle={PANEL_BODY} title="TERRITORY CONTROL" icon={Activity} iconColor="var(--yellow)" style={{ flexShrink: 0 }}>
             <TerritoryBar objectives={objectives} />
+            <TerritoryTrend roundId={roundId} />
           </PanelBase>
 
-          {/* Critical assets */}
-          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="CRITICAL ASSETS" icon={Alert} iconColor="var(--red)"
-            right={critCount > 0 ? <span className="font-mono-vs" style={{ fontSize: '0.58rem', color: 'var(--red)', background: 'rgba(204,68,68,0.12)', border: '1px solid rgba(204,68,68,0.3)', padding: '1px 6px' }}>{critCount} CRIT</span> : undefined}
-            style={{ flexShrink: 0 }}>
-            <CriticalObjectives objectives={objectives} />
-          </PanelBase>
-
-          {/* Full objective roster — scrollable */}
-          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="OBJECTIVE ROSTER" icon={Pin} iconColor="var(--accent)" count={total}
-            style={isMobile ? { flex: '0 0 auto', maxHeight: 320 } : { flex: 1 }}>
+          {/* Front line: what is under attack, falling, freshly taken or
+              running dry. Replaces the full roster -- every base at 100%
+              told nobody anything; the Objectives page has the table. */}
+          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="FRONT LINE" icon={Alert} iconColor="var(--red)" count={attention.length}
+            style={isMobile ? { flex: '0 0 auto', maxHeight: 360 } : { flex: 1 }}>
             <div style={{ overflowY: 'auto', flex: 1 }}>
-              <ObjectiveRoster objectives={objectives} />
+              <FrontLine items={attention} onOpen={setDrawer} />
             </div>
           </PanelBase>
         </div>
@@ -656,6 +600,8 @@ export default function Dashboard() {
           </PanelBase>
         </div>
       </div>
+
+      <ObjectiveDrawer objective={drawer} onClose={() => setDrawer(null)} onOpen={setDrawer} />
     </div>
   )
 }

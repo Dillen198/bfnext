@@ -1,21 +1,19 @@
+import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import QueryState from '../components/QueryState'
 import { useState, useMemo } from 'react'
-import { api, type NavaidEntry } from '../api'
+import { api, type NavaidEntry, type CaptureEvent, type Frontlines } from '../api'
 import HealthBar from '../components/HealthBar'
 import SideBadge from '../components/SideBadge'
 import PageHeader from '../components/PageHeader'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts'
+import TacMap from '../components/TacMap'
+import { ago } from '../lib/format'
+import { attentionList, TONE } from '../lib/objectives'
 import { useRound } from '../context/RoundContext'
-import { Objective, Alert, Shield, Pin, Capture } from '@icons'
+import { Objective, Alert, Pin, Capture } from '@icons'
 import CaptureTimeline from '../components/CaptureTimeline'
 import Panel from '../components/Panel'
 import ObjectiveDrawer from '../components/ObjectiveDrawer'
-
-const TT = {
-  contentStyle: { background: 'var(--bg-elevated)', border: '1px solid var(--border-light)', borderRadius: 4, color: 'var(--text)', fontSize: 12 },
-  cursor: { fill: 'rgba(56,189,248,0.04)' },
-}
 
 type Filter = 'All' | 'Red' | 'Blue' | 'Neutral'
 type SortKey = 'name' | 'kind' | 'owner' | 'health' | 'logi' | 'supply' | 'fuel' | 'navaid' | 'last_change'
@@ -30,6 +28,7 @@ const COLS: { label: string; key?: SortKey }[] = [
   { label: 'Supply', key: 'supply' },
   { label: 'Fuel', key: 'fuel' },
   { label: 'Navaids', key: 'navaid' },
+  { label: 'Last Taken' },
   { label: 'Last Change', key: 'last_change' },
 ]
 
@@ -71,8 +70,25 @@ const COLUMN_HELP: Partial<Record<string, string>> = {
   Logistics: '% of the logistics-defense unit group still alive, reduced further if warehouse buildings are destroyed. Governs repair speed and capturability -- not a fuel/resource level.',
   Supply: '% fill of the warehouse\'s equipment stock (weapons, vehicles, aircraft) -- a resource level, not defender health.',
   Fuel: '% fill of the warehouse\'s fuel stock -- a resource level, not defender health.',
+  'Last Taken': 'The most recent capture this round: by which side, and who flew it.',
 }
 
+const SIDE_COLOR: Record<string, string> = { Blue: 'var(--blue)', Red: 'var(--red)', Neutral: '#64748b' }
+
+
+
+function LastTaken({ c, now }: { c: CaptureEvent | undefined; now: number }) {
+  if (!c) return <span style={{ color: 'var(--text-dim)' }}>—</span>
+  // An all-zero UCID is bfdb's "no pilot credited".
+  const by = c.by.filter(n => !/^0+$/.test(n))
+  return (
+    <span title={new Date(c.time).toLocaleString()}>
+      <span style={{ color: SIDE_COLOR[c.side] }}>{c.side}</span>
+      {by.length > 0 && <span> · {by.join(', ')}</span>}
+      <span style={{ color: 'var(--text-dim)' }}> · {ago(c.time, now)}</span>
+    </span>
+  )
+}
 
 export default function Objectives() {
   const { selectedRound } = useRound()
@@ -116,6 +132,7 @@ export default function Objectives() {
   const [drawer, setDrawer] = useState<string | null>(null)
 
   const [filter, setFilter] = useState<Filter>('All')
+  const [kindFilter, setKindFilter] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState<SortKey>('health')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -138,28 +155,36 @@ export default function Objectives() {
 
   const total = objectives.length
 
-  // Health distribution
-  const healthBuckets = [
-    { range: '0–25%',   count: objectives.filter(o => o.health <= 25).length,                     fill: '#ef4444' },
-    { range: '26–50%',  count: objectives.filter(o => o.health > 25  && o.health <= 50).length,   fill: '#f97316' },
-    { range: '51–75%',  count: objectives.filter(o => o.health > 50  && o.health <= 75).length,   fill: '#eab308' },
-    { range: '76–100%', count: objectives.filter(o => o.health > 75).length,                      fill: '#22c55e' },
-  ]
+  const { data: fronts = { mid: [], blue: [], red: [] } } = useQuery<Frontlines>({
+    queryKey: ['frontline', selectedRound], queryFn: () => api.frontline(selectedRound), refetchInterval: 30_000,
+  })
 
-  // Kind distribution
-  const kindData = OBJ_KINDS.map(k => ({
-    name: k, count: objectives.filter(o => o.kind === k).length, fill: KIND_COLORS[k] ?? '#4b5563',
-  })).filter(d => d.count > 0)
+  // Newest capture per objective (events arrive newest first).
+  const lastCapture = useMemo(() => {
+    const m = new Map<string, CaptureEvent>()
+    for (const e of captureEvents) if (!m.has(e.objective)) m.set(e.objective, e)
+    return m
+  }, [captureEvents])
 
-  // Critical objectives (health < 40)
-  const criticalObjs = useMemo(() =>
-    [...objectives].filter(o => o.health < 40).sort((a, b) => a.health - b.health).slice(0, 6),
-    [objectives]
-  )
+  const [now] = useState(() => Date.now())
+  const attention = useMemo(() => attentionList(objectives, captureEvents, now), [objectives, captureEvents, now])
+
+  // Who holds what kind of base.
+  const byKind = OBJ_KINDS.map(k => {
+    const of = objectives.filter(o => o.kind === k)
+    return {
+      kind: k, total: of.length,
+      Blue: of.filter(o => o.owner === 'Blue').length,
+      Red: of.filter(o => o.owner === 'Red').length,
+      Neutral: of.filter(o => o.owner === 'Neutral').length,
+    }
+  }).filter(k => k.total > 0)
+  const kindMax = Math.max(1, ...byKind.map(k => k.total))
 
   const filtered = useMemo(() => objectives
     .filter(o => {
       if (filter !== 'All' && o.owner !== filter) return false
+      if (kindFilter && o.kind !== kindFilter) return false
       if (search && !o.name.toLowerCase().includes(search.toLowerCase())) return false
       return true
     })
@@ -180,7 +205,7 @@ export default function Objectives() {
           return dir * ((a[sortBy] as number) - (b[sortBy] as number))
       }
     }),
-    [objectives, filter, search, sortBy, sortDir, navaidByName]
+    [objectives, filter, kindFilter, search, sortBy, sortDir, navaidByName]
   )
 
   const bluePct    = total > 0 ? counts.Blue    / total * 100 : 0
@@ -215,131 +240,91 @@ export default function Objectives() {
                 Territory Control
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: '0.65rem', fontFamily: 'var(--font-mono)' }}>
-                <span style={{ color: '#60a5fa' }}>{Math.round(bluePct)}% Blue</span>
+                <span style={{ color: 'var(--blue)' }}>{Math.round(bluePct)}% Blue</span>
                 <span style={{ color: 'var(--border-light)' }}>·</span>
-                <span style={{ color: '#f87171' }}>{Math.round(redPct)}% Red</span>
+                <span style={{ color: 'var(--red)' }}>{Math.round(redPct)}% Red</span>
                 <span style={{ color: 'var(--border-light)' }}>·</span>
                 <span style={{ color: 'var(--text-dim)' }}>{Math.round(neutralPct)}% Neutral</span>
               </div>
             </div>
             <div style={{ height: 8, overflow: 'hidden', display: 'flex', background: 'var(--bg-elevated)', borderRadius: 2 }}>
-              <div className="health-fill" style={{ width: `${bluePct}%`, height: '100%', background: 'linear-gradient(90deg,#1d4ed8,#3b82f6)' }} />
+              <div className="health-fill" style={{ width: `${bluePct}%`, height: '100%', background: 'var(--blue)' }} />
               <div className="health-fill" style={{ width: `${neutralPct}%`, height: '100%', background: 'var(--border-light)' }} />
-              <div className="health-fill" style={{ width: `${redPct}%`, height: '100%', background: 'linear-gradient(90deg,#dc2626,#991b1b)' }} />
+              <div className="health-fill" style={{ width: `${redPct}%`, height: '100%', background: 'var(--red)' }} />
             </div>
           </div>
         )}
 
-        {/* ── Stat legend ── */}
-        <div style={{
-          background: 'var(--bg-card)', border: '1px solid var(--border)',
-          borderRadius: 6, padding: '10px 16px',
-          display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
-        }}>
-          <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600, flexShrink: 0 }}>Stats:</span>
-          <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            <b style={{ color: 'var(--text)' }}>Health</b> &amp; <b style={{ color: 'var(--text)' }}>Logistics</b> are defender strength (% of units still alive) —
-            {' '}<b style={{ color: 'var(--text)' }}>Supply</b> &amp; <b style={{ color: 'var(--text)' }}>Fuel</b> are warehouse stock levels (% of inventory remaining).
-            Logistics is not the same as Fuel: it tracks whether the base's logistics defenders are alive, not how much fuel is stored there.
-          </span>
+        {/* ── Map + needs attention ── */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+          <div className="vs-card p-0" style={{ flex: '3 1 420px', minWidth: 0, height: 400, overflow: 'hidden' }}>
+            <TacMap objectives={objectives} fronts={fronts} onSelect={setDrawer} />
+          </div>
+          <div style={{ flex: '2 1 300px', minWidth: 0, height: 400, display: 'flex', flexDirection: 'column' }}>
+            <Panel title="Needs Attention" icon={Alert} iconColor="#ca8a04"
+              right={<span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>{attention.length}</span>}>
+              <div style={{ overflowY: 'auto', maxHeight: 352 }}>
+                {attention.length === 0 ? (
+                  <div style={{ padding: 20, fontSize: '0.7rem', color: 'var(--text-dim)' }}>
+                    Nothing is under attack, about to fall, low on stock or freshly taken.
+                  </div>
+                ) : attention.map(({ obj, reasons }) => (
+                  <button key={obj.id} type="button" onClick={() => setDrawer(obj.name)}
+                    style={{ all: 'unset', boxSizing: 'border-box', width: '100%', cursor: 'pointer', display: 'flex', gap: 10, alignItems: 'center', padding: '9px 14px', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ color: SIDE_COLOR[obj.owner], fontSize: '0.95rem', width: 16, textAlign: 'center', flexShrink: 0 }}>{KIND_ICONS[obj.kind] ?? '■'}</span>
+                    <span style={{ minWidth: 0, flex: 1 }}>
+                      <span className="flex items-center gap-2">
+                        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{obj.name}</span>
+                        <SideBadge side={obj.owner} size="xs" />
+                      </span>
+                      <span className="flex flex-wrap" style={{ gap: 4, marginTop: 4 }}>
+                        {reasons.map(r => (
+                          <span key={r.text} style={{ fontSize: '0.58rem', letterSpacing: '0.04em', padding: '1px 6px', borderRadius: 2, color: TONE[r.tone].fg, background: TONE[r.tone].bg }}>{r.text}</span>
+                        ))}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </Panel>
+          </div>
         </div>
 
-        {/* ── Critical alerts ── */}
-        {criticalObjs.length > 0 && (
-          <Panel
-            title="Critical Objectives"
-            icon={Alert}
-            iconColor="#fbbf24"
-            right={<span style={{ fontSize: '0.6rem', color: '#f59e0b', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}>{criticalObjs.length} CRITICAL</span>}
-          >
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }}>
-              {criticalObjs.map(obj => (
-                <div key={obj.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: '1.2rem', color: KIND_COLORS[obj.kind] ?? 'var(--text-dim)', flexShrink: 0 }}>
-                    {KIND_ICONS[obj.kind] ?? '■'}
+        {/* ── Who holds what ── */}
+        {byKind.length > 0 && (
+          <Panel title="Holdings by Type" icon={Pin} iconColor="var(--accent)"
+            right={
+              <span className="flex items-center gap-3" style={{ fontSize: '0.6rem', color: 'var(--text-muted)' }}>
+                {(['Blue', 'Red', 'Neutral'] as const).map(sd => (
+                  <span key={sd} className="flex items-center gap-1.5"><span style={{ width: 8, height: 8, borderRadius: 2, background: SIDE_COLOR[sd], display: 'inline-block' }} />{sd}</span>
+                ))}
+              </span>
+            }>
+            <div style={{ padding: '12px 20px', display: 'grid', gridTemplateColumns: 'minmax(100px, 150px) 1fr auto', gap: '8px 12px', alignItems: 'center' }}>
+              {byKind.map(k => (
+                <React.Fragment key={k.kind}>
+                  <button type="button" onClick={() => setKindFilter(kindFilter === k.kind ? null : k.kind)}
+                    title={kindFilter === k.kind ? 'Show every type' : `Show only ${k.kind} in the table`}
+                    style={{ all: 'unset', cursor: 'pointer', fontSize: '0.7rem', color: kindFilter === k.kind ? 'var(--accent-bright)' : 'var(--text)' }}>
+                    <span style={{ color: 'var(--text-dim)', marginRight: 6 }}>{KIND_ICONS[k.kind] ?? '■'}</span>{k.kind}
+                  </button>
+                  <div style={{ display: 'flex', gap: 2, height: 10, width: `${(k.total / kindMax) * 100}%`, minWidth: 6 }}
+                    title={`${k.kind}: ${k.Blue} Blue · ${k.Red} Red · ${k.Neutral} neutral`}>
+                    {(['Blue', 'Red', 'Neutral'] as const).filter(sd => k[sd] > 0).map((sd, i, arr) => (
+                      <div key={sd} style={{
+                        flex: k[sd], background: SIDE_COLOR[sd], minWidth: 2,
+                        borderRadius: `${i === 0 ? 2 : 0}px ${i === arr.length - 1 ? 4 : 0}px ${i === arr.length - 1 ? 4 : 0}px ${i === 0 ? 2 : 0}px`,
+                      }} />
+                    ))}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)' }}>{obj.name}</span>
-                      <SideBadge side={obj.owner} size="xs" />
-                    </div>
-                    <HealthBar value={obj.health} />
-                    <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: '0.6rem', fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>
-                      <span>L:{obj.logi}%</span>
-                      <span>S:{obj.supply}%</span>
-                      <span>F:{obj.fuel}%</span>
-                    </div>
-                  </div>
-                </div>
+                  <span className="font-mono-vs" style={{ fontSize: '0.64rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                    {k.Blue} / {k.Red}{k.Neutral ? ` / ${k.Neutral}` : ''}
+                  </span>
+                </React.Fragment>
               ))}
             </div>
           </Panel>
         )}
-
-        {/* ── Charts row ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-          {/* Ownership bars */}
-          <Panel title="Ownership" icon={Shield} iconColor="#60a5fa">
-            <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {([['Blue', counts.Blue, '#3b82f6'], ['Red', counts.Red, '#ef4444'], ['Neutral', counts.Neutral, '#4a5568']] as const).map(([side, count, color]) => {
-                const pct = total > 0 ? count / total * 100 : 0
-                return (
-                  <div key={side}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: 4 }}>
-                      <span style={{ color }}>{side}</span>
-                      <span className="font-mono-vs" style={{ color: 'var(--text-muted)' }}>{count} <span style={{ color: 'var(--text-dim)' }}>({Math.round(pct)}%)</span></span>
-                    </div>
-                    <div style={{ height: 6, background: 'var(--bg-elevated)', borderRadius: 2, overflow: 'hidden' }}>
-                      <div style={{ width: `${pct}%`, height: '100%', background: color, transition: 'width 0.5s' }} />
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </Panel>
-
-          {/* Health distribution */}
-          <Panel title="Health Distribution" icon={Objective} iconColor="#4ade80">
-            <div className="p-5">
-              <ResponsiveContainer width="100%" height={100}>
-                <BarChart data={healthBuckets} margin={{ left: -10, right: 4 }}>
-                  <XAxis dataKey="range" tick={{ fill: 'var(--text-dim)', fontSize: 10 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: 'var(--text-dim)', fontSize: 11 }} axisLine={false} tickLine={false} width={20} />
-                  <Tooltip {...TT} />
-                  <Bar dataKey="count" radius={[3, 3, 0, 0]}>
-                    {healthBuckets.map((b, i) => <Cell key={i} fill={b.fill} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </Panel>
-
-          {/* Objective type breakdown */}
-          <Panel title="Types" icon={Pin} iconColor="#22d3ee">
-            <div className="p-5">
-              {kindData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={100}>
-                  <PieChart>
-                    <Pie data={kindData} cx="50%" cy="50%" outerRadius={44} paddingAngle={2} dataKey="count" stroke="none">
-                      {kindData.map((d, i) => <Cell key={i} fill={d.fill} />)}
-                    </Pie>
-                    <Tooltip {...TT} formatter={(v, name) => [v, name]} />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : (
-                <div style={{ height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-dim)', fontSize: '0.8rem' }}>No data</div>
-              )}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', marginTop: 8 }}>
-                {kindData.map(d => (
-                  <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.6rem' }}>
-                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: d.fill, display: 'inline-block' }} />
-                    <span style={{ color: 'var(--text-dim)' }}>{d.name} <span className="font-mono-vs" style={{ color: 'var(--text-muted)' }}>{d.count}</span></span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </Panel>
-        </div>
 
         {/* Capture timeline -- full width. It carries a chart AND a scrolling
             event list, so squeezed into a third of the row it was twice the
@@ -361,7 +346,7 @@ export default function Objectives() {
                   fontSize: '0.75rem',
                   letterSpacing: '0.1em',
                   padding: '0.3rem 0.75rem',
-                  background: filter === f ? 'rgba(56,189,248,0.1)' : 'transparent',
+                  background: filter === f ? 'var(--accent-glow)' : 'transparent',
                   color: filter === f ? 'var(--accent)' : 'var(--text-muted)',
                   border: 'none',
                   cursor: 'pointer',
@@ -372,8 +357,15 @@ export default function Objectives() {
               </button>
             ))}
           </div>
-          <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', marginLeft: '0.25rem' }}>
-            click a column header to sort
+          {kindFilter && (
+            <button type="button" onClick={() => setKindFilter(null)} className="vs-pill"
+              style={{ fontSize: '0.62rem', padding: '0.25rem 0.6rem', border: '1px solid var(--accent-border)', background: 'var(--accent-glow)', color: 'var(--accent-bright)', cursor: 'pointer', borderRadius: 2 }}>
+              {kindFilter} ✕
+            </button>
+          )}
+          <span style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginLeft: '0.25rem' }}
+            title="Health and Logistics are defender strength (% of units alive). Supply and Fuel are warehouse stock levels.">
+            Health/Logistics = defenders alive · Supply/Fuel = stock · hover a header for more
           </span>
           <span className="ml-auto font-mono-vs" style={{ fontSize: '0.65rem', color: 'var(--text-dim)' }}>{filtered.length} shown</span>
         </div>
@@ -410,7 +402,7 @@ export default function Objectives() {
               </thead>
               <tbody>
                 <QueryState
-                  colSpan={9} what="objectives" isLoading={isLoading}
+                  colSpan={10} what="objectives" isLoading={isLoading}
                   isError={isError} error={error} onRetry={refetch}
                 />
                 {filtered.map(obj => {
@@ -438,6 +430,9 @@ export default function Objectives() {
                       <td className="font-mono-vs" style={{ padding: '9px 14px', fontSize: '0.62rem', color: '#facc15', whiteSpace: 'nowrap' }}>
                         {navaidByName.has(obj.name) ? navaidCell(navaidByName.get(obj.name)!) : <span style={{ color: 'var(--text-dim)' }}>—</span>}
                       </td>
+                      <td style={{ padding: '9px 14px', fontSize: '0.64rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        <LastTaken c={lastCapture.get(obj.name)} now={now} />
+                      </td>
                       <td className="font-mono-vs" style={{ padding: '9px 14px', fontSize: '0.62rem', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
                         {new Date(obj.last_change).toLocaleString()}
                       </td>
@@ -445,7 +440,7 @@ export default function Objectives() {
                   )
                 })}
                 <QueryState
-                  colSpan={9} what="objectives" isLoading={false}
+                  colSpan={10} what="objectives" isLoading={false}
                   isEmpty={!isLoading && !isError && filtered.length === 0}
                   emptyText={objectives.length === 0
                     ? 'No objectives in this round'

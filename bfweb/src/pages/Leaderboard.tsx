@@ -4,6 +4,7 @@ import { AirframeUsage, PointsEconomy } from '../components/CampaignStats'
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, type Pilot } from '../api'
+import { useRound } from '../context/RoundContext'
 import PageHeader from '../components/PageHeader'
 import {
   Rankings,
@@ -80,13 +81,50 @@ const TABS: { key: SortKey; label: string; color: string; icon: IconComponent }[
   { key: 'logistics',   label: 'Logistics',   color: '#34d399', icon: Logistics },
 ]
 
+function Seg<T extends string>({ name, value, options, onChange }: {
+  name: string; value: T; options: readonly (readonly [T, string])[]; onChange: (v: T) => void
+}) {
+  return (
+    <div role="group" aria-label={name} className="flex overflow-hidden" style={{ border: '1px solid var(--border)', borderRadius: 2 }}>
+      {options.map(([v, label]) => (
+        <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}
+          style={{
+            fontFamily: 'var(--font-display)', fontSize: '0.75rem', letterSpacing: '0.1em', padding: '0.3rem 0.7rem',
+            background: value === v ? 'var(--accent-glow)' : 'transparent', color: value === v ? 'var(--accent-bright)' : 'var(--text-muted)',
+            border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
+          }}>
+          {label.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+type Period = 'all' | 'round'
+type SideF = 'All' | 'Blue' | 'Red'
+
 export default function Leaderboard() {
   const navigate = useNavigate()
-  const { data: pilots = [], isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['leaderboard'],
-    queryFn: api.leaderboard,
+  const { selectedRound } = useRound()
+  const { data: rounds = [] } = useQuery({ queryKey: ['rounds'], queryFn: () => api.rounds() })
+  // "This round" is the round picked in the header's round selector, else
+  // the one being played.
+  const roundId = selectedRound ?? rounds.find(r => r.active)?.id ?? null
+  const [period, setPeriod] = useState<Period>('all')
+  const [sideF, setSideF] = useState<SideF>('All')
+  const byRound = period === 'round' && roundId != null
+  const { data: allPilots = [], isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['leaderboard', byRound ? roundId : 'all'],
+    queryFn: () => (byRound ? api.leaderboardRound(roundId!) : api.leaderboard()),
     refetchInterval: 30_000,
   })
+  // An older bfdb ignores ?round= and answers all-time; side comes only from
+  // the all-time roster, so fill it in for round rows.
+  const { data: allTime = [] } = useQuery({ queryKey: ['leaderboard', 'all'], queryFn: () => api.leaderboard(), enabled: byRound })
+  const sideOf = useMemo(() => new Map(allTime.map(p => [p.ucid, p.side])), [allTime])
+  const pilots = useMemo(() => allPilots
+    .map(p => (p.side || !byRound ? p : { ...p, side: sideOf.get(p.ucid) ?? null }))
+    .filter(p => sideF === 'All' || p.side === sideF), [allPilots, byRound, sideOf, sideF])
   const [tab,    setTab]    = useState<SortKey>('score')
   const [sort, setSort] = useState<SortKey>('score')
   const [asc,  setAsc]  = useState(false)
@@ -129,7 +167,7 @@ export default function Leaderboard() {
       <PageHeader
         icon={Rankings}
         title="RANKINGS"
-        sub={`${pilots.length} pilots registered`}
+        sub={`${pilots.length} pilots${byRound ? ` · round ${roundId}` : ' · all time'}`}
         right={
           <input type="text" placeholder="Search pilot…" value={search}
             onChange={e => setSearch(e.target.value)} className="vs-input lb-search"
@@ -166,7 +204,16 @@ export default function Leaderboard() {
               </button>
             )
           })}
+          {(
+            <div className="flex items-center gap-2 ml-auto flex-wrap">
+              <Seg name="Period" value={period} onChange={setPeriod}
+                options={[['all', 'All time'], ['round', roundId != null ? `Round ${roundId}` : 'This round']] as const} />
+              <Seg name="Side" value={sideF} onChange={setSideF}
+                options={[['All', 'Both sides'], ['Blue', 'Blue'], ['Red', 'Red']] as const} />
+            </div>
+          )}
         </div>
+
 
         {/* ── Podium ── */}
         {top3.length >= 3 && (
@@ -245,8 +292,10 @@ export default function Leaderboard() {
         </div>
 
         {/* ── Main table (scrolls internally, not the whole page) ── */}
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: '1 1 0', minHeight: 240 }}>
-          <div style={{ overflow: 'auto', flex: '1 1 auto', minHeight: 0 }}>
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 'none' }}>
+          {/* Its own scroll, tall enough for a page of pilots: squeezed into
+              what the podium left over it showed three rows. */}
+          <div style={{ overflow: 'auto', maxHeight: 'max(440px, calc(100vh - 260px))' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 1 }}>
@@ -348,6 +397,7 @@ export default function Leaderboard() {
             </table>
           </div>
         </div>
+
 
         {/* Campaign-wide readouts bfdb has always served and nothing showed:
             which airframes are actually being flown, and where the points

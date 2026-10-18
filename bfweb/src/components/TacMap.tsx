@@ -28,7 +28,7 @@ function FitBounds({ objectives, padding }: { objectives: Objective[]; padding: 
  *  `snapshot` is the Discord render: bigger glyphs, a stronger basemap, and a
  *  ring around every objective under attack or ready to capture, so the
  *  picture carries the "where is the fight" answer on its own. */
-export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = false, onTilesLoaded }: {
+export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = false, onTilesLoaded, onSelect }: {
   objectives: Objective[]
   fronts: Frontlines
   /** Shows the TACMAP button when given. */
@@ -36,6 +36,8 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
   snapshot?: boolean
   /** Snapshot only: every visible basemap tile has loaded. */
   onTilesLoaded?: () => void
+  /** Clicking an objective's glyph; the Objectives page opens its drawer. */
+  onSelect?: (name: string) => void
 }) {
   const valid = objectives.filter(o => o.lat !== 0 || o.lon !== 0)
   const ownerColor = (owner: string) =>
@@ -115,7 +117,8 @@ export default function TacMap({ objectives, fronts, onOpenTacmap, snapshot = fa
             pathOptions={{ color: '#fee75c', weight: 4, opacity: 0.95, fill: true, fillColor: '#fee75c', fillOpacity: 0.15 }} />
         ))}
         {valid.map(obj => (
-          <Marker key={obj.id} position={[obj.lat, obj.lon]} icon={markerIcon(obj)} />
+          <Marker key={obj.id} position={[obj.lat, obj.lon]} icon={markerIcon(obj)} title={obj.name}
+            eventHandlers={onSelect ? { click: () => onSelect(obj.name) } : undefined} />
         ))}
       </MapContainer>
 

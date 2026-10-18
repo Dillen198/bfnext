@@ -19,6 +19,7 @@ const Objectives       = lazy(() => import('./pages/Objectives'))
 const BriefingPage     = lazy(() => import('./pages/BriefingPage'))
 const Leaderboard      = lazy(() => import('./pages/Leaderboard'))
 const Pilots           = lazy(() => import('./pages/Pilots'))
+const SortieDebriefPage = lazy(() => import('./pages/SortieDebriefPage'))
 const KillFeed         = lazy(() => import('./pages/KillFeed'))
 const AdminPage        = lazy(() => import('./pages/AdminPage'))
 const ConfigEditorPage = lazy(() => import('./pages/ConfigEditorPage'))
@@ -115,6 +116,7 @@ export default function App() {
                 <Route path="briefing" element={<RequireCoalition what="briefing"><BriefingPage /></RequireCoalition>} />
                 <Route path="leaderboard" element={<Leaderboard />} />
                 <Route path="pilots" element={<Pilots />} />
+                <Route path="pilots/:ucid/sortie/:id" element={<SortieDebriefPage />} />
                 <Route path="kills" element={<KillFeed />} />
                 <Route path="replay" element={<ReplayListPage />} />
                 <Route path="replay/:rec" element={<ReplayPage />} />

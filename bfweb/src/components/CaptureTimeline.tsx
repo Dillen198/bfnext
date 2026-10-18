@@ -21,6 +21,15 @@ const fmtClock = (d: Date) =>
 const fmtDay = (d: Date) =>
   d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' })
 
+/** Who took it. bfdb credits a capture no pilot made (ground forces, AI)
+ *  to an all-zero UCID, and falls back to the raw UCID when it has no name,
+ *  so a run of zeros means "no pilot", not a callsign. */
+function capturers(by: string[]): string {
+  const names = by.filter(n => !/^0+$/.test(n))
+  if (names.length > 0) return names.join(', ')
+  return by.length > 0 ? 'no pilot credited' : 'unattributed'
+}
+
 export default function CaptureTimeline({ events }: { events: CaptureEvent[] }) {
   const now = Date.now()
 
@@ -146,7 +155,7 @@ export default function CaptureTimeline({ events }: { events: CaptureEvent[] }) 
               </span>
               <span style={{ color: col, fontWeight: 700, flexShrink: 0 }}>{e.objective}</span>
               <span style={{ color: 'var(--text-muted)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {e.by.length > 0 ? e.by.join(', ') : 'unattributed'}
+                {capturers(e.by)}
               </span>
               <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', fontSize: '0.58rem', flexShrink: 0 }}>
                 {ago(d, now)}

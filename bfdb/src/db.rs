@@ -80,6 +80,107 @@ pub(crate) struct DeployRecord {
     pub(crate) method: Option<std::string::String>,
 }
 
+/// A round over time -- see `round_report`. Built on read, never stored.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RoundReport {
+    pub(crate) start: DateTime<Utc>,
+    pub(crate) end: Option<DateTime<Utc>>,
+    pub(crate) winner: Option<std::string::String>,
+    pub(crate) bucket_secs: i64,
+    pub(crate) objectives: u32,
+    pub(crate) buckets: Vec<ReportBucket>,
+    pub(crate) contested: Vec<ContestedObjective>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub(crate) struct ReportBucket {
+    /// Bucket start.
+    pub(crate) t: DateTime<Utc>,
+    pub(crate) blue_air: u32,
+    pub(crate) blue_ground: u32,
+    pub(crate) red_air: u32,
+    pub(crate) red_ground: u32,
+    pub(crate) blue_caps: u32,
+    pub(crate) red_caps: u32,
+    /// Objectives held at the bucket's end.
+    pub(crate) blue_held: u32,
+    pub(crate) red_held: u32,
+    pub(crate) neutral_held: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ContestedObjective {
+    pub(crate) name: std::string::String,
+    pub(crate) captures: u32,
+}
+
+/// One sortie with the combat and logistics that happened during it -- see
+/// `pilot_sortie_stats`. Built on read, never stored.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SortieStats {
+    pub(crate) round_id: RoundId,
+    pub(crate) sortie_id: SortieId,
+    pub(crate) aircraft: std::string::String,
+    pub(crate) takeoff: DateTime<Utc>,
+    pub(crate) land: Option<DateTime<Utc>>,
+    /// Takeoff to landing, or to death when the pilot never landed. Zero
+    /// when neither is known.
+    pub(crate) duration_secs: i64,
+    pub(crate) landed: bool,
+    /// "landed" | "killed" (shot down) | "lost" (died with no shooter: crash,
+    /// collision, ejection) | "no_landing" (despawned, disconnected, or the
+    /// round ended with them airborne).
+    pub(crate) outcome: &'static str,
+    pub(crate) air_kills: u32,
+    pub(crate) ground_kills: u32,
+    /// Shots this pilot fired *at targets that died*. DCS shot events reach
+    /// bfdb only inside a kill record, so a miss on a target that survived is
+    /// not counted anywhere.
+    pub(crate) shots: u32,
+    pub(crate) hits: u32,
+    pub(crate) kills: Vec<SortieKill>,
+    pub(crate) weapons: Vec<SortieWeapon>,
+    pub(crate) death: Option<SortieDeath>,
+    pub(crate) deploys: Vec<SortieDeploy>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SortieKill {
+    pub(crate) time: DateTime<Utc>,
+    pub(crate) victim_ucid: Option<std::string::String>,
+    pub(crate) victim_name: Option<std::string::String>,
+    pub(crate) victim_side: std::string::String,
+    pub(crate) target_type: std::string::String,
+    pub(crate) weapon: Option<std::string::String>,
+    pub(crate) air: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SortieWeapon {
+    pub(crate) weapon: std::string::String,
+    pub(crate) shots: u32,
+    pub(crate) hits: u32,
+    pub(crate) kills: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SortieDeath {
+    pub(crate) time: DateTime<Utc>,
+    pub(crate) killer_ucid: Option<std::string::String>,
+    pub(crate) killer_name: Option<std::string::String>,
+    pub(crate) killer_side: Option<std::string::String>,
+    pub(crate) killer_type: Option<std::string::String>,
+    pub(crate) weapon: Option<std::string::String>,
+    pub(crate) teamkill: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SortieDeploy {
+    pub(crate) time: DateTime<Utc>,
+    pub(crate) deployable: std::string::String,
+    pub(crate) method: Option<std::string::String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct BanRecord {
     pub(crate) name:      std::string::String,
@@ -3852,6 +3953,127 @@ impl StatsDb {
         Ok(objs)
     }
 
+    /// How a round went, bucketed over its length: kills and captures by
+    /// side, and how many objectives each side held at the end of each
+    /// bucket. Backs the per-round report on the Rounds page.
+    ///
+    /// Ownership over time is rebuilt from the capture log: bfdb keeps only
+    /// each objective's current owner, so an objective's owner before its
+    /// first recorded capture is taken to be the side that lost it (the
+    /// opposite of the capturer). A base that started neutral is therefore
+    /// counted as the loser's until it falls -- close, not exact.
+    pub(crate) fn round_report(&self, rid: RoundId) -> Result<Option<RoundReport>> {
+        let Some((_, _, round)) = self.all_rounds()?.into_iter().find(|(_, id, _)| *id == rid) else {
+            return Ok(None);
+        };
+        let start = round.start;
+        let end = round.end.unwrap_or_else(Utc::now).max(start + chrono::Duration::hours(1));
+        let span = (end - start).num_seconds();
+        let bucket_secs: i64 = if span <= 2 * 86400 {
+            3600
+        } else if span <= 14 * 86400 {
+            6 * 3600
+        } else {
+            86400
+        };
+        let n = ((span + bucket_secs - 1) / bucket_secs).max(1) as usize;
+        let idx = |t: DateTime<Utc>| ((t - start).num_seconds() / bucket_secs).clamp(0, n as i64 - 1) as usize;
+        let mut buckets: Vec<ReportBucket> = (0..n)
+            .map(|i| ReportBucket {
+                t: start + chrono::Duration::seconds(i as i64 * bucket_secs),
+                ..Default::default()
+            })
+            .collect();
+
+        // Kills, by the side of the credited shooter. The kills tree holds one
+        // row per credited shooter, so dedupe by KillId.
+        let mut seen: HashSet<KillId> = HashSet::new();
+        for r in self.kills.iter() {
+            let ((_, r_id, kid), dead) = r?;
+            if r_id != rid || !seen.insert(kid) {
+                continue;
+            }
+            let Some(shot) = dead.shots.iter().find(|s| s.hit).or_else(|| dead.shots.first()) else {
+                continue;
+            };
+            let air = self.victim_is_air(rid, &dead.victim)?;
+            let b = &mut buckets[idx(dead.time)];
+            match (shot.shooter.side(), air) {
+                (Side::Blue, true) => b.blue_air += 1,
+                (Side::Blue, false) => b.blue_ground += 1,
+                (Side::Red, true) => b.red_air += 1,
+                (Side::Red, false) => b.red_ground += 1,
+                _ => (),
+            }
+        }
+
+        // Captures, and ownership replayed through them.
+        let mut caps: Vec<CaptureRecord> = Vec::new();
+        for r in self.captures.scan_prefix(&rid)? {
+            caps.push(r?.1);
+        }
+        caps.sort_by(|a, b| a.time.cmp(&b.time));
+        let opposite = |s: Side| match s {
+            Side::Blue => Side::Red,
+            Side::Red => Side::Blue,
+            s => s,
+        };
+        let mut owner: HashMap<std::string::String, Side> = HashMap::new();
+        for (_, o) in self.objectives_for_round(rid)? {
+            owner.insert(o.name.to_string(), o.owner);
+        }
+        let mut contested: HashMap<std::string::String, u32> = HashMap::new();
+        for c in &caps {
+            *contested.entry(c.objective_name.clone()).or_default() += 1;
+        }
+        for c in caps.iter().rev() {
+            // Walking backwards, the last write per objective is its first
+            // capture: before it, the loser held it.
+            if owner.contains_key(&c.objective_name) {
+                owner.insert(c.objective_name.clone(), opposite(c.side));
+            }
+        }
+        let mut next = 0;
+        for (i, b) in buckets.iter_mut().enumerate() {
+            let bucket_end = start + chrono::Duration::seconds((i as i64 + 1) * bucket_secs);
+            while next < caps.len() && caps[next].time < bucket_end {
+                let c = &caps[next];
+                match c.side {
+                    Side::Blue => b.blue_caps += 1,
+                    Side::Red => b.red_caps += 1,
+                    _ => (),
+                }
+                if let Some(o) = owner.get_mut(&c.objective_name) {
+                    *o = c.side;
+                }
+                next += 1;
+            }
+            for s in owner.values() {
+                match s {
+                    Side::Blue => b.blue_held += 1,
+                    Side::Red => b.red_held += 1,
+                    _ => b.neutral_held += 1,
+                }
+            }
+        }
+
+        let mut contested: Vec<ContestedObjective> = contested
+            .into_iter()
+            .map(|(name, captures)| ContestedObjective { name, captures })
+            .collect();
+        contested.sort_by(|a, b| b.captures.cmp(&a.captures).then(a.name.cmp(&b.name)));
+        contested.truncate(8);
+        Ok(Some(RoundReport {
+            start,
+            end: round.end,
+            winner: round.winner.map(|w| format!("{w:?}")),
+            bucket_secs,
+            objectives: owner.len() as u32,
+            buckets,
+            contested,
+        }))
+    }
+
     /// Get all detected, alive units for a given round
     pub(crate) fn detected_units_for_round(
         &self,
@@ -3959,6 +4181,212 @@ impl StatsDb {
         }
         result.sort_by(|a, b| b.1.time.cmp(&a.1.time));
         Ok(result)
+    }
+
+    /// Every sortie a pilot flew, oldest first, with the kills, shots, death
+    /// and deploys that happened during it.
+    ///
+    /// Nothing links a kill or a death to a sortie at ingest -- `Sortie` is
+    /// just (vehicle, takeoff, land) -- so this attributes by time: an event
+    /// belongs to the latest sortie of the same round that took off at or
+    /// before it, if it falls before that sortie ended. A kill is timed by the
+    /// pilot's own shot (when they fired), not by the death, so a missile that
+    /// arrives after touchdown still counts. Only shots fired from the pilot's
+    /// own aircraft count: kills by their deployed ground units are not part
+    /// of any flight.
+    pub(crate) fn pilot_sortie_stats(&self, ucid: &Ucid) -> Result<Vec<SortieStats>> {
+        // A crash on touchdown can arrive just after the Land event.
+        const DEATH_GRACE_SECS: i64 = 30;
+        // Crates are unpacked on the ground after landing.
+        const DEPLOY_GRACE_SECS: i64 = 30 * 60;
+        // How long a sortie with no landing and no later takeoff stays open.
+        const OPEN_SORTIE_SECS: i64 = 8 * 3600;
+
+        struct Span {
+            round: RoundId,
+            takeoff: DateTime<Utc>,
+            end: DateTime<Utc>,
+            next: Option<DateTime<Utc>>,
+        }
+        type Tally = HashMap<std::string::String, (u32, u32, u32)>;
+
+        let mut out: Vec<SortieStats> = self
+            .pilot_sorties(ucid)?
+            .into_iter()
+            .map(|(round_id, sortie_id, s)| SortieStats {
+                round_id,
+                sortie_id,
+                aircraft: s.vehicle.to_string(),
+                takeoff: s.takeoff,
+                land: s.land,
+                duration_secs: s.land.map(|l| (l - s.takeoff).num_seconds()).unwrap_or(0),
+                landed: s.land.is_some(),
+                outcome: if s.land.is_some() { "landed" } else { "no_landing" },
+                air_kills: 0,
+                ground_kills: 0,
+                shots: 0,
+                hits: 0,
+                kills: vec![],
+                weapons: vec![],
+                death: None,
+                deploys: vec![],
+            })
+            .collect();
+        let spans: Vec<Span> = out
+            .iter()
+            .enumerate()
+            .map(|(i, s)| Span {
+                round: s.round_id,
+                takeoff: s.takeoff,
+                end: s
+                    .land
+                    .unwrap_or(s.takeoff + chrono::Duration::seconds(OPEN_SORTIE_SECS)),
+                next: out[i + 1..]
+                    .iter()
+                    .find(|o| o.round_id == s.round_id)
+                    .map(|o| o.takeoff),
+            })
+            .collect();
+        let locate = |round: RoundId, t: DateTime<Utc>, grace: i64| -> Option<usize> {
+            let pp = spans.partition_point(|s| s.takeoff <= t);
+            let i = (0..pp).rev().find(|&i| spans[i].round == round)?;
+            let s = &spans[i];
+            let mut limit = s.end + chrono::Duration::seconds(grace);
+            if let Some(next) = s.next {
+                limit = limit.min(next);
+            }
+            (t <= limit).then_some(i)
+        };
+        let weapon_of = |s: &bfprotocols::shots::Shot| -> Option<std::string::String> {
+            s.weapon_name
+                .as_ref()
+                .map(|w| w.to_string())
+                .filter(|w| !w.is_empty() && w != "nil")
+        };
+        let side_name = |w: &Who| format!("{:?}", w.side());
+        let mut tallies: Vec<Tally> = vec![Tally::new(); out.len()];
+
+        // Kills and the shots that made them.
+        for (rid, dead) in self.pilot_kills_for(ucid)? {
+            let mine: Vec<&bfprotocols::shots::Shot> = dead
+                .shots
+                .iter()
+                .filter(|s| matches!(&s.shooter, Who::Player { ucid: u, .. } if u == ucid))
+                .collect();
+            if mine.is_empty() {
+                continue;
+            }
+            for &s in &mine {
+                let Some(i) = locate(rid, s.time, 0) else { continue };
+                out[i].shots += 1;
+                let e = tallies[i]
+                    .entry(weapon_of(s).unwrap_or_else(|| "Unknown".into()))
+                    .or_default();
+                e.0 += 1;
+                if s.hit {
+                    out[i].hits += 1;
+                    e.1 += 1;
+                }
+            }
+            // Same crediting rule as `record_kill`: when anyone hit, only the
+            // hitters get the kill.
+            let any_hit = dead.shots.iter().any(|s| s.hit);
+            let credited = mine
+                .iter()
+                .find(|s| s.hit)
+                .or_else(|| if any_hit { None } else { mine.first() });
+            let Some(&shot) = credited else { continue };
+            let Some(i) = locate(rid, shot.time, 0) else { continue };
+            let air = self.victim_is_air(rid, &dead.victim)?;
+            if air {
+                out[i].air_kills += 1;
+            } else {
+                out[i].ground_kills += 1;
+            }
+            let weapon = weapon_of(shot);
+            tallies[i]
+                .entry(weapon.clone().unwrap_or_else(|| "Unknown".into()))
+                .or_default()
+                .2 += 1;
+            let victim_ucid = dead.victim.ucid().copied();
+            out[i].kills.push(SortieKill {
+                time: dead.time,
+                victim_ucid: victim_ucid.map(|u| u.to_string()),
+                victim_name: victim_ucid.and_then(|u| self.pilot_name(&u)),
+                victim_side: side_name(&dead.victim),
+                target_type: shot.target_typ.to_string(),
+                weapon,
+                air,
+            });
+        }
+
+        // Deaths. `kill_seen` is keyed by victim, so this is a prefix scan per
+        // round rather than a walk of the whole kills tree. A death with no
+        // stored kill record had no shooter at all (crash, collision).
+        let me = EnId::Player(*ucid);
+        let rounds: std::collections::BTreeSet<RoundId> = out.iter().map(|o| o.round_id).collect();
+        for rid in rounds {
+            for r in self.kill_seen.scan_prefix(&(rid, me))? {
+                let ((_, _, ms), kid) = r?;
+                let Some(time) = DateTime::<Utc>::from_timestamp_millis(ms) else { continue };
+                let Some(i) = locate(rid, time, DEATH_GRACE_SECS) else { continue };
+                if out[i].death.is_some() {
+                    continue;
+                }
+                let mut dead = None;
+                for enid in self.shared_kills.get(&kid)?.unwrap_or_default() {
+                    if let Some(d) = self.kills.get(&(enid, rid, kid))? {
+                        dead = Some(d);
+                        break;
+                    }
+                }
+                let shot = dead
+                    .as_ref()
+                    .and_then(|d| d.shots.iter().find(|s| s.hit).or_else(|| d.shots.first()));
+                let killer_ucid = shot.and_then(|s| s.shooter.ucid().copied());
+                let by_self = killer_ucid.as_ref() == Some(ucid);
+                let teamkill = !by_self
+                    && dead
+                        .as_ref()
+                        .zip(shot)
+                        .is_some_and(|(d, s)| s.shooter.side() == d.victim.side());
+                let o = &mut out[i];
+                o.outcome = if shot.is_some() && !by_self { "killed" } else { "lost" };
+                if o.land.is_none() {
+                    o.duration_secs = (time - o.takeoff).num_seconds().max(0);
+                }
+                o.death = Some(SortieDeath {
+                    time,
+                    killer_ucid: killer_ucid.map(|u| u.to_string()),
+                    killer_name: killer_ucid.and_then(|u| self.pilot_name(&u)),
+                    killer_side: shot.map(|s| side_name(&s.shooter)),
+                    killer_type: shot.and_then(|s| s.shooter_typ.as_ref().map(|t| t.to_string())),
+                    weapon: shot.and_then(weapon_of),
+                    teamkill,
+                });
+            }
+        }
+
+        // Logistics flown on the sortie.
+        for (rid, rec) in self.pilot_deploys_for(ucid)? {
+            let Some(i) = locate(rid, rec.time, DEPLOY_GRACE_SECS) else { continue };
+            out[i].deploys.push(SortieDeploy {
+                time: rec.time,
+                deployable: rec.deployable,
+                method: rec.method,
+            });
+        }
+
+        for (o, tally) in out.iter_mut().zip(tallies) {
+            o.kills.sort_by(|a, b| a.time.cmp(&b.time));
+            o.deploys.sort_by(|a, b| a.time.cmp(&b.time));
+            o.weapons = tally
+                .into_iter()
+                .map(|(weapon, (shots, hits, kills))| SortieWeapon { weapon, shots, hits, kills })
+                .collect();
+            o.weapons.sort_by(|a, b| b.kills.cmp(&a.kills).then(b.shots.cmp(&a.shots)));
+        }
+        Ok(out)
     }
 
     pub(crate) fn recent_kills(&self, round: RoundId, limit: usize) -> Result<Vec<Dead>> {

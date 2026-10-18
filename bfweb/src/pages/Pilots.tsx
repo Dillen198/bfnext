@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import QueryState from '../components/QueryState'
 import { kd, sl, fmtHours, fmtDuration } from '../lib/format'
@@ -6,6 +6,10 @@ import { Link as RouterLink, useSearchParams } from 'react-router-dom'
 import type { FlightRow } from '../replay/data'
 import { api, type Pilot, type PilotSortie, type TheaterBreakdown, type PilotKill, type PilotDeploy } from '../api'
 import PageHeader from '../components/PageHeader'
+import SortieDetail from './SortieDetail'
+import PilotCharts from './PilotCharts'
+import { RivalsCard, CompareCard } from './PilotRivals'
+import { OUTCOME, outcomeOf, replayFor } from '../lib/sortie'
 import { useAuth } from '../context/AuthContext'
 import {
   Pilot as PilotIcon,
@@ -121,21 +125,27 @@ function SortHeader<T extends string>({
 
 // ── Flight log ────────────────────────────────────────────────────────────────
 
-type SortieCol = 'date' | 'aircraft' | 'duration' | 'outcome'
+type SortieCol = 'date' | 'aircraft' | 'duration' | 'kills' | 'outcome'
 
-/** The recorded flight a sortie happened in: the one whose time in the
- *  recording spans the takeoff (a minute's slack either side), same airframe
- *  preferred. */
-function replayFor(s: PilotSortie, replays: FlightRow[]): FlightRow | undefined {
-  const t = Date.parse(s.takeoff)
-  if (Number.isNaN(t)) return undefined
-  const hits = replays.filter(r => t >= r.start_ms - 60_000 && t <= r.end_ms + 60_000)
-  return hits.find(r => r.aircraft === s.aircraft) ?? hits[0]
-}
+// Sorts best-to-worst ending.
+const OUTCOME_RANK = { landed: 3, no_landing: 2, lost: 1, killed: 0 } as const
 
-function FlightLog({ sorties, breakdown, replays }: { sorties: PilotSortie[]; breakdown: TheaterBreakdown[]; replays: FlightRow[] }) {
+function FlightLog({ ucid, sorties, breakdown, replays }: { ucid: string; sorties: PilotSortie[]; breakdown: TheaterBreakdown[]; replays: FlightRow[] }) {
   const [sort, setSort] = useState<{ col: SortieCol; dir: SortDir }>({ col: 'date', dir: 'desc' })
   const [page, setPage] = useState(0)
+  const [open, setOpen] = useState<number | null>(null)
+  // The table scrolls sideways in a narrow card; an open sortie is pinned to
+  // the visible width instead of the table's, so none of it scrolls away.
+  // A callback ref, since the table mounts only once the sorties arrive.
+  const [boxW, setBoxW] = useState<number | null>(null)
+  const observer = useRef<ResizeObserver | null>(null)
+  const scrollRef = useCallback((el: HTMLDivElement | null) => {
+    observer.current?.disconnect()
+    observer.current = null
+    if (!el) return
+    observer.current = new ResizeObserver(() => setBoxW(el.clientWidth))
+    observer.current.observe(el)
+  }, [])
   const PER_PAGE = 10
 
   const ridToScenario = useMemo(() => {
@@ -151,7 +161,8 @@ function FlightLog({ sorties, breakdown, replays }: { sorties: PilotSortie[]; br
       if (sort.col === 'date')     v = a.takeoff.localeCompare(b.takeoff)
       if (sort.col === 'aircraft') v = a.aircraft.localeCompare(b.aircraft)
       if (sort.col === 'duration') v = a.duration_secs - b.duration_secs
-      if (sort.col === 'outcome')  v = (a.landed ? 1 : 0) - (b.landed ? 1 : 0)
+      if (sort.col === 'outcome')  v = OUTCOME_RANK[outcomeOf(a)] - OUTCOME_RANK[outcomeOf(b)]
+      if (sort.col === 'kills')    v = ((a.air_kills ?? 0) + (a.ground_kills ?? 0)) - ((b.air_kills ?? 0) + (b.ground_kills ?? 0))
       return sort.dir === 'desc' ? -v : v
     })
     return arr
@@ -192,8 +203,8 @@ function FlightLog({ sorties, breakdown, replays }: { sorties: PilotSortie[]; br
       {sorties.length === 0 ? (
         <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.7rem' }}>No sorties recorded</div>
       ) : (
-        <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-        <table style={{ width: '100%', minWidth: 560, borderCollapse: 'collapse' }}>
+        <div ref={scrollRef} style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        <table style={{ width: '100%', minWidth: 620, borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'rgba(0,0,0,0.2)' }}>
               <SortHeader col="date" label="Date" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
@@ -202,31 +213,51 @@ function FlightLog({ sorties, breakdown, replays }: { sorties: PilotSortie[]; br
               <th style={{ padding: '6px 10px', fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600, textAlign: 'left', borderBottom: '1px solid var(--border)' }}>Takeoff</th>
               <th style={{ padding: '6px 10px', fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600, textAlign: 'left', borderBottom: '1px solid var(--border)' }}>End</th>
               <SortHeader col="duration" label="Duration" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
+              <SortHeader col="kills" label="Kills" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
               <SortHeader col="outcome" label="Outcome" sort={sort} setSort={s => { setSort(s); setPage(0) }} />
               <th style={{ padding: '6px 10px', fontSize: '0.6rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase', fontWeight: 600, textAlign: 'left', borderBottom: '1px solid var(--border)' }}>Replay</th>
             </tr>
           </thead>
           <tbody>
-            {page_sorties.map((s, i) => (
-              <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.12)' }}>
+            {page_sorties.map((s, i) => {
+              const id = s.sortie_id
+              const isOpen = id !== undefined && open === id
+              const out = OUTCOME[outcomeOf(s)]
+              const replay = replayFor(s, replays)
+              return (
+              <React.Fragment key={id ?? i}>
+              <tr
+                onClick={id === undefined ? undefined : () => setOpen(isOpen ? null : id)}
+                aria-expanded={id === undefined ? undefined : isOpen}
+                title={id === undefined ? undefined : isOpen ? 'Hide sortie details' : 'Show sortie details'}
+                style={{
+                  background: isOpen ? 'rgba(96,165,250,0.08)' : i % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.12)',
+                  cursor: id === undefined ? undefined : 'pointer',
+                }}>
                 <td style={{ ...cell, fontFamily: 'monospace', color: '#64748b' }}>{fmtDate(s.takeoff)}</td>
                 <td style={{ ...cell, color: '#60a5fa' }}>{s.aircraft}</td>
                 <td style={{ ...cell, color: '#94a3b8' }}>{ridToScenario[s.round_id] ?? `Round ${s.round_id}`}</td>
                 <td style={{ ...cell, fontFamily: 'monospace' }}>{fmtTime(s.takeoff)}</td>
                 <td style={{ ...cell, fontFamily: 'monospace' }}>{s.land ? fmtTime(s.land) : '—'}</td>
                 <td style={{ ...cell, fontFamily: 'monospace', color: s.duration_secs > 0 ? 'var(--text)' : '#64748b' }}>{fmtDuration(s.duration_secs)}</td>
-                <td style={cell}>
-                  {s.landed ? (
-                    <span style={{ color: '#22c55e', fontSize: '0.62rem', letterSpacing: '0.06em' }}>✈ Landed</span>
-                  ) : (
-                    <span style={{ color: '#ef4444', fontSize: '0.62rem', letterSpacing: '0.06em' }}>✕ Lost</span>
+                <td style={{ ...cell, fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                  {s.air_kills === undefined ? '—' : (
+                    <>
+                      <span style={{ color: s.air_kills ? '#60a5fa' : '#475569' }} title="Air-to-air">{s.air_kills}</span>
+                      <span style={{ color: '#475569' }}> / </span>
+                      <span style={{ color: s.ground_kills ? '#f97316' : '#475569' }} title="Air-to-ground">{s.ground_kills ?? 0}</span>
+                    </>
                   )}
                 </td>
                 <td style={cell}>
+                  <span style={{ color: out.color, fontSize: '0.62rem', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{out.label}</span>
+                </td>
+                <td style={cell}>
                   {(() => {
-                    const r = replayFor(s, replays)
+                    const r = replay
                     return r ? (
                       <RouterLink
+                        onClick={e => e.stopPropagation()}
                         to={`/replay/${encodeURIComponent(r.rec)}?focus=${r.i}`}
                         style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--accent-bright)', fontSize: '0.62rem', letterSpacing: '0.08em', textDecoration: 'none' }}
                       >
@@ -236,7 +267,18 @@ function FlightLog({ sorties, breakdown, replays }: { sorties: PilotSortie[]; br
                   })()}
                 </td>
               </tr>
-            ))}
+              {isOpen && (
+                <tr>
+                  <td colSpan={9} style={{ padding: 0, borderBottom: '1px solid var(--border)' }}>
+                    <div style={{ position: 'sticky', left: 0, width: boxW ?? undefined }}>
+                      <SortieDetail ucid={ucid} sortieId={id} replay={replay} />
+                    </div>
+                  </td>
+                </tr>
+              )}
+              </React.Fragment>
+              )
+            })}
           </tbody>
         </table>
         </div>
@@ -778,6 +820,13 @@ export default function Pilots() {
             {/* ══════════ RIGHT — detail tables ══════════ */}
             <div className="space-y-4" style={{ minWidth: 0 }}>
 
+              {/* ── Career overview ── */}
+              <PilotCharts key={pilot.ucid} sorties={sorties} />
+
+              {/* ── Rivals & compare ── */}
+              <RivalsCard ucid={pilot.ucid} sorties={sorties} kills={kills} pilots={pilots} />
+              <CompareCard key={`cmp-${pilot.ucid}`} pilot={pilot} pilots={pilots} />
+
               {/* ── Theater breakdown ── */}
               {breakdown.length > 0 && (
                 <div className="vs-card p-0">
@@ -795,7 +844,8 @@ export default function Pilots() {
               )}
 
               {/* ── Flight log ── */}
-              <FlightLog sorties={sorties} breakdown={breakdown} replays={replays} />
+              {/* Keyed by pilot: a different pilot starts on page one, nothing open. */}
+              <FlightLog key={pilot.ucid} ucid={pilot.ucid} sorties={sorties} breakdown={breakdown} replays={replays} />
 
               {/* ── Kill log ── */}
               <KillLog kills={kills} allPilots={pilots} breakdown={breakdown} />

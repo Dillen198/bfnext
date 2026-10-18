@@ -121,6 +121,34 @@ export interface JsonSchema {
   definitions?: Record<string, JsonSchema>
 }
 
+/** GET /api/rounds/{id}/report: the round over time. Ownership before an
+ *  objective's first recorded capture is inferred (the loser held it), so
+ *  the held counts are close rather than exact. */
+export interface RoundReport {
+  start: string
+  end: string | null
+  winner: string | null
+  bucket_secs: number
+  objectives: number
+  buckets: RoundReportBucket[]
+  contested: { name: string; captures: number }[]
+}
+
+export interface RoundReportBucket {
+  /** bucket start */
+  t: string
+  blue_air: number
+  blue_ground: number
+  red_air: number
+  red_ground: number
+  blue_caps: number
+  red_caps: number
+  /** objectives held at the bucket's end */
+  blue_held: number
+  red_held: number
+  neutral_held: number
+}
+
 export interface Round {
   id: number
   /** Which DCS server instance ran this round. */
@@ -1405,13 +1433,85 @@ export interface AircraftUsage {
   hours: number
 }
 
+/** How a sortie ended. "killed" = shot down, "lost" = died with no shooter
+ *  (crash, collision), "no_landing" = despawned, disconnected or still up at
+ *  round end. */
+export type SortieOutcome = 'landed' | 'killed' | 'lost' | 'no_landing'
+
 export interface PilotSortie {
   round_id: number
   aircraft: string
   takeoff: string
   land: string | null
+  /** Takeoff to landing, or to death when the pilot never landed. */
   duration_secs: number
   landed: boolean
+  // Per-sortie stats. Optional: an older bfdb serves only the fields above.
+  sortie_id?: number
+  outcome?: SortieOutcome
+  air_kills?: number
+  ground_kills?: number
+  /** Shots fired at targets that died -- a miss on a survivor never reaches
+   *  bfdb, so this is not a true accuracy figure. */
+  shots?: number
+  hits?: number
+  deploys?: number
+  /** Who shot them down, if they were (a pilot's name, else the unit type). */
+  killed_by?: string | null
+  killed_by_ucid?: string | null
+}
+
+export interface SortieKill {
+  time: string
+  victim_ucid: string | null
+  victim_name: string | null
+  victim_side: string
+  target_type: string
+  weapon: string | null
+  air: boolean
+}
+
+export interface SortieWeapon {
+  weapon: string
+  shots: number
+  hits: number
+  kills: number
+}
+
+export interface SortieDeath {
+  time: string
+  killer_ucid: string | null
+  killer_name: string | null
+  killer_side: string | null
+  killer_type: string | null
+  weapon: string | null
+  teamkill: boolean
+}
+
+export interface SortieDeployEvent {
+  time: string
+  deployable: string
+  method: string | null
+}
+
+/** One sortie with everything that happened on it (GET /pilot/:ucid/sortie/:id). */
+export interface SortieDetail {
+  round_id: number
+  sortie_id: number
+  aircraft: string
+  takeoff: string
+  land: string | null
+  duration_secs: number
+  landed: boolean
+  outcome: SortieOutcome
+  air_kills: number
+  ground_kills: number
+  shots: number
+  hits: number
+  kills: SortieKill[]
+  weapons: SortieWeapon[]
+  death: SortieDeath | null
+  deploys: SortieDeployEvent[]
 }
 
 export interface TheaterBreakdown {
@@ -2014,7 +2114,10 @@ export const api = {
   /** Round history for the selected instance, or every instance's when
    *  `all` is set (each row carries its own `instance` id either way). */
   rounds: (all = false) => get<Round[]>(all ? '/rounds?instance=all' : '/rounds'),
+  roundReport: (id: number) => get<RoundReport | null>(`/rounds/${id}/report`),
   leaderboard: () => get<Pilot[]>('/leaderboard'),
+  /** One round's leaderboard (needs a bfdb that takes ?round=). */
+  leaderboardRound: (round: number) => get<Pilot[]>(`/leaderboard?round=${round}`),
   allPilots: () => get<PilotName[]>('/pilots'),
   objectives: (roundId?: number) =>
     get<Objective[]>(roundId ? `/objectives?round=${roundId}` : '/objectives'),
@@ -2066,6 +2169,7 @@ export const api = {
     get<Kill[]>(`/kills?limit=${limit}${roundId ? `&round=${roundId}` : ''}`),
   pilot: (ucid: string) => get<Pilot>(`/pilot/${ucid}`),
   pilotSorties: (ucid: string) => get<PilotSortie[]>(`/pilot/${ucid}/sorties`),
+  pilotSortie: (ucid: string, sortieId: number) => get<SortieDetail>(`/pilot/${ucid}/sortie/${sortieId}`),
   /** Flight replay (Tacview recordings): a pilot's recorded flights, newest
    *  first. Not instance-scoped -- one pilot flies on every server. */
   pilotReplays: (ucid: string) => get<import('./replay/data').FlightRow[]>(`/replay/pilot/${ucid}?instance=all`),

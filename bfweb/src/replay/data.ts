@@ -188,6 +188,15 @@ export async function fetchMeta(rec: string): Promise<RecMeta> {
   return res.json()
 }
 
+/** One object's whole track, stitched across chunks (null if the recording
+ *  holds no samples for it). */
+export async function fetchObjectTrack(rec: string, meta: RecMeta, idx: number): Promise<Seg | null> {
+  const o = meta.objects[idx]
+  if (!o) return null
+  const buf = await fetchBin(`/rec/${encodeURIComponent(rec)}/object/${idx}?t0=${o.t0}&t1=${o.t1}`)
+  return decodeChunk(buf).get(idx) ?? null
+}
+
 /** Meta indices of the flights flown by players (the rest are AI). */
 export async function fetchHumans(rec: string): Promise<number[]> {
   const res = await fetch(`${API_ROOT}/api/replay/rec/${encodeURIComponent(rec)}/humans`, { credentials: 'include' })

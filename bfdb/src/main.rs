@@ -980,6 +980,24 @@ static ROUTE_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Ar
 
 /// Serve `key` from [`ROUTE_CACHE`], computing it with `f` (a blocking DB
 /// read) at most once per TTL however many requests arrive together.
+/// GET /api/rounds/:id/report — the round over time: kills and captures by
+/// side per bucket, territory held, most contested objectives.
+async fn api_round_report(
+    id: u64,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let data = cached_json(format!("round_report:{}:{id}", inst.id), || -> Result<String> {
+        let rid = db::RoundId(id);
+        if db.round_instance_of(rid) != inst.id {
+            return Ok("null".into());
+        }
+        Ok(serde_json::to_string(&db.round_report(rid)?)?)
+    })
+    .await?;
+    Ok(json_response(data))
+}
+
 async fn cached_json(
     key: std::string::String,
     f: impl FnOnce() -> Result<std::string::String>,
@@ -993,10 +1011,21 @@ async fn cached_json(
         .map(|a| (*a).clone())
 }
 
-async fn api_leaderboard(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
-    let data = cached_json(format!("leaderboard:{}", inst.id), || -> Result<String> {
-        // Use all-time totals so pilot stats are never empty
-        let pilots = db.pilot_leaderboard(None)?;
+async fn api_leaderboard(
+    db: StatsDb,
+    inst: Inst,
+    q: std::collections::HashMap<std::string::String, std::string::String>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    // ?round=<id> ranks one round; without it, all-time totals (so pilot
+    // stats are never empty between rounds).
+    let round = q.get("round").and_then(|r| r.parse::<u64>().ok());
+    let data = cached_json(format!("leaderboard:{}:{round:?}", inst.id), || -> Result<String> {
+        let pilots = match round {
+            // Another instance's round is not this instance's to rank.
+            Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => vec![],
+            Some(id) => db.pilot_leaderboard(Some(db::RoundId(id)))?,
+            None => db.pilot_leaderboard(None)?,
+        };
         // Coalition drives which service's rank insignia the dashboard draws
         // for this pilot. Same resolution the recon-intel gate uses: the
         // active round's registration, else the most recent side on record
@@ -1849,21 +1878,49 @@ async fn api_pilot_sorties(
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
-        let sorties = db.pilot_sorties(&ucid)?;
-        let entries: Vec<_> = sorties.iter().rev().map(|(round_id, _sortie_id, s)| {
-            let duration_secs = s.land
-                .map(|l| (l - s.takeoff).num_seconds())
-                .unwrap_or(0);
+        // Summary rows, newest first. The per-sortie event lists are left to
+        // /api/pilot/:ucid/sortie/:id so a long career stays a small payload.
+        let sorties = db.pilot_sortie_stats(&ucid)?;
+        let entries: Vec<_> = sorties.iter().rev().map(|s| {
             serde_json::json!({
-                "round_id": round_id.0,
-                "aircraft": s.vehicle.to_string(),
+                "round_id": s.round_id.0,
+                "sortie_id": s.sortie_id.0,
+                "aircraft": s.aircraft,
                 "takeoff": s.takeoff.to_rfc3339(),
                 "land": s.land.map(|l| l.to_rfc3339()),
-                "duration_secs": duration_secs,
-                "landed": s.land.is_some(),
+                "duration_secs": s.duration_secs,
+                "landed": s.landed,
+                "outcome": s.outcome,
+                "air_kills": s.air_kills,
+                "ground_kills": s.ground_kills,
+                "shots": s.shots,
+                "hits": s.hits,
+                "deploys": s.deploys.len(),
+                // Who ended it, for the pilot page's nemesis.
+                "killed_by_ucid": s.death.as_ref().and_then(|d| d.killer_ucid.clone()),
+                "killed_by": s.death.as_ref().and_then(|d| d.killer_name.clone().or_else(|| d.killer_type.clone())),
             })
         }).collect();
         Ok(serde_json::to_string(&entries)?)
+    })?;
+    Ok(json_response(data))
+}
+
+/// GET /api/pilot/:ucid/sortie/:sortie_id — one sortie with its kills,
+/// weapons, death and deploys
+async fn api_pilot_sortie(
+    ucid: String,
+    sortie_id: u64,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+        let sortie = db
+            .pilot_sortie_stats(&ucid)?
+            .into_iter()
+            .find(|s| s.sortie_id.0 == sortie_id)
+            .ok_or_else(|| websec::not_found("no such sortie"))?;
+        Ok(serde_json::to_string(&sortie)?)
     })?;
     Ok(json_response(data))
 }
@@ -7772,9 +7829,15 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_rounds);
 
+    let round_report = warp::path!("api" / "rounds" / u64 / "report")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_round_report);
+
     let leaderboard = warp::path!("api" / "leaderboard")
         .and(with_db(db.clone()))
         .and(with_instance(db.clone()))
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .then(api_leaderboard);
 
     let all_pilots = warp::path!("api" / "pilots")
@@ -7868,6 +7931,10 @@ async fn main() -> Result<()> {
     let pilot_sorties = warp::path!("api" / "pilot" / String / "sorties")
         .and(with_db(db.clone()))
         .then(api_pilot_sorties);
+
+    let pilot_sortie = warp::path!("api" / "pilot" / String / "sortie" / u64)
+        .and(with_db(db.clone()))
+        .then(api_pilot_sortie);
 
     let pilot_breakdown = warp::path!("api" / "pilot" / String / "breakdown")
         .and(with_db(db.clone()))
@@ -8916,6 +8983,7 @@ async fn main() -> Result<()> {
     // Box sub-chains to avoid warp filter type overflow
     let api_routes = instances_route
         .or(rounds)
+        .or(round_report)
         .or(health)
         .or(version)
         .or(unitdb_versions)
@@ -8933,6 +9001,7 @@ async fn main() -> Result<()> {
         .or(kills)
         .or(capture_events)
         .or(pilot_sorties)
+        .or(pilot_sortie)
         .or(pilot_breakdown)
         .or(pilot_kills_route)
         .or(pilot_deploys_route)
