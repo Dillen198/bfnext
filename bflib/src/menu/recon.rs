@@ -18,7 +18,11 @@ use super::{slot_for_group, Pager};
 use crate::Context;
 use anyhow::{Context as ErrContext, Result};
 use chrono::prelude::*;
-use dcso3::{env::miz::GroupId, mission_commands::MissionCommands, MizLua};
+use dcso3::{
+    env::miz::GroupId,
+    mission_commands::{GroupSubMenu, MissionCommands},
+    MizLua,
+};
 
 fn start_recon(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
@@ -50,8 +54,12 @@ fn recon_status(lua: MizLua, gid: GroupId) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn add_recon_menu_for_group(mc: &MissionCommands, group: GroupId) -> Result<()> {
-    let root = mc.add_submenu_for_group(group, "Recon".into(), None)?;
+pub(super) fn add_recon_menu_for_group(
+    mc: &MissionCommands,
+    group: GroupId,
+    parent: Option<GroupSubMenu>,
+) -> Result<()> {
+    let root = mc.add_submenu_for_group(group, "Recon".into(), parent)?;
     let mut p = Pager::new(group, root);
     for (label, cb) in [
         ("Start Recon Pass", start_recon as fn(MizLua, GroupId) -> Result<()>),

@@ -35,6 +35,7 @@ import { createGroundwarMock } from './groundwarMock'
 import { createCommandMock } from './commandMock'
 import { visibleNames } from './groundwar/declutter'
 import { AssetLines, AssetMarker, AssetPanel, BaseOrders, EnemyAirMarker, LaunchPanel, LayerToggles, type AssetNote } from './groundwar/command'
+import { formationBase, isFormationKey } from './groundwar/buyFormation'
 import { ALL_LAYERS, MODE_TEXT, TARGET_TEXT, enemyAirOf, shown, useCommandFeed, useTacPicture, type AssetMode, type Layers } from './groundwar/commandFeed'
 import { Coverage, RoutePreview, SupplyNetwork, Territory, Threats } from './groundwar/overlays'
 import { rankFor } from '../ranks'
@@ -105,7 +106,7 @@ export default function GroundWarPage(): ReactElement {
 
   const feed = useGroundFeed(sideParam, instance, mock)
   const pic = feed.pic
-  const cmdMock = useMemo(() => (mock ? createCommandMock() : null), [mock])
+  const cmdMock = useMemo(() => (mock ? createCommandMock(mock) : null), [mock])
   useEffect(() => {
     if (!cmdMock) return
     const iv = window.setInterval(() => cmdMock.step(2), 2000)
@@ -194,8 +195,9 @@ export default function GroundWarPage(): ReactElement {
   const [selAssetId, setSelAssetId] = useState<number | null>(null)
   const [assetMode, setAssetMode] = useState<AssetMode>('none')
   const [showLaunch, setShowLaunch] = useState(false)
-  /** A catalogue order waiting for its target (and, for a transfer, the base it is from). */
-  const [pending, setPending] = useState<{ opt: OrderOption; from?: number } | null>(null)
+  /** A catalogue order waiting for its target (and, for a transfer, the base it is from;
+   *  for a formation bought from the treasury, how many -- its route goes in `wps`). */
+  const [pending, setPending] = useState<{ opt: OrderOption; from?: number; count?: number } | null>(null)
   const [busy, setBusy] = useState(false)
   // Base names that fit on screen right now (`declutter`); null = all.
   const [names, setNames] = useState<Set<number> | null>(null)
@@ -291,10 +293,41 @@ export default function GroundWarPage(): ReactElement {
     setMode('none')
     setPending((cur) => (cur?.opt.key === o.key ? null : { opt: o }))
   }
+  /** Arm a formation purchase: then the map takes its route. */
+  const armFormation = (o: OrderOption, count: number) => {
+    setAssetMode('none')
+    setMode('none')
+    setWps([])
+    setPending((cur) => (cur?.opt.key === o.key && cur.count === count ? null : { opt: o, count }))
+  }
+  /** Where a bought formation would be built, for the route preview. */
+  const buyBase = pending && isFormationKey(pending.opt.key) && pic && cp?.buy_formation
+    ? formationBase(pic.objectives, side, wps[0], cp.buy_formation.range_m)
+    : null
+  /** Send the armed formation purchase along the waypoints, ending at `last` (or the last waypoint). */
+  const sendBuy = (last?: LatLon) => {
+    const p = pending
+    const pts = last ? [...wps, last] : wps
+    if (!p?.count) return
+    if (pts.length === 0) return toast('Click the route on the map first.', false)
+    setPending(null)
+    setWps([])
+    const base = cp?.buy_formation && pic ? formationBase(pic.objectives, side, pts[0], cp.buy_formation.range_m) : null
+    const total = p.opt.cost * p.count
+    void order(
+      { buy_formation: { key: p.opt.key, count: p.count, to: pts[pts.length - 1], via: pts.slice(0, -1) } },
+      `Buy ${p.count} × ${p.opt.label} for ${total.toLocaleString()} treasury points? ${base ? `They set out from ${base.name}` : 'They set out from our nearest base'} along the route you drew.`,
+    )
+  }
   /** Aim the armed catalogue order: a point, a base, or two bases. */
   const applyOrder = (obj: number | null, at: LatLon) => {
     const p = pending
     if (!p) return
+    if (p.count != null) {
+      // A formation's route: each click is a waypoint, as for a Move.
+      if (wps.length >= 13) return toast('At most 12 waypoints: right-click or Enter to send.', false)
+      return setWps((w) => [...w, at])
+    }
     const o = p.opt
     const name = (id: number) => pic?.objectives.find((x) => x.id === id)?.name ?? 'that base'
     const ask = (where: string) => `${o.label} ${where} for ${o.cost.toLocaleString()} treasury points?`
@@ -538,7 +571,7 @@ export default function GroundWarPage(): ReactElement {
     applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
     selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
     assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset, selObjId,
-    pending, applyOrder, wps, sendRoute,
+    pending, applyOrder, wps, sendRoute, sendBuy,
   })
   useEffect(() => {
     live.current = {
@@ -546,7 +579,7 @@ export default function GroundWarPage(): ReactElement {
       applyMode, orderTo, hold, withdraw, release, raiseKey, enterMode, clearAll, centre, toggleFollow, cycle,
       selectOnly, toast, resolve: (o: number | null) => resolveOrder(pic, mode, selIds.length > 0, o),
       assetMode, applyAssetMode, assetDefault, armAsset, assetKey, selAsset, pickAsset, selObjId,
-      pending, applyOrder, wps, sendRoute,
+      pending, applyOrder, wps, sendRoute, sendBuy,
     }
   })
 
@@ -628,6 +661,7 @@ export default function GroundWarPage(): ReactElement {
       },
       context: (obj, at) => {
         const L = live.current
+        if (L.pending?.count != null) return L.sendBuy(at)
         if (L.pending) return setPending(null)
         if (L.assetMode === 'fmove' && L.selIds.length) return L.sendRoute(at)
         if (L.assetMode !== 'none') return setAssetMode('none')
@@ -667,6 +701,11 @@ export default function GroundWarPage(): ReactElement {
       if (e.key === 'Enter' && L.assetMode === 'fmove' && L.wps.length) {
         e.preventDefault()
         L.sendRoute()
+        return
+      }
+      if (e.key === 'Enter' && L.pending?.count != null && L.wps.length) {
+        e.preventDefault()
+        L.sendBuy()
         return
       }
       if (e.key === 'Escape') {
@@ -821,7 +860,9 @@ export default function GroundWarPage(): ReactElement {
         <SupplyNetwork lines={cp?.supply ?? []} visible={layers.supply !== false} />
         <Coverage defences={cp?.defences ?? []} tac={tac} side={side} visible={layers.cover !== false} />
         <Threats tac={tac} side={side} visible={layers.threats !== false} />
-        <RoutePreview from={selForms.map((f) => f.pos)} wps={assetMode === 'fmove' ? wps : []} side={side} />
+        {pending?.count != null
+          ? <RoutePreview from={buyBase ? [buyBase.pos] : wps.slice(0, 1)} wps={wps} side={side} />
+          : <RoutePreview from={selForms.map((f) => f.pos)} wps={assetMode === 'fmove' ? wps : []} side={side} />}
         <BattlefieldLayers formations={pic.formations} fronts={fronts} selected={selSet} side={side} territory={territory} />
         {pic.objectives.map((o) => (
           <ObjectiveMarker key={`o${o.id}`} o={o} side={side} selected={o.id === selObjId} showName={!names || names.has(o.id)} onPick={onPickObjective} />
@@ -888,7 +929,9 @@ export default function GroundWarPage(): ReactElement {
         )}
         {pending && (
           <div className="gw-modebar">
-            {pending.opt.label.toUpperCase()} · {pending.from != null ? 'NOW CLICK THE BASE TO SEND TO' : TARGET_TEXT[pending.opt.target]} · ESC TO CANCEL
+            {pending.count != null
+              ? `${pending.count} × ${pending.opt.label.toUpperCase()} · ${wps.length === 0 ? 'CLICK THE ROUTE' : buyBase ? `FROM ${buyBase.name.toUpperCase()} · ${wps.length} POINT${wps.length > 1 ? 'S' : ''}` : 'NO BASE OF OURS IN REACH OF THE FIRST POINT'} · RIGHT-CLICK OR ENTER TO SEND`
+              : `${pending.opt.label.toUpperCase()} · ${pending.from != null ? 'NOW CLICK THE BASE TO SEND TO' : TARGET_TEXT[pending.opt.target]}`} · ESC TO CANCEL
           </div>
         )}
         {mode !== 'none' && (
@@ -907,11 +950,13 @@ export default function GroundWarPage(): ReactElement {
       )}
       {selAsset && (
         <AssetPanel a={selAsset} canCommand={canOrder} mode={assetMode} setMode={armAsset}
-          onRtb={() => void order({ rtb: { group: selAsset.id } })} onClose={clearAll} />
+          onRtb={() => void order({ rtb: { group: selAsset.id } })}
+          onDisband={() => void order({ disband: { group: selAsset.id } }, `Disband ${selAsset.name}? It is removed for good and nothing is refunded.`)}
+          onClose={clearAll} />
       )}
       {showLaunch && cp && (
         <LaunchPanel cp={cp} selObj={selObj} side={side} canCommand={canOrder} busy={busy}
-          armed={pending?.opt.key ?? null} onArm={armOrder}
+          armed={pending?.opt.key ?? null} onArm={armOrder} onArmFormation={armFormation}
           onOrder={(o, c) => void order(o, c)} onFocus={(p) => flyTo(p, 11)} onBarrage={() => armAsset('barrage')}
           onClose={() => setShowLaunch(false)} />
       )}

@@ -8,9 +8,9 @@ import { useQuery } from '@tanstack/react-query'
 import { Play, Pause, ChevronLeft, Link as LinkIcon, Eye, EyeOff, Download } from '@icons'
 import { API_ROOT } from '../api'
 import {
-  TrackStore, fetchMeta, fetchHumans, sideHex, objLabel, isAir,
+  TrackStore, fetchMeta, fetchHumans, fetchRangeHits, sideHex, objLabel, isAir,
   fmtDuration, fmtClock, gameClock, M_TO_FT, MS_TO_KT,
-  type RecMeta, type RecEvent, type RecFlight, type State,
+  type RecMeta, type RecEvent, type RecFlight, type State, type RangeHit,
 } from './data'
 import { ReplayEngine, type EngineUi, type ViewMode, type CamMode } from './engine'
 import FlightGraph from './FlightGraph'
@@ -42,7 +42,7 @@ function Viewer({ rec, meta }: { rec: string; meta: RecMeta }) {
   const labelsEl = useRef<HTMLDivElement>(null)
   const engine = useRef<ReplayEngine | null>(null)
   const [ui, setUi] = useState<EngineUi | null>(null)
-  const [side, setSide] = useState<'flights' | 'shots' | 'events'>('flights')
+  const [side, setSide] = useState<'flights' | 'shots' | 'events' | 'range'>('flights')
   const [sideOpen, setSideOpen] = useState(() => window.innerWidth > 900)
   const [fit, setFit] = useState(true)
   const [copied, setCopied] = useState(false)
@@ -50,6 +50,9 @@ function Viewer({ rec, meta }: { rec: string; meta: RecMeta }) {
   // Which flights players flew; null (show everything) on an older bfdb.
   const humansQ = useQuery({ queryKey: ['replay-humans', rec], queryFn: () => fetchHumans(rec), staleTime: 300_000, retry: false })
   const humans = useMemo(() => (humansQ.data ? new Set(humansQ.data) : null), [humansQ.data])
+  // Graded training-range results in this recording: a recording of the range server has them
+  const rangeQ = useQuery({ queryKey: ['replay-range', rec], queryFn: () => fetchRangeHits(rec), staleTime: 300_000, retry: false })
+  const rangeHits = rangeQ.data?.items ?? []
 
   // Engine lifetime = this recording.
   useEffect(() => {
@@ -180,6 +183,7 @@ function Viewer({ rec, meta }: { rec: string; meta: RecMeta }) {
             <button className={side === 'flights' ? 'on' : ''} onClick={() => setSide('flights')}>Flights</button>
             <button className={side === 'shots' ? 'on' : ''} onClick={() => setSide('shots')}>Shots</button>
             <button className={side === 'events' ? 'on' : ''} onClick={() => setSide('events')}>Events</button>
+            {rangeHits.length > 0 && <button className={side === 'range' ? 'on' : ''} onClick={() => setSide('range')}>Range {rangeHits.length}</button>}
           </div>
           {side === 'flights' && <FlightList meta={meta} humans={humans} t={t} focus={focus} onPick={i => { e?.setFocus(i); if (!fit) setFit(true) }} />}
           {side === 'shots' && (
@@ -194,6 +198,12 @@ function Viewer({ rec, meta }: { rec: string; meta: RecMeta }) {
             />
           )}
           {side === 'events' && <EventList meta={meta} t={t} focus={focus} onSeek={x => e?.setTime(x)} />}
+          {side === 'range' && (
+            <RangeList
+              meta={meta} hits={rangeHits} site={rangeQ.data?.site ?? ''} t={t}
+              onSeek={(hit, flight) => { if (!e) return; if (flight != null) e.setFocus(flight); e.setTime(Math.max(0, hit.t - 25_000)) }}
+            />
+          )}
           {ui && (
             <div className="rp-filters">
               <Toggle on={ui.opts.labels} label="Labels" onClick={() => e?.setOpts({ labels: !ui.opts.labels })} />
@@ -465,6 +475,48 @@ function FlightRowView({ f, live, on, onPick }: { f: RecFlight; live: boolean; o
         {f.fate === 'destroyed' && <span className="x">✕</span>}
       </span>
     </button>
+  )
+}
+
+const RANGE_KIND: Record<string, string> = {
+  bomb: 'BOMB', strafe: 'GUNS', trap: 'TRAP', aar: 'AAR', missile: 'MSL', engagement: 'ACM', anti_ship: 'SHIP', sling: 'SLNG',
+  landing: 'LAND', troops: 'TRPS', gunnery: 'GNRY', cas: 'CAS', sead: 'SEAD', hot_zone: 'HOT', low_level: 'LOLO', field_landing: 'PATT', csar: 'CSAR',
+}
+
+/**
+ * The training range's graded results in this recording: jump to the moment
+ * (following that pilot's flight) or open the full debrief on the range site,
+ * where the same pass has its LSO sheet, score sheet and 3D replay.
+ */
+function RangeList({ meta, hits, site, t, onSeek }: {
+  meta: RecMeta
+  hits: RangeHit[]
+  site: string
+  t: number
+  onSeek: (hit: RangeHit, flight: number | null) => void
+}) {
+  const flightOf = (h: RangeHit) => {
+    const at = meta.start_ms + h.t
+    const f = meta.flights.find(f => f.pilot.trim().toLowerCase() === h.pilot.trim().toLowerCase() && f.start_ms - 60_000 <= at && at <= f.end_ms + 60_000)
+    return f?.i ?? null
+  }
+  return (
+    <div className="rp-list">
+      {hits.map(h => (
+        <div key={h.id} className={`rp-ev rp-ev-range ${h.t <= t ? '' : 'dim'}`}>
+          <button className="rp-ev-main" onClick={() => onSeek(h, flightOf(h))} title="Jump to this moment and follow the pilot">
+            <span className="rp-ev-t">{fmtClock(meta.start_ms + h.t)}</span>
+            <span className="rp-range-kind">{RANGE_KIND[h.kind] ?? h.kind.toUpperCase()}</span>
+            <span>{h.pilot}{h.headline ? ` · ${h.headline}` : ''}</span>
+          </button>
+          {site && (
+            <a className="rp-range-link" href={`${site}/result/${encodeURIComponent(h.id)}`} target="_blank" rel="noreferrer" title="The debrief on the range site">
+              Debrief ↗
+            </a>
+          )}
+        </div>
+      ))}
+    </div>
   )
 }
 

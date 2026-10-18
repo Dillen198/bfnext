@@ -14,7 +14,7 @@
 //! noted; the spawn routes need a bot-linked Discord session and fill the ucid
 //! from that session, never from the request.
 
-use super::{ballistics, boards, cards, discord, parse_ts, store::Stored, RangeCtx, Scope};
+use super::{ballistics, boards, cards, clip, discord, parse_ts, store::Stored, RangeCtx, Scope};
 use bfprotocols::range::{SpawnRequest, WeaponDb};
 use netidx::publisher::Value as NValue;
 use serde::Deserialize;
@@ -729,6 +729,213 @@ async fn h_tacview(ctx: Arc<RangeCtx>, id: String) -> Response {
     r
 }
 
+// ── debrief clips ──────────────────────────────────────────────────────
+
+/// Seconds the result's own track covers (the earliest to the latest `t`
+/// anywhere in it), for how far back the clip reaches.
+fn track_span_s(v: &Value) -> Option<f64> {
+    fn walk(v: &Value, lo: &mut f64, hi: &mut f64) {
+        match v {
+            Value::Object(m) => {
+                if let Some(t) = m.get("t").and_then(Value::as_f64) {
+                    *lo = lo.min(t);
+                    *hi = hi.max(t);
+                }
+                m.values().for_each(|x| walk(x, lo, hi));
+            }
+            Value::Array(a) => a.iter().for_each(|x| walk(x, lo, hi)),
+            _ => (),
+        }
+    }
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    walk(v, &mut lo, &mut hi);
+    (hi >= lo).then_some(hi - lo)
+}
+
+fn clip_cache_path(ctx: &RangeCtx, id: &str) -> std::path::PathBuf {
+    let safe: String = id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    ctx.clip_dir.join(format!("{safe}.json.gz"))
+}
+
+fn gzip(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
+    use flate2::{write::GzEncoder, Compression};
+    use std::io::Write;
+    let mut gz = GzEncoder::new(Vec::with_capacity(bytes.len() / 4), Compression::new(6));
+    gz.write_all(bytes)?;
+    Ok(gz.finish()?)
+}
+
+/// The finished clip from the cache, as its gzip'd bytes and decoded.
+fn cached_clip(path: &std::path::Path) -> Option<(Vec<u8>, clip::Clip)> {
+    use std::io::Read;
+    let gz = std::fs::read(path).ok()?;
+    let mut raw = vec![];
+    flate2::read::GzDecoder::new(&gz[..]).read_to_end(&mut raw).ok()?;
+    let c: clip::Clip = serde_json::from_slice(&raw).ok()?;
+    (c.v == clip::CLIP_VERSION).then_some((gz, c))
+}
+
+/// `/api/range/result/<id>/clip` (gzip'd JSON for the 3D debrief) and
+/// `.../clip.acmi` (the same cut as a Tacview file). Cut on first ask from
+/// the server's recording; kept once the recording has gone past the end of
+/// the window, re-cut on every ask until then.
+async fn h_clip(ctx: Arc<RangeCtx>, id: String, as_acmi: bool) -> Response {
+    let id = decode_seg(&id);
+    let s = match block_in_place(|| ctx.store.full(&id)) {
+        Ok(Some(s)) => s,
+        Ok(None) => return err(StatusCode::NOT_FOUND, format!("no range result {id:?}")),
+        Err(e) => return internal(e),
+    };
+    let cache = clip_cache_path(&ctx, &id);
+    let (gz, c) = match block_in_place(|| cached_clip(&cache)) {
+        Some(hit) => hit,
+        None => {
+            let Some(dir) = ctx.db.instances().get(&s.instance).and_then(|c| c.tacview_dir.clone()) else {
+                return err(StatusCode::NOT_FOUND, "no Tacview recordings are published for this range");
+            };
+            let ts = SystemTime::UNIX_EPOCH + Duration::from_millis(s.ts_ms);
+            let Some(path) = block_in_place(|| pick_acmi(&dir, ts)) else {
+                return err(StatusCode::NOT_FOUND, "no Tacview recording covers this result");
+            };
+            let span = s.raw.get("track").and_then(track_span_s).unwrap_or(60.0);
+            let req = clip::ClipReq {
+                pilot: s.pilot_name().to_string(),
+                unit_type: s.unit_type().to_string(),
+                ts_ms: s.ts_ms as i64,
+                mission_date: s.raw.get("mission_date").and_then(Value::as_str).unwrap_or("").to_string(),
+                mission_time: s.raw.get("mission_time").and_then(Value::as_str).unwrap_or("").to_string(),
+                lead_s: (span + 25.0).clamp(40.0, 900.0),
+                tail_s: 15.0,
+            };
+            let built = tokio::task::spawn_blocking(move || clip::build(&path, &req)).await;
+            let c = match built {
+                Ok(Ok(c)) => c,
+                Ok(Err(e)) => return err(StatusCode::NOT_FOUND, format!("{e:#}")),
+                Err(e) => return internal(anyhow::anyhow!("clip task failed: {e}")),
+            };
+            let gz = match serde_json::to_vec(&c).map_err(anyhow::Error::from).and_then(|j| gzip(&j)) {
+                Ok(g) => g,
+                Err(e) => return internal(e),
+            };
+            if c.complete {
+                let (dir, tmp) = (ctx.clip_dir.clone(), cache.with_extension(format!("tmp{}", std::process::id())));
+                let written = block_in_place(|| {
+                    std::fs::create_dir_all(&dir)?;
+                    std::fs::write(&tmp, &gz)?;
+                    std::fs::rename(&tmp, &cache)
+                });
+                if let Err(e) = written {
+                    log::warn!("range: cannot cache the clip for {id}: {e}");
+                }
+            }
+            (gz, c)
+        }
+    };
+    let max_age = if c.complete { "public, max-age=86400" } else { "no-store" };
+    let mut r = if as_acmi {
+        let title = format!("{} · {} · {}", s.pilot_name(), s.kind(), s.raw.get("mission_time").and_then(Value::as_str).unwrap_or(""));
+        let text = clip::to_acmi(&c, &title);
+        let mut r = Response::new(text.into());
+        let name: String = format!("{}-{}-{}", s.pilot_name(), s.kind(), s.ts().format("%Y%m%d-%H%M%S"))
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' { ch } else { '_' })
+            .collect();
+        let h = r.headers_mut();
+        h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+        if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{name}.txt.acmi\"")) {
+            h.insert(header::CONTENT_DISPOSITION, v);
+        }
+        r
+    } else {
+        let mut r = Response::new(gz.into());
+        let h = r.headers_mut();
+        h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        h.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        r
+    };
+    r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(max_age));
+    r
+}
+
+// ── the dashboard's flight replay (web Tacview) ────────────────────────
+
+/// `/api/range/result/<id>/replay`: where this result is in the dashboard's
+/// flight replay -- the recording, the pilot's object in it, and a moment a
+/// little before the result -- so the debrief can open the replay there.
+/// 404 until the recording has been read into the replay (it is, once the
+/// server stops writing it).
+async fn h_replay_link(ctx: Arc<RangeCtx>, id: String) -> Response {
+    let id = decode_seg(&id);
+    let s = match block_in_place(|| ctx.store.get(&id)) {
+        Ok(Some(s)) => s,
+        Ok(None) => return err(StatusCode::NOT_FOUND, format!("no range result {id:?}")),
+        Err(e) => return internal(e),
+    };
+    let Some(rp) = ctx.replay.get() else {
+        return err(StatusCode::NOT_FOUND, "flight replay is off on this server");
+    };
+    let names = vec![s.pilot_name().to_string()];
+    let flights = match block_in_place(|| rp.flights_for(&names, 400)) {
+        Ok(f) => f,
+        Err(e) => return internal(e),
+    };
+    let ts = s.ts_ms as i64;
+    let slack = 60_000;
+    let best = flights
+        .iter()
+        .filter(|f| f.instance == s.instance && f.start_ms - slack <= ts && ts <= f.end_ms + slack)
+        .min_by_key(|f| (!f.aircraft.eq_ignore_ascii_case(s.unit_type()), (f.end_ms - f.start_ms).abs()));
+    let Some(f) = best else {
+        return err(StatusCode::NOT_FOUND, "the replay has not read the recording with this result yet: it does once the server stops writing it");
+    };
+    let rec_start = f.start_ms - f.t0;
+    let t = (ts - rec_start - 25_000).max(f.t0);
+    ok(&json!({
+        "rec": f.rec,
+        "focus": f.i,
+        "t": t,
+        "path": format!("/replay/{}?focus={}&t={}", urlencoding::encode(&f.rec), f.i, t),
+    }))
+}
+
+/// `/api/range/replay/<rec>/results`: every range result graded during one
+/// recording, with its moment in it (ms from the recording start), for the
+/// dashboard's replay to list and jump to.
+async fn h_replay_results(ctx: Arc<RangeCtx>, rec: String) -> Response {
+    let rec = decode_seg(&rec);
+    let Some(rp) = ctx.replay.get() else {
+        return err(StatusCode::NOT_FOUND, "flight replay is off on this server");
+    };
+    let sum = match block_in_place(|| rp.summary(&rec)) {
+        Ok(Some(s)) => s,
+        Ok(None) => return err(StatusCode::NOT_FOUND, format!("no recording {rec:?}")),
+        Err(e) => return internal(e),
+    };
+    let (from, to) = (sum.start_ms.max(0) as u64, (sum.start_ms + sum.duration_ms).max(0) as u64);
+    let mut items = vec![];
+    let r = block_in_place(|| {
+        ctx.store.walk_newest(&[sum.instance.clone()], from, Some((to + 1, "")), |s| {
+            let v = boards::summary(&ctx.store, &s);
+            items.push(json!({
+                "id": s.id,
+                "kind": s.kind(),
+                "pilot": s.pilot_name(),
+                "ucid": s.ucid(),
+                "unit_type": s.unit_type(),
+                "t": s.ts_ms as i64 - sum.start_ms,
+                "headline": v.get("headline").cloned().unwrap_or(Value::Null),
+                "score": v.get("score").cloned().unwrap_or(Value::Null),
+            }));
+            items.len() < 500
+        })
+    });
+    if let Err(e) = r {
+        return internal(e);
+    }
+    items.reverse();
+    ok(&json!({ "items": items, "site": ctx.site_url }))
+}
+
 // ── routes ─────────────────────────────────────────────────────────────
 
 /// Every `/api/range/*` route as one boxed filter.
@@ -768,6 +975,18 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
     let weapons = warp::path!("api" / "range" / "weapons").and(c.clone()).and(q.clone()).then(h_weapons);
     let tacview = warp::path!("api" / "range" / "tacview" / String).and(c.clone()).then(
         |id: String, ctx: Arc<RangeCtx>| h_tacview(ctx, id),
+    );
+    let clip_json = warp::path!("api" / "range" / "result" / String / "clip").and(c.clone()).then(
+        |id: String, ctx: Arc<RangeCtx>| h_clip(ctx, id, false),
+    );
+    let clip_acmi = warp::path!("api" / "range" / "result" / String / "clip.acmi").and(c.clone()).then(
+        |id: String, ctx: Arc<RangeCtx>| h_clip(ctx, id, true),
+    );
+    let replay_link = warp::path!("api" / "range" / "result" / String / "replay").and(c.clone()).then(
+        |id: String, ctx: Arc<RangeCtx>| h_replay_link(ctx, id),
+    );
+    let replay_results = warp::path!("api" / "range" / "replay" / String / "results").and(c.clone()).then(
+        |rec: String, ctx: Arc<RangeCtx>| h_replay_results(ctx, rec),
     );
 
     let spawn = warp::path!("api" / "range" / "spawn")
@@ -821,7 +1040,7 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
         .or(impacts)
         .unify()
         .boxed();
-    let reads_c = catalog.or(weapons).unify().or(tacview).unify().boxed();
+    let reads_c = catalog.or(weapons).unify().or(tacview).unify().or(clip_json).unify().or(clip_acmi).unify().or(replay_link).unify().or(replay_results).unify().boxed();
     let reads = warp::get().and(reads_a.or(reads_b).unify().or(reads_c).unify()).boxed();
     let writes = spawn.or(despawn).unify().or(reset).unify().boxed();
     // Anything else under /api/range/ is a JSON 404 rather than falling

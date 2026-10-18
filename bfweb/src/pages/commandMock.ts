@@ -10,6 +10,11 @@ export interface CommandMock {
   order(o: CommandOrder): CommandReply
 }
 
+/** The ground war mock, where a bought formation turns up. */
+export interface FormationSink {
+  buy(label: string, count: number, route: LatLon[]): { ok: boolean; message: string }
+}
+
 const KM_LAT = 1 / 110.6
 const KM_LON = 1 / 82.5
 
@@ -38,7 +43,7 @@ interface Sim {
   orbit?: { c: LatLon; r: number; t: number }
 }
 
-export function createCommandMock(): CommandMock {
+export function createCommandMock(ground?: FormationSink): CommandMock {
   let treasury = 2400
   const sims: Sim[] = []
   const add = (a: Omit<Asset, 'units' | 'alive' | 'total' | 'live'>, units: AssetUnit[], speed = 0, orbit?: Sim['orbit']) => {
@@ -65,6 +70,9 @@ export function createCommandMock(): CommandMock {
   const sam: LatLon = [42.16, 42.9]
   add({ id: 507, name: 'Hawk site (Rook)', kind: 'deployed', role: 'Hawk', typ: 'Hawk ln', pos: sam, heading: 80, alt_m: 200, speed_kts: 0, task: null, dest: null, base: null, range_m: null, orders: ['move'] },
     [unit('Hawk ln', sam, 80), unit('Hawk sr', offset(sam, 0.2, 0.1), 80), unit('Hawk tr', offset(sam, -0.15, 0.12), 80)])
+  const dismounts: LatLon = [42.27, 43.46]
+  add({ id: 509, name: 'Dismounts (M-2 Bradley)', kind: 'troops', role: 'Dismounts', typ: 'Soldier M4', pos: dismounts, heading: 60, alt_m: 520, speed_kts: 0, task: null, dest: null, base: null, range_m: null, orders: ['disband'] },
+    [0, 1, 2, 3].map((i) => unit('Soldier M4', offset(dismounts, 0.02 * i, 0.015 * (i % 2)), 60, 520)))
   const cvn: LatLon = [41.9, 41.45]
   add({ id: 508, name: 'CVN-74 group', kind: 'naval', role: 'Carrier group', typ: 'Stennis', pos: cvn, heading: 300, alt_m: 0, speed_kts: 18, task: null, dest: null, base: 'CVN-74 group', range_m: null, orders: ['sail'] },
     [unit('Stennis', cvn, 300, 0, 18), unit('TICONDEROG', offset(cvn, 1.5, 0.8), 300, 0, 18)], 0.005)
@@ -79,7 +87,12 @@ export function createCommandMock(): CommandMock {
     { key: 'action:Reinforcements', label: 'Reinforcements', category: 'Ground', target: 'own_base', cost: 75, detail: "a transporter convoy rebuilds the base's lost units", why_not: '' },
     { key: 'action:Naval Strike', label: 'Naval Strike', category: 'Naval', target: 'enemy_base', cost: 50, detail: 'our ships launch cruise missiles at the base', why_not: '' },
     { key: 'op:hunt', label: 'Surface action group', category: 'Naval', target: 'sea', cost: 300, detail: 'USS_Arleigh_Burke_IIa sail out and attack the enemy ships they find there', why_not: '' },
+    ...['MBT / M1A2C Abrams', 'IFV / M2A2 Bradley', 'APC / MRAP MaxxPro', 'AAA / Flakpanzergepard'].map((name, i): OrderOption => ({
+      key: `formation:${name}`, label: name.split(' / ')[1], category: 'Formations', target: 'land', cost: [60, 40, 20, 50][i],
+      detail: '2-8 of them set out together from our nearest base, as one formation, along the route you draw', why_not: '',
+    })),
   ]
+  let inField = 5
   const launch: LaunchOption[] = [
     { kind: 'strike', objective: 8, objective_name: 'Borjomi', pos: [41.842, 43.387], cost: 520, why: 'enemy factory feeding the Khashuri front', ready: true },
     { kind: 'sead', objective: 12, objective_name: 'Java', pos: [42.398, 43.928], cost: 300, why: 'SA-11 covering the northern approach', ready: true },
@@ -120,6 +133,7 @@ export function createCommandMock(): CommandMock {
         can_command: true,
         god_mode: false,
         commander: null,
+        buy_formation: { min_count: 2, max_count: 8, in_field: inField, max_in_field: 8, range_m: 25000 },
       }
     },
     step(dt: number) {
@@ -178,6 +192,12 @@ export function createCommandMock(): CommandMock {
         send(s, [42.176, 42.482], 0.2)
         return { ok: true, message: `${s.a.name} returning to base` }
       }
+      if ('disband' in o) {
+        const i = sims.findIndex((x) => x.a.id === o.disband.group)
+        if (i < 0) return { ok: false, message: 'no such group' }
+        const [s] = sims.splice(i, 1)
+        return { ok: true, message: `${s.a.name} disbanded` }
+      }
       if ('sail' in o) {
         const s = byId(o.sail.group)
         if (!s) return { ok: false, message: 'no such group' }
@@ -197,6 +217,20 @@ export function createCommandMock(): CommandMock {
         if (!opt) return { ok: false, message: 'no such order' }
         if (!pay(opt.cost)) return { ok: false, message: 'the treasury can’t pay for that' }
         return { ok: true, message: `${opt.label} ordered (${opt.cost} from the treasury)` }
+      }
+      if ('buy_formation' in o) {
+        const b = o.buy_formation
+        const opt = orders.find((x) => x.key === b.key)
+        if (!opt) return { ok: false, message: 'no such formation' }
+        if (b.count < 2 || b.count > 8) return { ok: false, message: 'a formation is 2 to 8 of them' }
+        if (inField >= 8) return { ok: false, message: 'Blue already has 8 formations in the field, the most it can have' }
+        const cost = opt.cost * b.count
+        if (cost > treasury) return { ok: false, message: `that costs ${cost} and the treasury has ${treasury}` }
+        const r = ground ? ground.buy(opt.label, b.count, [...(b.via ?? []), b.to]) : { ok: true, message: `${b.count} x ${opt.label} bought` }
+        if (!r.ok) return r
+        treasury -= cost
+        inField += 1
+        return { ok: true, message: `${r.message} (${cost} from the treasury)` }
       }
       if ('barrage' in o) return pay(120) ? { ok: true, message: 'barrage on the marked point (120 from the treasury)' } : { ok: false, message: 'the treasury can’t pay for that' }
       if ('move_formation' in o) return { ok: true, message: 'formation moving to the marked position' }

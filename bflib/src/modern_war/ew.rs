@@ -69,7 +69,14 @@ struct Site {
     guard: bool,
     spoof_point: Vector2,
     intel_mark: Option<MarkId>,
+    /// No truck because nothing needs jamming: it is removed while dark with
+    /// no enemy aircraft near, and comes back as soon as one is.
+    culled: bool,
 }
+
+/// A culled truck comes back once enemy air is within this multiple of its
+/// activation radius, so it is in DCS before it has to switch on.
+const CULL_MARGIN: f64 = 1.25;
 
 #[derive(Debug, Default)]
 pub(crate) struct Ew {
@@ -197,6 +204,7 @@ pub(crate) fn tick(
                     guard,
                     spoof_point: pos + Vector2::new(a.cos(), a.sin()) * cfg.spoof_offset_m,
                     intel_mark: None,
+                    culled: true,
                 },
             );
         }
@@ -230,14 +238,34 @@ pub(crate) fn tick(
             ctx.db.ephemeral.msgs().panel_to_side(15, false, owner.opposite(), theirs);
             ctx.db.ephemeral.msgs().panel_to_side(15, false, owner, ours);
         }
-        // Replace a missing truck once the site has been down long enough
-        // and the objective is still standing.
+        // Culling: every host objective used to keep its truck in DCS all
+        // session, whether or not anything was flying near it. A dark truck
+        // with no enemy aircraft near goes; it comes back when one is.
+        let radius = if guard { cfg.sam_activation_radius_m } else { cfg.activation_radius_m };
+        let site_pos = ctx.modern_war.ew.sites[&oid].pos;
+        let near = enemy_air(ctx, owner, now)
+            .into_iter()
+            .any(|p| dist(p, site_pos) <= radius * CULL_MARGIN);
+        {
+            let site = ctx.modern_war.ew.sites.get_mut(&oid).expect("present");
+            if near {
+                site.culled = false;
+            } else if site.on_since.is_none() {
+                site.culled = true;
+                if let Some(gid) = site.gid.take() {
+                    let _ = ctx.db.delete_group(&gid);
+                    debug!("ew: {owner:?} jammer at {name} culled, no enemy aircraft near");
+                }
+            }
+        }
+        // Replace a missing truck once the site has been down long enough,
+        // the objective is still standing, and there is something to jam.
         let site = &ctx.modern_war.ew.sites[&oid];
         let due = site
             .down_since
             .map(|t| (now - t).num_seconds() >= cfg.respawn_secs as i64)
             .unwrap_or(true);
-        if site.gid.is_none() && due && health > 0 {
+        if site.gid.is_none() && due && health > 0 && !site.culled {
             if let (Some(land), Some(spctx)) = (land.as_ref(), spctx.as_ref()) {
                 // A naval base's centre is often water.
                 match land_near(land, pos + Vector2::new(0., 300.), 3_000.) {

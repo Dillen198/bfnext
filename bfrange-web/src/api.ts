@@ -12,6 +12,7 @@
  *    src/mock/ (lazy-loaded, so a production build never ships them).
  */
 import type {
+  Clip,
   FeedQuery,
   FeedResponse,
   GreenieQuery,
@@ -39,6 +40,8 @@ const DEFAULT_API = import.meta.env.DEV ? 'http://localhost:8880' : 'https://api
 export const API_ROOT: string = (import.meta.env.VITE_API_BASE ?? DEFAULT_API).replace(/\/+$/, '')
 export const RANGE_INSTANCE: string | undefined = import.meta.env.VITE_RANGE_INSTANCE || undefined
 export const MOCK: boolean = __RANGE_MOCK__
+/** The dashboard: its flight replay is the full web Tacview of a session. */
+export const DASHBOARD_URL: string = (import.meta.env.VITE_DASHBOARD_URL || 'https://dashboard.vectorstrike.org').replace(/\/+$/, '')
 
 const BASE = `${API_ROOT}/api`
 
@@ -120,6 +123,19 @@ export interface RangeApi {
   weapons(): Promise<WeaponsResponse>
   /** Resolves to a Blob, or null when there is no recording (404). */
   tacview(id: string): Promise<Blob | null>
+  /**
+   * The cut of the server's recording around a result, for the 3D debrief.
+   * Rejects with an ApiError (404 + the reason) when there is none.
+   */
+  clip(id: string): Promise<Clip>
+  /** The same cut as a small Tacview file; null when there is none. */
+  clipAcmi(id: string): Promise<Blob | null>
+  /**
+   * Where the result is in the dashboard's flight replay: the dashboard path
+   * to open (recording, the pilot's flight, a moment before the result).
+   * Rejects with a 404 until the replay has read the recording.
+   */
+  replayLink(id: string): Promise<{ rec: string; focus: number; t: number; path: string }>
   /** Card image URLs for a result id (PNG for download, SVG for display). */
   cardUrl(id: string, fmt: 'png' | 'svg'): string
   loginUrl(): string
@@ -147,6 +163,14 @@ const realApi: RangeApi = {
     const res = await fetch(`${BASE}${withInstance(`/range/tacview/${encodeURIComponent(id)}`)}`, {
       credentials: 'include',
     })
+    if (res.status === 404) return null
+    if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
+    return res.blob()
+  },
+  clip: id => get(`/range/result/${encodeURIComponent(id)}/clip`),
+  replayLink: id => get(`/range/result/${encodeURIComponent(id)}/replay`),
+  clipAcmi: async id => {
+    const res = await fetch(`${BASE}${withInstance(`/range/result/${encodeURIComponent(id)}/clip.acmi`)}`, { credentials: 'include' })
     if (res.status === 404) return null
     if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
     return res.blob()

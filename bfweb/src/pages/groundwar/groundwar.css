@@ -930,3 +930,28 @@
 }
 .gw-seg button.on { background: var(--own); color: #0b0d0b; border-color: var(--own); }
 .gw-seg button:disabled:not(.on) { cursor: not-allowed; opacity: 0.5; }
+
+/* Buying a formation (buyFormation.tsx): what, how many, then its route. */
+.cm-buy { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.cm-buy-row { display: flex; gap: 3px; align-items: stretch; }
+.cm-buy select {
+  flex: 1;
+  min-width: 0;
+  font: 9.5px var(--font-mono);
+  color: var(--gw-ink);
+  background: rgba(230, 225, 207, 0.04);
+  border: 1px solid var(--gw-line);
+  padding: 4px 6px;
+}
+.cm-buy select option { background: #14170f; }
+.cm-buy-n { display: flex; align-items: stretch; border: 1px solid var(--gw-line); }
+.cm-buy-n button {
+  width: 22px;
+  font: 700 11px var(--font-mono);
+  color: var(--gw-pencil);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.cm-buy-n button:disabled { color: var(--gw-dim); opacity: 0.5; cursor: not-allowed; }
+.cm-buy-n b { min-width: 20px; display: grid; place-items: center; font: 700 11px var(--font-mono); color: var(--gw-ink); }

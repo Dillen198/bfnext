@@ -435,6 +435,12 @@ struct Context {
     last_weather_publish: DateTime<Utc>,
     /// When each held player last got the takeoff-hold countdown panel.
     takeoff_nag_last: FxHashMap<UnitId, DateTime<Utc>>,
+    /// Rear-base protection: seconds each pilot has spent inside an enemy
+    /// protected zone this sortie, and when they were last warned.
+    rear_base_time: FxHashMap<Ucid, (u32, Option<DateTime<Utc>>)>,
+    /// Era weapon rules: pilots who took off with a banned weapon, the
+    /// deadline to land, their slot and what they carry.
+    banned_loadouts: FxHashMap<Ucid, (DateTime<Utc>, SlotId, std::string::String)>,
     /// True once `db` holds a real campaign (initialized or loaded). Until
     /// then it is `Db::default()`, and saving it would overwrite the save
     /// file with an empty campaign.
@@ -1265,6 +1271,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             if let Err(e) = ctx.shots_out.shot(&ctx.db, start_ts, &e) {
                 error!("error processing shot event {:?}", e)
             }
+            banned_weapon_fired(lua, ctx, &e);
             if let Some(ucid) = e
                 .initiator
                 .as_ref()
@@ -1468,6 +1475,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                     let slot = unit.slot()?;
                     let position = unit.get_ground_position()?.0;
                     warn_taxiway_takeoff(lua, ctx, &unit, e.place.as_ref(), position, &slot);
+                    check_banned_loadout(ctx, &unit, &slot, start_ts);
                     match ctx.db.takeoff(Utc::now(), slot, &unit, position) {
                         Err(e) => error!("could not process takeoff, {:?}", e),
                         Ok(TakeoffRes::NoLifeTaken | TakeoffRes::NotPlayerSlot) => (),
@@ -1844,6 +1852,221 @@ fn announce_takeoff_holds(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
     }
 }
 
+/// Era weapon rules (`EraCfg::banned_weapons`): a pilot who took off with a
+/// banned store is told what it is and how long they have to land.
+fn check_banned_loadout(ctx: &mut Context, unit: &Unit, slot: &SlotId, now: DateTime<Utc>) {
+    let Some(era) = ctx.db.ephemeral.cfg.era.clone() else { return };
+    let Some(ucid) = ctx.db.ephemeral.player_in_slot(slot).copied() else { return };
+    let Ok(ammo) = unit.get_ammo() else { return };
+    let mut found: Vec<std::string::String> = vec![];
+    for a in ammo {
+        let Ok(a) = a else { continue };
+        let typ = a.type_name().map(|s| s.to_string()).unwrap_or_default();
+        let shown = a.display_name().map(|s| s.to_string()).unwrap_or_default();
+        if era.banned(&typ).is_some() || era.banned(&shown).is_some() {
+            let label = if shown.is_empty() { typ } else { shown };
+            if !found.contains(&label) {
+                found.push(label);
+            }
+        }
+    }
+    if found.is_empty() {
+        return;
+    }
+    let list = found.join(", ");
+    let secs = era.banned_weapon_land_secs.max(30);
+    info!("era rules: {ucid} took off with banned {list}");
+    if let Some(uid) = slot.as_unit_id() {
+        ctx.db.ephemeral.msgs().panel_to_unit(
+            30,
+            true,
+            uid,
+            format_compact!(
+                "BANNED IN THE {} ERA: {list}. Land and remove it within {}:{:02}, and do not \
+                 fire it -- or you will be removed.",
+                era.current.to_uppercase(),
+                secs / 60,
+                secs % 60
+            ),
+        );
+    }
+    ctx.banned_loadouts.insert(ucid, (now + Duration::seconds(secs as i64), slot.clone(), list));
+}
+
+/// Firing a banned weapon: the aircraft is removed on the spot.
+fn banned_weapon_fired(lua: MizLua, ctx: &mut Context, e: &dcso3::event::Shot) {
+    let Some(era) = ctx.db.ephemeral.cfg.era.as_ref() else { return };
+    let Some(name) = e.weapon_name.as_ref() else { return };
+    if era.banned(name.as_str()).is_none() {
+        return;
+    }
+    let Some(unit) = e.initiator.as_ref() else { return };
+    let Some(ucid) = unit.object_id().ok().and_then(|oid| ctx.db.player_in_unit(false, &oid)) else {
+        return;
+    };
+    let Ok(slot) = unit.slot() else { return };
+    warn!("[ERA_RULES] {ucid} fired banned weapon {name} -- removed");
+    remove_for_era_rules(lua, ctx, &ucid, &slot, &format_compact!("You fired {name}, which is banned in this era"));
+}
+
+/// Pilots past their deadline to land with a banned weapon are removed;
+/// those who landed are forgiven (the next takeoff checks again).
+fn enforce_banned_loadouts(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
+    if ctx.banned_loadouts.is_empty() {
+        return;
+    }
+    let entries: Vec<(Ucid, DateTime<Utc>, SlotId, std::string::String)> = ctx
+        .banned_loadouts
+        .iter()
+        .map(|(u, (t, s, l))| (*u, *t, s.clone(), l.clone()))
+        .collect();
+    for (ucid, deadline, slot, list) in entries {
+        let in_air = ctx
+            .db
+            .persisted
+            .players
+            .get(&ucid)
+            .and_then(|p| p.current_slot.as_ref())
+            .filter(|(s, _)| *s == slot)
+            .and_then(|(_, i)| i.as_ref())
+            .map(|i| i.in_air);
+        match in_air {
+            // Left the slot, or landed: nothing to enforce.
+            None | Some(false) => {
+                ctx.banned_loadouts.remove(&ucid);
+            }
+            Some(true) if now >= deadline => {
+                warn!("[ERA_RULES] {ucid} still airborne with banned {list} after the deadline -- removed");
+                remove_for_era_rules(
+                    lua,
+                    ctx,
+                    &ucid,
+                    &slot,
+                    &format_compact!("You did not land to remove {list}, which is banned in this era"),
+                );
+            }
+            Some(true) => (),
+        }
+    }
+}
+
+fn remove_for_era_rules(lua: MizLua, ctx: &mut Context, ucid: &Ucid, slot: &SlotId, why: &str) {
+    ctx.banned_loadouts.remove(ucid);
+    if let Some(uid) = slot.as_unit_id() {
+        ctx.db.ephemeral.msgs().panel_to_unit(
+            15,
+            true,
+            uid,
+            format_compact!("{why} -- returning to spectators."),
+        );
+    }
+    if let Some(oid) = ctx.db.ephemeral.get_object_id_by_slot(slot).cloned() {
+        if let Ok(u) = Unit::get_instance(lua, &oid) {
+            let _ = u.destroy();
+        }
+    }
+    ctx.db.ephemeral.force_player_to_spectators(ucid);
+}
+
+/// Rear-base protection (`Cfg::rear_base_protection`): an enemy aircraft
+/// near a side's protected airfield is warned every 10 s, and once it has
+/// spent `grace_secs` inside in total this sortie it is destroyed and sent
+/// to spectators. Spawn camping a rear field was the PvP griefing nothing
+/// else stopped. Called from the 1 Hz loop, so each call is one second.
+fn enforce_rear_bases(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
+    let Some(cfg) = ctx
+        .db
+        .ephemeral
+        .cfg
+        .rear_base_protection
+        .clone()
+        .filter(|c| c.enabled)
+    else {
+        return;
+    };
+    let bases: Vec<(Side, Vector2, String)> = cfg
+        .bases
+        .iter()
+        .flat_map(|(side, names)| names.iter().map(move |n| (*side, n)))
+        .filter_map(|(side, n)| {
+            let oid = ctx.db.persisted.objectives_by_name.get(n)?;
+            let o = ctx.db.persisted.objectives.get(oid)?;
+            (o.owner == side).then(|| (side, o.pos(), o.name.clone()))
+        })
+        .collect();
+    if bases.is_empty() {
+        ctx.rear_base_time.clear();
+        return;
+    }
+    let land = (cfg.min_agl_m > 0.).then(|| dcso3::land::Land::singleton(lua).ok()).flatten();
+    // (ucid, name, side, slot, uid, base)
+    let mut inside: Vec<(Ucid, String, Side, SlotId, UnitId, String)> = vec![];
+    let mut flying: FxHashSet<Ucid> = FxHashSet::default();
+    for (ucid, player, inst) in ctx.db.instanced_players() {
+        flying.insert(*ucid);
+        if !inst.in_air {
+            continue;
+        }
+        let Some((slot, _)) = player.current_slot.as_ref() else { continue };
+        let Some(uid) = slot.as_unit_id() else { continue };
+        let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
+        if let Some(land) = land.as_ref() {
+            let ground = land.get_height(LuaVec2(pos)).unwrap_or(0.);
+            if inst.position.p.y - ground <= cfg.min_agl_m {
+                continue;
+            }
+        }
+        let hit = bases.iter().find(|(owner, bpos, _)| {
+            *owner != player.side && na::distance(&pos.into(), &(*bpos).into()) <= cfg.radius_m
+        });
+        if let Some((_, _, bname)) = hit {
+            inside.push((*ucid, player.name.clone(), player.side, slot.clone(), uid, bname.clone()));
+        }
+    }
+    // A new sortie starts with a clean count.
+    ctx.rear_base_time.retain(|u, _| flying.contains(u));
+    const WARN_EVERY: i64 = 10;
+    for (ucid, name, side, slot, uid, base) in inside {
+        let e = ctx.rear_base_time.entry(ucid).or_insert((0, None));
+        e.0 += 1;
+        let spent = e.0;
+        if spent >= cfg.grace_secs {
+            warn!(
+                "[REAR_BASE] {name} ({ucid}, {side:?}) removed after {spent}s inside {base}'s protected zone"
+            );
+            ctx.rear_base_time.remove(&ucid);
+            ctx.db.ephemeral.msgs().panel_to_unit(
+                15,
+                true,
+                uid,
+                format_compact!(
+                    "You stayed in {base}'s protected airspace -- returning to spectators. Staff have been notified."
+                ),
+            );
+            if let Some(oid) = ctx.db.ephemeral.get_object_id_by_slot(&slot).cloned() {
+                if let Ok(u) = Unit::get_instance(lua, &oid) {
+                    let _ = u.destroy();
+                }
+            }
+            ctx.db.ephemeral.force_player_to_spectators(&ucid);
+            continue;
+        }
+        let due = e.1.map_or(true, |t| now - t >= Duration::seconds(WARN_EVERY));
+        if due {
+            e.1 = Some(now);
+            let left = cfg.grace_secs - spent;
+            ctx.db.ephemeral.msgs().panel_to_unit(
+                WARN_EVERY,
+                true,
+                uid,
+                format_compact!(
+                    "PROTECTED AIRSPACE: {base} is a rear base. Leave now -- {left}s before you are removed."
+                ),
+            );
+        }
+    }
+}
+
 fn message_life(
     ctx: &mut Context,
     slot: &SlotId,
@@ -1930,6 +2153,9 @@ fn land_debrief(ctx: &mut Context, r: &crate::db::player::LandReport, now: DateT
     }
     if r.tally.fired > 0 {
         let _ = writeln!(m, "Weapons fired: {}", r.tally.fired);
+    }
+    if let Some(line) = r.tally.contributions_line() {
+        let _ = writeln!(m, "Contributed: {line}");
     }
     let kills = r.tally.kill_count();
     if kills == 0 {
@@ -2087,7 +2313,9 @@ fn check_auto_shutdown(
         }
     }
     if let Some(victor) = ctx.db.check_victory(now) {
-        return admin::admin_shutdown(ctx, lua, Some(Some(victor)));
+        // `Neutral` is a draw: the round ran `max_round_days`.
+        let winner = (victor != Side::Neutral).then_some(victor);
+        return admin::admin_shutdown(ctx, lua, Some(winner));
     }
     Ok(AdminResult::Continue)
 }
@@ -4761,6 +4989,10 @@ fn run_slow_timed_events(
             if let Err(e) = ctx.db.tick_helo_missions(lua, start_ts) {
                 error!("error ticking helo missions {e:?}");
             }
+            // AI Fat Cows: set up on landing, pack up when their time is up.
+            if let Err(e) = ctx.db.tick_fat_cow_missions(lua, &ctx.idx, start_ts) {
+                error!("error ticking fat cows {e:?}");
+            }
             // Troop insertions whose helo failed, going in by road instead.
             if let Err(e) = ctx.db.tick_ground_insertions(lua, start_ts) {
                 error!("error ticking road troop insertions {e:?}");
@@ -4777,6 +5009,10 @@ fn run_slow_timed_events(
     step(lua, ctx, "modern war", |ctx| modern_war::tick(lua, ctx, perf, start_ts));
     step(lua, ctx, "hunters", |ctx| command::tick_hunters(lua, ctx, start_ts));
     step(lua, ctx, "ramp watch", |ctx| ctx.db.check_ramp_watch(lua, start_ts));
+    step(lua, ctx, "air stations", |ctx| ctx.db.flush_pending_air_stations(lua));
+    step(lua, ctx, "last defenders", |ctx| ctx.db.reveal_last_defenders(start_ts));
+    step(lua, ctx, "contributions", |ctx| ctx.db.drain_contributions());
+    step(lua, ctx, "task zones", |ctx| ctx.db.expire_tasks(start_ts));
     // Ground formations, the AI ground commander and players' ground orders
     // (`Cfg::ground_war`).
     step(lua, ctx, "ground war", |ctx| groundwar::tick(lua, ctx, perf, start_ts));
@@ -4835,16 +5071,11 @@ fn run_timed_events(
     });
 
     step(lua, ctx, "takeoff holds", |ctx| announce_takeoff_holds(lua, ctx, ts));
+    step(lua, ctx, "rear bases", |ctx| enforce_rear_bases(lua, ctx, ts));
+    step(lua, ctx, "banned loadouts", |ctx| enforce_banned_loadouts(lua, ctx, ts));
 
-    // Admin commands carry every dashboard query (bfdb's RPCs), so they run
-    // every second, not on the slow tick: at slow_timed_events_freq 10 each
-    // query waited up to ten seconds for its turn, bfdb logged the engine as
-    // slow, timed out, and opened its breaker -- the dashboard's 503s.
-    match step(lua, ctx, "admin commands", |ctx| run_admin_commands(ctx, lua)) {
-        Some(Err(e)) => error!("failed to run admin commands {e:?}"),
-        Some(Ok(AdminResult::Continue)) | None => (),
-        Some(Ok(AdminResult::Shutdown)) => return Ok(AdminResult::Shutdown),
-    }
+    // Admin commands (every bfdb RPC) are not run here: they have their own
+    // fast timer, see `start_admin_drain`.
 
     // Its subsystems are guarded one by one inside; this catches the rest.
     match step(lua, ctx, "slow timed events", |ctx| {
@@ -5043,6 +5274,47 @@ fn start_msgq_drain(lua: MizLua) -> Result<()> {
     Ok(())
 }
 
+/// How often admin commands -- every bfdb RPC -- are run.
+///
+/// They used to run on the 1 s event tick, and that capped each bfdb at about
+/// one RPC a second, whatever the queue limit said: the netidx publisher reads
+/// nothing more from a connection while an RPC on it is still unanswered, and
+/// bfdb's pollers share one connection per engine. So each call waited a tick
+/// for every call ahead of it, and replies came back after 3, 4, 5, 6 s -- the
+/// thousands of "engine slow" lines, and the breaker trips behind them. At
+/// 10 Hz a call waits about 100 ms per call ahead. `ADMIN_COMMANDS_PER_TICK`
+/// still bounds the work landing in any one DCS frame.
+const ADMIN_DRAIN_HZ: f64 = 10.;
+
+/// Run queued admin commands on their own fast timer.
+fn start_admin_drain(lua: MizLua) -> Result<()> {
+    let timer = Timer::singleton(lua)?;
+    let period = 1. / ADMIN_DRAIN_HZ;
+    timer.schedule_function(timer.get_time()? + period, mlua::Value::Nil, move |lua, _, now| {
+        let ctx = unsafe { Context::get_mut() };
+        if ctx.exit_attempts.is_some() {
+            // shutting down: the 1 s tick owns the exit retries
+            return Ok(None);
+        }
+        let res = {
+            let _defer = DeferEvents::begin();
+            step(lua, ctx, "admin commands", |ctx| run_admin_commands(ctx, lua))
+        };
+        match res {
+            Some(Err(e)) => error!("failed to run admin commands {e:?}"),
+            Some(Ok(AdminResult::Continue)) | None => (),
+            Some(Ok(AdminResult::Shutdown)) => {
+                println!("initiating DCS shutdown");
+                ctx.exit_attempts = Some(0);
+                try_exit_dcs(lua, ctx);
+                return Ok(None);
+            }
+        }
+        Ok(Some(now + period))
+    })?;
+    Ok(())
+}
+
 /// The message out of a caught panic payload.
 ///
 /// `catch_unwind` hands back `Box<dyn Any + Send>`, whose `Debug` is the
@@ -5154,6 +5426,7 @@ fn try_exit_dcs(lua: MizLua, ctx: &mut Context) -> bool {
 fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<()> {
     ctx.last_slow_timed_events = Utc::now();
     start_msgq_drain(lua)?;
+    start_admin_drain(lua)?;
     let timer = Timer::singleton(lua)?;
     timer.schedule_function(timer.get_time()? + 1., mlua::Value::Nil, {
         let path = path.clone();
@@ -5218,6 +5491,15 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
     };
     debug!("sortie is {:?}", ctx.sortie);
     let cfg = Arc::new(Cfg::load(&path)?);
+    // Fat Cow pads and layout are generated rather than placed in the
+    // mission editor; they have to be in the mission before anything looks
+    // templates up, so the index is rebuilt with them in it.
+    if db::fat_cow::inject_templates(lua, &miz, &ctx.idx, &cfg)
+        .context("generating fat cow templates")?
+        > 0
+    {
+        ctx.idx = miz.index().context("re-indexing the mission")?;
+    }
     // Computed once, up front, so both the netidx stats publisher (via
     // Task::CfgLoaded) and the NewRound stat below agree on whether this is
     // a genuinely new round or a resume of saved state -- sending a

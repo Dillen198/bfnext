@@ -59,6 +59,11 @@ const REBUILD_ORDER: [ObjGroupClass; 7] = [
 
 /// Straight line to road distance, for the travel time estimate.
 const ROAD_FACTOR: f64 = 1.4;
+/// A convoy parked this close to its objective has reached the end of the
+/// road there (see `reinforce_outcome`).
+const END_OF_ROAD_M: f64 = 3_000.;
+/// How long every transporter has to have stood still to count as parked.
+const PARKED_SECS: i64 = 120;
 
 fn dist(a: Vector2, b: Vector2) -> f64 {
     (a - b).norm()
@@ -386,6 +391,18 @@ impl Db {
         }
         let arrive = cfg.arrive_m as f64;
         if carriers.iter().any(|u| !u.dead && dist(u.pos, *dest) <= arrive) {
+            return Ok(Outcome::Arrived { alive, total });
+        }
+        // The route's last waypoint is "on road" at the objective's centre,
+        // so DCS stops the convoy at the road point nearest it -- at a base
+        // set back from the road, further out than `arrive_m`. It used to sit
+        // there until it was recalled as stuck and nothing was ever rebuilt.
+        // Parked at the end of the road close to the objective, it has arrived.
+        let live: Vec<_> = carriers.iter().filter(|u| !u.dead).collect();
+        let parked = live
+            .iter()
+            .all(|u| u.moved.map_or(true, |t| now - t >= Duration::seconds(PARKED_SECS)));
+        if parked && live.iter().any(|u| dist(u.pos, *dest) <= END_OF_ROAD_M.max(arrive)) {
             return Ok(Outcome::Arrived { alive, total });
         }
         let leg = rtb.map_or(0., |from| dist(from, *dest)) * ROAD_FACTOR;

@@ -9,6 +9,7 @@ import { GatePlot } from '../../components/plots/GatePlot'
 import { InterceptReplay } from '../../components/plots/InterceptReplay'
 import { StrafePit } from '../../components/plots/StrafePit'
 import { RunwayPlot } from '../../components/plots/RunwayPlot'
+import { FinalProfile, PatternPlan, PatternProfile, TaxiPlots } from '../../components/plots/FieldPlots'
 import { PathReplay, TrackMap } from '../../components/plots/TrackMap'
 import { TrapSheet } from '../../components/plots/TrapSheet'
 import { TONE_VAR, fmt, qualityTone } from '../../lib/format'
@@ -140,13 +141,23 @@ export function Interactive({ rec }: { rec: RangeRecord }) {
     case 'troops':
     case 'cas':
       return t?.kind === 'path' ? <PathReplay paths={t.paths} /> : none
-    case 'field_landing':
+    case 'field_landing': {
+      // the engine writes the pattern and the taxi as two paths; an older record has one path for the approach
+      const paths = t?.kind === 'path' ? t.paths : {}
+      const pattern = paths.pattern ?? Object.values(paths).find(v => v.length && v[v.length - 1].t <= 0.5) ?? []
+      const taxi = paths.taxi ?? []
       return (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-5">
+          {pattern.length > 4 && <PatternPlan r={r} track={pattern} />}
+          {pattern.length > 4 && <PatternProfile r={r} track={pattern} />}
+          {pattern.length > 4 && <FinalProfile r={r} track={pattern} />}
           <RunwayPlot r={r} />
-          {t?.kind === 'path' && <PathReplay paths={t.paths} height={340} />}
+          {taxi.length > 1 ? <TaxiPlots r={r} track={taxi} /> : r.outcome === 'touch_and_go'
+            ? <p className="muted text-[12.5px] m-0">A touch-and-go: no rollout or taxi to debrief.</p>
+            : <p className="muted text-[12.5px] m-0">No taxi recorded for this landing (an older record, or the pilot left the aircraft on the runway).</p>}
         </div>
       )
+    }
     case 'low_level':
       return r.gates.length || t?.kind === 'path' ? (
         <div className="flex flex-col gap-4">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent } from 'react'
 
 export interface Scale {
   (v: number): number
@@ -101,4 +101,28 @@ export function indexAtTime<S extends { t: number }>(samples: S[], t: number): n
     else hi = mid
   }
   return lo
+}
+
+const NARROW = '(max-width: 640px)'
+const narrowNow = () => { try { return window.matchMedia(NARROW).matches } catch { return false } }
+const onNarrow = (cb: () => void) => {
+  try {
+    const q = window.matchMedia(NARROW)
+    q.addEventListener('change', cb)
+    return () => q.removeEventListener('change', cb)
+  } catch { return () => {} }
+}
+
+/**
+ * True on a phone-width screen. Plots draw into a fixed viewBox scaled to
+ * the width they get, so on a phone a 900-wide plot's 10-unit text comes
+ * out at 4 px; they lay themselves out ~440 wide there instead.
+ */
+export function useNarrow(): boolean {
+  return useSyncExternalStore(onNarrow, narrowNow, () => false)
+}
+
+/** The viewBox width a plot should lay out to: `wide` normally, `narrow` on a phone. */
+export function usePlotW(wide = 900, narrow = 440): number {
+  return useNarrow() ? narrow : wide
 }

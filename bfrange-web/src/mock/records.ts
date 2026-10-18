@@ -5,6 +5,8 @@
  * of the same ballistics model the calculator uses, a missile outcome falls
  * out of a small pursuit simulation.
  */
+import { deckFor, deckInLanding, landingFromRef } from '../lib/carrierDeck'
+import { patternSummary, relPoints, taxiSummary } from '../lib/patternLegs'
 import { bodyFromWeapon, groundSpeedFromTas, trajectory, windComponents } from '../lib/ballistics'
 import { FT, KT, NM, destination, distanceM, fromLocal, norm180, norm360, rad, type LatLon } from '../lib/geo'
 import { aarGrade, bombQuality, clock as clockOf, goodRadius, precisionQuality, strafeQuality } from '../lib/grading'
@@ -168,8 +170,11 @@ export function trapRecord(p: MockPilot, rng: Rng, ts: number, forced?: Partial<
   const cv = CARRIERS[0]
   const night = forced?.night ?? rng.chance(0.22)
   const kase = night ? 3 : rng.chance(0.12) ? 2 : 1
-  const fb = norm360(cv.brc_deg + cv.deck_angle_deg)
-  const landing = destination(destination(cv.pos, cv.brc_deg + 180, 70), cv.brc_deg - 90, 6)
+  // the landing point exactly where the engine (and the 3D debrief) puts it
+  const geom = deckFor(cv.unit_type)
+  const fb = norm360(cv.brc_deg + geom.angle_deg)
+  const lp = landingFromRef(geom)
+  const landing = destination(destination(cv.pos, cv.brc_deg, lp.fwd), cv.brc_deg + 90, lp.right)
   const toLL = (x: number, y: number) => destination(destination(landing, fb + 180, x), fb + 90, y)
   const prof = grooveProfile(sc.comment, rng)
   const onspeed = ONSPEED[unit_type] ?? 8.1
@@ -224,19 +229,23 @@ export function trapRecord(p: MockPilot, rng: Rng, ts: number, forced?: Partial<
   const grooveLen = x0 * stopF
   const n = Math.round(grooveLen / (closureBase * KT * 0.5))
   const grooveStartT = t
+  // the wheels meet the deck just past the wire the hook takes (the 3-wire
+  // is the landing point, x = 0); a waveoff or bolter aims at the 3-wire
+  const deckX = deckInLanding(geom).wires
+  const xt = sc.outcome === 'trap' && sc.wire ? (deckX[sc.wire - 1] ?? 0) - 2 : 0
   for (let i = 0; i <= n; i++) {
     const f = (i / n) * stopF
     const x = x0 * (1 - f)
     const d = prof(f)
     const y = x * Math.tan(rad(d.lue))
-    const alt = Math.max(0, (x * Math.tan(rad(GS + d.gse))) / FT)
+    const alt = Math.max(0, ((x - xt) * Math.tan(rad(GS + d.gse))) / FT)
     push(x, y, alt, onspeed + d.aoa, closureBase - d.aoa * 4, d.gse, d.lue)
   }
   const grooveTime = t - grooveStartT
   // ── after the groove ──
   const lastS = samples[samples.length - 1]
   if (sc.outcome === 'trap') {
-    for (let x = -10, v = closureBase; v > 0; x -= v * KT * 0.5, v -= 38) push(x, lastS.y_m * 0.3, 0, null, Math.max(0, v), 0, 0)
+    for (let x = xt - 10, v = closureBase; v > 0; x -= v * KT * 0.5, v -= 38) push(x, lastS.y_m * 0.3, 0, null, Math.max(0, v), 0, 0)
   } else {
     const climb = sc.outcome === 'bolter' ? 0 : lastS.alt_ft
     for (let i = 1; i < 24; i++) {
@@ -1108,14 +1117,71 @@ export function fieldLandingRecord(p: MockPilot, rng: Rng, ts: number): RangeRec
     calls,
     touchdown_pos: geo(td, f.threshold.alt_m),
   }
-  // a straight-in from 4 nm on a 3° glideslope
-  const pts: TrackPt[] = []
-  for (let t = 0; t <= 110; t += 2) {
-    const d = 4 * NM * (1 - t / 110) - aimPoint
-    const q2 = destination(f.threshold, hdg + 180, d)
-    pts.push({ t, lat: q2.lat, lon: q2.lon, alt_m: Math.round(f.threshold.alt_m + Math.max(0, d + aimPoint) * Math.tan(rad(3))), speed_kts: 140 })
+  // the pattern, flown in the runway frame (along the runway from the
+  // threshold, across + right, AGL), then the rollout and the taxi
+  const kind = rng.weighted([['overhead', 6 + p.skill * 4], ['downwind', 2], ['straight_in', 2]] as const)
+  const side = rng.chance(0.7) ? -1 : 1
+  const spacing = (0.9 + rng.gauss(0.25, 0.35 * (1.3 - p.skill))) * NM
+  const dwAlt = rng.gauss(1000, 180 * (1.3 - p.skill)) * FT
+  const rel: { t: number; along: number; across: number; agl: number; gs: number }[] = []
+  const finalNm = kind === 'straight_in' ? 5 : clamp(rng.gauss(0.65, 0.2 * (1.3 - p.skill)), 0.2, 1.4)
+  const vApp = result.touchdown_gs_kts + 5
+  // walk the legs backwards from the touchdown, then reverse
+  const back: { along: number; across: number; agl: number; gs: number }[] = []
+  for (let a = fromThr; a > -finalNm * NM; a -= vApp * KT) back.push({ along: a, across: cl * Math.max(0, a / -1000), agl: Math.max(0, (aimPoint - a)) * Math.tan(rad(3)), gs: vApp })
+  if (kind !== 'straight_in') {
+    const r0 = finalNm * NM, rTurn = Math.abs(side * spacing) / 2
+    for (let k = 1; k <= 14; k++) {
+      const th = (k / 14) * Math.PI
+      back.push({ along: -r0 - Math.sin(th) * 380, across: side * rTurn * (1 - Math.cos(th)), agl: r0 * Math.tan(rad(3)) + (dwAlt - r0 * Math.tan(rad(3))) * (k / 14), gs: vApp + 10 })
+    }
+    for (let a = -r0; a < 1400; a += 160 * KT) back.push({ along: a, across: side * spacing, agl: dwAlt, gs: 160 })
+    if (kind === 'overhead') {
+      for (let k = 1; k <= 12; k++) {
+        const th = (k / 12) * Math.PI
+        back.push({ along: 1400 + Math.sin(th) * 420, across: side * spacing * (1 + Math.cos(th)) / 2, agl: dwAlt + (1500 * FT - dwAlt) * (k / 12), gs: 220 + k * 6 })
+      }
+      for (let a = 1400; a > -3 * NM; a -= 300 * KT) back.push({ along: a, across: rng.gauss(0, 15), agl: 1500 * FT, gs: 300 })
+    }
   }
-  return { ...base(p, unit_type, ts), score: PQ_SCORE[quality], result, track: { kind: 'path', paths: { [p.name]: pts } } }
+  back.reverse().forEach((q, i, all) => rel.push({ t: i - (all.length - 1), ...q }))
+  // the rollout, the turn-off, the taxi to the apron (a full stop only)
+  const taxiRel: typeof rel = []
+  const fullStop = result.outcome === 'full_stop'
+  if (fullStop) {
+    let along = fromThr, gs = result.touchdown_gs_kts, t = 0
+    const decel = rng.range(4, 7)
+    while (gs > 18) { taxiRel.push({ t, along, across: cl, agl: 0, gs }); along += gs * KT; gs -= decel; t++ }
+    const exitA = along + 60
+    for (; along < exitA; along += gs * KT, t++) taxiRel.push({ t, along, across: cl, agl: 0, gs })
+    const fast = rng.chance((1 - p.skill) * 0.6)
+    for (let c = cl; c < 160; c += 6, t++) taxiRel.push({ t, along: exitA, across: c, agl: 0, gs: 12 })
+    for (let a = exitA; a > 250; t++) {
+      const g = fast && a < exitA - 400 && a > 900 ? 36 : 20
+      a -= g * KT
+      taxiRel.push({ t, along: a, across: 160, agl: 0, gs: g })
+    }
+    for (let k = 0; k < 6; k++, t++) taxiRel.push({ t, along: 250, across: 160, agl: 0, gs: 0 })
+    for (let c = 160; c < 320; c += 5, t++) taxiRel.push({ t, along: 250, across: c, agl: 0, gs: 10 })
+    for (let k = 0; k < 28; k++, t++) taxiRel.push({ t, along: 250, across: 320, agl: 0, gs: 0 })
+  }
+  const toPt = (q: (typeof rel)[number]): TrackPt => {
+    const at = destination(destination(f.threshold, hdg, q.along), hdg + 90, q.across)
+    return { t: q.t, lat: at.lat, lon: at.lon, alt_m: Math.round(f.threshold.alt_m + q.agl), speed_kts: Math.round(q.gs) }
+  }
+  const patternPts = rel.map(toPt)
+  const taxiPts = taxiRel.map(toPt)
+  Object.assign(result, {
+    runway_heading_deg: hdg, threshold_pos: f.threshold, aim_point_m: aimPoint, runway_length_m: 2400, runway_width_m: 45,
+  })
+  const fl = result as Extract<RangeResult, { kind: 'field_landing' }>
+  fl.pattern = patternSummary(relPoints(patternPts, fl), 0)
+  fl.taxi = fullStop
+    ? taxiSummary(taxiRel.map(q => ({ t: q.t, along: q.along, across: q.across, gs_kts: q.gs, x: q.along, y: q.across })), 2400, 45, 'parked')
+    : null
+  const paths: Record<string, TrackPt[]> = { pattern: patternPts }
+  if (taxiPts.length) paths.taxi = taxiPts
+  return { ...base(p, unit_type, ts), score: PQ_SCORE[quality], result, track: { kind: 'path', paths } }
 }
 
 // ─── CSAR ──────────────────────────────────────────────────────────────────

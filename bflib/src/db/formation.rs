@@ -55,6 +55,12 @@ for more details.
 //! that base's garrison: the survivors are back at their posts and the dead
 //! are rebuilt by the base's repair and reinforcement like any other
 //! garrison loss.
+//!
+//! A purchased formation is the exception: a commander buys it from the
+//! treasury (`Db::buy_formation`) as copies of a deployable template, built
+//! at a base without touching its garrison. It never joins a garrison either
+//! -- when it stands down its survivors stay where they are as ordinary
+//! deployed units of the commander who bought it.
 
 use super::{
     combat::{self, Condition, Deployment, Role},
@@ -70,7 +76,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context, Result};
 use bfprotocols::{
-    cfg::{GroundCombatCfg, GroundWarCfg, UnitTag},
+    cfg::{Deployable, GroundCombatCfg, GroundWarCfg, UnitTag},
     command::{Pace, Roe},
     db::{
         group::{GroupId, UnitId},
@@ -111,6 +117,8 @@ const COLUMN_GAP_M: f64 = 30.;
 const STALL_MOVE_M: f64 = 150.;
 /// ...in this long, with no enemy close, is stuck on the terrain.
 const STALL_SECS: i64 = 300;
+/// How long the AI leaves an order alone after a formation got stuck on it for good.
+const GAVE_UP_SECS: i64 = 2 * 3600;
 /// An enemy this close means a formation is in contact: fighting, not
 /// stuck, and a battle on the map (`super::battle`).
 pub(super) const ENGAGED_M: f64 = 6_000.;
@@ -264,6 +272,11 @@ pub struct Formation {
     /// How hard it drives.
     #[serde(default)]
     pub pace: Pace,
+    /// Bought from the treasury, not raised from `home`'s garrison: its
+    /// groups are deployed units, and go back to being that when it stands
+    /// down, never into a garrison (`Db::release_purchased_group`).
+    #[serde(default)]
+    pub purchased: bool,
 }
 
 fn full() -> f64 {
@@ -344,6 +357,10 @@ pub struct FormationRt {
     route_dirty: FxHashSet<FormationId>,
     /// (anchor, since, re-routes so far)
     stall: FxHashMap<FormationId, (Vector2, DateTime<Utc>, u8)>,
+    /// Orders a formation got stuck on for good, and when. The AI commander
+    /// doesn't hand the same one back for `GAVE_UP_SECS`: it used to, every
+    /// few minutes, and the company stalled on the same ridge all night.
+    gave_up: FxHashMap<FormationId, (Order, DateTime<Utc>)>,
     assault_ts: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Formations already told they have no infantry for an assault.
     no_infantry_said: FxHashSet<FormationId>,
@@ -455,6 +472,14 @@ impl FormationRt {
 
     pub fn in_supply(&self, id: FormationId) -> bool {
         self.supplied.contains(&id)
+    }
+
+    /// Whether `id` got stuck for good on `order` recently enough that
+    /// giving it the same order again would only stall it again.
+    pub fn gave_up_on(&self, id: FormationId, order: &Order, now: DateTime<Utc>) -> bool {
+        self.gave_up
+            .get(&id)
+            .map_or(false, |(o, t)| o == order && now - *t < Duration::seconds(GAVE_UP_SECS))
     }
 
     /// `side`'s recent events, newest first.
@@ -1212,6 +1237,7 @@ impl Db {
             damage: 0.,
             roe: None,
             pace: Pace::Normal,
+            purchased: false,
         };
         self.persisted.formations.insert_cow(id, f);
         if let Err(e) = self.update_objective_status(&oid, now) {
@@ -1221,6 +1247,177 @@ impl Db {
         info!("ground war: {side:?} raised {name} ({id}), {strength0} vehicles from {oname}");
         rt.event(side, "raised", format_compact!("{name} formed up at {oname}, {strength0} vehicles"), Some(pos), Some(id), now);
         Ok(id)
+    }
+
+    /// A formation the treasury bought: `count` copies of `template` (the
+    /// group template of deployable `spec`) put together at base `oid` and
+    /// sent at once to `to` by way of `via`, as `by`'s order. The caller
+    /// prices it, pays for it and picks the base. Nothing comes out of the
+    /// garrison: the groups are `by`'s deployed units (`cost_fraction` 0, so a
+    /// -delete refunds nothing), held by the formation instead of the deployed
+    /// list while it exists.
+    #[allow(clippy::too_many_arguments)]
+    pub fn buy_formation(
+        &mut self,
+        rt: &mut FormationRt,
+        lua: MizLua,
+        idx: &MizIndex,
+        side: Side,
+        oid: ObjectiveId,
+        spec: &Deployable,
+        template: &str,
+        count: u32,
+        to: Vector2,
+        via: &[Vector2],
+        by: Option<Ucid>,
+        now: DateTime<Utc>,
+    ) -> Result<(FormationId, CompactString)> {
+        let cfg = self.ground_war_cfg()?;
+        let in_field = self.formations().filter(|f| f.side == side).count();
+        if in_field >= cfg.max_formations_per_side as usize {
+            bail!("{side:?} already has {in_field} formations in the field, the most it can have")
+        }
+        let total = self.formations().count();
+        if cfg.live_only && total >= cfg.max_live_formations as usize {
+            bail!("the server can run no more than {total} formations in DCS at once")
+        }
+        if count == 0 {
+            bail!("buy at least one")
+        }
+        let obj = objective!(self, oid)?;
+        let oname = obj.name.clone();
+        if obj.owner != side {
+            bail!("{oname} is not ours")
+        }
+        if obj.threatened {
+            bail!("{oname} is under threat")
+        }
+        if obj.in_capture_hold() {
+            bail!("{oname} is still consolidating")
+        }
+        let center = obj.zone.pos();
+        // It sets out with what the base can give it.
+        let supply = (obj.supply() as f64 / 100.).clamp(0.3, 1.);
+        let first = via.first().copied().unwrap_or(to);
+        let dir = {
+            let d = first - center;
+            if d.norm() > 1. { d.normalize() } else { Vector2::new(1., 0.) }
+        };
+        let heading = heading_of(dir);
+        let label = spec.path.last().map(|s| s.as_str()).unwrap_or(template).to_string();
+        let spctx = SpawnCtx::new(lua)?;
+        let origin = DeployKind::Deployed {
+            player: by.unwrap_or_default(),
+            moved_by: None,
+            spec: spec.clone(),
+            cost_fraction: 0.0,
+            origin: None,
+            jtac: None,
+        };
+        let mut gids: Vec<GroupId> = Vec::with_capacity(count as usize);
+        let built = (|| -> Result<()> {
+            for i in 0..count {
+                // Lined up behind the base, away from where it is going; the
+                // column is laid out properly below.
+                let pos = center - dir * (i as f64 * 60.);
+                let gid = self.add_group(
+                    &spctx,
+                    idx,
+                    side,
+                    SpawnLoc::AtPos { pos, offset_direction: -dir, group_heading: heading },
+                    template,
+                    origin.clone(),
+                    BitFlags::empty(),
+                )?;
+                gids.push(gid);
+                // The formation spawns and despawns it, not the deployed list
+                // (which would respawn it at every restart), and the
+                // formation's pin stands for it on the F10 map.
+                self.persisted.deployed.remove_cow(&gid);
+                if let Some((mark, _)) = self.ephemeral.group_marks.remove(&gid) {
+                    self.ephemeral.msgs().delete_mark(mark);
+                }
+                let g = group!(self, gid)?;
+                if g.kind != Some(GroupCategory::Ground) {
+                    bail!("{label} isn't a ground group")
+                }
+                if !self.group_can_drive(&gid) {
+                    bail!("{label} can't drive, so it can't march with a formation")
+                }
+            }
+            Ok(())
+        })();
+        if let Err(e) = built {
+            for gid in &gids {
+                let _ = self.delete_group(gid);
+            }
+            return Err(e);
+        }
+        let strength0 = gids
+            .iter()
+            .filter_map(|g| self.persisted.groups.get(g))
+            .flat_map(|g| g.units.into_iter())
+            .filter(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
+            .count() as u32;
+        let id = self.formations().map(|f| f.id).max().unwrap_or(0) + 1;
+        let name = String::from(format_compact!("{} {label} Coy ({oname})", ordinal(id)));
+        let f = Formation {
+            id,
+            name: name.clone(),
+            side,
+            home: oid,
+            groups: gids.clone(),
+            strength0,
+            order: Order::Hold,
+            posture: Posture::Holding,
+            pos: center,
+            heading,
+            path: vec![],
+            trail: vec![],
+            off_road: false,
+            commander: by,
+            locked_until: None,
+            order_ts: now,
+            created: now,
+            supply,
+            morale: 1.,
+            deployment: Deployment::Column,
+            deployment_ts: Some(now),
+            broken: false,
+            losses: 0,
+            kills: 0,
+            damage: 0.,
+            roe: None,
+            pace: Pace::Normal,
+            purchased: true,
+        };
+        self.persisted.formations.insert_cow(id, f);
+        let what = match self.move_formation_to(rt, lua, id, to, via, by, now) {
+            Ok(what) => what,
+            Err(e) => {
+                // Nothing bought: the route was no good.
+                self.persisted.formations.remove_cow(&id);
+                self.forget_formation(rt, id);
+                for gid in &gids {
+                    let _ = self.delete_group(gid);
+                }
+                return Err(e);
+            }
+        };
+        if let Err(e) = self.place_units(id) {
+            warn!("ground war: laying out {name}: {e:?}");
+        }
+        self.ephemeral.dirty();
+        info!("ground war: {side:?} bought {name} ({id}), {count} x {template}, {strength0} vehicles at {oname}");
+        rt.event(
+            side,
+            "raised",
+            format_compact!("{name} bought at {oname}, {strength0} vehicles"),
+            Some(center),
+            Some(id),
+            now,
+        );
+        Ok((id, what))
     }
 
     /// The road from `from` to `to` as map points, or a straight line
@@ -1879,6 +2076,7 @@ impl Db {
                 }
                 None => {
                     warn!("ground war: {name} stuck for good, holding where it is");
+                    rt.gave_up.insert(id, (f.order, now));
                     f.path.clear();
                     f.posture = Posture::Holding;
                     f.order = Order::Hold;
@@ -2188,6 +2386,16 @@ impl Db {
             .formations
             .remove_cow(&id)
             .ok_or_else(|| anyhow!("no such formation {id}"))?;
+        if f.purchased {
+            // Never part of a garrison, so none to rejoin.
+            for gid in &f.groups {
+                self.release_purchased_group(rt, *gid, now)?;
+            }
+            self.forget_formation(rt, id);
+            self.ephemeral.dirty();
+            info!("ground war: {:?} {} stood down where it is", f.side, f.name);
+            return Ok(());
+        }
         let rehome = at != f.home;
         for gid in &f.groups {
             self.rehome_group(rt, *gid, f.side, at, rehome, now)?;
@@ -2198,6 +2406,35 @@ impl Db {
         self.forget_formation(rt, id);
         self.ephemeral.dirty();
         info!("ground war: {:?} {} rejoined the garrison at {at}", f.side, f.name);
+        Ok(())
+    }
+
+    /// One of a purchased formation's groups, standing down: it stays where
+    /// it is as an ordinary deployed group of the commander who bought it,
+    /// in DCS from now on like any deployed unit -- or is removed, if nothing
+    /// in it is left alive.
+    fn release_purchased_group(&mut self, rt: &mut FormationRt, gid: GroupId, now: DateTime<Utc>) -> Result<()> {
+        rt.spawnq.retain(|(_, g)| *g != gid);
+        let was_live = rt.live.remove(&gid);
+        let Some(g) = self.persisted.groups.get(&gid) else { return Ok(()) };
+        let uids: SmallVec<[UnitId; 16]> = g.units.into_iter().copied().collect();
+        if !uids.iter().any(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead)) {
+            return self.delete_group(&gid);
+        }
+        // A restart puts it back where it stood down.
+        for uid in &uids {
+            let u = unit_mut!(self, uid)?;
+            u.spawn_pos = u.pos;
+            u.spawn_heading = u.heading;
+            u.spawn_position = u.position;
+        }
+        self.persisted.deployed.insert_cow(gid);
+        if !was_live {
+            // After any despawn the formation queued has gone through.
+            self.ephemeral.delayspawnq.entry(now + Duration::seconds(2)).or_default().push(gid);
+        }
+        self.mark_group(&gid)?;
+        self.ephemeral.dirty();
         Ok(())
     }
 
@@ -2269,8 +2506,14 @@ impl Db {
         for (id, gid) in stuck {
             let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
             f.groups.retain(|g| *g != gid);
-            let (side, home, name, empty) = (f.side, f.home, f.name.clone(), f.groups.is_empty());
-            if let Err(e) = self.rehome_group(rt, gid, side, home, false, now) {
+            let (side, home, name, empty, purchased) =
+                (f.side, f.home, f.name.clone(), f.groups.is_empty(), f.purchased);
+            let res = if purchased {
+                self.release_purchased_group(rt, gid, now)
+            } else {
+                self.rehome_group(rt, gid, side, home, false, now)
+            };
+            if let Err(e) = res {
                 warn!("ground war: sending {gid} of {name} home: {e:?}");
             }
             info!("ground war: {side:?} {name} left group {gid} at {home}: it can't drive");

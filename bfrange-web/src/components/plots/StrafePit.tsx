@@ -7,7 +7,7 @@ import { TONE_VAR, fmt, qualityTone } from '../../lib/format'
 import { SCORING_DEFAULTS } from '../../lib/grading'
 import { distanceM } from '../../lib/geo'
 import type { StrafeResult, TrackPt } from '../../types'
-import { linear, ticks } from './scale'
+import { linear, ticks, usePlotW } from './scale'
 
 const [DEADEYE, EXCELLENT, GOOD, INEFFECTIVE] = SCORING_DEFAULTS.strafe_bands
 const BAND_SPANS = [
@@ -19,7 +19,7 @@ const BAND_SPANS = [
 ]
 
 export function StrafePit({ r, path }: { r: StrafeResult; path?: TrackPt[] }) {
-  const W = 900, H = 260, m = { l: 52, r: 20, t: 18, b: 34 }
+  const W = usePlotW(), H = 260, m = { l: 52, r: 20, t: 18, b: 34 }
   const pts = (path ?? []).map(p => ({ d: distanceM(r.target_pos, p), agl: p.alt_m - r.target_pos.alt_m }))
   // only the inbound leg: until the closest point
   let minI = 0
@@ -39,7 +39,7 @@ export function StrafePit({ r, path }: { r: StrafeResult; path?: TrackPt[] }) {
     <div className="flex flex-col gap-4">
       <svg viewBox={`0 0 ${W} ${H}`} className="plot" role="img" aria-label="Strafe run-in profile">
         <rect x={x(r.foul_line_m)} y={m.t} width={x(0) - x(r.foul_line_m)} height={H - m.t - m.b} fill="var(--wave-soft)" />
-        {ticks(0, maxD, 8).map(d => (
+        {ticks(0, maxD, W < 600 ? 5 : 8).map(d => (
           <g key={d}>
             <line className="grid" x1={x(d)} x2={x(d)} y1={m.t} y2={H - m.b} />
             <text x={x(d)} y={H - m.b + 14} textAnchor="middle">{d}</text>

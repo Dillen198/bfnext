@@ -64,6 +64,15 @@ of your coalition's live JTACs, and hits whatever the JTAC you pick is currently
 tracking. So the workflow is: get a JTAC on the target first, then call the
 bomber.
 
+### Strike
+An AI flight from a friendly field that attacks with its **own weapons**, for
+example an F-117 on a precision strike. Unlike the Bomber it needs no JTAC.
+Each Strike action has one mission: **Precision** (an enemy base's buildings),
+**Runway** (an enemy airbase's runways), **Anti-ship** (an enemy carrier
+group), **Interdiction** (the enemy column nearest your mark) or **Carpet** (a
+line of bombs through your mark). See
+[AI Strike Missions](../advanced/strike-missions.md).
+
 ### Fighters (CAP)
 An AI fighter patrol at your mark. Useful as a screen over a corridor you need
 to keep open, or over a base you expect to be hit.
@@ -142,6 +151,23 @@ Moves supply between objectives. Pays
 Both are worth roughly an air kill. See
 [Logistics & Supply](../gameplay/logistics.md) and
 [Materiel & the War Economy](../gameplay/war-economy.md).
+
+### Fat Cow (AI)
+An AI heavy-lift helicopter that sets up a temporary forward arming and
+refuelling point at your map mark. It takes off from the nearest friendly
+field, lands at the mark, and a minute after touchdown the
+[Fat Cow](../advanced/deployables-guide.md#fat-cow-heavy-lift-farp) is laid out
+around it: pad 100 m behind the helicopter, fuel point, fire point and guards.
+
+- It stays **20 minutes** by default, then packs up and flies home.
+- It carries the same fixed load as a player-built Fat Cow. Nothing resupplies
+  it.
+- The mark must be clear of friendly objectives, like any FARP, and within
+  helicopter range of a friendly field.
+- If the helicopter is shot down on station, the Fat Cow closes with it. If it
+  is lost, can't set up, or isn't airborne within 15 minutes, you get the cost
+  back.
+- The action's limit caps how many your side can have out at once.
 
 ## Carrier
 

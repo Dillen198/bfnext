@@ -191,7 +191,7 @@ deployables are paid for in **crates and materiel**, not points — see
 [Materiel & the War Economy](../gameplay/war-economy.md).
 
 ### Q: Can I get refunds?
-**A**: Yes! Use `-delete <group-id>` to delete your deployed units and get **50% of the cost back**. Action units (AWACS, fighters, etc.) cannot be deleted by players.
+**A**: Yes! Use `-delete <group-id>` to delete your deployed units and get **50% of the cost back**. Units a commander put down from the side's treasury refund nothing, since no points paid for them. Action units (AWACS, fighters, etc.) cannot be deleted by players.
 
 ### Q: Can I transfer points to teammates?
 **A**: If enabled: `-transfer <amount> <player-name>`

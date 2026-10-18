@@ -7,13 +7,19 @@ you fly. This page walks through each screen and what to actually look at.
 
 ## Logging in
 
-- Most pages (SITREP, TACMAP, OBJECTIVES, RANKINGS, PILOTS, KILL FEED) are
-  **open** — no login needed.
-- **BRIEFING** and **RECON INTEL** are **coalition-locked**. Log in with Discord
-  and you'll see them for your registered side only — the enemy can't read your
-  briefing and you can't read theirs.
-- Logging in also links the dashboard to your pilot (use `-bind` in-game once,
-  from the token on your PILOTS profile) so **MY PROFILE** tracks your stats.
+- **Open to everyone, no login:** SITREP, OBJECTIVES, WAR DIARY, RANKINGS,
+  PILOTS, KILL FEED, REPLAY, ROUNDS and SQUADRONS (you need to sign in to
+  make or join a squadron).
+- **Your side only:** TACMAP, SCOPE, BRIEFING, RECON INTEL, THEATRE HQ and
+  COMMAND. Log in with Discord and you see them for your registered side
+  only: the enemy can't read your briefing or see your map, and you can't see
+  theirs. If you're signed in but the dashboard doesn't know your side yet,
+  these pages say **NO COALITION**. Link your pilot to fix it.
+- **Linking your pilot:** type `/linkme` in Discord to get a token, then
+  `-linkme <token>` in DCS chat, once. That tells the dashboard (and the
+  Discord bot) which pilot is yours, so your side's pages open and **MY
+  PROFILE** tracks your stats.
+- **ABOUT** has the credits and the version of the server software.
 
 ## SITREP — the front page
 
@@ -31,24 +37,58 @@ The at-a-glance state of the war. Read it top to bottom:
 - **AIR PICTURE / ENGAGEMENT LOG / TOP SHOOTERS** — who's up and what's been
   shot in the last while.
 
-## TACMAP — the tactical map
+## TACMAP: the tactical map *(your side only)*
 
-A full-fidelity map of the theater with NATO symbology. This is the same
-picture the F10 map gives you in the cockpit, minus the fog of war rules that
-apply in-game.
+Your side's live picture, drawn the same way as the commanders'
+[COMMAND map](../advanced/command.md), but read-only: nothing on it gives
+orders. It shows only what your side knows.
 
-- **Objective rings** colored by owner (BLUFOR / REDFOR / neutral). A **white
-  inner ring** means that objective is **capturable right now**.
-- Click an objective for its health, logistics, supply, fuel, garrison, and
-  supply-line links.
-- Known enemy units (from EWR, JTAC eyes-on, and recon passes) plot here with
-  threat rings on SAMs.
-- Use it to pick an ingress route that threads between threat rings, and to
-  find the seam in the enemy line.
+- **Layers** you can toggle: your own assets (**AIR / GND / SEA / LOG / HOS**),
+  zones of control (**TERR**), the supply network (**SUP**, cut routes in red),
+  your radar and air-defence coverage (**COV**), and the enemy air defences
+  you know of (**THR**). The front line is drawn too.
+- **Enemy aircraft and formations** appear only where your side can see them,
+  and are remembered where they were last seen.
+- **The combat log** runs down the side. **LOAD OLDER** pulls in the rest of
+  the round.
+- Where the server has no ground war, the map shows bases, your assets and the
+  air picture only.
+
+**Click a base** to open its drawer:
+
+- its status: **SECURE**, **THREATENED**, **UNDER ASSAULT**, **ENEMY HELD** or
+  **UNCLAIMED**;
+- **CONDITION**: health, logistics, supply and fuel, with chips for unlimited
+  supply or aircraft, and whether its warehouse has been knocked out. For an
+  enemy base, how old your recon on it is, or "No recon on file";
+- **GROUND**: its garrison and spare troops, its supply line, and any battles
+  and formations based there, defending, attacking or falling back;
+- **HISTORY**: who took it and when;
+- for your own bases, the full **WAREHOUSE**: every line of airframes,
+  vehicles, weapons, fortifications and fuel, most depleted first, with a
+  count of lines under 20%. If the game server is busy the drawer says so and
+  asks again every minute.
+
+**Click an enemy contact** for what's known about it: its kind, whether it's
+**IN SIGHT** or when it was **LAST SEEN**, roughly how many vehicles, which way
+it was moving, and whether it has been seen up close.
+
+Keys: `?` help, `F` follow yourself, Space centre, Tab / Shift-Tab cycle
+through, Esc clear.
+
+Use it to pick an ingress route that threads between threat rings, and to find
+the seam in the enemy line.
+
+### SCOPE
+
+The **SCOPE** button on the TACMAP's top bar opens the radar scope: raw radar
+contacts with BRAA from you and from bullseye. It's for your side only too.
+Commanders can take the **GCI seat** from here and speak to pilots on the GCI
+frequency: see [Live GCI](../gameplay/gci.md#the-human-gci-seat).
 
 ## OBJECTIVES — the sortable list
 
-Everything on TACMAP as a table you can sort and filter.
+Every objective as a table you can sort and filter.
 
 - Columns: owner, type (airbase / FARP / FOB / logistics hub / factory / naval
   base / SAM site / command center), **health**, **logi**, **supply**, **fuel**,
@@ -80,14 +120,38 @@ uploaded and marked up on a shared coalition map. If you're flying strike, check
 here for hand-annotated target folders before you plan. See
 [Recon Intel Map (TARPS)](../advanced/recon-intel-map.md).
 
-## RANKINGS / PILOTS / KILL FEED — the stats
+## THEATRE HQ and COMMAND *(your side only)*
 
-- **RANKINGS** — sortable leaderboard: air kills, ground kills, K/D, logistics
-  score, capture participation, overall score.
-- **PILOTS** — every pilot with a profile; your own page has your `-bind`
-  token and per-role life history.
-- **KILL FEED** — the live running log of every kill, with shooter, victim,
+- **THEATRE HQ**: what your side's AI commander intends, and the operations
+  it is running. See [Theatre HQ](../advanced/theatre-hq.md).
+- **COMMAND**: the commanders' map, where every asset your side has in the
+  field can be given orders. Everyone on your side can look; only commanders
+  can order. See [Command](../advanced/command.md).
+
+## WAR DIARY: the daily front page
+
+A newspaper front page for each day of the campaign: captures, where the
+fighting was, losses, and the ace of the day. Both sides read the same paper.
+See [The War Diary](../gameplay/war-diary.md).
+
+## RANKINGS / PILOTS / KILL FEED / REPLAY: the stats
+
+- **RANKINGS**: sortable leaderboard (air kills, ground kills, K/D, logistics
+  score, capture participation, overall score).
+- **PILOTS**: every pilot with a profile; your own page has your level and
+  XP, per-role life history and a flight log with a **WATCH** link for each
+  recorded sortie.
+- **KILL FEED**: the live running log of every kill, with shooter, victim,
   weapon, and whether it was air, ground, or friendly fire.
+- **REPLAY**: every recorded sortie, replayable in 2D or 3D in the browser.
+  See [Debriefing With Flight Replay](./flight-replay.md).
+
+## ROUNDS and SQUADRONS
+
+- **ROUNDS** (Round History): every round this server has played, who won and
+  how long it ran. Open one for its MVP and top pilots.
+- **SQUADRONS**: make or join a squadron, and see the squadron leaderboard.
+  See [XP, Levels & Squadrons](../gameplay/progression.md#squadrons).
 
 ## A pre-sortie routine
 
@@ -103,3 +167,5 @@ here for hand-annotated target folders before you plan. See
 - [Your First Sortie](./first-sortie.md)
 - [Reconnaissance](../f10-menu/recon.md)
 - [Early Warning Radar](../f10-menu/ewr.md)
+- [Debriefing With Flight Replay](./flight-replay.md)
+- [The War Diary](../gameplay/war-diary.md)

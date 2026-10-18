@@ -3112,7 +3112,7 @@ pub(super) enum Caller {
     External(oneshot::Sender<NetIdxValue>),
 }
 
-/// Admin commands run per event tick. The whole queue used to run in one DCS
+/// Admin commands run per drain pass (`start_admin_drain`, 10 Hz). The whole queue used to run in one DCS
 /// frame, so a burst from the dashboard -- or a few mark spawns -- landed as
 /// one long stall; whatever is over the budget waits for the next tick.
 const ADMIN_COMMANDS_PER_TICK: usize = 20;

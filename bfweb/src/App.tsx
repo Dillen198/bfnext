@@ -34,6 +34,8 @@ const SnapshotPage     = lazy(() => import('./pages/SnapshotPage'))
 const GroundWarPage    = lazy(() => import('./pages/GroundWarPage'))
 const HqPage           = lazy(() => import('./pages/HqPage'))
 const ReplayListPage   = lazy(() => import('./replay/ReplayListPage'))
+const RoundsPage       = lazy(() => import('./pages/RoundsPage'))
+const SquadronsPage    = lazy(() => import('./pages/SquadronsPage'))
 const ReplayPage       = lazy(() => import('./replay/ReplayPage'))
 
 /** Shown while a route chunk is in flight. Deliberately quiet -- on a fast
@@ -119,6 +121,8 @@ export default function App() {
                 <Route path="pilots/:ucid/sortie/:id" element={<SortieDebriefPage />} />
                 <Route path="kills" element={<KillFeed />} />
                 <Route path="replay" element={<ReplayListPage />} />
+                <Route path="rounds" element={<RoundsPage />} />
+                <Route path="squadrons" element={<SquadronsPage />} />
                 <Route path="replay/:rec" element={<ReplayPage />} />
               <Route path="intel" element={<RequireCoalition what="recon intel"><IntelPage /></RequireCoalition>} />
               <Route path="command" element={<RequireCoalition what="command"><GroundWarPage /></RequireCoalition>} />

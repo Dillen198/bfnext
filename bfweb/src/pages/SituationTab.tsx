@@ -220,6 +220,7 @@ export default function SituationTab({ report }: { report: SituationReport }) {
           {stat('Neutral', p.neutral_objectives)}
           {stat('Treasury', `${p.treasury} pts`)}
           {stat('Pilots', `${p.players_friendly} v ${p.players_enemy}`)}
+          {p.war_effort != null && stat('War effort', `${p.war_effort}/100${p.war_effort_tier ? ` · tier ${p.war_effort_tier}` : ''}`)}
           {stat('Convoys', l.convoys_active)}
           {report.mission_time && stat('Mission', report.mission_time)}
         </div>

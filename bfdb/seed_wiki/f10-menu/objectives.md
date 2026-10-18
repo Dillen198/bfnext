@@ -12,8 +12,9 @@ F10 → Objectives
 ├── Capturable / Contested     everything takeable right now, both directions
 ├── Capture Advisor: Nearest   why the nearest enemy base won't flip
 ├── Bases Under Threat         your bases with enemies inside the wire
-├── Friendly Status            paged roll-up of every base you own
-├── Enemy Status               paged roll-up of every base you don't
+├── Friendly Status            roll-up of every base you own      ┐ each one:
+├── Enemy Status               roll-up of every enemy base        │ Show (First Page)
+├── Neutral Status             roll-up of every neutral base      ┘ Next Page >> / << Previous Page
 ├── Base Detail                per-base card, your bases, A–Z submenus
 └── Capture Advisor            per-base advisor, enemy/neutral bases, A–Z submenus
 ```

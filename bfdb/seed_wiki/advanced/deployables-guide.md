@@ -37,6 +37,55 @@ A dedicated recon/JTAC vehicle (RED: Scout BRDM, 8 km range, no LOS required; BL
 
 **Ammo Truck** (both coalitions) is the one purely support-role deployable — no weapon, no sensor, just resupply capacity for nearby units. It's cheap relative to combat units and has a high unit limit (20–30), so keeping one forward of a contested objective is rarely a bad use of a cargo run.
 
+## Fat Cow (heavy-lift FARP)
+
+*Only on servers that configure one.* A Fat Cow is a forward arming and
+refuelling point you fly in yourself: a heavy-lift helicopter lands, and a pad
+with fuel, weapons and ground crew is laid out around it. Both sides can have
+one, up to the server's limit.
+
+**Building one**
+
+1. In a CH-47 or Mi-8, spawn the kit from **F10 → Cargo → Crates → Fat Cow**:
+   a Fat Cow Fuel Bladder (1,500 kg) and a Fat Cow Ammo Pallet (1,000 kg).
+2. Load them through **F8 → Ground Crew → Cargo**, fly to the site, land and
+   unload them the same way.
+3. Stay on the ground and pick **F10 → Cargo → Unpack Nearby Crate(s)**.
+
+The layout is built around your helicopter, facing the way you face, so land
+facing the way you want it and pick a clear area about 300 × 300 m. The pad
+is 100 m behind you and has ground crew straight away. A minute later the rest
+appears: a fuel point 35 m aft, a hose and generator 50 m aft, a fire point
+70 m aft, six guards around the helicopter and a MANPAD 50 m ahead. Land close
+to the pad to rearm and refuel; if the ground crew doesn't answer, you're too
+far from it.
+
+**Placement.** The same exclusion distance from friendly objectives as any
+other FARP. The Fat Cow's own zone is small: 500 m by default.
+
+**Finite stock.** No hub supplies a Fat Cow. It holds only what it was built
+with (by default 9,000 kg of jet fuel, plus Hellfires and Hydras for Blue, or
+Vikhrs, Shturms and S-8s for Red). When that runs out it's dry, unless someone
+flies a [supply transfer crate](../gameplay/logistics.md#supply-transfer-crates)
+to it.
+
+**Packing up and moving.** Land inside the Fat Cow's zone and pick
+**F10 → Cargo → Pack Up Fat Cow**. The FARP closes and its crates are put down
+next to your helicopter, carrying whatever fuel and weapons it had left. Load
+them, fly to the new site and unpack them. It comes back with that leftover
+stock, and you aren't charged again. Packed crates don't survive a server
+restart, so set it back up before one.
+
+**Destroying one.** Destroy both of its fuel points and the Fat Cow closes.
+
+**Fat Cow (AI).** Where the server offers it, the **Fat Cow (AI)** action
+does the flying for you: drop a map mark, buy the action, and an AI heavy-lift
+helicopter takes off from the nearest friendly field, lands at the mark and
+sets the Fat Cow up around itself. It stays 20 minutes by default, then packs
+up and flies home. If the helicopter is shot down on station, the Fat Cow
+closes with it. You get your points back if it's lost or can't set up before
+it starts work. See [Action Types](../reference/action-types.md#fat-cow-ai).
+
 ## Choosing What to Deploy
 
 - **Screening a landing zone against helicopters**: an IR SAM or AAA piece — cheap, fast, punishes the low-altitude approach.
@@ -44,6 +93,7 @@ A dedicated recon/JTAC vehicle (RED: Scout BRDM, 8 km range, no LOS required; BL
 - **Reinforcing a contested capture**: IFVs first (cheap, fast, high unit limit), MBTs if the fight is expected to last.
 - **Hitting a target beyond your own defensive range**: artillery or MLRS, not a direct ground push.
 - **Enabling CAS tasking on a position**: a JTAC/recon vehicle before committing other forces.
+- **Keeping attack helicopters in the fight far from base**: a Fat Cow, where the server has one.
 
 ## See Also
 

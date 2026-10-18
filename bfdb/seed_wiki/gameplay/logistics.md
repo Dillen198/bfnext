@@ -78,6 +78,15 @@ of objectives forms a genuine **supply corridor**, and taking the objectives
 astride an enemy road starves everything behind it without you ever attacking
 the base itself.
 
+The belt is relaxed at the **destination end**: an enemy objective whose belt
+only reaches the base being supplied cuts the road only if the road runs
+through its zone proper. So a base you've just taken on the front line can
+still be supplied by road, as long as the road to it doesn't pass through the
+enemy base next door.
+
+Each base gets **one** convoy or airlift at a time, carrying weapons and fuel
+together.
+
 ### A "logistics detached" base is on its own
 
 An objective the engine has flagged **fully detached** from the supply chain

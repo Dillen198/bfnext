@@ -23,11 +23,11 @@ createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AuthProvider>
-          <ToastProvider>
-            <BrowserRouter>
+          <BrowserRouter>
+            <ToastProvider>
               <App />
-            </BrowserRouter>
-          </ToastProvider>
+            </ToastProvider>
+          </BrowserRouter>
         </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>

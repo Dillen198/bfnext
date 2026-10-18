@@ -37,7 +37,7 @@ use crate::{
 use anyhow::{Context, Result, anyhow, bail};
 use bfprotocols::{
     cfg::{
-        ActionKind, AiPlaneCfg, AwacsCfg, BomberCfg, Cfg, Crate, Deployable, DeployableCfg,
+        Action, ActionKind, AiPlaneCfg, AwacsCfg, BomberCfg, Cfg, Crate, Deployable, DeployableCfg,
         DeployableKind, DeployableObjective, DroneCfg, ReinforceCfg, Troop, UnitTag, Vehicle,
         VictoryCondition, WarehouseConfig,
     },
@@ -423,6 +423,34 @@ pub struct Ephemeral {
     /// Fixed-wing AI flights started on a parking spot, and when, until they
     /// are seen in the air (`Db::check_ramp_watch`).
     pub(super) ramp_watch: FxHashMap<GroupId, (DateTime<Utc>, Option<ObjectiveId>)>,
+    /// Station orders (AWACS/tanker/drone/fighter waypoints) given to a
+    /// flight still on the ground: the new orbit point and who ordered it.
+    /// Applied once the flight is airborne (`Db::flush_pending_air_stations`)
+    /// -- a `set_task` on the ramp throws away its takeoff waypoint and the
+    /// flight never leaves its stand.
+    pub(super) pending_air_station: FxHashMap<GroupId, (Vector2, Option<Ucid>)>,
+    /// Contributions `stat` saw since the last `Db::drain_contributions`
+    /// (it only has `&self`, so they wait here).
+    pub(super) contributions:
+        std::cell::RefCell<Vec<(Ucid, super::player::Contribution)>>,
+    /// (field, template) pairs DCS refused a parking start for: it deletes
+    /// the group outright -- no crash, no dead event -- when the airframe
+    /// doesn't fit the spot it was put on (a C-17 next to another, or on the
+    /// field point with no spot at all). Flights of that template from that
+    /// field air-start over it instead for the rest of the session.
+    pub(super) ramp_rejected: FxHashSet<(ObjectiveId, String)>,
+    /// Pilots past rookie mode in this or an earlier round, and the file
+    /// that carries them across rounds (`bg::veterans_path`).
+    pub(super) veterans: FxHashSet<Ucid>,
+    pub(super) veterans_path: Option<std::path::PathBuf>,
+    /// Each pilot's paid task zone (`db::tasking`).
+    pub(super) tasked: FxHashMap<Ucid, super::tasking::TaskedZone>,
+    /// F10 marks on the last infantry of a battered base, for the attacker
+    /// (`Db::reveal_last_defenders`), and when they were placed.
+    pub(super) last_defender_marks: FxHashMap<
+        ObjectiveId,
+        (smallvec::SmallVec<[dcso3::trigger::MarkId; 8]>, DateTime<Utc>),
+    >,
     /// Drives for ground groups waiting in the spawn queue (see
     /// `QueuedDrive`). Dropped once the group is in DCS or given up on.
     pub(super) queued_drives: FxHashMap<GroupId, QueuedDrive>,
@@ -465,6 +493,70 @@ pub struct Ephemeral {
     /// Ghost-unit reconciliation state (see `db::ghosts`). Session-scoped on
     /// purpose: every unit's DCS object is re-learned after a load anyway.
     pub(super) ghosts: GhostTracker,
+}
+
+/// Make sure the field a flight is about to start on the ground at has what
+/// the flight takes off with: one airframe per unit, and the jet fuel in its
+/// tanks.
+///
+/// Every field's warehouse is limited (bftools clears `unlimitedAircrafts`
+/// and `unlimitedFuel`) and only carries the airframes the campaign tracks
+/// there, so the airframes the AI flies -- drones, AWACS, tankers, logistics
+/// helos and transports -- are normally at 0. DCS removes an AI flight that
+/// starts from parking at a field with none of its airframe a few seconds
+/// after it spawns: no death, no event. That was every red recon drone out of
+/// Adana and every blue helo supply run out of Hatay. On a field with little
+/// fuel it starts with near-empty tanks and never taxis, which is how the
+/// [RAMP] watch kept finding AWACS and tankers on the ground 15 minutes later.
+///
+/// Only what is missing is added. DCS takes it out again as the flight
+/// spawns, so the campaign's own stock at the field ends where it was.
+fn stock_for_ground_start(
+    wh: &dcso3::warehouse::Warehouse,
+    group: &miz::Group,
+    name: &str,
+    field: &str,
+) -> Result<()> {
+    let mut airframes: SmallVec<[(dcso3::String, u32); 2]> = smallvec![];
+    let mut fuel_kg = 0f64;
+    let units = group.units()?;
+    for i in 1..=units.len() {
+        let unit = units.get(i as i64)?;
+        let typ = unit.typ()?;
+        match airframes.iter_mut().find(|(t, _)| *t == typ) {
+            Some((_, n)) => *n += 1,
+            None => airframes.push((typ, 1)),
+        }
+        // Kilograms, written as a number or a numeric string.
+        if let Ok(payload) = unit.raw_get::<_, LuaTable>("payload") {
+            fuel_kg += match payload.raw_get::<_, LuaValue>("fuel")? {
+                LuaValue::Integer(i) => i as f64,
+                LuaValue::Number(n) => n,
+                LuaValue::String(s) => {
+                    s.to_str().ok().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(0.)
+                }
+                _ => 0.,
+            };
+        }
+    }
+    let mut added: SmallVec<[CompactString; 3]> = smallvec![];
+    for (typ, need) in airframes {
+        let have = wh.get_item_count(typ.clone())?;
+        if have < need {
+            wh.add_item(typ.clone(), need - have)?;
+            added.push(format_compact!("{} {typ} (had {have})", need - have));
+        }
+    }
+    let need = fuel_kg.ceil().max(0.) as u32;
+    let have = wh.get_liquid_amount(LiquidType::JetFuel)?;
+    if have < need {
+        wh.add_liquid(LiquidType::JetFuel, need - have)?;
+        added.push(format_compact!("{} kg jet fuel (had {have})", need - have));
+    }
+    if !added.is_empty() {
+        info!("[GROUND_START] {name}: stocked {field}'s warehouse with {added:?} for the start");
+    }
+    Ok(())
 }
 
 impl Default for Ephemeral {
@@ -559,6 +651,13 @@ impl Default for Ephemeral {
             despawn_failures: FxHashMap::default(),
             launch_requests: FxHashMap::default(),
             ramp_watch: FxHashMap::default(),
+            pending_air_station: FxHashMap::default(),
+            contributions: Default::default(),
+            ramp_rejected: FxHashSet::default(),
+            veterans: FxHashSet::default(),
+            veterans_path: None,
+            tasked: FxHashMap::default(),
+            last_defender_marks: FxHashMap::default(),
             queued_drives: FxHashMap::default(),
             restart_notices: Vec::new(),
             last_under_attack_notif: FxHashMap::default(),
@@ -614,6 +713,13 @@ impl Ephemeral {
         }
     }
 
+    /// Write the veterans list in the background.
+    pub(super) fn save_veterans(&self) {
+        if let Some(path) = &self.veterans_path {
+            self.do_bg(Task::SaveVeterans(path.clone(), self.veterans.iter().copied().collect()));
+        }
+    }
+
     fn do_bg(&self, task: Task) {
         if let Some(to_bg) = &self.to_bg {
             match to_bg.send(task) {
@@ -624,6 +730,10 @@ impl Ephemeral {
     }
 
     pub fn stat(&self, stat: Stat) {
+        let c = super::player::Contribution::of(&stat);
+        if !c.is_empty() {
+            self.contributions.borrow_mut().extend(c);
+        }
         self.do_bg(Task::Stat(stat))
     }
 
@@ -1376,16 +1486,23 @@ impl Ephemeral {
                 ammo_template,
                 fuel_template,
                 barracks_template,
+                fat_cow,
             }) = &dep.kind
             {
+                // A Fat Cow spawns the layout fat_cow::inject_templates wrote
+                // into the mission, not the configured part templates.
+                let parts: Vec<String> = match fat_cow {
+                    None => defenses_template
+                        .iter()
+                        .chain(ammo_template.iter())
+                        .chain(fuel_template.iter())
+                        .chain(barracks_template.iter())
+                        .cloned()
+                        .collect(),
+                    Some(_) => super::fat_cow::part_templates(side)?,
+                };
                 let mut names = FxHashSet::default();
-                for name in defenses_template
-                    .iter()
-                    .chain(ammo_template.iter())
-                    .chain(fuel_template.iter())
-                    .chain(barracks_template.iter())
-                    .chain(pad_templates.iter())
-                {
+                for name in parts.iter().chain(pad_templates.iter()) {
                     miz.get_group_by_name(mizidx, GroupKind::Any, side, name)?
                         .ok_or_else(|| anyhow!("missing farp template {:?} {:?}", side, name))?;
                     if !names.insert(name) {
@@ -1586,7 +1703,7 @@ impl Ephemeral {
         &mut self,
         miz: &Miz,
         mizidx: &MizIndex,
-        cfg: Arc<Cfg>,
+        mut cfg: Arc<Cfg>,
         to_bg: UnboundedSender<Task>,
     ) -> Result<()> {
         self.to_bg = Some(to_bg);
@@ -1661,85 +1778,110 @@ impl Ephemeral {
                 };
             }
         }
-        for (side, actions) in &cfg.actions {
-            for (_, act) in actions {
-                if !points && (act.cost > 0 || act.penalty.unwrap_or(0) > 0) {
-                    bail!("the points system is disabled but {act:?} costs points")
+        // One broken action (its template renamed or gone from the miz, its
+        // deployable dropped from the cfg) used to refuse the whole mission
+        // with "THE MISSION CANNOT START". It isn't worth the server: log it
+        // and drop that action, so the rest of the campaign runs.
+        let check_action = |side: &Side, act: &Action| -> Result<()> {
+            if !points && (act.cost > 0 || act.penalty.unwrap_or(0) > 0) {
+                bail!("the points system is disabled but {act:?} costs points")
+            }
+            match &act.kind {
+                ActionKind::Awacs(AwacsCfg {
+                    plane: AiPlaneCfg { template, .. },
+                    ..
+                })
+                | ActionKind::Strike(bfprotocols::cfg::StrikeCfg {
+                    plane: AiPlaneCfg { template, .. },
+                    ..
+                })
+                | ActionKind::Bomber(BomberCfg {
+                    plane: AiPlaneCfg { template, .. },
+                    ..
+                })
+                | ActionKind::CruiseMissileSpawn(AiPlaneCfg { template, .. })
+                | ActionKind::Tanker(AiPlaneCfg { template, .. })
+                | ActionKind::Drone(DroneCfg {
+                    plane: AiPlaneCfg { template, .. },
+                    ..
+                })
+                | ActionKind::Fighters(AiPlaneCfg { template, .. })
+                | ActionKind::Attackers(AiPlaneCfg { template, .. })
+                | ActionKind::LogisticsRepair(AiPlaneCfg { template, .. })
+                | ActionKind::LogisticsTransfer(AiPlaneCfg { template, .. })
+                | ActionKind::Reinforce(ReinforceCfg { template, .. }) => {
+                    miz.get_group_by_name(mizidx, GroupKind::Any, *side, template.as_str())?
+                        .ok_or_else(|| anyhow!("missing template for action {act:?}"))?;
                 }
-                match &act.kind {
-                    ActionKind::Awacs(AwacsCfg {
-                        plane: AiPlaneCfg { template, .. },
-                        ..
-                    })
-                    | ActionKind::Bomber(BomberCfg {
-                        plane: AiPlaneCfg { template, .. },
-                        ..
-                    })
-                    | ActionKind::CruiseMissileSpawn(AiPlaneCfg { template, .. })
-                    | ActionKind::Tanker(AiPlaneCfg { template, .. })
-                    | ActionKind::Drone(DroneCfg {
-                        plane: AiPlaneCfg { template, .. },
-                        ..
-                    })
-                    | ActionKind::Fighters(AiPlaneCfg { template, .. })
-                    | ActionKind::Attackers(AiPlaneCfg { template, .. })
-                    | ActionKind::LogisticsRepair(AiPlaneCfg { template, .. })
-                    | ActionKind::LogisticsTransfer(AiPlaneCfg { template, .. })
-                    | ActionKind::Reinforce(ReinforceCfg { template, .. }) => {
-                        miz.get_group_by_name(mizidx, GroupKind::Any, *side, template.as_str())?
-                            .ok_or_else(|| anyhow!("missing template for action {act:?}"))?;
+                ActionKind::Deployable(DeployableCfg { name, plane }) => {
+                    if let Some(AiPlaneCfg { template, .. }) = plane {
+                        miz.get_group_by_name(
+                            mizidx,
+                            GroupKind::Any,
+                            *side,
+                            template.as_str(),
+                        )?
+                        .ok_or_else(|| anyhow!("missing template for action {act:?}"))?;
                     }
-                    ActionKind::Deployable(DeployableCfg { name, plane }) => {
-                        if let Some(AiPlaneCfg { template, .. }) = plane {
-                            miz.get_group_by_name(
-                                mizidx,
-                                GroupKind::Any,
-                                *side,
-                                template.as_str(),
-                            )?
-                            .ok_or_else(|| anyhow!("missing template for action {act:?}"))?;
-                        }
-                        self.deployable_idx
-                            .get(side)
-                            .and_then(|idx| idx.deployables_by_name.get(name))
-                            .ok_or_else(|| anyhow!("missing deployable for action {act:?}"))?;
-                    }
-                    ActionKind::Paratrooper(DeployableCfg {
-                        name,
-                        plane: Some(AiPlaneCfg { template, .. }),
-                    }) => {
-                        miz.get_group_by_name(mizidx, GroupKind::Any, *side, template.as_str())?
-                            .ok_or_else(|| anyhow!("missing template for action {act:?}"))?;
-                        self.deployable_idx
-                            .get(side)
-                            .and_then(|idx| idx.squads_by_name.get(name))
-                            .ok_or_else(|| anyhow!("missing troop for action {act:?}"))?;
-                    }
-                    ActionKind::Paratrooper(DeployableCfg { name, plane: None }) => {
-                        bail!("patroop mission {name} does not include an ai plane config")
-                    }
-                    ActionKind::AwacsWaypoint
-                    | ActionKind::TankerWaypoint
-                    | ActionKind::DroneWaypoint
-                    | ActionKind::CruiseMissileWaypoint
-                    | ActionKind::FighersWaypoint
-                    | ActionKind::AttackersWaypoint
-                    | ActionKind::Sead(_)
-                    | ActionKind::SeadWaypoint
-                    | ActionKind::Move(_)
-                    | ActionKind::Rtb
-                    | ActionKind::Nuke(_)
-                    | ActionKind::CarrierWaypoint
-                    | ActionKind::CarrierRepair
-                    | ActionKind::CarrierRespawn
-                    // Artillery uses existing Armor/Mr/Lr groups; no template validation needed.
-                    | ActionKind::Artillery(_)
-                    | ActionKind::NavalCruiseMissileStrike(_)
-                    // The tasking board draws F10 marks, it spawns nothing,
-                    // so there is no template to validate.
-                    | ActionKind::AddTask(_)
-                    | ActionKind::RemoveTask(_)
-                    | ActionKind::Recon(_) => (),
+                    self.deployable_idx
+                        .get(side)
+                        .and_then(|idx| idx.deployables_by_name.get(name))
+                        .ok_or_else(|| anyhow!("missing deployable for action {act:?}"))?;
+                }
+                ActionKind::Paratrooper(DeployableCfg {
+                    name,
+                    plane: Some(AiPlaneCfg { template, .. }),
+                }) => {
+                    miz.get_group_by_name(mizidx, GroupKind::Any, *side, template.as_str())?
+                        .ok_or_else(|| anyhow!("missing template for action {act:?}"))?;
+                    self.deployable_idx
+                        .get(side)
+                        .and_then(|idx| idx.squads_by_name.get(name))
+                        .ok_or_else(|| anyhow!("missing troop for action {act:?}"))?;
+                }
+                ActionKind::Paratrooper(DeployableCfg { name, plane: None }) => {
+                    bail!("patroop mission {name} does not include an ai plane config")
+                }
+                ActionKind::AwacsWaypoint
+                | ActionKind::TankerWaypoint
+                | ActionKind::DroneWaypoint
+                | ActionKind::CruiseMissileWaypoint
+                | ActionKind::FighersWaypoint
+                | ActionKind::AttackersWaypoint
+                | ActionKind::Sead(_)
+                | ActionKind::SeadWaypoint
+                | ActionKind::Move(_)
+                | ActionKind::Rtb
+                | ActionKind::Nuke(_)
+                | ActionKind::CarrierWaypoint
+                | ActionKind::CarrierRepair
+                | ActionKind::CarrierRespawn
+                // Artillery uses existing Armor/Mr/Lr groups; no template validation needed.
+                | ActionKind::Artillery(_)
+                | ActionKind::NavalCruiseMissileStrike(_)
+                // The tasking board draws F10 marks, it spawns nothing,
+                // so there is no template to validate.
+                | ActionKind::AddTask(_)
+                | ActionKind::RemoveTask(_)
+                | ActionKind::Recon(_)
+                | ActionKind::FatCow(_) => (),
+            }
+            Ok(())
+        };
+        let mut broken: SmallVec<[(Side, String); 4]> = smallvec![];
+        for (side, actions) in &cfg.actions {
+            for (name, act) in actions {
+                if let Err(e) = check_action(side, act) {
+                    error!("{side:?} action {name} is disabled, fix the cfg or the miz: {e:?}");
+                    broken.push((*side, name.clone()));
+                }
+            }
+        }
+        if !broken.is_empty() {
+            let cfg = Arc::make_mut(&mut cfg);
+            for (side, name) in broken {
+                if let Some(actions) = cfg.actions.get_mut(&side) {
+                    actions.shift_remove(&name);
                 }
             }
         }
@@ -2143,6 +2285,11 @@ impl Ephemeral {
         // itself, with any template parking assignment cleared so DCS picks.
         let mut parking_fallback: Option<(Vector2, f64)> = None;
         let mut parking_anchor: Option<Vector2> = None;
+        // The warehouse of the field a parking start is built at, and its
+        // name, so `stock_for_ground_start` can make sure it holds the
+        // airframes and fuel the flight takes off with.
+        let mut start_warehouse: Option<(dcso3::warehouse::Warehouse<'lua>, std::string::String)> =
+            None;
         let (template, alive) = if let Some(spec) = self.synthetic_templates.get(group.template_name.as_str()).cloned() {
             if alive_units.is_empty() {
                 record_perf(&mut perf.spawn, ts);
@@ -2274,6 +2421,29 @@ impl Ephemeral {
                 let airbase = launch_oid
                     .as_ref()
                     .and_then(|oid| self.resolve_airbase(spctx.lua(), persisted, oid));
+                // DCS ATC never clears an AI flight to taxi from a field it
+                // thinks is the other side's: the flight starts up and sits
+                // on its stand for good. At startup every field is still the
+                // .miz's owner until `setup_warehouses_after_load` -- which
+                // runs after the actions respawn -- so a captured field's
+                // relaunched AWACS or tanker sat there, was "still at its
+                // field" at the next restart, and was relaunched into the
+                // same trap. Hand the field over first.
+                if let (Some(ab), Some(obj)) = (
+                    airbase.as_ref(),
+                    launch_oid.as_ref().and_then(|oid| persisted.objectives.get(oid)),
+                ) {
+                    let dcs_side = ab.as_object().and_then(|o| o.get_coalition());
+                    if obj.owner == group.side && dcs_side.as_ref().ok() != Some(&group.side) {
+                        info!(
+                            "[GROUND_START] {} DCS has {} as {:?}, handing it to {:?} before the start",
+                            group.name, obj.name, dcs_side, group.side
+                        );
+                        if let Err(e) = ab.set_coalition(group.side) {
+                            warn!("[GROUND_START] could not hand {} to {:?}: {e:?}", obj.name, group.side);
+                        }
+                    }
+                }
                 let helicopter = template.category == GroupKind::Helicopter;
                 let heavy = alive_units.iter().any(|u| super::Db::needs_big_spot(u.typ.as_str()));
                 // Whether this airframe may lift off from open ground when the
@@ -2427,11 +2597,18 @@ impl Ephemeral {
                         // ship) with none, a C-17 sits on it for good -- the
                         // air logistics flights that all "timed out in
                         // transit". It air-starts over the field below.
+                        // A fixed-wing flight with no spot of its own is not
+                        // "assigned one by DCS": DCS deletes the group on the
+                        // spot, which is how every C-17 put on a full field
+                        // vanished seconds after spawning, cargo and all. Same
+                        // for a template this field already refused.
                         (Some((abid, p, cat)), Some(anchor))
                             if (!open_ground || !parking_plan.is_empty())
-                                && (helicopter
-                                    || !parking_plan.is_empty()
-                                    || *cat == dcso3::airbase::AirbaseCategory::Airdrome) =>
+                                && (helicopter || !parking_plan.is_empty())
+                                && !launch_oid.map_or(false, |o| {
+                                    self.ramp_rejected
+                                        .contains(&(o, group.template_name.clone()))
+                                }) =>
                         {
                             // The exact shape DCS itself uses when it spawns a
                             // ground-starting flight at runtime (see
@@ -2490,6 +2667,13 @@ impl Ephemeral {
                             if !helicopter {
                                 self.ramp_watch.insert(group.id, (Utc::now(), launch_oid));
                             }
+                            start_warehouse = airbase.as_ref().and_then(|ab| {
+                                let field = launch_oid
+                                    .and_then(|o| persisted.objectives.get(&o))
+                                    .map(|o| o.name.to_string())
+                                    .unwrap_or_else(|| format!("{abid:?}"));
+                                ab.get_warehouse().ok().map(|wh| (wh, field))
+                            });
                             info!(
                                 "[GROUND_START] {} ground-starting from {cat:?} id {:?} at ({:.0},{:.0}) elev {:.0}, {} assigned parking spot(s)",
                                 group.name,
@@ -2876,6 +3060,14 @@ impl Ephemeral {
                         "[CRATE_MASS] template {} has no units() table, cannot set mass={}kg: {e:?}",
                         group.template_name, spec.weight
                     ),
+                }
+            }
+            if let (Some((wh, field)), Some(_)) = (start_warehouse.as_ref(), parking_anchor) {
+                if let Err(e) = stock_for_ground_start(wh, &template.group, &group.name, field) {
+                    warn!(
+                        "[GROUND_START] {} could not stock {field}'s warehouse for its start: {e:?}",
+                        group.name
+                    );
                 }
             }
             let carrier_link_id = self.carrier_linked_groups.remove(&group.id);

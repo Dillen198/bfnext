@@ -369,6 +369,9 @@ impl Db {
         // Lookups by `get`, never by indexing: a unit or player record that has
         // gone missing must cost this one pin, not panic the tick that asked
         // for it (and with it every other system that tick was running).
+        // A deployed group out of the deployed list belongs to a purchased
+        // formation, whose own pin stands for it.
+        let in_formation = !self.persisted.deployed.contains(gid);
         let units = &self.persisted.units;
         let players = &self.persisted.players;
         let pname = |ucid: &Ucid| {
@@ -392,6 +395,7 @@ impl Db {
             // That's one debug-grade label per group at every base -- pure
             // clutter (and a contributor to F10 lag), so don't draw it.
             DeployKind::Objective { .. } => None,
+            DeployKind::Deployed { .. } if in_formation => None,
             DeployKind::Action { name, spec: _, destination, player, marks, .. } => {
                 let pname = player
                     .as_ref()
@@ -681,6 +685,47 @@ impl Db {
             .into_iter()
             .filter(|gid| self.persisted.groups.get(gid).map(|g| g.side == side).unwrap_or(false))
             .count()
+    }
+
+    /// Can a commander of `side` disband this group? Only ground units no
+    /// player owns: dismount squads, and deployed units or troops whose
+    /// owner is the default ucid (spawned by the HQ, an admin or the API, or
+    /// ordered from the command panel before orders carried a commander).
+    /// A player's own units stay theirs to -delete; a squad holding a base
+    /// it just captured is left alone, since removing it would end the hold.
+    pub fn disbandable(&self, side: Side, gid: &GroupId) -> Result<(), &'static str> {
+        let group = self.persisted.groups.get(gid).ok_or("no such group")?;
+        if group.side != side {
+            return Err("that isn't ours");
+        }
+        match &group.origin {
+            DeployKind::Dismount { .. } => (),
+            DeployKind::Deployed { player, .. } | DeployKind::Troop { player, .. }
+                if *player == Ucid::default() => {}
+            DeployKind::Deployed { .. } | DeployKind::Troop { .. } => {
+                return Err("a player owns that -- only they can remove it")
+            }
+            _ => return Err("only unowned ground units and dismounts can be disbanded"),
+        }
+        if self
+            .persisted
+            .objectives
+            .into_iter()
+            .any(|(_, o)| o.capture_hold.contains(gid))
+        {
+            return Err("that squad is holding a base it just captured");
+        }
+        Ok(())
+    }
+
+    /// Disband a group `disbandable` allows. Nothing is refunded: nobody
+    /// paid for it, or the treasury did.
+    pub fn disband(&mut self, side: Side, gid: &GroupId) -> Result<()> {
+        if let Err(e) = self.disbandable(side, gid) {
+            bail!("{e}")
+        }
+        info!("disbanding unowned {side:?} group {gid}");
+        self.delete_group(gid)
     }
 
     /// Remove dismount squads older than `dismount_ttl_secs`, if that is set.
@@ -1555,7 +1600,15 @@ impl Db {
             self.ephemeral.uid_by_object_id.insert(id.clone(), uid);
             self.ephemeral.object_id_by_uid.insert(uid, id.clone());
             self.ephemeral.units_potentially_close_to_enemies.insert(uid);
-            if unit.tags.contains(UnitTag::Driveable) || unit.tags.contains(UnitTag::Boat) {
+            // Troops and dismounts are on foot, so not Driveable, but they
+            // walk -- under Combined Arms or their own DCS orders -- and
+            // check_capture reads their cached position. Without tracking
+            // them a squad that walked into a zone never counted.
+            if unit.tags.contains(UnitTag::Driveable)
+                || unit.tags.contains(UnitTag::Boat)
+                || self.persisted.troops.contains(&unit.group)
+                || self.persisted.dismounts.contains(&unit.group)
+            {
                 self.ephemeral.units_able_to_move.insert(uid);
             }
             self.ephemeral.stat(Stat::Unit {

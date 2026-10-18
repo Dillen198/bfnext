@@ -4,7 +4,7 @@ import QueryState from '../components/QueryState'
 import { kd, sl, fmtHours, fmtDuration } from '../lib/format'
 import { Link as RouterLink, useSearchParams } from 'react-router-dom'
 import type { FlightRow } from '../replay/data'
-import { api, type Pilot, type PilotSortie, type TheaterBreakdown, type PilotKill, type PilotDeploy } from '../api'
+import { api, type Pilot, type PilotSortie, type TheaterBreakdown, type PilotKill, type PilotDeploy, type PilotProgression, type Challenge } from '../api'
 import PageHeader from '../components/PageHeader'
 import SortieDetail from './SortieDetail'
 import PilotCharts from './PilotCharts'
@@ -510,6 +510,120 @@ function DeployLog({ deploys, total }: { deploys: PilotDeploy[]; total: number }
   )
 }
 
+// ── Progression ───────────────────────────────────────────────────────────────
+
+function ChallengeRow({ c }: { c: Challenge }) {
+  const pct = Math.min(100, (c.progress / Math.max(1, c.goal)) * 100)
+  return (
+    <div style={{ display: 'grid', gap: 3 }}>
+      <div className="flex items-center gap-2" style={{ fontSize: '0.68rem' }}>
+        <span style={{ color: c.done ? 'var(--accent)' : 'var(--text)' }}>{c.done ? '✓ ' : ''}{c.label}</span>
+        <span className="ml-auto font-mono" style={{ color: 'var(--text-dim)' }}>{c.progress}/{c.goal} · +{c.xp} XP</span>
+      </div>
+      <div style={{ height: 4, background: 'var(--border)', borderRadius: 2 }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: 'var(--accent)', borderRadius: 2 }} />
+      </div>
+    </div>
+  )
+}
+
+/** The pilot card, drawn in the page's own theme. bfdb renders the same card
+ *  as a PNG for sharing (Discord `/card`); the page links to that rather than
+ *  showing it, so the card here follows the theme and never shows a stale
+ *  image from an older server. */
+function PilotCardView({ pilot, p }: { pilot: Pilot; p: PilotProgression }) {
+  const logistics = pilot.repairs + pilot.supply_transfers + pilot.troops + pilot.farps + pilot.deploys
+  const badges = p.achievements.filter(a => a.tier > 0).length
+  const stats: [string, string | number][] = [
+    ['Air kills', pilot.air_kills],
+    ['Ground kills', pilot.ground_kills],
+    ['Captures', pilot.captures],
+    ['Logistics', logistics],
+    ['K/D', kd(pilot.air_kills, pilot.ground_kills, pilot.deaths)],
+    ['Flight time', fmtHours(pilot.hours)],
+  ]
+  return (
+    <div style={{
+      position: 'relative', background: 'var(--bg-card-solid)', border: '1px solid var(--border-light)',
+      borderLeft: '3px solid var(--accent)', borderRadius: 2, padding: '14px 16px 12px',
+      boxShadow: 'inset 0 2px 0 var(--accent-border)',
+    }}>
+      <div className="flex items-start gap-3">
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.7rem', letterSpacing: '0.06em', lineHeight: 1.05, color: 'var(--text)', overflowWrap: 'anywhere' }}>
+            {p.squadron && <span style={{ color: 'var(--accent-bright)' }}>[{p.squadron}] </span>}
+            {pilot.name}
+          </div>
+          <div className="font-mono" style={{ fontSize: '0.62rem', letterSpacing: '0.12em', color: 'var(--accent-bright)', marginTop: 4 }}>
+            LEVEL {p.level} · {p.xp.toLocaleString()} XP · {badges} ACHIEVEMENT{badges === 1 ? '' : 'S'}
+          </div>
+        </div>
+        <span className="ml-auto" style={{ fontSize: '0.55rem', letterSpacing: '0.24em', color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>VECTOR STRIKE</span>
+      </div>
+      <div style={{ height: 1, background: 'var(--border-light)', margin: '12px 0 10px' }} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))', gap: '10px 12px' }}>
+        {stats.map(([name, value]) => (
+          <div key={name}>
+            <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap' }}>{value}</div>
+            <div style={{ fontSize: '0.55rem', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--text-dim)', marginTop: 1 }}>{name}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function ProgressionCard({ p, dim, ucid, pilot }: { p: PilotProgression; dim: React.CSSProperties; ucid: string; pilot: Pilot }) {
+  const span = Math.max(1, p.next_level_xp - p.level_xp)
+  const pct = Math.min(100, ((p.xp - p.level_xp) / span) * 100)
+  return (
+    <div className="vs-card p-0">
+      <div className="flex items-center gap-2 px-4 pt-4 pb-3" style={{ borderBottom: '1px solid var(--border)' }}>
+        <Shield size={12} style={{ color: 'var(--accent)' }} />
+        <span style={dim}>Progression</span>
+        <span className="ml-auto font-mono" style={{ fontSize: '0.7rem', color: 'var(--text)' }}>
+          {p.squadron ? `[${p.squadron}] · ` : ''}LEVEL {p.level} · {p.xp.toLocaleString()} XP
+        </span>
+        <a href={api.pilotCardUrl(ucid)} target="_blank" rel="noreferrer" title="Open the card image to share (Discord /card posts the same one)"
+          style={{ fontSize: '0.58rem', letterSpacing: '0.1em', color: 'var(--accent-bright)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+          SHARE CARD ↗
+        </a>
+      </div>
+      <div className="p-3 space-y-3">
+        <PilotCardView pilot={pilot} p={p} />
+        <div>
+          <div style={{ height: 6, background: 'var(--border)', borderRadius: 3 }}>
+            <div style={{ width: `${pct}%`, height: '100%', background: 'var(--accent)', borderRadius: 3 }} />
+          </div>
+          <div className="font-mono" style={{ fontSize: '0.6rem', color: 'var(--text-dim)', marginTop: 3 }}>
+            {(p.next_level_xp - p.xp).toLocaleString()} XP to level {p.level + 1}
+          </div>
+        </div>
+        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+          <div className="space-y-2">
+            <span style={dim}>Today</span>
+            {p.daily.map(c => <ChallengeRow key={c.label} c={c} />)}
+          </div>
+          <div className="space-y-2">
+            <span style={dim}>This week</span>
+            {p.weekly.map(c => <ChallengeRow key={c.label} c={c} />)}
+          </div>
+        </div>
+        <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+          {p.achievements.map(a => (
+            <div key={a.key} className="vs-card" style={{ padding: '6px 8px', fontSize: '0.66rem', opacity: a.tier > 0 ? 1 : 0.55 }}>
+              <div style={{ color: 'var(--text)' }}>{a.label}</div>
+              <div className="font-mono" style={{ color: 'var(--text-dim)' }}>
+                Tier {a.tier}/{a.max_tier} · {a.value}{a.next != null ? ` (next ${a.next})` : ''}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Theater breakdown ─────────────────────────────────────────────────────────
 
 function TheaterCard({ td }: { td: TheaterBreakdown }) {
@@ -597,6 +711,13 @@ export default function Pilots() {
     queryKey: ['pilot-breakdown', selected],
     queryFn: () => api.pilotBreakdown(selected!),
     enabled: !!selected,
+  })
+  const { data: progression } = useQuery({
+    queryKey: ['pilot-progression', selected],
+    queryFn: () => api.pilotProgression(selected!),
+    enabled: !!selected,
+    // An older bfdb has no progression route.
+    retry: false,
   })
   const { data: kills = [] } = useQuery({
     queryKey: ['pilot-kills', selected],
@@ -819,6 +940,9 @@ export default function Pilots() {
 
             {/* ══════════ RIGHT — detail tables ══════════ */}
             <div className="space-y-4" style={{ minWidth: 0 }}>
+
+              {/* ── Progression ── */}
+              {progression && selected && <ProgressionCard p={progression} dim={dim} ucid={selected} pilot={pilot} />}
 
               {/* ── Career overview ── */}
               <PilotCharts key={pilot.ucid} sorties={sorties} />

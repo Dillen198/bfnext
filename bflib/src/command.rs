@@ -172,6 +172,7 @@ fn air_role(kind: &ActionKind) -> (&'static str, bool) {
         ActionKind::Attackers(_) => ("Attackers", true),
         ActionKind::Sead(_) => ("SEAD", true),
         ActionKind::Bomber(_) => ("Bomber", false),
+        ActionKind::Strike(_) => ("Strike", false),
         ActionKind::Recon(_) => ("Recon", false),
         ActionKind::LogisticsRepair(_) | ActionKind::LogisticsTransfer(_) => ("Air logistics", false),
         ActionKind::Paratrooper(_) => ("Paratroop drop", false),
@@ -322,8 +323,20 @@ pub(crate) fn picture(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<
             if range.is_some() {
                 orders.push(Verb::Fire);
             }
+            if ctx.db.disbandable(side, &g.id).is_ok() {
+                orders.push(Verb::Disband);
+            }
             if let Some(mut a) = asset_of(ctx, lua, coord, g.id, kind, &role, orders, true) {
                 a.range_m = range;
+                assets.push(a);
+            }
+        }
+        // Dismount squads: nobody owns them, so a commander is the only one
+        // who can clear them away.
+        let dismounts: Vec<GroupId> = ctx.db.persisted.dismounts.into_iter().copied().collect();
+        for gid in dismounts {
+            let orders = if ctx.db.disbandable(side, &gid).is_ok() { vec![Verb::Disband] } else { continue };
+            if let Some(a) = asset_of(ctx, lua, coord, gid, AssetKind::Troops, "Dismounts", orders, true) {
                 assets.push(a);
             }
         }
@@ -378,6 +391,7 @@ pub(crate) fn picture(lua: MizLua, ctx: &mut Context, side: Side, now: DateTime<
         orders: orders::catalog(ctx, side),
         supply,
         defences,
+        buy_formation: orders::formation_purchase(ctx, side),
     }
 }
 
@@ -555,7 +569,7 @@ pub(crate) fn order(
     now: DateTime<Utc>,
 ) -> CommandReply {
     // A formation's own order already goes in the log, by the ground war.
-    let logged = !matches!(o, CommandOrder::MoveFormation { .. });
+    let logged = !matches!(o, CommandOrder::MoveFormation { .. } | CommandOrder::BuyFormation { .. });
     match order_inner(lua, ctx, perf, side, ucid, o, now) {
         Ok(text) => {
             let who = ucid
@@ -692,6 +706,12 @@ fn order_inner(
             run_action(lua, ctx, perf, side, ActionKind::Rtb, ActionArgs::Rtb(WithPosAndGroup { cfg: (), pos, group: gid }))?;
             Ok(format_compact!("{} returning to base", group_name(ctx, &gid)))
         }
+        CommandOrder::Disband { group } => {
+            let gid = own_group(ctx, side, group)?;
+            let name = group_name(ctx, &gid);
+            ctx.db.disband(side, &gid).map_err(|e| format_compact!("{e}"))?;
+            Ok(format_compact!("{name} disbanded"))
+        }
         CommandOrder::Sail { group, to } => {
             let pos = from_ll(lua, to)?;
             let land = Land::singleton(lua).map_err(|e| format_compact!("{e}"))?;
@@ -741,13 +761,13 @@ fn order_inner(
                 .ok_or_else(|| CompactString::from("no such objective"))?;
             let cost = price(ctx, OpKind::HeloTroops)?;
             afford(ctx, side, cost)?;
-            ctx.db.call_helo_troop_insertion(lua, side, None, oid, now).map_err(|e| format_compact!("{e}"))?;
+            ctx.db.call_helo_troop_insertion(lua, side, ucid, true, oid, now).map_err(|e| format_compact!("{e}"))?;
             pay(ctx, side, cost);
             Ok(format_compact!("helicopter troops to {name} ({cost} from the treasury)"))
         }
         CommandOrder::Launch { kind, objective } => {
             // Paid, tracked and announced by the HQ itself.
-            crate::hq::commander_launch(lua, ctx, perf, side, kind, ObjectiveId::from(objective), &who, now)
+            crate::hq::commander_launch(lua, ctx, perf, side, kind, ObjectiveId::from(objective), &who, ucid, now)
         }
         CommandOrder::Posture { formations, groups, roe, pace } => {
             if formations.is_empty() && groups.is_empty() {
@@ -786,8 +806,17 @@ fn order_inner(
             }
             Ok(said.join("; ").into())
         }
+        CommandOrder::BuyFormation { key, count, to, via } => {
+            if let Some(u) = ucid.as_ref() {
+                let cool = ctx.db.ground_war_cfg().map(|c| c.player_order_cooldown_secs).unwrap_or(30);
+                if ctx.groundwar.last_order.get(u).map_or(false, |t| now - *t < Duration::seconds(cool as i64)) {
+                    return Err("wait a moment before your next ground order".into());
+                }
+            }
+            orders::buy_formation(lua, ctx, side, ucid, &key, count, to, &via, now)
+        }
         CommandOrder::Order { key, at, objective, to_objective } => {
-            orders::order(lua, ctx, perf, side, &key, at, objective, to_objective, now)
+            orders::order(lua, ctx, perf, side, ucid, &key, at, objective, to_objective, now)
         }
     }
 }

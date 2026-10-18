@@ -1,5 +1,128 @@
 # Changelog — v2.0
 
+## October 17, 2026
+
+**Your task, and rookie mode** — see [Your Task & Rookie Mode](../gameplay/your-task.md)
+- Every slot gets **one task**: the most urgent job on your side's list that
+  your aircraft can do, with a zone on your own F10 map. Kills you make inside
+  it pay **1.5×** points; captures, repairs, supply runs and FARPs there pay
+  bonus XP.
+- For your first 5 sorties on the server, the task is picked from the safer
+  work (logistics, recon, CSAR, defending a base).
+
+**The war-effort bar** — see [The War Effort Bar](../gameplay/war-effort.md)
+- One tug-of-war bar per round, moved by captures. A capture after two hours
+  of frozen front moves it twice as far.
+- The side it favours gets a shorter takeoff hold, then cheaper actions.
+- **Last defenders**: when a battered base is down to its last 8 infantry, the
+  attackers get rough F10 marks on the survivors.
+
+**XP, levels and squadrons** — see [XP, Levels & Squadrons](../gameplay/progression.md)
+- **XP** that never goes down and carries across rounds, with levels, daily and
+  weekly challenges, and achievements. It's on your profile on the PILOTS page.
+- **SQUADRONS** on the dashboard: make or join one. A squadron's XP only
+  counts what its members earned while in it.
+- `/fe_card` in Discord posts your pilot card.
+- The landing debrief lists what you contributed on the sortie.
+- **ROUNDS** on the dashboard: every round played, who won, how long it ran,
+  and its MVP and top pilots.
+
+**New ways to fight**
+- **AI Strike** actions (where configured): an AI flight attacks with its own
+  weapons, no JTAC needed: precision, runway, anti-ship, interdiction or
+  carpet. See [AI Strike Missions](../advanced/strike-missions.md).
+- **Fat Cow** (where configured): a heavy-lift FARP you fly in by CH-47 or
+  Mi-8, with fuel and weapons for helicopters, that you can pack up and move.
+  The **Fat Cow (AI)** action has an AI helicopter set one up at your mark.
+  See [Deployables Guide](../advanced/deployables-guide.md#fat-cow-heavy-lift-farp).
+
+**Command** — see [Command](../advanced/command.md)
+- **Buy a formation**: commanders can buy a new ground formation from the
+  treasury and send it out along a route they draw.
+- Units nobody owns and dismount squads show on the map, and commanders can
+  **disband** them.
+- What a commander puts on the map from the panel now belongs to them: they
+  get the credit, and can `-delete` it (nothing is refunded).
+- An AI flight given a Station order while still on the ramp now takes off and
+  goes there, instead of freezing on its stand.
+- **The human GCI seat**: commanders can type a call on the dashboard's radar
+  scope and the GCI voice speaks it on the GCI frequency. See
+  [Live GCI](../gameplay/gci.md#the-human-gci-seat).
+
+**Server rules** (each only where the server turns it on) — see
+[Rear Bases, Era Weapons & Round Length](../gameplay/round-rules.md)
+- **Protected rear bases**: enemy aircraft get 60 s in total near one, then
+  are removed.
+- **Era weapons**: weapons the round's era bans must not be carried or fired.
+- **Round length**: a round that runs past the server's limit ends in a draw.
+
+**Dashboard**
+- **TACMAP** is rebuilt: the command map's look, read-only, for everyone on
+  your side, with zones of control, supply lines, coverage and threats. Click
+  a base for its status, garrison, history and (for your own bases) its full
+  warehouse; click an enemy contact for what's known about it. It now needs
+  sign-in and a side. The old radar scope is under **SCOPE**. See
+  [Reading the Live Ops Dashboard](../playbooks/reading-live-ops.md).
+- **WAR DIARY** is a broadsheet front page for each day, with a picture for
+  every day (an early edition while the day is running), and it's in the
+  sidebar for everyone, signed in or not. See
+  [The War Diary](../gameplay/war-diary.md).
+
+**Bases, supply and capture**
+- A base you capture starts with
+  {{cfg:warehouse.capture_airframe_stock_percent|0}}% of its airframe capacity
+  in your own types. See
+  [Materiel & the War Economy](../gameplay/war-economy.md#captured-airframes).
+- A base you've just taken on the front line is no longer cut off from road
+  supply just because an enemy base is near it; only a road that runs through
+  the enemy base is cut. Each base gets one convoy or airlift at a time.
+- Air transports start in the air near their hub, so they no longer collide on
+  the ramp, and a flight with no room to park returns its load.
+- AI flights starting on the ground get the airframes and fuel they need at
+  their field, fixing vanished drones and AWACS and tankers stuck on the ramp.
+- Reinforcement convoys that park close to their base count as arrived.
+- Troops and dismount squads that walk into a zone now count for the capture.
+- Naval strikes: ships are set weapons free before launch, so they fire.
+
+**Smaller changes**
+- **CSAR** moved inside the **Cargo** menu in slots that have one, so **Info**
+  no longer falls off the end of the F10 menu.
+- Jammer trucks aren't spawned until enemy aircraft come near.
+- F10 convoy, fire mission and task markers are see-through, so the base under
+  them stays visible.
+- The AI ground commander stops reissuing an order a formation got stuck on.
+
+## October 9, 2026
+
+**Flight replay** — see [Debriefing With Flight Replay](../playbooks/flight-replay.md)
+- Every sortie can be replayed in the browser, in 2D or 3D, from the server's
+  Tacview recordings. No Tacview needed. **REPLAY** in the sidebar; a
+  **WATCH** link on each flight in your Flight Log.
+- Debrief tools: telemetry, range/aspect/closure measuring, and a Shots tab
+  with every missile's result, launch range and miss distance.
+- Real 3D models for most aircraft, armour, SAMs, ships and common weapons.
+
+**Stability and fixes**
+- A ship firing Tomahawks no longer crashes the server.
+- Formations that took over a base's garrison actually drive.
+- Ground units are kept clear of runways and taxiways (150 m), and nothing
+  patrols an airfield, so AI flights take off and helicopters no longer blow
+  up on spawn. A fixed-wing AI flight still on the ground 15 minutes after a
+  parking start is removed.
+- The dashboard answers in about a second instead of ten, so no more
+  "engine slow" errors.
+- Fixed-wing transports with no parking spot at a pad or ship start in the air
+  over the field; a road a convoy got stuck on is treated as cut for 3 hours.
+- A JTAC drone whose aircraft has gone is removed, and its side is told.
+
+**For server admins**
+- Flight replay needs `tacview_dir` set per server, matching Tacview's export
+  folder. Recordings are kept 30 days (`--replay-days`).
+- bfdb's daily backups now really happen on a server restarted more than once
+  a day.
+- A damaged database says how to recover, and `/feops db_restore` in Discord
+  puts back the newest daily backup (the damaged copy is kept).
+
 ## October 7, 2026
 
 **Command: a real command display**
@@ -54,6 +177,12 @@
   comes within reach of any enemy ground unit already in DCS.
 - Towed and emplaced guns (KS-19, ZU-23 emplacements, mortars) no longer join
   formations: DCS can't move them.
+- A commander's **Move** is a road march: the column keeps going past enemies
+  it only sees and returns fire, stopping to fight only within about 3 km.
+- SAM launchers are no longer mistaken for artillery: fire missions stopped
+  picking a Tor that would never fire.
+- COMMAND keeps working when the server is busy, showing the last good picture
+  marked as old instead of "assets offline".
 - The F10 attack arrows point at the target again.
 
 ## October 4, 2026

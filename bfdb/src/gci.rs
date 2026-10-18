@@ -376,6 +376,7 @@ pub(crate) async fn run(
     discord.log();
 
     let (tx, rx) = mpsc::channel::<QueuedCall>(64);
+    HUMAN_TX.lock().unwrap().insert(inst.id.to_string(), tx.clone());
 
     // Phase 3: speech recognition. When configured, each persistent SRS client
     // gets a sender for completed inbound transmissions, and a worker turns
@@ -1914,6 +1915,20 @@ struct QueuedCall {
     side: Side,
     urgent: bool,
     text: String,
+}
+
+/// Each running instance's GCI call queue, so a human controller on the
+/// dashboard can transmit through the same voice (`human_call`).
+static HUMAN_TX: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<std::string::String, mpsc::Sender<QueuedCall>>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Speak `text` on `side`'s GCI frequency on `instance`, ahead of the
+/// automatic calls. Errs when GCI voice isn't running there or is backed up.
+pub(crate) fn human_call(instance: &str, side: Side, text: &str) -> Result<(), &'static str> {
+    let g = HUMAN_TX.lock().unwrap();
+    let tx = g.get(instance).ok_or("GCI voice is not running on this server")?;
+    tx.try_send(QueuedCall { queued: Instant::now(), side, urgent: true, text: text.into() })
+        .map_err(|_| "the GCI radio is busy -- try again in a moment")
 }
 
 /// The two persistent SRS clients plus a per-side TTS engine (so red can use a

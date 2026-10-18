@@ -29,7 +29,10 @@ pub(crate) mod api;
 pub(crate) mod ballistics;
 pub(crate) mod boards;
 pub(crate) mod cards;
+pub(crate) mod clip;
+pub(crate) mod deckplan;
 pub(crate) mod discord;
+pub(crate) mod forms;
 pub(crate) mod ingest;
 pub(crate) mod insights;
 pub(crate) mod quals;
@@ -150,6 +153,11 @@ pub(crate) struct RangeCtx {
     /// Short-lived cache for the whole-window aggregates (boards, greenie,
     /// impacts, calibration), keyed by route + query.
     agg: StdMutex<HashMap<String, (Instant, serde_json::Value)>>,
+    /// Finished debrief clips (`clip::Clip`, gzip'd JSON), one per result.
+    pub(crate) clip_dir: std::path::PathBuf,
+    /// The dashboard's flight replay, set once it is up (main.rs builds it
+    /// after the range): links a result to its moment in the web Tacview.
+    pub(crate) replay: std::sync::OnceLock<Arc<crate::replay::ReplayCtx>>,
 }
 
 /// How long a Discord -> ucid link lookup is trusted. "Not linked" is
@@ -166,6 +174,7 @@ impl RangeCtx {
         bot: Arc<Option<BotLinkConfig>>,
         site_url: &str,
         api_url: &str,
+        clip_dir: std::path::PathBuf,
     ) -> Result<Arc<Self>> {
         let store = RangeStore::open(db.sled())?;
         Ok(Arc::new(Self {
@@ -179,6 +188,8 @@ impl RangeCtx {
             spawn_rl: StdMutex::new(HashMap::new()),
             ucids: StdMutex::new(HashMap::new()),
             agg: StdMutex::new(HashMap::new()),
+            clip_dir,
+            replay: std::sync::OnceLock::new(),
         }))
     }
 
@@ -383,6 +394,12 @@ pub(crate) fn spawn_tasks(ctx: &Arc<RangeCtx>, track_days: u32) {
                     ),
                     Err(e) => warn!("[{}] range: track pruning failed: {e:?}", cfg.id),
                 }
+            }
+            // debrief clips go with the tracks: same age limit, by file time
+            let dir = c.clip_dir.clone();
+            let n = tokio::task::block_in_place(|| clip::prune(&dir, Duration::from_secs(track_days as u64 * 86_400)));
+            if n > 0 {
+                info!("range: pruned {n} debrief clip(s) older than {track_days} days");
             }
         }
     });

@@ -3,11 +3,11 @@
  * event drawn interactively from its track (right), and the rendered card
  * that went to Discord, with downloads for the card and the Tacview file.
  */
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Download, Link as LinkIcon } from '@icons'
-import { api, apiUrl } from '../api'
+import { Download, ExternalLink, Link as LinkIcon } from '@icons'
+import { DASHBOARD_URL, api, apiUrl } from '../api'
 import { ScoreChip } from '../components/Chips'
 import { Panel } from '../components/Controls'
 import { KindIcon } from '../components/KindIcon'
@@ -18,11 +18,17 @@ import { downloadUrl, saveBlob } from '../lib/download'
 import { headline } from '../lib/headline'
 import { Facts } from './debrief/Facts'
 import { Interactive } from './debrief/Interactive'
+import { usePref } from '../lib/usePref'
+
+// three.js is big: only loaded when someone opens the 3D view
+const Debrief3D = lazy(() => import('./debrief/Debrief3D'))
+const isView = (v: unknown): v is '2d' | '3d' => v === '2d' || v === '3d'
 
 export default function ResultPage() {
   const { id = '' } = useParams()
   const toast = useToast()
-  const [busy, setBusy] = useState<'' | 'png' | 'acmi'>('')
+  const [busy, setBusy] = useState<'' | 'png' | 'acmi' | 'clip' | 'replay'>('')
+  const [view, setView] = usePref<'2d' | '3d'>('range.debrief.view', '2d', isView)
   const [cardFailed, setCardFailed] = useState(false)
   const q = useQuery({ queryKey: ['result', id], queryFn: () => api.result(id), staleTime: 5 * 60_000 })
 
@@ -66,6 +72,36 @@ export default function ResultPage() {
     }
   }
 
+  async function downloadClip() {
+    setBusy('clip')
+    try {
+      const b = await api.clipAcmi(rec.id)
+      if (!b) toast('No Tacview recording covers this result.', false)
+      else saveBlob(b, `${safeName}.txt.acmi`)
+    } catch (e) {
+      toast(`Could not cut the Tacview clip: ${e instanceof Error ? e.message : e}`, false)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  /** The whole session in the dashboard's web Tacview, following this pilot, just before the result. */
+  async function openReplay() {
+    setBusy('replay')
+    // open the tab now: a window opened after an await is blocked as a pop-up
+    const w = window.open('', '_blank')
+    try {
+      const l = await api.replayLink(rec.id)
+      if (w) w.location.href = `${DASHBOARD_URL}${l.path}`
+      else window.location.href = `${DASHBOARD_URL}${l.path}`
+    } catch (e) {
+      w?.close()
+      toast(e instanceof Error ? e.message : String(e), false)
+    } finally {
+      setBusy('')
+    }
+  }
+
   async function copyLink() {
     try {
       await navigator.clipboard.writeText(window.location.href)
@@ -95,8 +131,14 @@ export default function ResultPage() {
           <button className="btn-range" onClick={downloadPng} disabled={busy !== ''}>
             <Download size={14} /> {busy === 'png' ? 'Downloading…' : 'Card PNG'}
           </button>
-          <button className="btn-range" onClick={downloadAcmi} disabled={busy !== ''}>
-            <Download size={14} /> {busy === 'acmi' ? 'Fetching…' : 'Tacview'}
+          <button className="btn-range" onClick={downloadClip} disabled={busy !== ''} title="Just this result, a few minutes of the recording: opens in Tacview">
+            <Download size={14} /> {busy === 'clip' ? 'Cutting…' : 'Tacview clip'}
+          </button>
+          <button className="btn-range" onClick={openReplay} disabled={busy !== ''} title="The whole session in the dashboard's web Tacview, following you, just before this result">
+            <ExternalLink size={14} /> {busy === 'replay' ? 'Opening…' : 'Web Tacview'}
+          </button>
+          <button className="btn-range ghost" onClick={downloadAcmi} disabled={busy !== ''} title="The server's whole recording of this session (large)">
+            {busy === 'acmi' ? 'Fetching…' : 'Full session'}
           </button>
           <button className="btn-range" onClick={copyLink}>
             <LinkIcon size={14} /> Copy link
@@ -110,8 +152,22 @@ export default function ResultPage() {
         <Panel title="What the range measured" className="self-start">
           <Facts rec={rec} />
         </Panel>
-        <Panel title="Interactive debrief">
-          <Interactive rec={rec} />
+        <Panel
+          title="Interactive debrief"
+          right={
+            <div className="seg" role="group" aria-label="2D or 3D">
+              <button aria-pressed={view === '2d'} onClick={() => setView('2d')}>2D</button>
+              <button aria-pressed={view === '3d'} onClick={() => setView('3d')}>3D</button>
+            </div>
+          }
+        >
+          {view === '3d' ? (
+            <Suspense fallback={<Loading label="Loading the 3D view" />}>
+              <Debrief3D rec={rec} />
+            </Suspense>
+          ) : (
+            <Interactive rec={rec} />
+          )}
         </Panel>
       </div>
 

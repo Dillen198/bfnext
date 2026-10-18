@@ -158,6 +158,8 @@ pub(crate) struct AirLife {
     civ_country_resolved: bool,
     /// Last player to hit each civilian unit, by unit name.
     civ_hits: FxHashMap<String, (Ucid, DateTime<Utc>)>,
+    /// Sides already told they have no action a package can fly.
+    no_package_actions_said: Vec<Side>,
 }
 
 impl AirLife {
@@ -927,6 +929,15 @@ fn tick_packages(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Date
         }
         let actions = package_actions(ctx, &cfg, side);
         if actions.is_empty() {
+            // Packages fly the side's Fighters / Attackers / SEAD actions. A
+            // config that sells none of them gets no packages at all, and this
+            // used to skip without a word.
+            if !ctx.airlife.no_package_actions_said.contains(&side) {
+                ctx.airlife.no_package_actions_said.push(side);
+                info!(
+                    "air_life: {side:?} has no Fighters, Attackers or SEAD action configured -- AI packages can't launch for it"
+                );
+            }
             continue;
         }
         let targets = package_targets(ctx, &cfg, side);

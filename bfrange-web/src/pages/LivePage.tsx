@@ -1,95 +1,80 @@
 /**
- * `/` — the range as it is right now: the picture on the map, what the
- * tankers and the boat are doing, which stations are hot, and every result
- * as it lands. Live state polls every 2 s while the tab is visible.
+ * `/` — range control: the range as it is right now. The map fills the
+ * frame; the dock beside it carries the situation and one tab per job
+ * (results, traffic, the boat, threats, stations). A thing picked on either
+ * side is picked on both, and `?focus=<key>` (the search palette) opens with
+ * the camera on it. Live state polls every 2 s while the tab is visible.
  */
-import { useQuery } from '@tanstack/react-query'
-import { Wind } from '@icons'
-import { api } from '../api'
+import { useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ErrorState, Loading } from '../components/States'
-import { fmt, fmtClock, pad3 } from '../lib/format'
-import type { RangeLive } from '../types'
-import { LiveFeed } from './live/LiveFeed'
-import { LiveMap } from './live/LiveMap'
-import { AirDefencePanel, CarrierPanel, HeloOpsPanel, HotZonesPanel, StationsPanel, TankersPanel } from './live/LivePanels'
+import { locate, tabFor, type DockTab } from '../lib/select'
+import { useLive } from '../lib/useLive'
+import { usePref } from '../lib/usePref'
+import { LiveDock } from './live/LiveDock'
+import { LiveMap, type Focus } from './live/LiveMap'
 
-function StatusStrip({ live }: { live: RangeLive }) {
-  const w = live.wind
-  const airborne = live.players.filter(p => p.in_air).length
-  const items: [string, React.ReactNode][] = [
-    ['Theatre', live.theatre],
-    ['Mission', <>{live.mission_date} · <b>{live.mission_time}</b>{live.night ? ' · night' : ''}</>],
-    ['Surface wind', `${pad3(w.surface_from_deg)}/${fmt(w.surface_kts)} kt`],
-    ['6,600 ft', `${pad3(w.alt_from_deg)}/${fmt(w.alt_kts)} kt`],
-    ['Temp · QNH', `${fmt(w.temperature_c)}°C · ${fmt(w.qnh_hpa)}`],
-    ['Pilots', `${live.players.length} · ${airborne} airborne`],
-    ['Up', fmtClock(live.uptime_s)],
-  ]
-  return (
-    <div className="flex flex-wrap items-stretch gap-x-6 gap-y-2 py-3">
-      <div className="flex items-center gap-2">
-        <span className="dot live" />
-        <span className="display text-[26px]" style={{ color: 'var(--chalk)' }}>Range live</span>
-      </div>
-      {items.map(([k, v]) => (
-        <div key={k} className="flex flex-col justify-center min-w-0">
-          <span className="caps flex items-center gap-1" style={{ fontSize: 9.5 }}>{k === 'Surface wind' && <Wind size={11} />}{k}</span>
-          <span className="mono text-[13px]">{v}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
+const TABS: DockTab[] = ['feed', 'traffic', 'boat', 'threats', 'stations']
+const isTab = (v: unknown): v is DockTab => TABS.includes(v as DockTab)
 
 export default function LivePage() {
-  const q = useQuery({
-    queryKey: ['live'],
-    queryFn: () => api.live(),
-    refetchInterval: 2000,
-    staleTime: 1000,
-  })
+  const q = useLive(2000)
   const live = q.data?.live ?? null
+  const [tab, setTab] = usePref<DockTab>('range.live.tab', 'feed', isTab)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [focus, setFocus] = useState<Focus | null>(null)
+  const [params, setParams] = useSearchParams()
+
+  /** From the dock: select, open nothing new, fly the camera there. */
+  const pickFromDock = useCallback((key: string) => {
+    setSelected(key)
+    setFocus(f => ({ key, n: (f?.n ?? 0) + 1 }))
+  }, [])
+  /** From the map: select and open the dock tab that lists it. */
+  const pickFromMap = useCallback((key: string | null) => {
+    setSelected(key)
+    if (key) setTab(tabFor(key))
+  }, [setTab])
+
+  // ?focus= from the search palette: take it once the picture is in, then
+  // clear it from the address so a reload does not fly there again
+  const want = params.get('focus')
+  const [taken, setTaken] = useState<string | null>(null)
+  if (want !== taken && (!want || live)) {
+    setTaken(want)
+    if (want && live && locate(live, want)) {
+      setSelected(want)
+      setTab(tabFor(want))
+      setFocus(f => ({ key: want, n: (f?.n ?? 0) + 1 }))
+    }
+  }
+  useEffect(() => {
+    if (want && live) setParams(p => { p.delete('focus'); return p }, { replace: true })
+  }, [want, live, setParams])
+
+  // a selection whose thing has gone (despawned, logged off) shows as none
+  const current = selected && live && locate(live, selected) ? selected : null
 
   return (
-    <div className="wrap pb-12">
-      {q.isLoading ? (
-        <Loading label="Contacting the range" />
-      ) : q.error ? (
-        <div className="py-4"><ErrorState error={q.error} retry={() => q.refetch()} /></div>
-      ) : !live ? (
-        <div className="py-4">
-          <div className="panel panel-b flex flex-wrap items-center gap-3">
-            <span className="chip outline">RANGE OFFLINE</span>
-            <span>{q.data?.reason ?? 'The range server is not publishing a live picture right now.'}</span>
-            <span className="muted text-[12px]">Results already flown are still below.</span>
+    <div className="control">
+      <div className="control-map">
+        {q.isLoading ? (
+          <div className="h-full grid place-items-center"><Loading label="Contacting the range" /></div>
+        ) : q.error ? (
+          <div className="p-4"><ErrorState error={q.error} retry={() => q.refetch()} /></div>
+        ) : !live ? (
+          <div className="h-full grid place-items-center p-6">
+            <div className="panel panel-b max-w-md text-center">
+              <span className="chip bad">RANGE OFFLINE</span>
+              <p className="mt-3 mb-1">{q.data?.reason ?? 'The range server is not publishing a live picture right now.'}</p>
+              <p className="muted text-[12.5px] m-0">Results already flown are in the feed, your record and the boards.</p>
+            </div>
           </div>
-        </div>
-      ) : (
-        <StatusStrip live={live} />
-      )}
-
-      <div className="grid gap-3 xl:grid-cols-[340px_minmax(0,1fr)_360px] lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="order-2 xl:order-1 min-w-0">
-          <LiveFeed />
-        </div>
-        <div className="order-1 xl:order-2 min-w-0 lg:col-span-2 xl:col-span-1">
-          {live && <LiveMap live={live} height="min(72vh, 760px)" />}
-        </div>
-        <div className="order-3 flex flex-col gap-3 min-w-0">
-          {live && (
-            <>
-              <CarrierPanel carriers={live.carriers} />
-              <TankersPanel tankers={live.tankers} />
-              {(live.hot_zones ?? []).length > 0 && <HotZonesPanel zones={live.hot_zones!} />}
-              {(live.iads ?? []).length + (live.jammers ?? []).length > 0 && <AirDefencePanel iads={live.iads ?? []} jammers={live.jammers ?? []} />}
-              {(live.csar ?? []).length + (live.ship_decks ?? []).length > 0 && (
-                <HeloOpsPanel csar={live.csar ?? []} decks={live.ship_decks ?? []} now={live.server_time} />
-              )}
-              <StationsPanel stations={live.stations} />
-            </>
-          )}
-        </div>
+        ) : (
+          <LiveMap live={live} height="100%" selected={current} onSelect={pickFromMap} focus={focus} />
+        )}
       </div>
+      <LiveDock live={live} tab={live ? tab : 'feed'} setTab={setTab} selected={current} onSelect={pickFromDock} />
     </div>
   )
 }

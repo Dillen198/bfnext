@@ -4,8 +4,9 @@
 //! Result cards: an SVG per record, built as a string, rasterised to PNG with
 //! resvg for Discord.
 //!
-//! Dark theme matching a Discord embed (#2b2d31) so the PNG sits in the embed
-//! without a visible frame. Text uses Arial / Segoe UI from the system font
+//! Ink on paper, laid out as the forms the services use (see `forms.rs`:
+//! the LSO pass record, the range score sheet, and the form frame every
+//! other card sits in). Text uses Arial / Segoe UI from the system font
 //! database (the server is Windows); with no fonts at all resvg simply draws
 //! no text rather than failing.
 //!
@@ -18,20 +19,18 @@
 //!   timeline, stats
 //! * missile -- plan view of missile and target tracks, launch point, closest
 //!   approach, outcome
-//! * field landing -- the runway from above with the aim point and the
-//!   touchdown, then the approach numbers
+//! * field landing -- [`forms::field_form`]: the pattern, the final, the
+//!   touchdown, the rollout and the taxi
 //! * low level -- AGL and timing at every gate against the ceiling and the
 //!   plan
 //! * anything else (SEAD, hot zone, CSAR, helo drills ...) -- a generic card
 //!   with the record's key fields
 
-use super::discord;
+use super::{discord, forms};
 use anyhow::{anyhow, Result};
 use bfprotocols::range::{
-    lso, AarResult, BombQuality, BombResult, FieldLandingOutcome, FieldLandingResult,
-    GrooveSample, LowLevelResult, MissileOutcome, MissileResult, PrecisionQuality, RangeRecord,
+    AarResult, BombQuality, LowLevelResult, MissileOutcome, MissileResult, PrecisionQuality, RangeRecord,
     RangeResult, RefuelMethod, RelSample, StrafeQuality, StrafeResult, Track, TrackPt,
-    TrapResult,
 };
 use resvg::{tiny_skia, usvg, usvg::fontdb};
 use std::{
@@ -41,18 +40,19 @@ use std::{
 
 // ── palette ────────────────────────────────────────────────────────────
 
-const BG: &str = "#2b2d31";
-const PANEL: &str = "#1e1f22";
-const GRID: &str = "#3f4147";
-const TEXT: &str = "#f2f3f5";
-const MUTED: &str = "#b5bac1";
-const GREEN: &str = "#57f287";
-const YELLOW: &str = "#fee75c";
-const RED: &str = "#ed4245";
-const ORANGE: &str = "#f0a04b";
-const BLUE: &str = "#5da9ff";
-const SAND: &str = "#c8ad7f";
-const SHIP: &str = "#6d717a";
+pub(crate) const BG: &str = "#f4f1e8";
+pub(crate) const PANEL: &str = "#ebe6d6";
+pub(crate) const GRID: &str = "#cfc8b4";
+pub(crate) const TEXT: &str = "#15191e";
+pub(crate) const MUTED: &str = "#5d6369";
+pub(crate) const GREEN: &str = "#1d7a3e";
+pub(crate) const YELLOW: &str = "#a87f00";
+pub(crate) const RED: &str = "#b42318";
+pub(crate) const ORANGE: &str = "#c05a00";
+pub(crate) const BLUE: &str = "#1f5fa6";
+pub(crate) const SAND: &str = "#a8894a";
+/// blueprint ink, for the technical drawings
+pub(crate) const INK: &str = "#1b3a5c";
 const FONT: &str = "Arial, 'Segoe UI', Helvetica, sans-serif";
 
 const FT: f64 = 3.28084;
@@ -92,7 +92,7 @@ pub(crate) fn png(svg: &str) -> Result<Vec<u8>> {
 
 // ── svg builder ────────────────────────────────────────────────────────
 
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -109,7 +109,7 @@ fn esc(s: &str) -> String {
 }
 
 /// Finite or zero: an NaN in a coordinate makes the whole SVG unparsable.
-fn n(x: f64) -> f64 {
+pub(crate) fn n(x: f64) -> f64 {
     if x.is_finite() {
         x
     } else {
@@ -117,7 +117,7 @@ fn n(x: f64) -> f64 {
     }
 }
 
-fn trunc(s: &str, max: usize) -> String {
+pub(crate) fn trunc(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
@@ -127,34 +127,42 @@ fn trunc(s: &str, max: usize) -> String {
     }
 }
 
-struct Svg {
-    w: f64,
-    h: f64,
-    b: String,
+pub(crate) struct Svg {
+    pub(crate) w: f64,
+    pub(crate) h: f64,
+    pub(crate) b: String,
+    /// where the body starts, after the opening tag and the background
+    start: usize,
 }
 
 #[derive(Clone, Copy)]
-enum Anchor {
+pub(crate) enum Anchor {
     Start,
     Middle,
     End,
 }
 
 impl Svg {
-    fn new(w: f64, h: f64) -> Self {
+    pub(crate) fn new(w: f64, h: f64) -> Self {
         let mut b = String::with_capacity(16 * 1024);
         let _ = write!(
             b,
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}" font-family="{FONT}"><rect width="{w}" height="{h}" fill="{BG}"/>"#
         );
-        Self { w, h, b }
+        let start = b.len();
+        Self { w, h, b, start }
     }
 
-    fn raw(&mut self, s: &str) {
+    /// Everything drawn so far, without the opening tag and the background.
+    pub(crate) fn inner(&self) -> &str {
+        &self.b[self.start..]
+    }
+
+    pub(crate) fn raw(&mut self, s: &str) {
         self.b.push_str(s);
     }
 
-    fn clip(&mut self, id: &str, x: f64, y: f64, w: f64, h: f64) {
+    pub(crate) fn clip(&mut self, id: &str, x: f64, y: f64, w: f64, h: f64) {
         let _ = write!(
             self.b,
             r#"<clipPath id="{id}"><rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"/></clipPath>"#,
@@ -165,7 +173,7 @@ impl Svg {
         );
     }
 
-    fn rect(&mut self, x: f64, y: f64, w: f64, h: f64, fill: &str, stroke: Option<(&str, f64)>, rx: f64) {
+    pub(crate) fn rect(&mut self, x: f64, y: f64, w: f64, h: f64, fill: &str, stroke: Option<(&str, f64)>, rx: f64) {
         let st = stroke
             .map(|(c, w)| format!(r#" stroke="{c}" stroke-width="{w}""#))
             .unwrap_or_default();
@@ -179,7 +187,7 @@ impl Svg {
         );
     }
 
-    fn line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, stroke: &str, w: f64, dash: Option<&str>) {
+    pub(crate) fn line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, stroke: &str, w: f64, dash: Option<&str>) {
         let d = dash.map(|d| format!(r#" stroke-dasharray="{d}""#)).unwrap_or_default();
         let _ = write!(
             self.b,
@@ -191,7 +199,7 @@ impl Svg {
         );
     }
 
-    fn polyline(&mut self, pts: &[(f64, f64)], stroke: &str, w: f64, dash: Option<&str>, clip: Option<&str>) {
+    pub(crate) fn polyline(&mut self, pts: &[(f64, f64)], stroke: &str, w: f64, dash: Option<&str>, clip: Option<&str>) {
         if pts.len() < 2 {
             return;
         }
@@ -208,7 +216,7 @@ impl Svg {
         );
     }
 
-    fn polygon(&mut self, pts: &[(f64, f64)], fill: &str, stroke: Option<(&str, f64)>, clip: Option<&str>) {
+    pub(crate) fn polygon(&mut self, pts: &[(f64, f64)], fill: &str, stroke: Option<(&str, f64)>, clip: Option<&str>) {
         let mut p = String::new();
         for (x, y) in pts {
             let _ = write!(p, "{:.1},{:.1} ", n(*x), n(*y));
@@ -220,7 +228,7 @@ impl Svg {
         let _ = write!(self.b, r#"<polygon points="{}" fill="{fill}"{st}{c}/>"#, p.trim_end());
     }
 
-    fn circle(&mut self, cx: f64, cy: f64, r: f64, fill: &str, stroke: Option<(&str, f64)>, dash: Option<&str>) {
+    pub(crate) fn circle(&mut self, cx: f64, cy: f64, r: f64, fill: &str, stroke: Option<(&str, f64)>, dash: Option<&str>) {
         let st = stroke
             .map(|(c, w)| format!(r#" stroke="{c}" stroke-width="{w}""#))
             .unwrap_or_default();
@@ -234,7 +242,7 @@ impl Svg {
         );
     }
 
-    fn text(&mut self, x: f64, y: f64, s: &str, size: f64, fill: &str, anchor: Anchor, bold: bool) {
+    pub(crate) fn text(&mut self, x: f64, y: f64, s: &str, size: f64, fill: &str, anchor: Anchor, bold: bool) {
         let a = match anchor {
             Anchor::Start => "start",
             Anchor::Middle => "middle",
@@ -251,7 +259,7 @@ impl Svg {
     }
 
     /// An arrow from (x1,y1) to (x2,y2) with a head at the end.
-    fn arrow(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, stroke: &str, w: f64) {
+    pub(crate) fn arrow(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, stroke: &str, w: f64) {
         self.line(x1, y1, x2, y2, stroke, w, None);
         let a = (y2 - y1).atan2(x2 - x1);
         let hl = 6. + w * 2.;
@@ -260,7 +268,7 @@ impl Svg {
         self.polygon(&[(x2, y2), p1, p2], stroke, None, None);
     }
 
-    fn finish(mut self) -> String {
+    pub(crate) fn finish(mut self) -> String {
         self.b.push_str("</svg>");
         self.b
     }
@@ -268,20 +276,8 @@ impl Svg {
 
 // ── shared bits ────────────────────────────────────────────────────────
 
-fn footer(s: &mut Svg, rec: &RangeRecord) {
-    let y = s.h - 16.;
-    let left = if rec.theatre.is_empty() && rec.mission_date.is_empty() {
-        "Vector Strike Range".to_string()
-    } else {
-        format!("{}: {} ({})", rec.theatre, rec.mission_date, rec.mission_time)
-    };
-    s.text(24., y, &left, 13., MUTED, Anchor::Start, false);
-    let right = rec.ts.format("%Y-%m-%d %H:%M:%SZ").to_string();
-    let w = s.w;
-    s.text(w - 24., y, &right, 13., MUTED, Anchor::End, false);
-}
 
-fn bomb_color(q: BombQuality) -> &'static str {
+pub(crate) fn bomb_color(q: BombQuality) -> &'static str {
     match q {
         BombQuality::Shack | BombQuality::Excellent => GREEN,
         BombQuality::Good => YELLOW,
@@ -299,7 +295,7 @@ fn strafe_color(q: StrafeQuality) -> &'static str {
     }
 }
 
-fn precision_color(q: PrecisionQuality) -> &'static str {
+pub(crate) fn precision_color(q: PrecisionQuality) -> &'static str {
     match q {
         PrecisionQuality::Perfect | PrecisionQuality::Excellent => GREEN,
         PrecisionQuality::Good => YELLOW,
@@ -308,7 +304,7 @@ fn precision_color(q: PrecisionQuality) -> &'static str {
     }
 }
 
-fn tier_color(tier: &str) -> &'static str {
+pub(crate) fn tier_color(tier: &str) -> &'static str {
     match tier {
         "easy" => GREEN,
         "medium" => YELLOW,
@@ -365,7 +361,7 @@ fn nice_step(span: f64, ticks: f64) -> f64 {
 }
 
 /// Local flat-earth east/north metres of `p` from `o`.
-fn en(o: (f64, f64), p: (f64, f64)) -> (f64, f64) {
+pub(crate) fn en(o: (f64, f64), p: (f64, f64)) -> (f64, f64) {
     let r = 6371008.8;
     let lat = ((o.0 + p.0) / 2.).to_radians();
     ((p.1 - o.1).to_radians() * r * lat.cos(), (p.0 - o.0).to_radians() * r)
@@ -376,14 +372,14 @@ fn en(o: (f64, f64), p: (f64, f64)) -> (f64, f64) {
 /// The card for a record (its `track` should be attached when it has one).
 pub(crate) fn render_svg(rec: &RangeRecord) -> String {
     match &rec.result {
-        RangeResult::Trap(t) => trap_card(rec, t),
-        RangeResult::Bomb(b) => bomb_card(rec, b),
-        RangeResult::Strafe(s) => strafe_card(rec, s),
-        RangeResult::Aar(a) => aar_card(rec, a),
-        RangeResult::Missile(m) => missile_card(rec, m),
-        RangeResult::FieldLanding(f) => field_landing_card(rec, f),
-        RangeResult::LowLevel(l) => low_level_card(rec, l),
-        _ => generic_card(rec),
+        RangeResult::Trap(t) => forms::trap_form(rec, t),
+        RangeResult::Bomb(b) => forms::bomb_form(rec, b),
+        RangeResult::Strafe(s) => forms::frame(strafe_card(rec, s), rec, "GUNNERY SCORE SHEET", "VSR FORM 13-214 (REV 10-26)"),
+        RangeResult::Aar(a) => forms::frame(aar_card(rec, a), rec, "AIR REFUELING RECORD", "VSR FORM 3710/9 (REV 10-26)"),
+        RangeResult::Missile(m) => forms::frame(missile_card(rec, m), rec, "MISSILE DEFENSE ENGAGEMENT RECORD", "VSR FORM 11-2 (REV 10-26)"),
+        RangeResult::FieldLanding(f) => forms::field_form(rec, f),
+        RangeResult::LowLevel(l) => forms::frame(low_level_card(rec, l), rec, "LOW-LEVEL ROUTE RECORD", "VSR FORM 11-202 (REV 10-26)"),
+        _ => forms::frame(generic_card(rec), rec, "TRAINING EVENT RECORD", "VSR FORM 11-1 (REV 10-26)"),
     }
 }
 
@@ -397,393 +393,9 @@ pub(crate) fn unknown_svg(pilot: &str, unit_type: &str, kind: &str, ts: &str) ->
     s.finish()
 }
 
-// ── trap ───────────────────────────────────────────────────────────────
-
-fn trap_card(rec: &RangeRecord, t: &TrapResult) -> String {
-    const W: f64 = 900.;
-    const H: f64 = 930.;
-    const PX: f64 = 60.;
-    const PW: f64 = 800.;
-    const X_MIN: f64 = -300.;
-    const X_MAX: f64 = 2000.;
-    const GS: f64 = 3.5;
-    let mut s = Svg::new(W, H);
-    let samples: Vec<GrooveSample> = match &rec.track {
-        Some(Track::Groove { samples }) => samples.clone(),
-        _ => vec![],
-    };
-    // header
-    let gc = grade_color(&t.grade);
-    s.text(24., 40., &format!("LSO GRADE: {}  =>  {}", t.grade, lso::grade_name(&t.grade)), 26., gc, Anchor::Start, true);
-    s.text(
-        24.,
-        68.,
-        &format!(
-            "{} | {} | {} | CASE {} | {} | {}",
-            rec.pilot.name,
-            discord::short_airframe(&rec.unit_type),
-            t.carrier,
-            t.case,
-            if t.night { "Night" } else { "Day" },
-            t.outcome.label()
-        ),
-        16.,
-        TEXT,
-        Anchor::Start,
-        false,
-    );
-    let comment = if t.lso_comment.is_empty() { "-".to_string() } else { t.lso_comment.clone() };
-    s.text(24., 94., &trunc(&format!("LSO: {comment}"), 90), 15., MUTED, Anchor::Start, false);
-    let pts = t.points.map(|p| format!("{p:.1} PTS")).unwrap_or_else(|| "NO COUNT".into());
-    s.text(W - 24., 40., &pts, 24., gc, Anchor::End, true);
-    let mut bits = vec![];
-    if let Some(w) = t.wire {
-        bits.push(format!("Wire #{w}"));
-    }
-    if let Some(g) = t.groove_time_s {
-        bits.push(format!("Groove {g:.1}s"));
-    }
-    if let Some(w) = t.wind_over_deck_kts {
-        bits.push(format!("WOD {w:.0} kts"));
-    }
-    s.text(W - 24., 68., &bits.join("  ·  "), 15., TEXT, Anchor::End, false);
-
-    let sx = PW / (X_MAX - X_MIN);
-    let px = |x_m: f64| PX + (x_m - X_MIN) * sx;
-
-    // ── side view: glideslope ──
-    let (sy0, sh) = (130., 270.);
-    let max_alt = samples
-        .iter()
-        .filter(|p| p.x_m >= X_MIN && p.x_m <= X_MAX)
-        .map(|p| p.alt_ft)
-        .fold(0., f64::max);
-    let alt_max = nice_ceil((max_alt * 1.1).clamp(500., 1500.));
-    let ay = |alt: f64| sy0 + sh - alt / alt_max * sh;
-    s.text(PX, sy0 - 10., "GLIDESLOPE (side view)", 13., MUTED, Anchor::Start, true);
-    s.clip("side", PX, sy0, PW, sh);
-    s.rect(PX, sy0, PW, sh, PANEL, None, 4.);
-    let step = nice_step(alt_max, 5.);
-    let mut a = step;
-    while a < alt_max {
-        s.line(PX, ay(a), PX + PW, ay(a), GRID, 1., None);
-        s.text(PX - 6., ay(a) + 4., &format!("{a:.0}"), 11., MUTED, Anchor::End, false);
-        a += step;
-    }
-    s.text(PX - 6., sy0 + 12., "ft", 11., MUTED, Anchor::End, false);
-    for (q, lbl) in [(0.25, "1/4 NM"), (0.5, "1/2 NM"), (0.75, "3/4 NM"), (1., "1 NM")] {
-        let x = px(q * NM);
-        s.line(x, sy0, x, sy0 + sh, GRID, 1., Some("2 4"));
-        s.text(x, sy0 + sh + 16., lbl, 11., MUTED, Anchor::Middle, false);
-    }
-    // glideslope and its bands
-    let gs_line = |s: &mut Svg, deg: f64, col: &str, dash: Option<&str>, w: f64| {
-        let x1 = X_MAX;
-        let alt1 = x1 * deg.to_radians().tan() * FT;
-        let _ = write!(
-            s.b,
-            r#"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="{col}" stroke-width="{w}"{} clip-path="url(#side)"/>"#,
-            px(0.),
-            ay(0.),
-            px(x1),
-            ay(alt1),
-            dash.map(|d| format!(r#" stroke-dasharray="{d}""#)).unwrap_or_default()
-        );
-    };
-    for (d, col) in [(1.5, RED), (0.8, YELLOW), (0.4, GREEN)] {
-        gs_line(&mut s, GS + d, col, Some("3 5"), 1.5);
-        gs_line(&mut s, GS - d, col, Some("3 5"), 1.5);
-    }
-    gs_line(&mut s, GS, GREEN, None, 1.2);
-    // deck
-    s.line(px(X_MIN), ay(0.), px(50.), ay(0.), SHIP, 5., None);
-    let prof: Vec<(f64, f64)> = samples
-        .iter()
-        .filter(|p| p.x_m >= X_MIN - 50. && p.x_m <= X_MAX + 200.)
-        .map(|p| (px(p.x_m), ay(p.alt_ft.max(-50.))))
-        .collect();
-    s.polyline(&prof, TEXT, 2.2, None, Some("side"));
-
-    // ── top view: lineup ──
-    let (ty0, th) = (450., 360.);
-    let y_half = 300.;
-    let tsy = (th / 2.) / y_half;
-    let tyc = ty0 + th / 2.;
-    let py = |y_m: f64| tyc - y_m * tsy;
-    s.text(PX, ty0 - 10., "LINEUP (top view)", 13., MUTED, Anchor::Start, true);
-    s.clip("top", PX, ty0, PW, th);
-    s.rect(PX, ty0, PW, th, PANEL, None, 4.);
-    // ship: the flight deck laid along the ship's heading, 9 deg right of
-    // the landing area. Hull coordinates (a forward from the stern, b to
-    // starboard); the angled-deck sponson sticks out to port, over the
-    // landing strip.
-    let ang = 9f64.to_radians();
-    let fwd = (-ang.cos(), ang.sin());
-    let right = (ang.sin(), ang.cos());
-    let stern = (60., 12.);
-    let hull = |a: f64, b: f64| {
-        let x = stern.0 + a * fwd.0 + b * right.0;
-        let y = stern.1 + a * fwd.1 + b * right.1;
-        (px(x), py(y))
-    };
-    let hull_pts: Vec<(f64, f64)> = [
-        (0., -18.),
-        (0., 22.),
-        (40., 38.),
-        (230., 40.),
-        (290., 26.),
-        (330., 8.),
-        (330., -6.),
-        (250., -22.),
-        (170., -44.),
-        (60., -44.),
-        (20., -30.),
-    ]
-    .iter()
-    .map(|(a, b)| hull(*a, *b))
-    .collect();
-    s.polygon(&hull_pts, SHIP, Some(("#8a8f98", 1.)), Some("top"));
-    s.polygon(
-        &[(px(-230.), py(12.)), (px(55.), py(12.)), (px(55.), py(-12.)), (px(-230.), py(-12.))],
-        "#8a8f98",
-        None,
-        Some("top"),
-    );
-    // centreline, wake, wedges
-    s.line(px(-230.), tyc, px(X_MAX), tyc, "#9aa0a6", 1., Some("6 6"));
-    let wake_end = X_MAX;
-    s.raw(r#"<g clip-path="url(#top)">"#);
-    s.line(px(60.), py(-60. * ang.tan()), px(wake_end), py(-wake_end * ang.tan()), "#4a4e55", 4., None);
-    s.raw("</g>");
-    s.text(px(X_MAX * 0.97), py(-X_MAX * 0.97 * ang.tan()) - 8., "wake", 11., MUTED, Anchor::End, false);
-    for (d, col) in [(3., RED), (1., YELLOW), (0.5, GREEN)] {
-        let y = X_MAX * f64::to_radians(d).tan();
-        for sign in [1., -1.] {
-            let _ = write!(
-                s.b,
-                r#"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="{col}" stroke-width="1.5" stroke-dasharray="3 5" clip-path="url(#top)"/>"#,
-                px(0.),
-                tyc,
-                px(X_MAX),
-                py(sign * y)
-            );
-        }
-    }
-    // distance arcs (right halves of ellipses: the axes are scaled differently)
-    for (q, lbl) in [(0.25, "1/4 NM"), (0.5, "1/2 NM"), (0.75, "3/4 NM"), (1., "1 NM")] {
-        let r = q * NM;
-        let (rx, ry) = (r * sx, r * tsy);
-        let cx = px(0.);
-        let _ = write!(
-            s.b,
-            r#"<path d="M {:.1} {:.1} A {:.1} {:.1} 0 0 1 {:.1} {:.1}" fill="none" stroke="{GRID}" stroke-width="1.2" stroke-dasharray="2 4" clip-path="url(#top)"/>"#,
-            cx,
-            tyc - ry,
-            rx,
-            ry,
-            cx,
-            tyc + ry
-        );
-        let top = ty0 + 16.;
-        let dy = tyc - top;
-        let (lx, ly) = if dy < ry {
-            (cx + rx * (1. - (dy / ry).powi(2)).sqrt() + 4., top)
-        } else {
-            (cx + 4., tyc - ry - 4.)
-        };
-        s.text(lx, ly, lbl, 11., MUTED, Anchor::Start, false);
-    }
-    // the pilot's ground track
-    let track: Vec<(f64, f64)> = samples
-        .iter()
-        .filter(|p| p.x_m >= X_MIN - 100. && p.x_m <= X_MAX + 1000.)
-        .map(|p| (px(p.x_m), py(p.y_m.clamp(-5000., 5000.))))
-        .collect();
-    s.polyline(&track, TEXT, 2.2, None, Some("top"));
-    // wake crossing: where y + x tan(9 deg) changes sign, aft of the ship
-    let wake = |p: &GrooveSample| p.y_m + p.x_m * ang.tan();
-    let mut cross = None;
-    for w in samples.windows(2) {
-        let (a, b) = (&w[0], &w[1]);
-        if a.x_m > 60. && b.x_m > 60. && wake(a).signum() != wake(b).signum() {
-            let f = wake(a) / (wake(a) - wake(b));
-            cross = Some((
-                a.x_m + f * (b.x_m - a.x_m),
-                a.y_m + f * (b.y_m - a.y_m),
-                a.alt_ft + f * (b.alt_ft - a.alt_ft),
-            ));
-        }
-    }
-    if let Some(alt) = t.pattern.wake_alt_ft.or(cross.map(|c| c.2)) {
-        let (cx, cy) = match cross {
-            Some((x, y, _)) => (px(x.min(X_MAX)), py(y.clamp(-y_half, y_half))),
-            None => (px(X_MAX * 0.8), py(-X_MAX * 0.8 * ang.tan())),
-        };
-        s.circle(cx, cy, 5., YELLOW, None, None);
-        let bx = if cx + 160. > PX + PW { cx - 156. } else { cx + 16. };
-        let by = if cy + 50. > ty0 + th { cy - 44. } else { cy + 18. };
-        let (bx, by) = (bx.clamp(PX + 4., PX + PW - 144.), by.clamp(ty0 + 4., ty0 + th - 30.));
-        s.line(cx, cy, bx + 70., by + 13., YELLOW, 1., None);
-        s.rect(bx, by, 140., 26., PANEL, Some((YELLOW, 1.5)), 4.);
-        s.text(bx + 70., by + 18., &format!("Wake Alt: {alt:.0}ft"), 13., YELLOW, Anchor::Middle, true);
-    }
-    if samples.is_empty() {
-        s.text(W / 2., sy0 + sh / 2., "no groove track recorded", 16., MUTED, Anchor::Middle, false);
-        s.text(W / 2., tyc, "no groove track recorded", 16., MUTED, Anchor::Middle, false);
-    }
-    // legend + decoded calls
-    let ly = ty0 + th + 26.;
-    let mut x = PX;
-    for (col, lbl) in [(GREEN, "±0.4° / ±0.5°"), (YELLOW, "±0.8° / ±1°"), (RED, "±1.5° / ±3°")] {
-        s.line(x, ly - 4., x + 24., ly - 4., col, 2., Some("3 4"));
-        s.text(x + 30., ly, lbl, 12., MUTED, Anchor::Start, false);
-        x += 150.;
-    }
-    let desc = if t.lso_description.is_empty() {
-        lso::describe(&t.lso_comment)
-    } else {
-        t.lso_description.clone()
-    };
-    let mut lines: Vec<String> = vec![String::new()];
-    for d in &desc {
-        let cur = lines.last_mut().unwrap();
-        if !cur.is_empty() && cur.chars().count() + d.chars().count() + 2 > 105 {
-            lines.push(d.clone());
-        } else {
-            if !cur.is_empty() {
-                cur.push_str(", ");
-            }
-            cur.push_str(d);
-        }
-    }
-    for (i, l) in lines.iter().take(2).enumerate() {
-        s.text(PX, ly + 24. + i as f64 * 17., &trunc(l, 110), 13., TEXT, Anchor::Start, false);
-    }
-    footer(&mut s, rec);
-    s.finish()
-}
-
-// ── bomb ───────────────────────────────────────────────────────────────
-
-fn bomb_card(rec: &RangeRecord, b: &BombResult) -> String {
-    const W: f64 = 800.;
-    const H: f64 = 900.;
-    const PX: f64 = 50.;
-    const PY: f64 = 96.;
-    const PS: f64 = 700.;
-    let mut s = Svg::new(W, H);
-    s.text(24., 40., &format!("Bombing result of {}", rec.pilot.name), 26., TEXT, Anchor::Start, true);
-    s.text(24., 70., &format!("{}: {}", b.range, b.target), 16., MUTED, Anchor::Start, false);
-    if let Some(t) = &b.tier {
-        let c = tier_color(t);
-        s.rect(W - 144., 20., 120., 28., PANEL, Some((c, 1.5)), 4.);
-        s.text(W - 84., 40., &format!("TIER: {}", t.to_uppercase()), 14., c, Anchor::Middle, true);
-    }
-    if let Some(j) = &b.gps_denied {
-        s.text(W - 24., 72., &trunc(&format!("GPS DENIED · {j}"), 34), 14., ORANGE, Anchor::End, true);
-    }
-
-    let ring_max = b.rings_m.iter().cloned().fold(0., f64::max);
-    let ext = nice_ceil((ring_max * 1.15).max(b.miss_m * 1.25).max(30.));
-    let sc = (PS / 2.) / ext;
-    let (cx, cy) = (PX + PS / 2., PY + PS / 2.);
-    let to = |e: f64, nn: f64| (cx + e * sc, cy - nn * sc);
-    s.clip("plot", PX, PY, PS, PS);
-    s.rect(PX, PY, PS, PS, PANEL, None, 4.);
-    let step = nice_step(2. * ext, 8.);
-    let mut g = -((ext / step).floor()) * step;
-    while g <= ext + 1e-9 {
-        let (x, _) = to(g, 0.);
-        let (_, y) = to(0., g);
-        s.line(x, PY, x, PY + PS, GRID, 1., None);
-        s.line(PX, y, PX + PS, y, GRID, 1., None);
-        s.text(x, PY + PS + 16., &format!("{g:.0}"), 11., MUTED, Anchor::Middle, false);
-        s.text(PX - 6., y + 4., &format!("{g:.0}"), 11., MUTED, Anchor::End, false);
-        g += step;
-    }
-    s.text(PX + PS, PY + PS + 32., "east, m", 11., MUTED, Anchor::End, false);
-    s.text(PX, PY - 6., "north, m", 11., MUTED, Anchor::Start, false);
-    // target and rings
-    let tr = (ext * 0.03).max(3.) * sc;
-    s.circle(cx, cy, tr.max(6.), SAND, Some(("#8f7a52", 1.5)), None);
-    for r in &b.rings_m {
-        if *r <= 0. {
-            continue;
-        }
-        s.circle(cx, cy, r * sc, "none", Some((MUTED, 1.2)), Some("3 5"));
-        let a = 40f64.to_radians();
-        let lbl = if r.fract().abs() > 1e-6 { format!("{r:.1} m") } else { format!("{r:.0} m") };
-        s.text(cx + r * sc * a.cos() + 3., cy - r * sc * a.sin() - 3., &lbl, 11., MUTED, Anchor::Start, false);
-    }
-    // aircraft box, placed back along the attack heading
-    let hdg = b.release.heading_deg.to_radians();
-    let back = (-hdg.sin(), hdg.cos()); // screen dx, dy of "behind the target"
-    let (bw, bh) = (170., 86.);
-    let ax = (cx + back.0 * PS * 0.36 - bw / 2.).clamp(PX + 8., PX + PS - bw - 8.);
-    let ay = (cy + back.1 * PS * 0.36 - bh / 2.).clamp(PY + 8., PY + PS - bh - 8.);
-    let (acx, acy) = (ax + bw / 2., ay + bh / 2.);
-    let (dx, dy) = (cx - acx, cy - acy);
-    let dl = dx.hypot(dy).max(1.);
-    let start = (acx + dx / dl * (bh / 2. + 8.), acy + dy / dl * (bh / 2. + 8.));
-    let end = (cx - dx / dl * 28., cy - dy / dl * 28.);
-    if dl > 90. {
-        s.arrow(start.0, start.1, end.0, end.1, GREEN, 2.);
-    }
-    s.rect(ax, ay, bw, bh, PANEL, Some((GREEN, 2.)), 4.);
-    let alt_ft = if b.release.pos.alt_m != 0. { b.release.pos.alt_m } else { b.release.alt_agl_m } * FT;
-    s.text(ax + 10., ay + 20., &trunc(&rec.unit_type, 20), 14., GREEN, Anchor::Start, true);
-    s.text(ax + 10., ay + 39., &format!("h={alt_ft:.0} ft"), 13., TEXT, Anchor::Start, false);
-    s.text(ax + 10., ay + 57., &format!("v={:.0} kts", b.release.tas_kts), 13., TEXT, Anchor::Start, false);
-    s.text(ax + 10., ay + 75., &format!("ψ={:.0}°", b.release.heading_deg.rem_euclid(360.)), 13., TEXT, Anchor::Start, false);
-    // impact and its box
-    let (ix, iy) = to(b.impact_east_m, b.impact_north_m);
-    let (ox, oy) = (ix - cx, iy - cy);
-    let ol = ox.hypot(oy);
-    let dir = if ol > 1. { (ox / ol, oy / ol) } else { (0.7, -0.7) };
-    let (qw, qh) = (180., 90.);
-    let bx = (ix + dir.0 * 70. - qw / 2.).clamp(PX + 8., PX + PS - qw - 8.);
-    let mut by = (iy + dir.1 * 70. - qh / 2.).clamp(PY + 8., PY + PS - qh - 8.);
-    // keep the two boxes apart
-    if bx < ax + bw && bx + qw > ax && by < ay + bh && by + qh > ay {
-        by = if ay > PY + PS / 2. { (ay - qh - 10.).max(PY + 8.) } else { (ay + bh + 10.).min(PY + PS - qh - 8.) };
-    }
-    let qc = bomb_color(b.quality);
-    s.line(ix, iy, bx + qw / 2., by + qh / 2., RED, 1.5, None);
-    s.rect(bx, by, qw, qh, PANEL, Some((RED, 2.)), 4.);
-    let wpn = if b.weapon_display.is_empty() { &b.weapon } else { &b.weapon_display };
-    s.text(bx + 10., by + 20., &trunc(wpn, 20), 14., TEXT, Anchor::Start, true);
-    s.text(bx + 10., by + 39., &format!("r={:.1} m", b.miss_m), 13., TEXT, Anchor::Start, false);
-    s.text(bx + 10., by + 57., &format!("φ={:.1}°", b.radial_deg.rem_euclid(360.)), 13., TEXT, Anchor::Start, false);
-    s.text(bx + 10., by + 76., b.quality.label(), 14., qc, Anchor::Start, true);
-    s.circle(ix, iy, 6., RED, Some(("#ffffff", 1.5)), None);
-    // compass: north plus the attack heading
-    let (kx, ky, kr) = (PX + PS - 44., PY + 44., 30.);
-    s.circle(kx, ky, kr, BG, Some((GRID, 1.5)), None);
-    s.arrow(kx, ky + kr * 0.6, kx, ky - kr * 0.85, TEXT, 2.);
-    s.text(kx, ky - kr - 6., "N", 13., TEXT, Anchor::Middle, true);
-    let (hx, hy) = (hdg.sin(), -hdg.cos());
-    s.arrow(kx - hx * kr * 0.6, ky - hy * kr * 0.6, kx + hx * kr * 0.85, ky + hy * kr * 0.85, GREEN, 2.);
-    // stats line
-    let class = format!("{:?}", b.weapon_class).to_lowercase();
-    s.text(
-        24.,
-        PY + PS + 58.,
-        &format!(
-            "{} o'clock  ·  long {:+.0} m  ·  cross {:+.0} m  ·  dive {:.0}°  ·  AGL {:.0} ft  ·  ToF {:.1} s  ·  {class}",
-            b.clock, b.long_m, b.cross_m, b.release.dive_deg, b.release.alt_agl_m * FT, b.time_of_flight_s
-        ),
-        13.,
-        TEXT,
-        Anchor::Start,
-        false,
-    );
-    footer(&mut s, rec);
-    s.finish()
-}
-
 // ── strafe ─────────────────────────────────────────────────────────────
 
-fn strafe_card(rec: &RangeRecord, st: &StrafeResult) -> String {
+fn strafe_card(rec: &RangeRecord, st: &StrafeResult) -> Svg {
     const W: f64 = 800.;
     const H: f64 = 600.;
     let mut s = Svg::new(W, H);
@@ -841,13 +453,12 @@ fn strafe_card(rec: &RangeRecord, st: &StrafeResult) -> String {
     if let Some(r) = &st.invalid_reason {
         row(&mut s, "Invalid", trunc(r, 28), RED);
     }
-    footer(&mut s, rec);
-    s.finish()
+    s
 }
 
 // ── AAR ────────────────────────────────────────────────────────────────
 
-fn aar_card(rec: &RangeRecord, a: &AarResult) -> String {
+fn aar_card(rec: &RangeRecord, a: &AarResult) -> Svg {
     const W: f64 = 900.;
     const H: f64 = 720.;
     let mut s = Svg::new(W, H);
@@ -985,13 +596,12 @@ fn aar_card(rec: &RangeRecord, a: &AarResult) -> String {
         s.text(60., y, &format!("• {}", trunc(c, 100)), 14., YELLOW, Anchor::Start, false);
         y += 22.;
     }
-    footer(&mut s, rec);
-    s.finish()
+    s
 }
 
 // ── missile ────────────────────────────────────────────────────────────
 
-fn missile_card(rec: &RangeRecord, m: &MissileResult) -> String {
+fn missile_card(rec: &RangeRecord, m: &MissileResult) -> Svg {
     const W: f64 = 800.;
     const H: f64 = 860.;
     let mut s = Svg::new(W, H);
@@ -1099,110 +709,12 @@ fn missile_card(rec: &RangeRecord, m: &MissileResult) -> String {
         s.text(x, y, k, 14., MUTED, Anchor::Start, false);
         s.text(x + 170., y, v, 14., TEXT, Anchor::Start, true);
     }
-    footer(&mut s, rec);
-    s.finish()
-}
-
-// ── field landing ──────────────────────────────────────────────────────
-
-fn field_landing_card(rec: &RangeRecord, fl: &FieldLandingResult) -> String {
-    const W: f64 = 900.;
-    const H: f64 = 640.;
-    let mut s = Svg::new(W, H);
-    let qc = if fl.outcome == FieldLandingOutcome::Undershoot { RED } else { precision_color(fl.quality) };
-    s.text(24., 40., &format!("Field landing of {}", rec.pilot.name), 26., TEXT, Anchor::Start, true);
-    s.text(
-        24.,
-        70.,
-        &format!("{} runway {}  ·  {}  ·  {}", fl.airfield, fl.runway, rec.unit_type, fl.outcome.label()),
-        16.,
-        MUTED,
-        Anchor::Start,
-        false,
-    );
-    s.text(W - 24., 44., fl.quality.label(), 28., qc, Anchor::End, true);
-
-    // top view: landing direction to the right, so right of centreline is
-    // down the page
-    let (px, py, pw, ph) = (40., 110., 820., 220.);
-    s.text(px, py - 10., "TOUCHDOWN (top view, lateral scale exaggerated)", 13., MUTED, Anchor::Start, true);
-    s.clip("rwy", px, py, pw, ph);
-    s.rect(px, py, pw, ph, PANEL, None, 4.);
-    let td = fl.touchdown_from_threshold_m;
-    let aim = td - fl.aim_error_m;
-    let lo = td.min(0.) - 250.;
-    let hi = (td.max(aim) + 500.).max(1500.);
-    let sx = pw / (hi - lo);
-    let x = |m: f64| px + (m - lo) * sx;
-    let half = (fl.centreline_m.abs() * 1.4).max(35.);
-    let sy = (ph / 2. - 18.) / half;
-    let cy = py + ph / 2.;
-    let y = |m: f64| cy + m * sy;
-    let _ = write!(s.b, r#"<g clip-path="url(#rwy)">"#);
-    // runway, 45 m wide
-    s.rect(x(0.), y(-22.5), x(hi + 1000.) - x(0.), 45. * sy, "#3a3d44", Some(("#8a8f98", 1.)), 0.);
-    s.line(x(0.), cy, x(hi + 1000.), cy, "#c9ccd1", 1.5, Some("14 10"));
-    // threshold bars
-    let mut b = -18.;
-    while b <= 18. {
-        s.line(x(0.) + 4., y(b), x(0.) + 30., y(b), "#e6e7ea", 3., None);
-        b += 6.;
-    }
-    // aim point markings
-    for side in [-1., 1.] {
-        s.rect(x(aim) - 12., y(side * 11.) - 4., 24., 8., "#e6e7ea", None, 1.);
-    }
-    s.raw("</g>");
-    s.text(x(0.) + 2., py + 16., "threshold", 11., MUTED, Anchor::Start, false);
-    s.text(x(aim), py + 16., &format!("aim point {aim:.0} m"), 11., MUTED, Anchor::Middle, false);
-    s.line(x(aim), py + 20., x(aim), py + ph - 4., MUTED, 1., Some("2 4"));
-    // approach arrow and the touchdown
-    let (tx, ty) = (x(td).clamp(px + 6., px + pw - 6.), y(fl.centreline_m).clamp(py + 6., py + ph - 6.));
-    s.arrow(px + 12., ty, (tx - 16.).max(px + 40.), ty, GREEN, 2.);
-    s.circle(tx, ty, 8., qc, Some(("#ffffff", 1.5)), None);
-    let lbl = format!(
-        "{:.0} m {}  ·  {:.1} m {}",
-        fl.aim_error_m.abs(),
-        if fl.aim_error_m >= 0. { "long" } else { "short" },
-        fl.centreline_m.abs(),
-        if fl.centreline_m >= 0. { "right" } else { "left" }
-    );
-    let (lx, anchor) = if tx > px + pw * 0.7 { (tx - 14., Anchor::End) } else { (tx + 14., Anchor::Start) };
-    let ly = if ty > cy { ty + 22. } else { ty - 14. };
-    s.text(lx, ly.clamp(py + 30., py + ph - 20.), &lbl, 14., qc, anchor, true);
-    // scale
-    let step = nice_step(hi - lo, 6.);
-    let mut g = (lo / step).ceil() * step;
-    while g <= hi {
-        let g0 = if g.abs() < 1e-6 { 0. } else { g };
-        s.text(x(g), py + ph + 16., &format!("{g0:.0}"), 11., MUTED, Anchor::Middle, false);
-        g += step;
-    }
-    s.text(px + pw, py + ph + 32., "metres past the threshold", 11., MUTED, Anchor::End, false);
-
-    let deg = |v: Option<f64>| v.map(|v| format!("{v:+.1}°")).unwrap_or_else(|| "-".into());
-    let rows: Vec<(String, String)> = vec![
-        ("Touchdown".into(), discord::from_threshold(td)),
-        ("Aim point".into(), discord::signed(fl.aim_error_m, "m", "long", "short")),
-        ("Centreline".into(), discord::signed(fl.centreline_m, "m", "right", "left")),
-        ("Sink rate".into(), format!("{:.0} fpm", fl.touchdown_fpm)),
-        ("Ground speed".into(), format!("{:.0} kts", fl.touchdown_gs_kts)),
-        ("Stable from 1 nm".into(), if fl.stable { "yes".into() } else { "NO".into() }),
-        ("Glideslope 1 / 0.5 nm".into(), format!("{} / {}", deg(fl.gs_error_1nm_deg), deg(fl.gs_error_half_nm_deg))),
-        ("Lineup 1 / 0.5 nm".into(), format!("{} / {}", deg(fl.lineup_1nm_deg), deg(fl.lineup_half_nm_deg))),
-    ];
-    let mut yy = rows2(&mut s, 40., 390., 430., 180., &rows) + 10.;
-    for c in fl.calls.iter().take(3) {
-        s.text(40., yy, &format!("• {}", trunc(c, 100)), 14., YELLOW, Anchor::Start, false);
-        yy += 22.;
-    }
-    footer(&mut s, rec);
-    s.finish()
+    s
 }
 
 // ── low level ──────────────────────────────────────────────────────────
 
-fn low_level_card(rec: &RangeRecord, l: &LowLevelResult) -> String {
+fn low_level_card(rec: &RangeRecord, l: &LowLevelResult) -> Svg {
     const W: f64 = 900.;
     const H: f64 = 730.;
     let mut s = Svg::new(W, H);
@@ -1300,13 +812,12 @@ fn low_level_card(rec: &RangeRecord, l: &LowLevelResult) -> String {
         s.text(40., yy, &format!("• {}", trunc(c, 100)), 14., YELLOW, Anchor::Start, false);
         yy += 20.;
     }
-    footer(&mut s, rec);
-    s.finish()
+    s
 }
 
 // ── generic ────────────────────────────────────────────────────────────
 
-fn generic_card(rec: &RangeRecord) -> String {
+fn generic_card(rec: &RangeRecord) -> Svg {
     let fields = discord::fields(rec);
     // short fields in two columns, long ones (calls, kill lists) full width
     let (short, long): (Vec<_>, Vec<_>) = fields.into_iter().partition(|(_, _, inline)| *inline);
@@ -1329,8 +840,7 @@ fn generic_card(rec: &RangeRecord) -> String {
         s.text(24., y, k, 14., MUTED, Anchor::Start, false);
         s.text(174., y, &trunc(&clean(v), 78), 14., TEXT, Anchor::Start, true);
     }
-    footer(&mut s, rec);
-    s.finish()
+    s
 }
 
 #[cfg(test)]
@@ -1338,6 +848,65 @@ pub(crate) mod tests {
     use super::*;
     use bfprotocols::range::*;
     use chrono::Utc;
+
+    /// An overhead, left-hand, to runway 31 at the fixture's threshold, then the rollout and a taxi.
+    pub(crate) fn field_track() -> Track {
+        let (lat0, lon0, elev, h) = (41.6283f64, 45.0347f64, 460., 315f64.to_radians());
+        let pt = |t: f64, along: f64, across: f64, agl_ft: f64, gs: f64| {
+            let nn = along * h.cos() - across * h.sin();
+            let e = along * h.sin() + across * h.cos();
+            TrackPt {
+                t,
+                lat: lat0 + (nn / 6371008.8).to_degrees(),
+                lon: lon0 + (e / (6371008.8 * lat0.to_radians().cos())).to_degrees(),
+                alt_m: elev + agl_ft / 3.28084,
+                speed_kts: gs,
+            }
+        };
+        let nm = 1852.;
+        let mut p = vec![];
+        let mut push = |a: f64, c: f64, ft: f64, gs: f64| p.push((a, c, ft, gs));
+        let mut a = -3. * nm;
+        while a < 900. {
+            push(a, 10., 1500., 300.);
+            a += 150.;
+        }
+        for k in 0..12 {
+            let th = (k as f64 + 0.5) / 12. * std::f64::consts::PI;
+            push(900. + th.sin() * 400., -(1. - th.cos()) * 1.2 * nm / 2., 1500. - k as f64 * 40., 250.);
+        }
+        let mut a = 900.;
+        while a > -1200. {
+            push(a, -1.2 * nm, 1000., 150.);
+            a -= 75.;
+        }
+        for k in 0..10 {
+            let th = (k as f64 + 0.5) / 10. * std::f64::consts::PI;
+            push(-1200. - th.sin() * 350., -1.2 * nm * th.cos().max(0.).max((1. - th / std::f64::consts::PI) * 0.6), 900. - k as f64 * 30., 140.);
+        }
+        let mut a = -0.6 * nm;
+        while a < 480. {
+            push(a, if a > 0. { -4.2 * a / 480. } else { 2. }, (-(a - 300.)).max(0.) * 0.0524 * 3.28084, 135.);
+            a += 60.;
+        }
+        let n = p.len() as f64;
+        let pattern: Vec<TrackPt> = p.iter().enumerate().map(|(i, q)| pt(i as f64 - n + 1., q.0, q.1, q.2, q.3)).collect();
+        // rollout, a turn off at 1580 m, a taxi with a stop, parked
+        let mut taxi = vec![];
+        let (mut t, mut along, mut gs) = (0., 480., 135.);
+        while gs > 25. {
+            taxi.push(pt(t, along, -4., 0., gs));
+            along += gs * 0.514;
+            gs -= 6.;
+            t += 1.;
+        }
+        for k in 0..60 {
+            let (c, g) = (-(k as f64) * 9. - 25., if (8..14).contains(&k) { 38. } else if (30..36).contains(&k) { 0. } else { 15. });
+            taxi.push(pt(t, along + if k > 40 { (k - 40) as f64 * 9. } else { 0. }, c.max(-380.), 0., g));
+            t += 1.;
+        }
+        Track::Path { paths: [("pattern".to_string(), pattern), ("taxi".to_string(), taxi)].into_iter().collect() }
+    }
 
     pub(crate) fn base(result: RangeResult, track: Option<Track>) -> RangeRecord {
         RangeRecord {
@@ -1449,7 +1018,7 @@ pub(crate) mod tests {
         )
     }
 
-    fn all_cards() -> Vec<RangeRecord> {
+    pub(crate) fn all_cards() -> Vec<RangeRecord> {
         let strafe = base(
             RangeResult::Strafe(StrafeResult {
                 station_id: "S".into(),
@@ -1631,13 +1200,42 @@ pub(crate) mod tests {
                 stable: true,
                 quality: PrecisionQuality::Good,
                 calls: vec!["A little high at 1 nm".into()],
-                touchdown_pos: GeoPt::default(),
-                runway_heading_deg: 95.,
-                threshold_pos: GeoPt::default(),
+                touchdown_pos: GeoPt { lat: 41.6283, lon: 45.0347, alt_m: 460. },
+                runway_heading_deg: 315.,
+                threshold_pos: GeoPt { lat: 41.6283, lon: 45.0347, alt_m: 460. },
                 aim_point_m: 300.,
                 runway_length_m: 2400.,
+                runway_width_m: 45.,
+                pattern: Some(FieldPattern {
+                    kind: "overhead".into(),
+                    side: Some("left".into()),
+                    initial_alt_ft: Some(1500.),
+                    break_alt_ft: Some(1480.),
+                    break_at_m: Some(900.),
+                    downwind_alt_ft: Some(1000.),
+                    abeam_nm: Some(1.2),
+                    abeam_alt_ft: Some(1000.),
+                    base_at_m: Some(-1200.),
+                    rollout_nm: Some(0.6),
+                    rollout_alt_ft: Some(330.),
+                    final_gs_kts: Some(135.),
+                    pattern_time_s: Some(150.),
+                    calls: vec![],
+                }),
+                taxi: Some(FieldTaxi {
+                    rollout_m: 1050.,
+                    rollout_s: 18.,
+                    runway_clear_s: Some(27.),
+                    exit_at_m: Some(1580.),
+                    taxi_time_s: 82.,
+                    taxi_distance_m: 640.,
+                    max_taxi_kts: 38.,
+                    stops: 1,
+                    end: "parked".into(),
+                    calls: vec!["fast taxi, 38 kt".into()],
+                }),
             }),
-            None,
+            Some(field_track()),
         );
         let short = base(
             RangeResult::FieldLanding(FieldLandingResult {
@@ -1661,6 +1259,9 @@ pub(crate) mod tests {
                 threshold_pos: GeoPt::default(),
                 aim_point_m: 300.,
                 runway_length_m: 2400.,
+                runway_width_m: 45.,
+                pattern: None,
+                taxi: None,
             }),
             None,
         );

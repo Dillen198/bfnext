@@ -79,6 +79,8 @@ const STATS_NAV: NavItem[] = [
   { to: '/pilots',      icon: Pilot,      label: 'PILOTS'    },
   { to: '/kills',       icon: KillFeed,   label: 'KILL FEED' },
   { to: '/replay',      icon: PlayCircle, label: 'REPLAY'    },
+  { to: '/rounds',      icon: Rankings,   label: 'ROUNDS'    },
+  { to: '/squadrons',   icon: Pilot,      label: 'SQUADRONS' },
 ]
 const PROFILE_NAV = (ucid: string): NavItem => ({ to: `/pilots?ucid=${ucid}`, icon: Pilot, label: 'MY PROFILE' })
 

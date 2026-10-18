@@ -14,7 +14,7 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-use super::{Db, ephemeral::DeployableIndex, group::{SpawnedGroup, SpawnedUnit}, objective::Objective};
+use super::{Db, ephemeral::DeployableIndex, group::{SpawnedGroup, SpawnedUnit}, logistics::FatCowStock, objective::Objective};
 use crate::{
     db::group::DeployKind,
     group, maybe, objective, objective_mut,
@@ -51,7 +51,7 @@ use dcso3::{
 };
 use enumflags2::BitFlags;
 use fxhash::{FxHashMap, FxHashSet};
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use serde_derive::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 use std::{cmp::max, fmt, sync::Arc};
@@ -347,6 +347,11 @@ pub struct C130Cargo {
     /// is spawned rather than when it deploys. `None` means it was free.
     #[serde(default)]
     pub charged: Option<f32>,
+    /// Set on the crates of a packed-up Fat Cow: what it had left. That set
+    /// was paid for when the Fat Cow was first built, so rebuilding it from
+    /// these crates is free and restores this stock instead of a fresh load.
+    #[serde(default)]
+    pub fat_cow_stock: Option<FatCowStock>,
 }
 
 impl C130Cargo {
@@ -385,6 +390,7 @@ impl C130Cargo {
             retry_after: None,
             waiting_on: None,
             charged: None,
+            fat_cow_stock: None,
         }
     }
 
@@ -423,6 +429,7 @@ impl C130Cargo {
             retry_after: None,
             waiting_on: None,
             charged: None,
+            fat_cow_stock: None,
         }
     }
 }
@@ -949,7 +956,7 @@ impl Db {
     /// and distance of the friendly objective that forbids unpacking at
     /// `centroid`, or `None` if it is clear. `origins` are the objectives the
     /// crates came from (they also count for logistics deployables).
-    fn unpack_too_close(
+    pub(super) fn unpack_too_close(
         &self,
         side: Side,
         centroid: Vector2,
@@ -3369,6 +3376,25 @@ impl Db {
         origin: ObjectiveId,
         auto_unpack: bool,
     ) -> Result<String> {
+        self.spawn_c130_crate_inner(lua, idx, slot, crate_name.clone(), side, origin, auto_unpack, None)?;
+        Ok(String::from(format!("Spawned {} crate. Use DCS cargo menu (F8 -> Ground Crew -> Cargo) to load it.", crate_name)))
+    }
+
+    /// Spawn one physical crate next to the player's aircraft and track it.
+    /// Returns the crate's group name. A crate carrying `packed` stock comes
+    /// from packing up a Fat Cow in the field, so it skips the rule that
+    /// crates are only issued inside a friendly logistics zone.
+    fn spawn_c130_crate_inner(
+        &mut self,
+        lua: MizLua,
+        idx: &MizIndex,
+        slot: &SlotId,
+        crate_name: String,
+        side: Side,
+        origin: ObjectiveId,
+        auto_unpack: bool,
+        packed: Option<FatCowStock>,
+    ) -> Result<String> {
         debug!("[C130_CARGO] spawn_c130_crate called: crate={}, side={:?}, origin={:?}, slot={:?}",
             crate_name, side, origin, slot);
 
@@ -3468,7 +3494,7 @@ impl Db {
         // Without this a C-130/helo pilot could air-drop crates anywhere on
         // the map. The recorded origin is the objective actually dropped at,
         // not the slot's home base.
-        let origin = if on_carrier {
+        let origin = if on_carrier || packed.is_some() {
             origin
         } else {
             self.point_near_logistics(side, point)
@@ -3477,7 +3503,9 @@ impl Db {
                     anyhow!("you must be inside a friendly logistics objective to spawn crates")
                 })?
         };
-        self.check_can_issue_supply(origin)?;
+        if packed.is_none() {
+            self.check_can_issue_supply(origin)?;
+        }
 
         // Scan for a spot clear of any existing crate, from any player, so two
         // players dropping cargo near the same spot don't compute overlapping
@@ -3558,7 +3586,7 @@ impl Db {
         };
 
         // Create C130Cargo tracking entry
-        let c130_cargo = C130Cargo::new(
+        let mut c130_cargo = C130Cargo::new(
             group_name.clone(),
             group_id,
             crate_type,
@@ -3570,12 +3598,81 @@ impl Db {
             crate_def,
             auto_unpack,
         );
+        c130_cargo.fat_cow_stock = packed;
 
         self.ephemeral.c130_crates.insert(group_name.clone(), c130_cargo);
         debug!("[C130_CARGO] Crate tracking added: name='{}', group_id={:?}, total_tracked={}",
             group_name, group_id, self.ephemeral.c130_crates.len());
 
-        Ok(String::from(format!("Spawned {} crate. Use DCS cargo menu (F8 -> Ground Crew -> Cargo) to load it.", crate_name)))
+        Ok(group_name)
+    }
+
+    /// Pack up the friendly Fat Cow the player has landed at. Its crates go
+    /// back on the ground next to the helicopter carrying whatever it had
+    /// left, and the FARP is gone. Unpacking them somewhere else rebuilds it
+    /// with that stock.
+    pub fn pack_fat_cow(&mut self, lua: MizLua, idx: &MizIndex, slot: &SlotId) -> Result<String> {
+        let st = SlotStats::get(self, lua, slot)?;
+        if st.in_air {
+            bail!("land at the Fat Cow to pack it up")
+        }
+        let (oid, spec) = self
+            .persisted
+            .farps
+            .into_iter()
+            .filter_map(|oid| self.persisted.objectives.get(oid))
+            .filter(|o| o.owner == st.side && o.fat_cow().is_some() && o.contains(st.point))
+            .min_by(|a, b| {
+                na::distance_squared(&a.pos().into(), &st.point.into())
+                    .total_cmp(&na::distance_squared(&b.pos().into(), &st.point.into()))
+            })
+            .and_then(|o| match &o.kind {
+                ObjectiveKind::Farp { spec, .. } => Some((o.id, spec.clone())),
+                _ => None,
+            })
+            .ok_or_else(|| anyhow!("you are not at a friendly Fat Cow"))?;
+        let name = objective!(self, oid)?.name.clone();
+        let origin = self.player_current_objective_id(slot)?;
+        let stock = self.fat_cow_stock(lua, oid)?;
+        // The crates go down before the FARP comes apart, so a crate that
+        // can't be placed leaves the Fat Cow standing rather than lost.
+        let mut spawned: Vec<String> = Vec::new();
+        for cr in &spec.crates {
+            for _ in 0..cr.required {
+                match self.spawn_c130_crate_inner(
+                    lua,
+                    idx,
+                    slot,
+                    cr.name.clone(),
+                    st.side,
+                    origin,
+                    false,
+                    Some(stock.clone()),
+                ) {
+                    Ok(crate_name) => spawned.push(crate_name),
+                    Err(e) => {
+                        self.despawn_c130_crates(&spawned);
+                        bail!("can't pack up {name}: {e}")
+                    }
+                }
+            }
+        }
+        if let Err(e) = self.close_fat_cow_warehouse(lua, oid) {
+            error!("[FAT_COW] failed to empty {name}'s pad: {e:?}");
+        }
+        self.delete_objective(&oid)?;
+        let weapons: u32 = stock.weapons.values().sum();
+        info!(
+            "[FAT_COW] {name} packed up by {:?}: {}kg jet fuel and {weapons} weapons left, {} crates",
+            st.ucid,
+            stock.jet_fuel,
+            spawned.len()
+        );
+        Ok(String::from(format_compact!(
+            "Packed up {name}: {}kg jet fuel and {weapons} weapons left. Its {} crates are next to you -- load them (F8 -> Ground Crew -> Cargo) and unpack them where you want it.",
+            stock.jet_fuel,
+            spawned.len()
+        )))
     }
 
     /// Spawn a vehicle as physical cargo near the player's aircraft
@@ -4400,6 +4497,65 @@ impl Db {
             .map_err(|e| format!("{src_name} has no warehouse to draw these supplies from ({e})"))
     }
 
+    /// Where a Fat Cow set up from crates at `crates` is anchored: the
+    /// nearest friendly helicopter on the ground within 300 m, and the way it
+    /// faces, or the crates themselves if there is none.
+    fn fat_cow_anchor(&self, side: Side, crates: Vector2) -> (Vector2, f64) {
+        self.instanced_players()
+            .filter(|(_, player, inst)| {
+                player.side == side
+                    && !inst.in_air
+                    && self
+                        .ephemeral
+                        .cfg
+                        .unit_classification
+                        .get(&inst.typ)
+                        .map(|tags| tags.contains(UnitTag::Helicopter))
+                        .unwrap_or(false)
+            })
+            .map(|(_, _, inst)| {
+                let pos = Vector2::new(inst.position.p.0.x, inst.position.p.0.z);
+                let heading = azumith2d(Vector2::new(inst.position.x.0.x, inst.position.x.0.z));
+                (pos, heading, na::distance(&pos.into(), &crates.into()))
+            })
+            .filter(|(_, _, d)| *d <= 300.)
+            .min_by(|a, b| a.2.total_cmp(&b.2))
+            .map(|(pos, heading, _)| (pos, heading))
+            .unwrap_or((crates, 0.))
+    }
+
+    /// Despawn the crates a physical-crate unpack consumed, whether they are
+    /// tracked in `c130_crates` or are legacy F10-menu crates.
+    fn despawn_c130_crates(&mut self, crates_to_delete: &[String]) {
+        info!("[C130_CARGO] Deleting {} crates for deployment: {:?}", crates_to_delete.len(), crates_to_delete);
+        for cn in crates_to_delete {
+            if let Some(crate_to_delete) = self.ephemeral.c130_crates.remove(cn) {
+                info!("[C130_CARGO] Removing crate '{}' (group_id={:?}) from tracking and despawning",
+                      cn, crate_to_delete.group_id);
+                if let Some(id) = crate_to_delete.missing_marker {
+                    self.ephemeral.msgs().delete_mark(id);
+                }
+                if let Err(e) = self.delete_group(&crate_to_delete.group_id) {
+                    error!("[C130_CARGO] Failed to delete crate group '{}' (group_id={:?}): {:?}",
+                           cn, crate_to_delete.group_id, e);
+                }
+            } else if let Some(gid) =
+                self.persisted.groups_by_name.get(cn).copied()
+            {
+                // Legacy F10-menu crate folded into this set by the
+                // scan above -- despawn it the normal way.
+                info!("[C130_CARGO] Removing legacy crate '{}' (group_id={:?}) and despawning",
+                      cn, gid);
+                if let Err(e) = self.delete_group(&gid) {
+                    error!("[C130_CARGO] Failed to delete legacy crate group '{}' (group_id={:?}): {:?}",
+                           cn, gid, e);
+                }
+            } else {
+                debug!("[C130_CARGO] Crate '{}' already removed from tracking (likely processed by earlier crate in batch)", cn);
+            }
+        }
+    }
+
     /// Unpack a physical crate (spawns deployable if enough crates are present)
     fn unpack_c130_crate(&mut self, lua: MizLua, idx: &MizIndex, crate_data: &C130Cargo, crate_name: &str) -> Result<String> {
         match &crate_data.crate_type {
@@ -4548,14 +4704,6 @@ impl Db {
                     return Ok(String::from(format!("Crate landed, need more crates for {}", deployable_name)));
                 }
 
-                // Only support Group deployables for C-130 airdrops
-                let template = match &deployable.kind {
-                    DeployableKind::Group { template } => template.clone(),
-                    DeployableKind::Objective(_) => {
-                        bail!("C-130 airdrops don't support objective deployables")
-                    }
-                };
-
                 // Consume EXACTLY `required` crates of each type for
                 // this deployment. The trigger crate is sorted to the
                 // front so it is always part of the consumed set --
@@ -4611,7 +4759,12 @@ impl Db {
                 // for free -- and `-delete` then paid out half its price.
                 // The crate's spawner pays, as the auto-unpack has no one else.
                 if let Some((obj_name, dist)) =
-                    self.unpack_too_close(crate_data.side, crate_pos, false, &origins)
+                    self.unpack_too_close(
+                        crate_data.side,
+                        crate_pos,
+                        deployable.kind.is_objective(),
+                        &origins,
+                    )
                 {
                     let needed = (self.ephemeral.cfg.logistics_exclusion as f64 - dist).max(50.0);
                     return Ok(self.c130_crate_blocked(
@@ -4640,6 +4793,71 @@ impl Db {
                             crate_data,
                             format!("can't unpack {deployable_name}: {e}"),
                         ));
+                    }
+                };
+
+                // An objective deployable -- a Fat Cow flown in by a heavy
+                // lift helo, or a whole FARP kit -- is built the same way the
+                // F10 unpack builds one from crates on the ground.
+                let template = match &deployable.kind {
+                    DeployableKind::Group { template } => template.clone(),
+                    DeployableKind::Objective(parts) => {
+                        let packed = crates_to_delete.iter().find_map(|cn| {
+                            self.ephemeral.c130_crates.get(cn).and_then(|c| c.fat_cow_stock.clone())
+                        });
+                        // A Fat Cow is laid out around the helicopter that
+                        // brought it; anything else just keeps clear of aircraft.
+                        let (at, heading) = match parts.fat_cow {
+                            Some(_) => self.fat_cow_anchor(crate_data.side, crate_pos),
+                            None => (self.clear_of_aircraft(crate_pos), 0.),
+                        };
+                        let oid = match self.add_farp_facing(
+                            lua,
+                            &SpawnCtx::new(lua)?,
+                            idx,
+                            crate_data.side,
+                            at,
+                            heading,
+                            &deployable,
+                            parts,
+                        ) {
+                            Ok(oid) => oid,
+                            Err(e) => {
+                                return Ok(self.c130_crate_blocked(
+                                    crate_name,
+                                    crate_data,
+                                    format!("can't set up {deployable_name}: {e}"),
+                                ));
+                            }
+                        };
+                        self.ephemeral.stat(Stat::DeployFarp {
+                            oid,
+                            by: crate_data.player,
+                            deployable: deployable_name.clone(),
+                        });
+                        self.despawn_c130_crates(&crates_to_delete);
+                        match &packed {
+                            // Paid for when it was first built.
+                            Some(stock) => {
+                                if let Err(e) = self.set_fat_cow_stock(&oid, stock) {
+                                    warn!("[FAT_COW] failed to restore packed stock: {e:?}");
+                                }
+                            }
+                            None => {
+                                self.charge_for_item(
+                                    &crate_data.player,
+                                    from_obj,
+                                    deployable.cost,
+                                    &format_compact!("for {deployable_name} unpack"),
+                                );
+                                if let Err(e) = self.consume_deploy_supply(crates_by_origin) {
+                                    error!("[C130_CARGO] failed to charge deploy supply: {e:?}");
+                                }
+                            }
+                        }
+                        let name = objective!(self, oid)?.name.clone();
+                        info!("[C130_CARGO] Set up {deployable_name} as {name}");
+                        return Ok(String::from(format!("{deployable_name} set up as {name}")));
                     }
                 };
 
@@ -4726,34 +4944,7 @@ impl Db {
                             *cost_fraction = frac;
                         }
 
-                        info!("[C130_CARGO] Deleting {} crates for deployment: {:?}", crates_to_delete.len(), crates_to_delete);
-
-                        for cn in &crates_to_delete {
-                            if let Some(crate_to_delete) = self.ephemeral.c130_crates.remove(cn) {
-                                info!("[C130_CARGO] Removing crate '{}' (group_id={:?}) from tracking and despawning",
-                                      cn, crate_to_delete.group_id);
-                                if let Some(id) = crate_to_delete.missing_marker {
-                                    self.ephemeral.msgs().delete_mark(id);
-                                }
-                                if let Err(e) = self.delete_group(&crate_to_delete.group_id) {
-                                    error!("[C130_CARGO] Failed to delete crate group '{}' (group_id={:?}): {:?}",
-                                           cn, crate_to_delete.group_id, e);
-                                }
-                            } else if let Some(gid) =
-                                self.persisted.groups_by_name.get(cn).copied()
-                            {
-                                // Legacy F10-menu crate folded into this set by the
-                                // scan above -- despawn it the normal way.
-                                info!("[C130_CARGO] Removing legacy crate '{}' (group_id={:?}) and despawning",
-                                      cn, gid);
-                                if let Err(e) = self.delete_group(&gid) {
-                                    error!("[C130_CARGO] Failed to delete legacy crate group '{}' (group_id={:?}): {:?}",
-                                           cn, gid, e);
-                                }
-                            } else {
-                                debug!("[C130_CARGO] Crate '{}' already removed from tracking (likely processed by earlier crate in batch)", cn);
-                            }
-                        }
+                        self.despawn_c130_crates(&crates_to_delete);
 
                         if let Err(e) = self.consume_deploy_supply(crates_by_origin) {
                             error!("[C130_CARGO] failed to charge deploy supply: {e:?}");

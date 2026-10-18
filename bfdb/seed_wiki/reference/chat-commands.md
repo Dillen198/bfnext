@@ -22,7 +22,7 @@ Quick reference for all Fowl Engine chat commands.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `-delete <id>` | Delete deployed group (50% refund) | `-delete 12345` |
+| `-delete <id>` | Delete deployed group (50% refund if you paid points; none for treasury-paid units). Commanders can also disband units nobody owns | `-delete 12345` |
 | `-bind <uuid>` | Link your pilot to the web dashboard (**not** for groups) | `-bind 3f2a91c4-…` |
 
 ### JTAC Commands

@@ -4,12 +4,12 @@
  */
 import { fmt, fmtSigned } from '../../lib/format'
 import type { LowLevelResult } from '../../types'
-import { linear, niceCeil, ticks } from './scale'
+import { linear, niceCeil, ticks, usePlotW } from './scale'
 
 const timeTone = (e: number) => (Math.abs(e) <= 15 ? 'var(--datum)' : Math.abs(e) <= 45 ? 'var(--ball)' : 'var(--wave)')
 
 export function GatePlot({ r }: { r: LowLevelResult }) {
-  const W = 900, m = { l: 52, r: 16 }
+  const W = usePlotW(), m = { l: 52, r: 16 }
   const n = Math.max(1, r.gates.length)
   const slot = (W - m.l - m.r) / n
   const gx = (i: number) => m.l + slot * (i + 0.5)

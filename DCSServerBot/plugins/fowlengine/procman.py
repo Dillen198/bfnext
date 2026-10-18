@@ -1201,6 +1201,12 @@ class Procman:
     def is_running(self) -> bool:
         return self._bfdb is not None and self._bfdb.poll() is None
 
+    @property
+    def busy(self) -> bool:
+        """A deliberate stop/swap/start (restart, rollback, rebuild) is under
+        way, so bfdb being unreachable right now is expected."""
+        return self._op_lock.locked()
+
     async def process_info(self) -> dict:
         """bfdb + resolver state for the Ops page."""
         running = self.is_running()

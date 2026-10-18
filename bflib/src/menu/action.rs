@@ -90,6 +90,10 @@ fn do_pos_action(
             cfg: cfg.clone(),
             pos,
         }),
+        ActionKind::FatCow(cfg) => ActionArgs::FatCow(WithPos {
+            cfg: cfg.clone(),
+            pos,
+        }),
         ActionKind::Deployable(cfg) => ActionArgs::Deployable(WithPos {
             cfg: cfg.clone(),
             pos,
@@ -119,6 +123,10 @@ fn do_pos_action(
             pos,
         }),
         ActionKind::Recon(cfg) => ActionArgs::Recon(WithPos {
+            cfg: cfg.clone(),
+            pos,
+        }),
+        ActionKind::Strike(cfg) => ActionArgs::Strike(WithPos {
             cfg: cfg.clone(),
             pos,
         }),
@@ -273,6 +281,7 @@ fn do_pos_group_action(
         | ActionKind::Sead(_)
         | ActionKind::Awacs(_)
         | ActionKind::Deployable(_)
+        | ActionKind::FatCow(_)
         | ActionKind::CruiseMissileSpawn(_)
         | ActionKind::Drone(_)
         | ActionKind::Fighters(_)
@@ -287,6 +296,7 @@ fn do_pos_group_action(
         | ActionKind::Artillery(_)
         | ActionKind::Recon(_)
         | ActionKind::Reinforce(_)
+        | ActionKind::Strike(_)
         | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
@@ -362,6 +372,7 @@ fn do_objective_action(
         | ActionKind::Awacs(_)
         | ActionKind::CruiseMissileSpawn(_)
         | ActionKind::Deployable(_)
+        | ActionKind::FatCow(_)
         | ActionKind::Drone(_)
         | ActionKind::Fighters(_)
         | ActionKind::Tanker(_)
@@ -377,6 +388,7 @@ fn do_objective_action(
         | ActionKind::CarrierRespawn
         | ActionKind::Artillery(_)
         | ActionKind::Recon(_)
+        | ActionKind::Strike(_)
         | ActionKind::NavalCruiseMissileStrike(_) => bail!("invalid action type for this menu item"),
     };
     let cmd = ActionCmd { name, action, args };
@@ -431,6 +443,10 @@ fn do_enemy_objective_action(
                 cfg: cfg.clone(),
                 oid,
             })
+        }
+        ActionKind::Strike(cfg) if cfg.mission.targets_objective() => {
+            let pos = ctx.db.objective(&oid)?.pos();
+            ActionArgs::Strike(WithPos { cfg: cfg.clone(), pos })
         }
         _ => bail!("invalid action type for enemy objective menu item"),
     };
@@ -1234,6 +1250,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             | ActionKind::Sead(_)
             | ActionKind::Awacs(_)
             | ActionKind::Deployable(_)
+            | ActionKind::FatCow(_)
             | ActionKind::CruiseMissileSpawn(_)
             | ActionKind::Drone(_)
             | ActionKind::Fighters(_)
@@ -1260,6 +1277,14 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             ActionKind::NavalCruiseMissileStrike(_) => {
                 let root = p.submenu(&mc, title)?;
                 add_enemy_objective(root.clone(), name.clone())?
+            }
+            ActionKind::Strike(cfg) => {
+                let root = p.submenu(&mc, title)?;
+                if cfg.mission.targets_objective() {
+                    add_enemy_objective(root.clone(), name.clone())?
+                } else {
+                    add_pos(root.clone(), name.clone())?
+                }
             }
             ActionKind::AddTask(cfg) => {
                 let root = p.submenu(&mc, title)?;

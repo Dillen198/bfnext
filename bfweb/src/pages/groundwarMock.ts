@@ -142,6 +142,9 @@ export interface GroundMock {
   picture(): GroundPicture
   step(dtSecs: number): void
   command(cmd: GroundCommand): GroundCommandReply
+  /** A formation bought on the command map (`buy_formation`): built at our
+   *  nearest base to the first point and sent along `route`. */
+  buy(label: string, count: number, route: LatLon[]): { ok: boolean; message: string }
 }
 
 export function createGroundwarMock(mode: string): GroundMock {
@@ -599,5 +602,27 @@ export function createGroundwarMock(mode: string): GroundMock {
     }
   }
 
-  return { picture, step, command }
+  function buy(label: string, count: number, route: LatLon[]): { ok: boolean; message: string } {
+    if (route.length === 0) return { ok: false, message: 'Click the route first.' }
+    const base = objectives
+      .filter((o) => o.owner === 'Blue' && !o.threatened && km(o.pos, route[0]) <= 25)
+      .sort((a, b) => km(a.pos, route[0]) - km(b.pos, route[0]))[0]
+    if (!base) return { ok: false, message: 'none of our bases is within 25 km of that point' }
+    const id = nextId++
+    const role: GroundRole = /abrams|leopard|merkava|t-\d/i.test(label) ? 'tank' : /gepard|vulkan|shilka/i.test(label) ? 'aaa' : /mrap|btr/i.test(label) ? 'apc' : 'ifv'
+    const f = sim({
+      id, name: `${id}th ${label} Coy (${base.name})`, kind: role === 'tank' ? 'armour' : 'mechanised',
+      roles: roles([[role, count]]), route: [base.pos, ...route], home: base.id,
+      commander: 'Dillen', locked: 60, face: bearing(base.pos, route[0]),
+    })
+    f.moving = true
+    f.stoppedFor = 0
+    f.speed = role === 'tank' ? 32 : 28
+    forms.push(f)
+    const k = pathLength(f.route) / 1000
+    pushEvent({ kind: 'raised', text: `${f.name} bought at ${base.name}, ${count} vehicles`, pos: base.pos, formation: id })
+    return { ok: true, message: `${f.name.split(' (')[0]}: moving to a position ${k.toFixed(0)} km away by road` }
+  }
+
+  return { picture, step, command, buy }
 }

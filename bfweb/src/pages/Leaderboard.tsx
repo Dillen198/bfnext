@@ -1,9 +1,10 @@
-import { useQuery } from '@tanstack/react-query'
+import React from 'react'
+import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import QueryState from '../components/QueryState'
 import { AirframeUsage, PointsEconomy } from '../components/CampaignStats'
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type Pilot } from '../api'
+import { api, type Pilot, type Squadron, type XpRow } from '../api'
 import { useRound } from '../context/RoundContext'
 import PageHeader from '../components/PageHeader'
 import {
@@ -100,8 +101,74 @@ function Seg<T extends string>({ name, value, options, onChange }: {
   )
 }
 
+const thS: React.CSSProperties = { padding: '10px 14px', textAlign: 'left', fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700, borderBottom: '1px solid var(--border)' }
+const tdS: React.CSSProperties = { padding: '9px 14px', fontSize: '0.75rem', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }
+
+function SquadronTable({ q, onOpen }: { q: UseQueryResult<Squadron[]>; onOpen: (tag: string) => void }) {
+  const rows = [...(q.data ?? [])].sort((a, b) => b.xp - a.xp)
+  return (
+    <div className="vs-card overflow-hidden">
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead><tr>
+          <th style={{ ...thS, width: 40 }}>#</th><th style={thS}>Squadron</th>
+          <th style={{ ...thS, textAlign: 'right' }}>Members</th><th style={{ ...thS, textAlign: 'right' }}>XP</th>
+          <th style={{ ...thS, textAlign: 'right' }}>XP / member</th>
+        </tr></thead>
+        <tbody>
+          <QueryState colSpan={5} what="squadrons" isLoading={q.isLoading} isError={q.isError} error={q.error} onRetry={q.refetch}
+            isEmpty={!q.isLoading && rows.length === 0} emptyText="No squadrons yet" />
+          {rows.map((sq, i) => (
+            <tr key={sq.tag} onClick={() => onOpen(sq.tag)} style={{ cursor: 'pointer' }} className="kill-row">
+              <td style={{ ...tdS, color: 'var(--text-dim)' }}>{i + 1}</td>
+              <td style={tdS}><span style={{ color: 'var(--accent-bright)', fontWeight: 700 }}>[{sq.tag}]</span> <span style={{ color: 'var(--text)' }}>{sq.name}</span></td>
+              <td style={{ ...tdS, textAlign: 'right' }}>{sq.member_count}</td>
+              <td style={{ ...tdS, textAlign: 'right', color: 'var(--text)', fontWeight: 700 }}>{sq.xp.toLocaleString()}</td>
+              <td style={{ ...tdS, textAlign: 'right' }}>{sq.member_count ? Math.round(sq.xp / sq.member_count).toLocaleString() : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function XpTable({ q, onOpen }: { q: UseQueryResult<XpRow[]>; onOpen: (ucid: string) => void }) {
+  const rows = q.data ?? []
+  const max = Math.max(1, ...rows.map(r => r.xp))
+  return (
+    <div className="vs-card overflow-hidden">
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead><tr>
+          <th style={{ ...thS, width: 40 }}>#</th><th style={thS}>Pilot</th>
+          <th style={{ ...thS, textAlign: 'right', width: 70 }}>Level</th><th style={{ ...thS, width: '40%' }}>XP</th>
+        </tr></thead>
+        <tbody>
+          <QueryState colSpan={4} what="XP leaderboard" isLoading={q.isLoading} isError={q.isError} error={q.error} onRetry={q.refetch}
+            isEmpty={!q.isLoading && rows.length === 0} emptyText="Nobody has earned XP yet" />
+          {rows.map((r, i) => (
+            <tr key={r.ucid} onClick={() => onOpen(r.ucid)} style={{ cursor: 'pointer' }} className="kill-row">
+              <td style={{ ...tdS, color: 'var(--text-dim)' }}>{i + 1}</td>
+              <td style={{ ...tdS, color: 'var(--text)', fontWeight: 600 }}>{r.name || r.ucid}</td>
+              <td style={{ ...tdS, textAlign: 'right' }}>{r.level}</td>
+              <td style={tdS}>
+                <div className="flex items-center gap-2">
+                  <div style={{ flex: 1, height: 8, background: 'rgba(148,163,184,0.1)', borderRadius: 2 }}>
+                    <div style={{ width: `${(r.xp / max) * 100}%`, height: '100%', background: 'var(--accent)', borderRadius: '0 4px 4px 0' }} />
+                  </div>
+                  <span className="font-mono-vs" style={{ minWidth: 64, textAlign: 'right' }}>{r.xp.toLocaleString()}</span>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 type Period = 'all' | 'round'
 type SideF = 'All' | 'Blue' | 'Red'
+type View = 'pilots' | 'squadrons' | 'xp'
 
 export default function Leaderboard() {
   const navigate = useNavigate()
@@ -112,6 +179,7 @@ export default function Leaderboard() {
   const roundId = selectedRound ?? rounds.find(r => r.active)?.id ?? null
   const [period, setPeriod] = useState<Period>('all')
   const [sideF, setSideF] = useState<SideF>('All')
+  const [view, setView] = useState<View>('pilots')
   const byRound = period === 'round' && roundId != null
   const { data: allPilots = [], isLoading, isError, error, refetch } = useQuery({
     queryKey: ['leaderboard', byRound ? roundId : 'all'],
@@ -125,6 +193,8 @@ export default function Leaderboard() {
   const pilots = useMemo(() => allPilots
     .map(p => (p.side || !byRound ? p : { ...p, side: sideOf.get(p.ucid) ?? null }))
     .filter(p => sideF === 'All' || p.side === sideF), [allPilots, byRound, sideOf, sideF])
+  const squadrons = useQuery({ queryKey: ['squadrons'], queryFn: () => api.squadrons(), enabled: view === 'squadrons' })
+  const xp = useQuery({ queryKey: ['xp-top'], queryFn: () => api.xpTop(), enabled: view === 'xp' })
   const [tab,    setTab]    = useState<SortKey>('score')
   const [sort, setSort] = useState<SortKey>('score')
   const [asc,  setAsc]  = useState(false)
@@ -152,6 +222,7 @@ export default function Leaderboard() {
   }
 
   function selectTab(key: SortKey) {
+    setView('pilots')
     setTab(key)
     setSort(key)
     setAsc(false)
@@ -167,7 +238,7 @@ export default function Leaderboard() {
       <PageHeader
         icon={Rankings}
         title="RANKINGS"
-        sub={`${pilots.length} pilots${byRound ? ` · round ${roundId}` : ' · all time'}`}
+        sub={view === 'pilots' ? `${pilots.length} pilots${byRound ? ` · round ${roundId}` : ' · all time'}` : view === 'squadrons' ? 'Squadrons by XP' : 'Pilots by XP'}
         right={
           <input type="text" placeholder="Search pilot…" value={search}
             onChange={e => setSearch(e.target.value)} className="vs-input lb-search"
@@ -180,7 +251,7 @@ export default function Leaderboard() {
         {/* ── Leaderboard tabs ── */}
         <div className="lb-tabs" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {TABS.map(t => {
-            const active = tab === t.key
+            const active = view === 'pilots' && tab === t.key
             return (
               <button key={t.key} className="vs-tab" onClick={() => selectTab(t.key)}
                 style={{
@@ -204,7 +275,22 @@ export default function Leaderboard() {
               </button>
             )
           })}
-          {(
+          {([['squadrons', 'Squadrons', Award], ['xp', 'XP', Rankings]] as const).map(([v, label, Icon]) => {
+            const active = view === v
+            return (
+              <button key={v} className="vs-tab" onClick={() => setView(v)}
+                style={{
+                  padding: '6px 16px', borderRadius: 6, cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700,
+                  letterSpacing: '0.05em', textTransform: 'uppercase', transition: 'all 0.12s',
+                  background: active ? 'var(--accent)' : 'var(--bg-card)',
+                  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                  color: active ? '#0a0d07' : 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 7,
+                }}>
+                <Icon size={13} strokeWidth={1.75} />{label}
+              </button>
+            )
+          })}
+          {view === 'pilots' && (
             <div className="flex items-center gap-2 ml-auto flex-wrap">
               <Seg name="Period" value={period} onChange={setPeriod}
                 options={[['all', 'All time'], ['round', roundId != null ? `Round ${roundId}` : 'This round']] as const} />
@@ -214,6 +300,9 @@ export default function Leaderboard() {
           )}
         </div>
 
+        {view === 'squadrons' && <SquadronTable q={squadrons} onOpen={tag => navigate(`/squadrons?tag=${encodeURIComponent(tag)}`)} />}
+        {view === 'xp' && <XpTable q={xp} onOpen={ucid => navigate(`/pilots?ucid=${encodeURIComponent(ucid)}`)} />}
+        {view === 'pilots' && <>
 
         {/* ── Podium ── */}
         {top3.length >= 3 && (
@@ -398,6 +487,7 @@ export default function Leaderboard() {
           </div>
         </div>
 
+        </>}
 
         {/* Campaign-wide readouts bfdb has always served and nothing showed:
             which airframes are actually being flown, and where the points

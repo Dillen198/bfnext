@@ -55,6 +55,9 @@ export const CATEGORY_LABEL: Record<SpawnCategory, string> = {
   ew: 'Electronic warfare',
 }
 
+/** Stations whose impacts group into a CEP diagram (`/stations/:id`). */
+export const GROUPABLE_STATIONS: readonly StationKind[] = ['bomb_circle', 'tactical_array', 'laser_target', 'coord_target', 'convoy']
+
 export const STATION_KIND_LABEL: Record<StationKind, string> = {
   bomb_circle: 'Bomb circle',
   strafe_pit: 'Strafe pit',

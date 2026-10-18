@@ -198,6 +198,26 @@ export async function fetchObjectTrack(rec: string, meta: RecMeta, idx: number):
 }
 
 /** Meta indices of the flights flown by players (the rest are AI). */
+/** A training-range result graded during a recording (bfdb `/api/range/replay/<rec>/results`). */
+export interface RangeHit {
+  id: string
+  kind: string
+  pilot: string
+  ucid: string | null
+  unit_type: string
+  /** ms from the recording start */
+  t: number
+  headline: string | null
+  score: number | null
+}
+
+/** The range results in a recording, and where the range site lives; empty when it has none. */
+export async function fetchRangeHits(rec: string): Promise<{ items: RangeHit[]; site: string }> {
+  const res = await fetch(`${API_ROOT}/api/range/replay/${encodeURIComponent(rec)}/results`, { credentials: 'include' })
+  if (!res.ok) return { items: [], site: '' }
+  return res.json()
+}
+
 export async function fetchHumans(rec: string): Promise<number[]> {
   const res = await fetch(`${API_ROOT}/api/replay/rec/${encodeURIComponent(rec)}/humans`, { credentials: 'include' })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)

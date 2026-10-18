@@ -417,6 +417,13 @@ export class BattlefieldEngine {
 
     // Fog of war: dark everywhere our forces can't see.
     if (this.showFog && this.fog) {
+      // The fog canvas is only sized in resize(); one created or left behind
+      // at 0 x 0 while the map canvas has a size made drawImage throw on
+      // every frame. Keep it the map canvas's size.
+      if (this.fog.width !== cv.width || this.fog.height !== cv.height) {
+        this.fog.width = cv.width
+        this.fog.height = cv.height
+      }
       const f = this.fog.getContext('2d')
       if (f) {
         f.setTransform(1, 0, 0, 1, 0, 0)

@@ -666,7 +666,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         }
         Event::Takeoff(e) => {
             if let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) {
-                ctx.pattern.took_off(name.as_str());
+                ctx.pattern.took_off(lua, &mut ctx.rec, name.as_str());
                 if let Some(f) = ctx.players.flying.get(name.as_str()) {
                     ctx.players.takeoff(f.ucid);
                 }
@@ -712,7 +712,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             if carrier::carrier_by_place(&ctx.cv, &place) {
                 ctx.cv.runway_takeoff(name.as_str(), &place, now);
             }
-            ctx.pattern.took_off(name.as_str());
+            ctx.pattern.took_off(lua, &mut ctx.rec, name.as_str());
         }
         Event::Refueling(r) => {
             if let Some(n) = r.initiator.and_then(|o| o.get_name().ok()) {

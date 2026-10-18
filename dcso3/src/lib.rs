@@ -24,7 +24,6 @@ use std::{
     borrow::Borrow,
     cell::RefCell,
     collections::hash_map::Entry,
-    f64,
     fmt::Debug,
     marker::PhantomData,
     ops::{Add, AddAssign, Deref, DerefMut, Sub},
@@ -151,17 +150,13 @@ macro_rules! atomic_id {
                 }
 
                 fn update_max(n: i64) {
-                    const O: std::sync::atomic::Ordering = std::sync::atomic::Ordering::Relaxed;
-                    let _: Result<_, _> = [<MAX_ $name:upper _ID>].fetch_update(O, O, |cur| {
-                        // saturating: a corrupt/hostile id of i64::MAX must
-                        // not wrap the sequence to i64::MIN and start
-                        // handing out ids that collide with existing ones
-                        if n >= cur {
-                            Some(n.saturating_add(1))
-                        } else {
-                            None
-                        }
-                    });
+                    // saturating: a corrupt/hostile id of i64::MAX must
+                    // not wrap the sequence to i64::MIN and start
+                    // handing out ids that collide with existing ones
+                    [<MAX_ $name:upper _ID>].fetch_max(
+                        n.saturating_add(1),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
                 }
 
                 pub fn inner(&self) -> i64 {
@@ -1548,7 +1543,7 @@ pub fn degrees_to_radians(degrees: f64) -> f64 {
 /// change the heading (in radians) by the specified amount, adjusting if it rotates through 0/2 pi.
 /// e.g. `change_heading(3/2 pi, pi) -> pi / 2 not 5 / 2 pi`
 pub fn change_heading(heading: f64, change: f64) -> f64 {
-    const PI2: f64 = f64::consts::PI * 2.;
+    const PI2: f64 = std::f64::consts::PI * 2.;
     let change = if change.abs() > PI2 { change % PI2 } else { change };
     let res = heading + change;
     if res > PI2 {

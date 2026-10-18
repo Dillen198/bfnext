@@ -142,6 +142,63 @@ pub struct GroundWarCfg {
     /// morale, deployment, spotting. See `GroundCombatCfg`.
     #[serde(default)]
     pub combat: GroundCombatCfg,
+    /// Formations a commander buys from the treasury on the command map,
+    /// for sides whose garrisons have nothing to spare. See
+    /// `PurchasedFormationCfg`.
+    #[serde(default)]
+    pub purchase: PurchasedFormationCfg,
+}
+
+/// A purchased formation: `count` copies of one of the side's deployable
+/// group templates, built at our nearest unthreatened base and sent along a
+/// route in one order, paid from the treasury. It is not drawn from any
+/// garrison and never joins one: when it stands down (withdraws to a base,
+/// or the ground war is switched off) its survivors stay where they are as
+/// ordinary deployed units, owned by the commander who bought it. It counts
+/// against `max_formations_per_side` like any other formation.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PurchasedFormationCfg {
+    /// Default true.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Fewest and most copies of the template one order buys. Default 2
+    /// and 8.
+    #[serde(default = "default_purchase_min")]
+    pub min_count: u32,
+    #[serde(default = "default_purchase_max")]
+    pub max_count: u32,
+    /// Price of one copy as a multiple of the deployable's own (scaled)
+    /// cost; the order costs `count` times that. Default 1.
+    #[serde(default = "default_purchase_factor")]
+    pub cost_factor: f64,
+    /// Deployables that can be bought this way, by menu path joined with
+    /// " / " (as the command map names them). Empty = every group
+    /// deployable that isn't a radar or a GCI station; templates whose
+    /// vehicles can't drive are refused when ordered.
+    #[serde(default)]
+    pub deployables: Vec<String>,
+}
+
+impl Default for PurchasedFormationCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_count: default_purchase_min(),
+            max_count: default_purchase_max(),
+            cost_factor: default_purchase_factor(),
+            deployables: vec![],
+        }
+    }
+}
+
+fn default_purchase_min() -> u32 {
+    2
+}
+fn default_purchase_max() -> u32 {
+    8
+}
+fn default_purchase_factor() -> f64 {
+    1.
 }
 
 /// The ground war's combat model, for formations the server is not

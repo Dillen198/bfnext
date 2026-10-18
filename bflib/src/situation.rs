@@ -247,6 +247,8 @@ fn build_posture(ctx: &Context, side: Side, now: DateTime<Utc>) -> Posture {
         players_enemy: 0,
         last_stand: None,
         victory_condition: None,
+        war_effort: Some(db.persisted.war_effort.for_side(side).round()),
+        war_effort_tier: db.persisted.war_effort.tier(side) as u8,
     };
     let hour_ago = now - chrono::Duration::hours(1);
     for (_, o) in db.objectives() {
@@ -1685,6 +1687,69 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
 /// config. No-op when the slot isn't an aircraft, or when `situation_briefing`
 /// is absent / has `on_slot_entry` off — the F10 report and the dashboard are
 /// pull paths and stay available either way.
+/// Paid tasking (`db::tasking`): give the pilot in `slot` the most urgent
+/// task on the side's list that their airframe can do -- logistics, CSAR or
+/// a capture for a cargo airframe, the rest for everything else -- and say
+/// so. `None` when there is no pilot or no fitting task.
+fn assign_paid_task(
+    ctx: &mut Context,
+    lua: MizLua,
+    slot: &dcso3::net::SlotId,
+    miz_gid: dcso3::env::miz::GroupId,
+    typ: &bfprotocols::cfg::Vehicle,
+    rep: &SituationReport,
+) -> Option<String> {
+    let ucid = *ctx.db.ephemeral.player_in_slot(slot)?;
+    let cargo_airframe = ctx.db.ephemeral.cfg.cargo.contains_key(typ);
+    // Rookie mode: a pilot's first few sorties get the safest useful work --
+    // logistics, recon or holding a friendly base -- before deep strikes into
+    // the enemy's air defence.
+    let rookie = ctx.db.is_rookie(&ucid);
+    let fits = |t: &&bfprotocols::situation::Task| {
+        let ground_job = matches!(t.kind, TaskKind::Logistics | TaskKind::Csar | TaskKind::Capture);
+        ground_job == cargo_airframe
+    };
+    let safe = |t: &&bfprotocols::situation::Task| {
+        matches!(t.kind, TaskKind::Logistics | TaskKind::Recon | TaskKind::Defend | TaskKind::Csar)
+    };
+    let task = rookie
+        .then(|| rep.tasking.iter().filter(fits).find(safe))
+        .flatten()
+        .or_else(|| rep.tasking.iter().find(fits))?;
+    let pos = task
+        .objective
+        .as_ref()
+        .and_then(|n| ctx.db.persisted.objectives_by_name.get(&dcso3::String::from(n.as_str())))
+        .and_then(|oid| ctx.db.persisted.objectives.get(oid))
+        .map(|o| o.pos())
+        .or_else(|| {
+            let c = dcso3::coord::Coord::singleton(lua).ok()?;
+            let p = c
+                .ll_to_lo(dcso3::coord::LLPos { latitude: task.lat, longitude: task.lon, altitude: 0. })
+                .ok()?;
+            Some(Vector2::new(p.0.x, p.0.z))
+        })?;
+    let radius = match task.kind {
+        TaskKind::Intercept => 40_000.,
+        TaskKind::Recon => 25_000.,
+        _ => 15_000.,
+    };
+    ctx.db.assign_task(ucid, miz_gid, pos, radius, task.title.as_str(), chrono::Utc::now());
+    let mut line = format!(
+        "YOUR TASK: {} -- x{} points and bonus XP inside the zone marked on your map ({:.0} km)",
+        task.title,
+        crate::db::tasking::TASK_POINTS_MULT,
+        radius / 1000.
+    );
+    if rookie {
+        line.push_str(
+            "
+NEW PILOT: this is a safer task to start with. F10 > Info > Help > Getting Started covers the basics, and the First Sortie guide and the training range are on the dashboard.",
+        );
+    }
+    Some(line)
+}
+
 pub(crate) fn schedule_slot_briefing(lua: MizLua, slot: dcso3::net::SlotId) -> anyhow::Result<()> {
     use dcso3::timer::Timer;
     let ctx = unsafe { Context::get_mut() };
@@ -1702,18 +1767,25 @@ pub(crate) fn schedule_slot_briefing(lua: MizLua, slot: dcso3::net::SlotId) -> a
         let Some(si) = ctx.db.ephemeral.get_slot_info(&slot) else {
             return Ok(None);
         };
-        let (miz_gid, side) = (si.miz_gid, si.side);
+        let (miz_gid, side, typ) = (si.miz_gid, si.side, si.typ.clone());
         let from = crate::menu::player_world_pos(ctx, &slot);
         let rep = build(ctx, lua, side, Opts { include_map: false, from });
+        let task_line = assign_paid_task(ctx, lua, &slot, miz_gid, &typ, &rep);
         let cfg = match ctx.db.ephemeral.cfg.situation_briefing.as_ref() {
             Some(c) => c.clone(),
             None => return Ok(None),
         };
-        let text = render_panel(
+        let mut text = render_panel(
             &rep,
             cfg.panel_tasks,
             cfg.note.as_ref().map(|n| n.as_str()),
         );
+        if let Some(line) = task_line {
+            text.push('\n');
+            text.push_str(&line);
+        }
+        text.push('\n');
+        text.push_str(ctx.db.persisted.war_effort.briefing_line(side).as_str());
         ctx.db
             .ephemeral
             .msgs()

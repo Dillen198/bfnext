@@ -5,6 +5,8 @@ interface ImportMetaEnv {
   readonly VITE_API_BASE?: string
   /** bfdb instance id for the range; unset = bfdb picks */
   readonly VITE_RANGE_INSTANCE?: string
+  /** the dashboard, for its flight replay (web Tacview); default https://dashboard.vectorstrike.org */
+  readonly VITE_DASHBOARD_URL?: string
   /** "1" = serve everything from src/mock */
   readonly VITE_MOCK?: string
 }

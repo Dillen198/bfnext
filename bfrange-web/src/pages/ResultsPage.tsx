@@ -11,12 +11,11 @@ import { api } from '../api'
 import { DaysSeg, Panel, Select } from '../components/Controls'
 import { ResultCard } from '../components/ResultCard'
 import { Empty, ErrorState, Loading } from '../components/States'
-import { KIND_LABEL, STATION_KIND_LABEL, airframe } from '../lib/format'
+import { GROUPABLE_STATIONS, KIND_LABEL, STATION_KIND_LABEL, airframe } from '../lib/format'
 import { RESULT_KINDS, type ResultKind } from '../types'
 
 const PAGE = 30
 const AIRFRAMES = ['FA-18C_hornet', 'F-14B', 'F-16C_50', 'A-10C_2', 'AV8BNA', 'F-15ESE', 'T-45', 'M-2000C', 'UH-1H', 'CH-47Fbl1', 'AH-64D_BLK_II', 'Mi-8MT', 'Ka-50_3']
-const GROUPABLE = ['bomb_circle', 'tactical_array', 'laser_target', 'coord_target', 'convoy']
 
 function useDebounced<T>(v: T, ms = 250): T {
   const [d, setD] = useState(v)
@@ -157,7 +156,7 @@ export default function ResultsPage() {
           <Panel title="Impact groups" bodyClass="">
             <p className="text-[12.5px] muted px-3 pt-2.5 m-0">Every drop on one target, with the group's CEP and mean point of impact.</p>
             <ul className="m-0 p-0 list-none mt-1">
-              {stations.filter(s => GROUPABLE.includes(s.kind)).map(s => (
+              {stations.filter(s => GROUPABLE_STATIONS.includes(s.kind)).map(s => (
                 <li key={s.id} className="border-t border-[var(--line)]">
                   <Link to={`/stations/${encodeURIComponent(s.id)}`} className="flex items-center gap-2 px-3 py-2 hover:bg-[var(--panel-2)]">
                     <span className="text-[13px] font-medium truncate">{s.name}</span>

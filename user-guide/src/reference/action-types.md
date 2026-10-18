@@ -232,6 +232,16 @@ See [Deployable Units Reference](./deployables.md) for complete details.
 - **Effect**: Balances supply levels
 - **Use**: Strategic supply management, emergency resupply
 
+### Fat Cow (AI)
+- **Type**: An AI heavy-lift helicopter that sets up a temporary forward arming and refuelling point
+- **How**: place an F10 map mark where you want it, then pick the Fat Cow action and give it the mark's text
+- **Function**: the helicopter takes off from the nearest friendly field, flies to the mark and lands. A minute after it touches down, the Fat Cow is laid out around it (see [Fat Cow](deployables.md#fat-cow-heavy-lift-farp)): pad 100 m behind the helicopter, fuel point, fire point and guards. When its time is up it packs up and the helicopter flies home.
+- **Duration**: 20 minutes by default (`duration_mins`)
+- **Stock**: the same fixed load as a player-built Fat Cow. Nothing resupplies it.
+- **Placement**: the same rules as a player Fat Cow: away from friendly objectives, and within `helo_insertion.max_range_m` of a friendly field
+- **Risk**: if the helicopter is shot down on station, the Fat Cow closes with it. If it is lost before it sets up, the cost is refunded.
+- **Limit**: `limit` caps how many a side can have out at once
+
 ## Paratrooper Operations
 
 ### Paratrooper Drop

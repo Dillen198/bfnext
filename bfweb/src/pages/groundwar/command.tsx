@@ -16,6 +16,7 @@ import {
   type AirTrack, type Asset, type AssetVerb, type CommandOrder, type CommandPicture,
   type GroundObjective, type HqOpKind, type LatLon, type OrderOption,
 } from '../../api'
+import { FormationShop, isFormationKey } from './buyFormation'
 import { TARGET_TEXT, type AssetMode, type Layers } from './commandFeed'
 import { offset } from './geo'
 import { playerSvg } from './sprites'
@@ -196,6 +197,7 @@ const VERB: Record<AssetVerb, { label: string; key: string; mode: AssetMode | nu
   station: { label: 'STATION', key: 'S', mode: 'station', hint: 'Click where it should work.' },
   sail: { label: 'SAIL', key: 'M', mode: 'sail', hint: 'Click open water.' },
   rtb: { label: 'RTB', key: 'B', mode: null, hint: '' },
+  disband: { label: 'DISBAND', key: '', mode: null, hint: '' },
 }
 
 /** What one of our assets is and what it is doing: the panel without the
@@ -222,12 +224,13 @@ export function AssetCard({ a, onClose, children }: { a: Asset; onClose: () => v
   )
 }
 
-export function AssetPanel({ a, canCommand, mode, setMode, onRtb, onClose }: {
+export function AssetPanel({ a, canCommand, mode, setMode, onRtb, onDisband, onClose }: {
   a: Asset
   canCommand: boolean
   mode: AssetMode
   setMode: (m: AssetMode) => void
   onRtb: () => void
+  onDisband: () => void
   onClose: () => void
 }): ReactElement {
   return (
@@ -239,9 +242,9 @@ export function AssetPanel({ a, canCommand, mode, setMode, onRtb, onClose }: {
             const active = d.mode != null && mode === d.mode
             return (
               <button key={v} className={active ? 'on' : ''} disabled={!canCommand}
-                title={canCommand ? `${d.label} (${d.key})` : 'Commanders give orders'}
-                onClick={() => (d.mode ? setMode(active ? 'none' : d.mode) : onRtb())}>
-                <kbd>{d.key}</kbd> {d.label}
+                title={canCommand ? (v === 'disband' ? 'Remove this unowned unit for good (no refund)' : `${d.label} (${d.key})`) : 'Commanders give orders'}
+                onClick={() => (d.mode ? setMode(active ? 'none' : d.mode) : v === 'disband' ? onDisband() : onRtb())}>
+                {d.key && <kbd>{d.key}</kbd>} {d.label}
               </button>
             )
           })}
@@ -274,7 +277,8 @@ function OrderCatalog({ orders, armed, canCommand, busy, onArm }: {
 }): ReactElement {
   const groups = useMemo(() => {
     const by = new Map<string, OrderOption[]>()
-    for (const o of orders) {
+    // Formations for sale have their own panel (`FormationShop`).
+    for (const o of orders.filter((x) => !isFormationKey(x.key))) {
       const k = o.category || 'Other'
       by.set(k, [...(by.get(k) ?? []), o])
     }
@@ -314,7 +318,7 @@ function OrderCatalog({ orders, armed, canCommand, busy, onArm }: {
   )
 }
 
-export function LaunchPanel({ cp, selObj, side, canCommand, busy, armed, onArm, onOrder, onFocus, onBarrage, onClose }: {
+export function LaunchPanel({ cp, selObj, side, canCommand, busy, armed, onArm, onArmFormation, onOrder, onFocus, onBarrage, onClose }: {
   cp: CommandPicture
   selObj: GroundObjective | null
   side: Side
@@ -322,12 +326,14 @@ export function LaunchPanel({ cp, selObj, side, canCommand, busy, armed, onArm, 
   busy: boolean
   armed: string | null
   onArm: (o: OrderOption) => void
+  onArmFormation: (o: OrderOption, count: number) => void
   onOrder: (o: CommandOrder, confirm?: string) => void
   onFocus: (p: LatLon) => void
   onBarrage: () => void
   onClose: () => void
 }): ReactElement {
   const ours = selObj && selObj.owner === side
+  const forSale = (cp.orders ?? []).filter((o) => isFormationKey(o.key))
   return (
     <aside className="cm-launch">
       <button className="gw-drawer-x" onClick={onClose} title="Close (L)"><X size={14} /></button>
@@ -341,6 +347,14 @@ export function LaunchPanel({ cp, selObj, side, canCommand, busy, armed, onArm, 
       </div>
 
       <OrderCatalog orders={cp.orders ?? []} armed={armed} canCommand={canCommand} busy={busy} onArm={onArm} />
+
+      {cp.buy_formation && forSale.length > 0 && (
+        <>
+          <h3>BUY A FORMATION</h3>
+          <FormationShop opts={forSale} limits={cp.buy_formation} treasury={cp.treasury} canCommand={canCommand}
+            busy={busy} armed={armed} onArm={onArmFormation} />
+        </>
+      )}
 
       <h3>LOGISTICS{selObj ? ` · ${selObj.name.toUpperCase()}` : ''}</h3>
       {!selObj ? (

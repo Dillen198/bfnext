@@ -145,6 +145,18 @@ Your choice sticks with your pilot across slots and sessions.
 
 ---
 
+## The human GCI seat
+
+A commander (or an admin) can take the GCI seat from the dashboard: open
+**TACMAP**, press **SCOPE**, and use the **GCI seat** button at the bottom
+left of the radar scope. Type a call of up to 200 characters and press
+**Transmit** or Enter. The server's GCI voice speaks it on your side's GCI
+frequency over SRS, ahead of the automatic calls.
+
+So a commander watching the whole picture can talk to pilots directly ("Viper
+flight, push north, two groups inbound to Kutaisi") without being in DCS. If
+the radio is busy with another call, wait a moment and send again.
+
 ## Notes & limits
 
 - **One flight is served per cycle** and there's a short cooldown between calls

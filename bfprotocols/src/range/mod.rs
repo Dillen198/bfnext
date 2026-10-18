@@ -14,6 +14,7 @@
 pub mod cfg;
 pub mod grading;
 pub mod lso;
+pub mod pattern_legs;
 
 use chrono::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -1120,6 +1121,78 @@ pub struct FieldLandingResult {
     pub aim_point_m: f64,
     #[serde(default)]
     pub runway_length_m: f64,
+    #[serde(default)]
+    pub runway_width_m: f64,
+    /// how the pilot flew the pattern into this landing (missing on older records)
+    #[serde(default)]
+    pub pattern: Option<FieldPattern>,
+    /// the rollout and the taxi after a full stop (missing on older records and touch-and-goes)
+    #[serde(default)]
+    pub taxi: Option<FieldTaxi>,
+}
+
+/// The traffic pattern into a field landing, worked out from the track in the
+/// runway frame: distances along the runway from the landing threshold (+ =
+/// past it, in the landing direction), across it (+ = right), heights AGL.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FieldPattern {
+    /// "overhead" (initial, break, downwind), "downwind" (joined downwind),
+    /// "straight_in", or "other"
+    pub kind: String,
+    /// "left" or "right" traffic, from the side the downwind was flown on
+    #[serde(default)]
+    pub side: Option<String>,
+    #[serde(default)]
+    pub initial_alt_ft: Option<f64>,
+    #[serde(default)]
+    pub break_alt_ft: Option<f64>,
+    /// where the break started, metres along the runway from the threshold
+    #[serde(default)]
+    pub break_at_m: Option<f64>,
+    #[serde(default)]
+    pub downwind_alt_ft: Option<f64>,
+    /// downwind spacing abeam the threshold, nm from the centreline
+    #[serde(default)]
+    pub abeam_nm: Option<f64>,
+    #[serde(default)]
+    pub abeam_alt_ft: Option<f64>,
+    /// where the base turn started, metres along from the threshold (negative = before it, an extended downwind)
+    #[serde(default)]
+    pub base_at_m: Option<f64>,
+    /// wings level on final: nm before the threshold, and the height there
+    #[serde(default)]
+    pub rollout_nm: Option<f64>,
+    #[serde(default)]
+    pub rollout_alt_ft: Option<f64>,
+    /// ground speed down final
+    #[serde(default)]
+    pub final_gs_kts: Option<f64>,
+    /// break (or downwind, or final) to touchdown
+    #[serde(default)]
+    pub pattern_time_s: Option<f64>,
+    #[serde(default)]
+    pub calls: Vec<String>,
+}
+
+/// After the wheels are down: the rollout, clearing the runway, the taxi.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FieldTaxi {
+    /// touchdown to taxi speed (30 kt), metres down the runway, and seconds
+    pub rollout_m: f64,
+    pub rollout_s: f64,
+    /// touchdown to clear of the runway, seconds; where it turned off, metres from the threshold
+    #[serde(default)]
+    pub runway_clear_s: Option<f64>,
+    #[serde(default)]
+    pub exit_at_m: Option<f64>,
+    pub taxi_time_s: f64,
+    pub taxi_distance_m: f64,
+    pub max_taxi_kts: f64,
+    pub stops: u32,
+    /// "parked", "stopped_on_runway", "left", "took_off" or "timeout"
+    pub end: String,
+    #[serde(default)]
+    pub calls: Vec<String>,
 }
 
 // ---------------------------------------------------------------- CSAR

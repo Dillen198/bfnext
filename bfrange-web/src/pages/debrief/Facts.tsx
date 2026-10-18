@@ -475,7 +475,33 @@ export function Facts({ rec }: { rec: RangeRecord }) {
               ['Lineup 1 nm · ½ nm', `${deg(r.lineup_1nm_deg)} · ${deg(r.lineup_half_nm_deg)}`],
             ]} />
           </Section>
-          <Calls calls={r.calls} />
+          {r.pattern && (
+            <Section title={`Pattern · ${r.pattern.kind.replace('_', '-')}${r.pattern.side ? `, ${r.pattern.side}-hand` : ''}`}>
+              <KV rows={([
+                ['Initial', r.pattern.initial_alt_ft != null ? `${fmt(r.pattern.initial_alt_ft)} ft` : null],
+                ['Break', r.pattern.break_alt_ft != null ? `${fmt(r.pattern.break_alt_ft)} ft, ${fmt((r.pattern.break_at_m ?? 0))} m past the threshold` : null],
+                ['Downwind', r.pattern.downwind_alt_ft != null ? `${fmt(r.pattern.downwind_alt_ft)} ft` : null],
+                ['Abeam', r.pattern.abeam_nm != null ? `${fmt(r.pattern.abeam_nm, 1)} nm · ${fmt(r.pattern.abeam_alt_ft ?? 0)} ft` : null],
+                ['Base turn', r.pattern.base_at_m != null ? `${fmt(Math.abs(r.pattern.base_at_m) / 1852, 2)} nm ${r.pattern.base_at_m < 0 ? 'past' : 'short of'} the threshold` : null],
+                ['Wings level', r.pattern.rollout_nm != null ? `${fmt(r.pattern.rollout_nm, 2)} nm · ${fmt(r.pattern.rollout_alt_ft ?? 0)} ft` : null],
+                ['Final speed', r.pattern.final_gs_kts != null ? `${fmt(r.pattern.final_gs_kts)} kt` : null],
+                ['Pattern time', r.pattern.pattern_time_s != null ? `${fmt(r.pattern.pattern_time_s)} s` : null],
+              ] as [string, string | null][]).filter((x): x is [string, string] => x[1] !== null)} />
+            </Section>
+          )}
+          {r.taxi && (
+            <Section title="Rollout and taxi">
+              <KV rows={([
+                ['Rollout to 30 kt', `${fmt(r.taxi.rollout_m)} m · ${fmt(r.taxi.rollout_s)} s`],
+                ['Clear of the runway', r.taxi.runway_clear_s != null ? `${fmt(r.taxi.runway_clear_s)} s${r.taxi.exit_at_m != null ? `, ${fmt(r.taxi.exit_at_m)} m down` : ''}` : 'never'],
+                ['Taxi', `${fmt(r.taxi.taxi_distance_m)} m in ${fmt(r.taxi.taxi_time_s)} s`],
+                ['Top taxi speed', `${fmt(r.taxi.max_taxi_kts)} kt`],
+                ['Stops', String(r.taxi.stops)],
+                ['Ended', ({ parked: 'parked', stopped_on_runway: 'stopped on the runway', left: 'left the aircraft', took_off: 'took off again', timeout: 'lost track (10 min)' } as Record<string, string>)[r.taxi.end] ?? r.taxi.end],
+              ] as [string, string][])} />
+            </Section>
+          )}
+          <Calls calls={[...r.calls, ...(r.pattern?.calls ?? []), ...(r.taxi?.calls ?? [])]} />
         </>
       )
     case 'csar':

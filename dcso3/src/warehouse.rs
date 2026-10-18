@@ -186,6 +186,16 @@ impl WSCategory {
 wrapped_table!(WSType, None);
 
 impl<'lua> WSType<'lua> {
+    /// The raw four level wsType, e.g. `[4, 6, 10, 2]`. Missing levels read
+    /// as 0.
+    pub fn levels(&self) -> Result<[i64; 4]> {
+        let mut levels = [0; 4];
+        for (i, l) in levels.iter_mut().enumerate() {
+            *l = self.t.raw_get::<_, Option<i64>>(i + 1)?.unwrap_or(0);
+        }
+        Ok(levels)
+    }
+
     pub fn category(&self) -> Result<WSCategory> {
         match self.t.raw_get(1)? {
             0 => Ok(WSCategory::None),

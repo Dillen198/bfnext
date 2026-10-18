@@ -29,7 +29,9 @@ are.
   bombers, recon and transports, each drawn where it really is, with its
   altitude and speed.
 - **Supply convoys** on the road, with the base they are headed for.
-- **Deployed units and troops** players have put down.
+- **Deployed units and troops** players have put down, units nobody owns
+  (put down by the HQ or an admin), and **Dismounts**: infantry squads that
+  got off their vehicles.
 - **Batteries**: artillery in our bases and among deployed units.
 - **Carrier groups**.
 - **Enemy aircraft** our radar and AWACS hold, and the enemy formations our
@@ -48,16 +50,17 @@ hotkey, or right-click the map for its main order:
 | Asset | Orders |
 |---|---|
 | Ground formations | Attack, defend, withdraw, hold (as before), and **Move** (**M**) to any point that isn't an enemy base. A Move is a road march: the column drives on past enemies it only sees and returns fire, stopping to fight only when the enemy is within about 3 km. To go looking for a fight, give an Attack |
-| AI flights | **Station** (**S**): go to a point and work there (CAP station, tanker or AWACS orbit, attack area). **RTB** (**B**) |
+| AI flights | **Station** (**S**): go to a point and work there (CAP station, tanker or AWACS orbit, attack area); given while the flight is still on the ramp, it takes effect once it is airborne. **RTB** (**B**) |
 | Deployed units, troops | **Move** (**M**) |
+| Units nobody owns, dismount squads | **DISBAND**: removed for good, nothing refunded. Not a squad holding a base it has just captured, and never a unit a player owns: only they can remove it |
 | Batteries | **Fire** (**G**) on a point inside the orange ring |
 | Carrier groups | **Sail** (**M**) to open water |
 | Every battery in range | **Barrage** (**V**) |
 
 **L** opens the command panel: the side's treasury, the logistics orders for
 the selected base (**convoy**, **helicopter supply**, **helicopter troops**),
-and the operations the [Theatre HQ](./theatre-hq.md) can run right now, each
-with its price. Click one to launch it.
+the operations the [Theatre HQ](./theatre-hq.md) can run right now, each
+with its price, and **BUY A FORMATION**. Click one to launch it.
 
 Press **?** on the page for every key.
 
@@ -89,6 +92,29 @@ The formation panel sets how it fights and drives, at once in DCS:
   moving), **HOLD** (hold fire).
 - **Pace**: **SLOW** (half speed, keeps together), **NORMAL**, **FAST** (flat out).
 
+## Buying a formation
+
+Where the ground war is on, commanders can buy a whole new formation from the
+treasury, under **BUY A FORMATION** on the command panel (**L**):
+
+1. Pick the unit type (each shows its price per copy) and set how many with
+   **−** / **+**: {{cfg:ground_war.purchase.min_count|2}} to
+   {{cfg:ground_war.purchase.max_count|8}}.
+2. Press **ROUTE**, click up to 12 waypoints, and **right-click** or press
+   **Enter** to send.
+3. Confirm the price.
+
+The formation is put together at your nearest base within
+{{cfg:command.deploy_range_m|25000}} m of the route's first point and sets
+out along your route. That base can't be under threat, still consolidating
+after a capture, a carrier, a naval base or a SAM site. Radar and GCI units
+can't be bought this way, and nor can anything that can't drive.
+
+A bought formation counts towards your side's formation limit
+({{cfg:ground_war.max_formations_per_side|6}}) and starts with its base's
+supply. When it stands down, its survivors stay where they are as the buying
+commander's deployed units.
+
 ## The order catalogue
 
 The **COMMAND** panel (**L**) lists everything your side can order on this
@@ -102,6 +128,8 @@ Everything happens in DCS. Nothing is decided on the map instead:
 - **Air**: AWACS, tankers, fighters, attack and SEAD flights take off from a
   friendly airfield (one must be within 250 km of the point) and fly there.
   **Bombers** go after the target a JTAC of yours is lasing nearest the point.
+  **Strikes** attack with the flight's own weapons, no JTAC needed (see
+  [AI Strike Missions](./strike-missions.md)).
 - **Fires**: every battery in range fires (**Barrage**); deployed missile
   launchers fire a **missile strike**; ALCM bombers launch cruise missiles.
 - **Ground**: new units (**deployments**) are put together at your nearest
@@ -135,5 +163,9 @@ every order:
 - You can only order your own side's assets, and only commanders can.
 - A formation can't be moved into an enemy base: taking one is an Attack, with
   its assault and capture rules.
+- What you put on the map from the panel (deployments by road, troop
+  insertions, the HQ operations you launch, and actions paid from the
+  treasury) is **yours**: you get the credit, and you can `-delete` it, but
+  nothing is refunded, since your points didn't pay for it.
 - Orders are rate limited.
 - The whole side is told who ordered what.

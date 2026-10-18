@@ -21,7 +21,11 @@ for more details.
 use super::{slot_for_group, Pager};
 use crate::{airlife::WingmanCmd, Context};
 use anyhow::{Context as ErrContext, Result};
-use dcso3::{env::miz::GroupId, mission_commands::MissionCommands, MizLua};
+use dcso3::{
+    env::miz::GroupId,
+    mission_commands::{GroupSubMenu, MissionCommands},
+    MizLua,
+};
 
 fn queue(lua: MizLua, gid: GroupId, cmd: WingmanCmd) -> Result<()> {
     let ctx = unsafe { Context::get_mut() };
@@ -44,8 +48,12 @@ fn status(lua: MizLua, gid: GroupId) -> Result<()> {
     queue(lua, gid, WingmanCmd::Status)
 }
 
-pub(super) fn add_wingman_menu_for_group(mc: &MissionCommands, group: GroupId) -> Result<()> {
-    let root = mc.add_submenu_for_group(group, "Wingman".into(), None)?;
+pub(super) fn add_wingman_menu_for_group(
+    mc: &MissionCommands,
+    group: GroupId,
+    parent: Option<GroupSubMenu>,
+) -> Result<()> {
+    let root = mc.add_submenu_for_group(group, "Wingman".into(), parent)?;
     let mut p = Pager::new(group, root);
     for (label, cb) in [
         ("Request Wingman", request as fn(MizLua, GroupId) -> Result<()>),

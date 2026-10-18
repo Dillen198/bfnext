@@ -102,6 +102,8 @@ pub enum Verb {
     Rtb,
     /// Sail to a point.
     Sail,
+    /// Remove it for good (unowned ground units and dismounts only).
+    Disband,
 }
 
 /// One unit of an asset, where DCS has it now.
@@ -188,6 +190,24 @@ pub struct CommandPicture {
     /// Our air defences and how far they reach.
     #[serde(default)]
     pub defences: Vec<DefenceRing>,
+    /// Formations bought from the treasury (`CommandOrder::BuyFormation`):
+    /// how many copies an order may buy, and room left. None when the
+    /// server doesn't sell them. What can be bought is in `orders`, keyed
+    /// "formation:<deployable>", priced per copy.
+    #[serde(default)]
+    pub buy_formation: Option<FormationPurchase>,
+}
+
+/// The limits on buying a formation, for the command map.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormationPurchase {
+    pub min_count: u32,
+    pub max_count: u32,
+    /// Our formations in the field now, and the most we may have.
+    pub in_field: u32,
+    pub max_in_field: u32,
+    /// How far from the first point of its route our base may be, metres.
+    pub range_m: f64,
 }
 
 /// One leg of our supply network: a hub feeding a base.
@@ -327,6 +347,9 @@ pub enum CommandOrder {
     Station { group: i64, at: LatLon },
     /// An AI flight goes home.
     Rtb { group: i64 },
+    /// Remove a ground group no player owns (a dismount squad, or a unit
+    /// the HQ put down). Nothing is refunded.
+    Disband { group: i64 },
     /// A carrier group sails to a point.
     Sail { group: i64, to: LatLon },
     /// A supply convoy to one of our bases.
@@ -337,6 +360,16 @@ pub enum CommandOrder {
     HeloTroops { to: i64 },
     /// One of the HQ's operations, paid from the treasury.
     Launch { kind: crate::hq::OpKind, objective: i64 },
+    /// Buy a formation: `count` copies of a deployable's template (the
+    /// catalogue's "formation:<deployable>" entry), built at our nearest
+    /// unthreatened base and sent to `to` by way of `via`, as one formation.
+    BuyFormation {
+        key: String,
+        count: u32,
+        to: LatLon,
+        #[serde(default)]
+        via: Vec<LatLon>,
+    },
     /// Anything from the order catalogue (`CommandPicture::orders`), at the
     /// commander's choice of place: `at` for a point, `objective` for a
     /// base, `objective` -> `to_objective` for a transfer.
@@ -370,5 +403,8 @@ mod tests {
         assert!(matches!(o, CommandOrder::Launch { objective: 3, .. }));
         let o: CommandOrder = serde_json::from_str(r#"{"barrage":{"at":[42.0,44.25]}}"#).unwrap();
         assert!(matches!(o, CommandOrder::Barrage { .. }));
+        let o: CommandOrder =
+            serde_json::from_str(r#"{"buy_formation":{"key":"formation:MBT / T-90M","count":6,"to":[35.1,36.5]}}"#).unwrap();
+        assert!(matches!(o, CommandOrder::BuyFormation { count: 6, ref via, .. } if via.is_empty()));
     }
 }

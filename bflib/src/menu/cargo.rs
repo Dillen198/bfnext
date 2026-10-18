@@ -20,7 +20,7 @@ use crate::{
     db::cargo::{Cargo, Oldest, SlotStats},
 };
 use anyhow::{Context as ErrContext, Result, anyhow};
-use bfprotocols::cfg::{Cfg, LimitEnforceTyp};
+use bfprotocols::cfg::{Cfg, DeployableKind, LimitEnforceTyp};
 use chrono;
 use compact_str::{CompactString, ToCompactString, format_compact};
 use dcso3::{
@@ -855,8 +855,12 @@ pub(super) fn add_cargo_menu_for_group(
     Ok(())
 }
 
-pub(super) fn add_csar_menu_for_group(mc: &MissionCommands, group: GroupId) -> Result<()> {
-    let root = mc.add_submenu_for_group(group, "CSAR".into(), None)?;
+pub(super) fn add_csar_menu_for_group(
+    mc: &MissionCommands,
+    group: GroupId,
+    parent: Option<GroupSubMenu>,
+) -> Result<()> {
+    let root = mc.add_submenu_for_group(group, "CSAR".into(), parent)?;
     mc.add_command_for_group(
         group,
         "List Downed Pilots".into(),
@@ -1119,6 +1123,16 @@ fn unpack_helo_crates(lua: MizLua, arg: GroupId) -> Result<()> {
     Ok(())
 }
 
+fn pack_fat_cow(lua: MizLua, arg: GroupId) -> Result<()> {
+    let ctx = unsafe { Context::get_mut() };
+    let (_, slot) = slot_for_group(lua, ctx, &arg).context("getting slot for group")?;
+    match ctx.db.pack_fat_cow(lua, &ctx.idx, &slot) {
+        Ok(msg) => ctx.db.ephemeral.msgs().panel_to_group(15, false, arg, msg),
+        Err(e) => ctx.db.ephemeral.msgs().panel_to_group(10, false, arg, format_compact!("{e}")),
+    }
+    Ok(())
+}
+
 pub(super) fn add_helo_cargo_menu_for_group(
     cfg: &Cfg,
     mc: &MissionCommands,
@@ -1155,6 +1169,18 @@ pub(super) fn add_helo_cargo_menu_for_group(
         destroy_nearby_crate,
         group,
     )?;
+    let has_fat_cow = cfg.deployables.get(side).into_iter().flatten().any(|d| {
+        matches!(&d.kind, DeployableKind::Objective(o) if o.fat_cow.is_some())
+    });
+    if has_fat_cow {
+        mc.add_command_for_group(
+            group,
+            "Pack Up Fat Cow".into(),
+            Some(root.clone()),
+            pack_fat_cow,
+            group,
+        )?;
+    }
 
     let crates_menu = mc.add_submenu_for_group(group, "Crates".into(), Some(root.clone()))?;
 

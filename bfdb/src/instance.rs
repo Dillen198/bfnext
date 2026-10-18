@@ -185,6 +185,11 @@ pub(crate) struct InstanceCfg {
     /// site's "download Tacview" link. Unset disables both.
     #[serde(default)]
     pub tacview_dir: Option<PathBuf>,
+    /// Seconds after a recording ends before anyone but an admin can replay
+    /// or download it. On a PvP server a fresh recording shows where the
+    /// other side is right now. 0 (the default) = straight away.
+    #[serde(default)]
+    pub replay_delay_secs: u64,
 }
 
 /// Which engine an instance runs. Serialized lowercase: `"campaign"` /

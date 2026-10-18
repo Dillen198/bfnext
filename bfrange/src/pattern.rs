@@ -10,7 +10,14 @@
 //! `took_off_off_runway`) -- then grades the touchdown against the aim point
 //! and the centreline, the sink rate in the last second, and the approach
 //! at 1 nm and ½ nm against a 3° glideslope. A take-off within 15 s makes it
-//! a touch-and-go; the card waits that long before it is written.
+//! a touch-and-go; the in-game grade waits that long.
+//!
+//! The pattern into the landing is read from the last six minutes of track
+//! ([`bfprotocols::range::pattern_legs::pattern`]: initial, break, downwind, base, final).
+//! After a full stop the engine keeps following the aircraft through the
+//! rollout and the taxi ([`bfprotocols::range::pattern_legs::taxi`]) until it parks, its
+//! pilot leaves, it takes off again or ten minutes pass; then the record is
+//! written, with the pattern and the taxi as its track.
 
 use crate::{
     players::{Flying, Players},
@@ -18,8 +25,11 @@ use crate::{
     util::{self, V3},
 };
 use bfprotocols::range::{
-    cfg::RangeCfg, grading, FieldLandingOutcome, FieldLandingResult, PilotRef, RangeResult,
+    cfg::RangeCfg, grading,
+    pattern_legs::{self, RelSample, TaxiSample},
+    FieldLandingOutcome, FieldLandingResult, PilotRef, RangeResult, Track, TrackPt,
 };
+use std::collections::BTreeMap;
 use dcso3::{airbase::AirbaseCategory, coalition::Side, env::miz::GroupId, world::World, MizLua};
 use fxhash::FxHashMap;
 use log::{info, warn};
@@ -28,6 +38,12 @@ use std::collections::VecDeque;
 /// Sample aircraft this close to a field, and this low.
 const NEAR_M: f64 = 8. * util::NM;
 const LOW_M: f64 = 1200.;
+/// How much track to keep: enough for an overhead pattern and a long final.
+const KEEP_S: f64 = 360.;
+/// Give up following a taxi after this long.
+const TAXI_MAX_S: f64 = 600.;
+/// Stopped this long, it has parked.
+const PARKED_S: f64 = 25.;
 
 #[derive(Debug, Clone)]
 struct Rwy {
@@ -53,6 +69,24 @@ struct Sample {
     v: V3,
 }
 
+/// The landing runway, for the runway frame: threshold, direction, size.
+#[derive(Debug, Clone, Copy)]
+struct Frame {
+    thr: V3,
+    s: f64,
+    c: f64,
+    len: f64,
+    width: f64,
+}
+
+impl Frame {
+    /// (along from the threshold, across + right)
+    fn rel(&self, q: V3) -> (f64, f64) {
+        let d = q - self.thr;
+        (d.x * self.c + d.z * self.s, -d.x * self.s + d.z * self.c)
+    }
+}
+
 #[derive(Debug)]
 struct Pending {
     res: FieldLandingResult,
@@ -62,6 +96,20 @@ struct Pending {
     callsign: String,
     gid: GroupId,
     due: f64,
+    frame: Frame,
+    t_touch: f64,
+    /// the pattern into the landing, 1 Hz, for the record's track
+    pattern_pts: Vec<TrackPt>,
+}
+
+/// A full stop being followed through the rollout and the taxi.
+#[derive(Debug)]
+struct Taxiing {
+    p: Pending,
+    samples: Vec<TaxiSample>,
+    pts: Vec<TrackPt>,
+    last: f64,
+    still_since: Option<f64>,
 }
 
 #[derive(Debug, Default)]
@@ -69,6 +117,7 @@ pub struct Pattern {
     fields: Vec<Field>,
     track: FxHashMap<String, VecDeque<Sample>>,
     pending: FxHashMap<String, Pending>,
+    taxiing: FxHashMap<String, Taxiing>,
     /// unit -> last touchdown time (a bounce is not a second landing)
     last_touch: FxHashMap<String, f64>,
     last_sample: f64,
@@ -133,13 +182,20 @@ impl Pattern {
 
     /// 5 Hz sampling of fixed-wing players low near a field.
     pub fn tick(&mut self, lua: MizLua, cfg: &RangeCfg, players: &Players, rec: &mut Recorder, now: f64) {
-        // cards whose touch-and-go window has closed
+        // landings whose touch-and-go window has closed: the grade goes out
+        // now; a full stop is then followed through the taxi
         let due: Vec<String> = self.pending.iter().filter(|(_, p)| now >= p.due).map(|(u, _)| u.clone()).collect();
         for u in due {
             if let Some(p) = self.pending.remove(&u) {
-                self.emit(lua, cfg, rec, p);
+                self.message(lua, cfg, &p);
+                if p.res.outcome == FieldLandingOutcome::TouchAndGo || !players.flying.contains_key(&u) {
+                    self.record(lua, rec, p, vec![], None);
+                } else {
+                    self.taxiing.insert(u, Taxiing { p, samples: vec![], pts: vec![], last: f64::NEG_INFINITY, still_since: None });
+                }
             }
         }
+        self.follow_taxi(lua, players, rec, now);
         if self.fields.is_empty() || now - self.last_sample < 0.2 {
             return;
         }
@@ -157,14 +213,73 @@ impl Pattern {
             };
             let q = self.track.entry(f.unit_name.clone()).or_default();
             q.push_back(Sample { t: now, p, v });
-            while q.front().map(|s| now - s.t > 90.).unwrap_or(false) {
+            while q.front().map(|s| now - s.t > KEEP_S).unwrap_or(false) {
                 q.pop_front();
             }
         }
     }
 
     pub fn active(&self) -> bool {
-        !self.track.is_empty() || !self.pending.is_empty()
+        !self.track.is_empty() || !self.pending.is_empty() || !self.taxiing.is_empty()
+    }
+
+    /// One sample a second of every aircraft being followed after a full
+    /// stop, and the end of its taxi.
+    fn follow_taxi(&mut self, lua: MizLua, players: &Players, rec: &mut Recorder, now: f64) {
+        let mut done: Vec<(String, &'static str)> = vec![];
+        for (u, tx) in self.taxiing.iter_mut() {
+            if now - tx.last < 1. {
+                continue;
+            }
+            tx.last = now;
+            let Some(f) = players.flying.get(u) else {
+                done.push((u.clone(), "left"));
+                continue;
+            };
+            let (p, v) = match dcso3::unit::Unit::get_by_name(lua, u).and_then(|un| Ok((un.get_point()?.0, un.get_velocity()?.0))) {
+                Ok(x) => x,
+                Err(_) => (f.pos, f.vel),
+            };
+            let (along, across) = tx.p.frame.rel(p);
+            let gs = util::gs_kts(v);
+            tx.samples.push(TaxiSample { t: now, along, across, gs_kts: gs, x: p.x, z: p.z });
+            let g = util::geo(lua, p);
+            tx.pts.push(TrackPt { t: now - tx.p.t_touch, lat: g.lat, lon: g.lon, alt_m: g.alt_m, speed_kts: gs });
+            let on_rwy = across.abs() <= tx.p.frame.width / 2. + 4. && (-30. ..=tx.p.frame.len + 30.).contains(&along);
+            if gs < 1. {
+                let since = *tx.still_since.get_or_insert(now);
+                if now - since >= PARKED_S {
+                    done.push((u.clone(), if on_rwy { "stopped_on_runway" } else { "parked" }));
+                    continue;
+                }
+            } else {
+                tx.still_since = None;
+            }
+            if now - tx.p.t_touch > TAXI_MAX_S {
+                done.push((u.clone(), "timeout"));
+            }
+        }
+        for (u, end) in done {
+            self.finish_taxi(lua, rec, &u, end);
+        }
+    }
+
+    fn finish_taxi(&mut self, lua: MizLua, rec: &mut Recorder, unit: &str, end: &str) {
+        let Some(tx) = self.taxiing.remove(unit) else { return };
+        let mut p = tx.p;
+        // the touchdown itself opens the taxi track
+        let mut samples = tx.samples;
+        if samples.is_empty() || samples[0].t > p.t_touch + 0.5 {
+            let (a, c) = (p.res.touchdown_from_threshold_m, p.res.centreline_m);
+            samples.insert(0, TaxiSample { t: p.t_touch, along: a, across: c, gs_kts: p.res.touchdown_gs_kts, x: f64::NAN, z: f64::NAN });
+            if samples.len() > 1 {
+                samples[0].x = samples[1].x;
+                samples[0].z = samples[1].z;
+            }
+        }
+        let t = pattern_legs::taxi(&samples, p.t_touch, p.frame.len, p.frame.width, end);
+        p.res.taxi = Some(t);
+        self.record(lua, rec, p, tx.pts, None);
     }
 
     /// RUNWAY_TOUCH at an airfield.
@@ -276,6 +391,25 @@ impl Pattern {
             calls.push("touched down short of the threshold".into());
         }
         let quality = grading::field_landing_quality(err, across, fpm, stable, undershoot);
+        // the pattern, from the track in the runway frame
+        let frame = Frame { thr, s, c, len: rw.length, width: rw.width };
+        let rel: Vec<RelSample> = samples
+            .iter()
+            .map(|x| {
+                let (a, cr) = frame.rel(x.p);
+                RelSample { t: x.t, along: a, across: cr, agl: x.p.y - elev, rel: util::angdiff(util::hdg(x.v), dir), gs_kts: util::gs_kts(x.v) }
+            })
+            .collect();
+        let pattern = pattern_legs::pattern(&rel, now);
+        let mut pattern_pts = vec![];
+        let mut last = f64::NEG_INFINITY;
+        for x in &samples {
+            if x.t - last >= 1. {
+                last = x.t;
+                let g = util::geo(lua, x.p);
+                pattern_pts.push(TrackPt { t: x.t - now, lat: g.lat, lon: g.lon, alt_m: g.alt_m, speed_kts: util::gs_kts(x.v) });
+            }
+        }
         let res = FieldLandingResult {
             airfield: field.name.clone(),
             runway: designator(&rw.name, dir),
@@ -297,6 +431,9 @@ impl Pattern {
             threshold_pos: util::geo(lua, thr),
             aim_point_m: aim,
             runway_length_m: rw.length,
+            runway_width_m: rw.width,
+            pattern: Some(pattern),
+            taxi: None,
         };
         self.pending.insert(
             f.unit_name.clone(),
@@ -308,21 +445,29 @@ impl Pattern {
                 callsign: f.group_name.clone(),
                 gid: f.group_id,
                 due: now + 15.,
+                frame,
+                t_touch: now,
+                pattern_pts,
             },
         );
     }
 
-    /// RUNWAY_TAKEOFF / TAKEOFF: a pending landing was a touch-and-go.
-    pub fn took_off(&mut self, unit: &str) {
+    /// RUNWAY_TAKEOFF / TAKEOFF: a pending landing was a touch-and-go; a taxi
+    /// being followed has ended in a take-off.
+    pub fn took_off(&mut self, lua: MizLua, rec: &mut Recorder, unit: &str) {
         if let Some(p) = self.pending.get_mut(unit) {
             if p.res.outcome == FieldLandingOutcome::FullStop {
                 p.res.outcome = FieldLandingOutcome::TouchAndGo;
             }
             p.due = 0.;
         }
+        if self.taxiing.contains_key(unit) {
+            self.finish_taxi(lua, rec, unit, "took_off");
+        }
     }
 
-    fn emit(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, p: Pending) {
+    /// The grade, in game, to the pilot's group.
+    fn message(&self, lua: MizLua, cfg: &RangeCfg, p: &Pending) {
         let r = &p.res;
         if cfg.in_game_results {
             records::to_group(
@@ -345,16 +490,39 @@ impl Pattern {
                 ),
                 cfg.message_s,
             );
+            if let Some(pt) = &r.pattern {
+                if !pt.calls.is_empty() {
+                    records::to_group(lua, p.gid, &format!("PATTERN ({}): {}", pt.kind.replace('_', " "), pt.calls.join("; ")), cfg.message_s);
+                }
+            }
         }
-        let score = r.quality.score();
-        rec.emit(lua, p.pilot, &p.typ, p.side, &p.callsign, Some(score), RangeResult::FieldLanding(p.res), None);
+    }
+
+    /// The record, with the pattern and the taxi as its track.
+    fn record(&self, lua: MizLua, rec: &mut Recorder, p: Pending, taxi_pts: Vec<TrackPt>, _why: Option<&str>) {
+        let score = p.res.quality.score();
+        let mut paths = BTreeMap::new();
+        if !p.pattern_pts.is_empty() {
+            paths.insert("pattern".to_string(), p.pattern_pts.clone());
+        }
+        if !taxi_pts.is_empty() {
+            paths.insert("taxi".to_string(), taxi_pts);
+        }
+        let track = (!paths.is_empty()).then_some(Track::Path { paths });
+        rec.emit(lua, p.pilot, &p.typ, p.side, &p.callsign, Some(score), RangeResult::FieldLanding(p.res), track);
     }
 
     pub fn player_out(&mut self, lua: MizLua, cfg: &RangeCfg, rec: &mut Recorder, unit: &str) {
         self.track.remove(unit);
         self.last_touch.remove(unit);
         if let Some(p) = self.pending.remove(unit) {
-            self.emit(lua, cfg, rec, p);
+            self.message(lua, cfg, &p);
+            self.record(lua, rec, p, vec![], None);
+        }
+        if let Some(tx) = self.taxiing.get(unit) {
+            // stopped clear of the runway before leaving: that was parking
+            let parked = tx.still_since.map(|s| tx.last - s >= 5.).unwrap_or(false);
+            self.finish_taxi(lua, rec, unit, if parked { "parked" } else { "left" });
         }
     }
 }

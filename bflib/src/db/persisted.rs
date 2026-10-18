@@ -95,6 +95,13 @@ pub struct Persisted {
     pub blue_treasury: i64,
     #[serde(default)]
     pub red_treasury: i64,
+    /// When this round began (first seen by an engine that tracks it), for
+    /// `Cfg::max_round_days`.
+    #[serde(default)]
+    pub round_started: Option<DateTime<Utc>>,
+    /// The round's war-effort bar (`db::war_effort`).
+    #[serde(default)]
+    pub war_effort: super::war_effort::WarEffort,
     /// Sides whose base funds have been seeded from `objective_start_points`
     /// this round. Load used to re-seed every base whose fund was exactly 0
     /// on every restart -- and size the share against only those bases, so a
@@ -154,6 +161,11 @@ pub struct Persisted {
     /// instead of a restart re-opening every freshly flipped base at once.
     #[serde(default)]
     pub last_owner_change: MapS<ObjectiveId, DateTime<Utc>>,
+    /// When each AI Fat Cow packs up. The helicopter on station is not
+    /// respawned after a restart, so without this its FARP would stay up for
+    /// good. See `crate::db::fat_cow`.
+    #[serde(default)]
+    pub fat_cow_expiry: MapS<ObjectiveId, DateTime<Utc>>,
     /// Troop insertions on their way in by road after the helo failed, by
     /// id. Persisted so a restart can refund them: the vehicle itself is not
     /// respawned. See `crate::db::ground_insertion`.

@@ -172,9 +172,74 @@ pub struct SortieTally {
     pub kills: Vec<(String, u16)>,
     #[serde(default)]
     pub kill_points: i32,
+    /// What the flight did for its side besides kills -- captures, repairs,
+    /// supply, troops and deployments -- in the order they happened.
+    #[serde(default)]
+    pub contributions: Vec<String>,
+}
+
+/// A pilot with fewer sorties than this is a rookie: their slot briefing
+/// gives them a safer task and points them at the getting-started help.
+pub(crate) const ROOKIE_SORTIES: u32 = 5;
+
+fn rookie_done() -> u32 {
+    ROOKIE_SORTIES
+}
+
+/// Most contributions a debrief lists; the rest are summed as "and N more".
+const MAX_CONTRIBUTIONS: usize = 6;
+
+/// Something a pilot did for the team, queued by `Ephemeral::stat` and
+/// written into their flight's tally by `Db::drain_contributions`.
+#[derive(Debug, Clone)]
+pub(crate) enum Contribution {
+    Capture(ObjectiveId),
+    Repair(ObjectiveId),
+    Supply(ObjectiveId),
+    Troops(String),
+    Deployed(String),
+    Farp(ObjectiveId),
+}
+
+impl Contribution {
+    /// Who did what, if `stat` is a contribution.
+    pub(crate) fn of(stat: &Stat) -> SmallVec<[(Ucid, Contribution); 1]> {
+        match stat {
+            Stat::Capture { id, by, .. } => by.iter().map(|u| (*u, Contribution::Capture(*id))).collect(),
+            Stat::Repair { id, by } => smallvec![(*by, Contribution::Repair(*id))],
+            Stat::SupplyTransfer { to, by, .. } => smallvec![(*by, Contribution::Supply(*to))],
+            Stat::DeployTroop { by, troop, .. } => smallvec![(*by, Contribution::Troops(troop.clone()))],
+            Stat::DeployGroup { by, deployable, .. } => {
+                smallvec![(*by, Contribution::Deployed(deployable.clone()))]
+            }
+            Stat::DeployFarp { by, oid, .. } => smallvec![(*by, Contribution::Farp(*oid))],
+            _ => SmallVec::new(),
+        }
+    }
 }
 
 impl SortieTally {
+    fn add_contribution(&mut self, what: String) {
+        if !self.contributions.iter().any(|c| *c == what) {
+            self.contributions.push(what);
+        }
+    }
+
+    /// The contributions as one line, capped at `MAX_CONTRIBUTIONS`.
+    pub fn contributions_line(&self) -> Option<std::string::String> {
+        if self.contributions.is_empty() {
+            return None;
+        }
+        let shown: Vec<&str> =
+            self.contributions.iter().take(MAX_CONTRIBUTIONS).map(|c| c.as_str()).collect();
+        let more = self.contributions.len().saturating_sub(MAX_CONTRIBUTIONS);
+        Some(if more > 0 {
+            format!("{}, and {more} more", shown.join(", "))
+        } else {
+            shown.join(", ")
+        })
+    }
+
     fn add_kill(&mut self, typ: &str, points: i32) {
         match self.kills.iter_mut().find(|(t, _)| t.as_str() == typ) {
             Some((_, n)) => *n = n.saturating_add(1),
@@ -330,6 +395,11 @@ pub struct Player {
     /// written before it existed.
     #[serde(default)]
     pub flight: Option<FlightCharge>,
+    /// Sorties flown this round (first takeoffs of a flight), for rookie
+    /// mode (`ROOKIE_SORTIES`). A save from before this field existed only
+    /// holds pilots who were already flying here, so they count as done.
+    #[serde(default = "rookie_done")]
+    pub sorties: u32,
     #[serde(skip)]
     pub current_slot: Option<(SlotId, Option<InstancedPlayer>)>,
     #[serde(skip)]
@@ -347,6 +417,13 @@ pub struct Player {
 }
 
 impl Db {
+    /// Whether `ucid` still gets rookie mode: fewer than `ROOKIE_SORTIES`
+    /// sorties, counting earlier rounds (`Ephemeral::veterans`).
+    pub(crate) fn is_rookie(&self, ucid: &Ucid) -> bool {
+        !self.ephemeral.veterans.contains(ucid)
+            && self.persisted.players.get(ucid).map_or(false, |p| p.sorties < ROOKIE_SORTIES)
+    }
+
     pub fn player_deslot(&mut self, ucid: &Ucid) {
         if let Some(player) = self.persisted.players.get_mut_cow(ucid) {
             player.airborne = None;
@@ -817,6 +894,10 @@ impl Db {
         if flight.tally.took_off.is_none() {
             flight.tally.took_off = Some(time);
             flight.tally.from = from;
+            player.sorties = player.sorties.saturating_add(1);
+            if player.sorties >= ROOKIE_SORTIES && self.ephemeral.veterans.insert(ucid) {
+                self.ephemeral.save_veterans();
+            }
         }
         let side = player.side;
         self.ephemeral.dirty();
@@ -929,7 +1010,49 @@ impl Db {
 
     /// Settle a landing and say what it settled. `None` only when the slot
     /// isn't a known player's.
+    /// Write the contributions `Ephemeral::stat` queued into each pilot's
+    /// flight tally. Pilots not on a flight (a deploy from the ground) get
+    /// nothing written: there is no debrief for it to show in.
+    pub(crate) fn drain_contributions(&mut self) {
+        let queued = std::mem::take(&mut *self.ephemeral.contributions.borrow_mut());
+        for (ucid, c) in queued {
+            let name = |db: &Db, oid: &ObjectiveId| {
+                db.persisted
+                    .objectives
+                    .get(oid)
+                    .map(|o| o.name.to_string())
+                    .unwrap_or_else(|| "an objective".to_string())
+            };
+            let at = match &c {
+                Contribution::Capture(oid)
+                | Contribution::Repair(oid)
+                | Contribution::Supply(oid)
+                | Contribution::Farp(oid) => self.persisted.objectives.get(oid).map(|o| o.zone.pos()),
+                Contribution::Troops(_) | Contribution::Deployed(_) => None,
+            };
+            if let Some(p) = at
+                && self.in_task_zone(&ucid, p, Utc::now())
+            {
+                self.task_bonus_xp(ucid, super::tasking::TASK_JOB_XP, "objective work");
+            }
+            let what = match &c {
+                Contribution::Capture(oid) => format!("captured {}", name(self, oid)),
+                Contribution::Repair(oid) => format!("repaired {}", name(self, oid)),
+                Contribution::Supply(oid) => format!("supplied {}", name(self, oid)),
+                Contribution::Troops(t) => format!("inserted {t}"),
+                Contribution::Deployed(d) => format!("deployed {d}"),
+                Contribution::Farp(oid) => format!("built FARP {}", name(self, oid)),
+            };
+            if let Some(player) = self.persisted.players.get_mut_cow(&ucid)
+                && let Some(flight) = player.flight.as_mut()
+            {
+                flight.tally.add_contribution(String::from(what.as_str()));
+            }
+        }
+    }
+
     pub fn land(&mut self, slot: SlotId, position: Vector2, unit: &Unit) -> Option<LandReport> {
+        self.drain_contributions();
         // Record the touchdown before any of the bookkeeping below can bail
         // out. `player_deslot` reads this to decide whether the slot session
         // ended on the ground, so every landing has to be marked -- not just
@@ -1402,6 +1525,7 @@ impl Db {
                         kill_streak: 0,
                         total_kills: 0,
                         flight: None,
+                        sorties: 0,
                         untransferable,
                     },
                 );
@@ -1700,9 +1824,12 @@ impl Db {
         let in_air = unit.in_air()?;
         // Ground-start slots get a hold before they may get airborne; air starts
         // are already flying, so there's nothing to hold.
+        // The war-effort bar shortens the hold for the side pushing it.
+        let hold_factor = self.persisted.war_effort.hold_factor(player.side);
         let takeoff_ok_at = match self.ephemeral.cfg.takeoff_delay_secs {
             secs if secs > 0 && !in_air => {
-                Some(Utc::now() + Duration::seconds(secs as i64))
+                let secs = (secs as f64 * hold_factor).round() as i64;
+                Some(Utc::now() + Duration::seconds(secs))
             }
             _ => None,
         };
@@ -2129,6 +2256,17 @@ impl Db {
                     })
                 }
             };
+            // Where it died, for the paid-tasking multiplier.
+            let victim_pos: Option<Vector2> = match &dead.victim {
+                Who::AI { uid, .. } => self.persisted.units.get(uid).map(|u| u.pos),
+                Who::Player { ucid, .. } => self
+                    .persisted
+                    .players
+                    .get(ucid)
+                    .and_then(|p| p.current_slot.as_ref())
+                    .and_then(|(_, i)| i.as_ref())
+                    .map(|i| Vector2::new(i.position.p.x, i.position.p.z)),
+            };
             for (((ucid, via_ai), _), share) in credit.iter().copied().zip(shares) {
                 let Some((side, streak)) = self
                     .persisted
@@ -2160,7 +2298,13 @@ impl Db {
                             .map(|(_, mult)| *mult)
                             .unwrap_or(1.0)
                     };
-                    let raw = (share as f64 * ai_frac * streak_mult).round() as i32;
+                    let tasked = !via_ai
+                        && victim_pos.map_or(false, |p| self.in_task_zone(&ucid, p, dead.time));
+                    let task_mult = if tasked { super::tasking::TASK_POINTS_MULT } else { 1.0 };
+                    if tasked {
+                        self.task_bonus_xp(ucid, super::tasking::TASK_KILL_XP, "kill");
+                    }
+                    let raw = (share as f64 * ai_frac * streak_mult * task_mult).round() as i32;
                     let earned = self.scale_earning(&ucid, raw);
                     let pts = earned.amount;
                     let provisional = !via_ai && cfg.provisional;

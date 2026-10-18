@@ -127,7 +127,12 @@ somewhere else.
 
 ## Captured airframes
 
-When a base changes hands, some of the losing side's parked aircraft come with it.
+A base you capture starts with
+**{{cfg:warehouse.capture_airframe_stock_percent|0}}%** of its airframe capacity
+in each of your own types (rounded up), a quick-reaction force to hold it
+while the supply line catches up. The rest arrives by convoy or airlift.
+
+When a base changes hands, some of the losing side's parked aircraft also come with it.
 
 | | |
 | --- | --- |

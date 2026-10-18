@@ -5,16 +5,21 @@
  * The threat layer adds the IADS sites (lit when their radar is up), hot
  * zones with their bandit count and GPS jammers; CSAR maydays show only the
  * rough search area, never the survivor.
+ *
+ * Every marker can be clicked: it becomes the selection (see lib/select.ts),
+ * which the control dock beside the map opens. `focus` flies the camera to
+ * a selection made elsewhere (the dock, the search palette).
  */
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Layer, Marker, Source, type MapLayerMouseEvent } from 'react-map-gl/maplibre'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Layer, Marker, Source, type MapLayerMouseEvent, type MapRef, type MarkerEvent } from 'react-map-gl/maplibre'
 import type { Feature, FeatureCollection } from 'geojson'
-import { Aircraft, Antenna, Carrier, Csar, Explosion, Helicopter, Radar, Refuel, Strike, Crosshair, Ship, Armor, Sam, type IconComponent } from '@icons'
+import { Aircraft, Antenna, Armor, Carrier, Crosshair, Csar, Explosion, Helicopter, Layers as LayersIcon, Maximize2, Radar, Refuel, Sam, Ship, Strike, type IconComponent } from '@icons'
 import { RangeMap } from '../../components/RangeMap'
 import { useTheme } from '../../context/ThemeContext'
 import { airframe, fmt, pad3 } from '../../lib/format'
 import { boundsOf, circleRing, destination, NM, type LatLon } from '../../lib/geo'
 import { drawSectors, showsFor, type SideFilter } from '../../lib/sectors'
+import { locate } from '../../lib/select'
 import { usePref } from '../../lib/usePref'
 import type { RangeLive, Sector, StationKind } from '../../types'
 import { SECTOR_HIT_LAYER, SectorCard, SectorLabels, SectorLegend, SectorShapes, SectorTip } from './LiveSectors'
@@ -34,6 +39,10 @@ const STATION_ICON: Record<StationKind, IconComponent> = {
 }
 
 type Layers = { stations: boolean; threats: boolean; air: boolean; labels: boolean }
+const isLayers = (v: unknown): v is Layers => {
+  const l = v as Layers | null
+  return !!l && ['stations', 'threats', 'air', 'labels'].every(k => typeof (l as unknown as Record<string, unknown>)[k] === 'boolean')
+}
 
 /** Colours of the new layers: the F10 map's own for hot zones and EW. */
 const HOT = '#FF1744'
@@ -70,9 +79,6 @@ const SIDES: { v: SideFilter; label: string; title: string }[] = [
 const hasHover = () => {
   try { return window.matchMedia('(hover: hover)').matches } catch { return true }
 }
-const isNarrow = () => {
-  try { return window.matchMedia('(max-width: 640px)').matches } catch { return false }
-}
 
 /** The pointer on the map, and the map's size, in CSS pixels. */
 type Pointer = { x: number; y: number; w: number; h: number }
@@ -88,10 +94,33 @@ function placeTip(el: HTMLDivElement | null, p: Pointer | null) {
   el.style.transform = `translate(${Math.max(6, x)}px, ${Math.max(6, y)}px)`
 }
 
-export function LiveMap({ live, height }: { live: RangeLive; height: number | string }) {
+/** A request to fly the camera; `n` changes to fly again to the same thing. */
+export interface Focus {
+  key: string
+  n: number
+}
+
+function Toggle({ on, onChange, children, hint }: { on: boolean; onChange: () => void; children: ReactNode; hint?: string }) {
+  return (
+    <label className="layer-row" title={hint}>
+      <input type="checkbox" checked={on} onChange={onChange} />
+      <span className="layer-box" aria-hidden />
+      <span>{children}</span>
+    </label>
+  )
+}
+
+export function LiveMap({ live, height, selected = null, onSelect, focus = null }: {
+  live: RangeLive
+  height: number | string
+  selected?: string | null
+  onSelect?: (key: string | null) => void
+  focus?: Focus | null
+}) {
   const { theme } = useTheme()
   const light = theme === 'light'
-  const [show, setShow] = useState<Layers>({ stations: true, threats: true, air: true, labels: true })
+  const [show, setShow] = usePref<Layers>('range.live.layers', { stations: true, threats: true, air: true, labels: true }, isLayers)
+  const [menu, setMenu] = useState(false)
   const iads = live.iads ?? []
   const hotZones = live.hot_zones ?? []
   const jammers = live.jammers ?? []
@@ -99,6 +128,7 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
   const decks = live.ship_decks ?? []
   const hasThreats = iads.length + hotZones.length + jammers.length > 0
   const [zoom, setZoom] = useState(8)
+  const mapRef = useRef<MapRef>(null)
   // how much text the labels carry: -1 none, 0 names only for the big
   // things, 1 names everywhere, 2 full detail (frequencies, BRC, targets)
   const detail = !show.labels ? -1 : zoom >= 10.5 ? 2 : zoom >= 9 ? 1 : 0
@@ -108,12 +138,7 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
   const sectorsKey = useMemo(() => JSON.stringify(live.sectors ?? []), [live.sectors])
   const drawn = useMemo(() => drawSectors(JSON.parse(sectorsKey) as Sector[]), [sectorsKey])
   const [canHover] = useState(hasHover)
-  const [sec, setSec] = usePref<SectorPref>(
-    'range.live.sectors',
-    // the key starts open where there is room for it
-    () => ({ on: true, side: 'all', key: !isNarrow() }),
-    isSectorPref,
-  )
+  const [sec, setSec] = usePref<SectorPref>('range.live.sectors', () => ({ on: true, side: 'all', key: false }), isSectorPref)
   const sectorsOn = sec.on && drawn.length > 0
   const shown = useMemo(() => (sectorsOn ? drawn.filter(d => showsFor(d.sector, sec.side)) : []), [drawn, sectorsOn, sec.side])
   const shownIds = useMemo(() => new Set(shown.map(d => d.sector.id)), [shown])
@@ -127,6 +152,18 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
   const tipRef = useRef<HTMLDivElement>(null)
   const pointer = useRef<Pointer | null>(null)
   useLayoutEffect(() => placeTip(tipRef.current, pointer.current), [hovered])
+
+  // fly to a selection made elsewhere; read the live picture through a ref so
+  // the 2 s poll does not re-fly the camera
+  const liveRef = useRef(live)
+  useEffect(() => { liveRef.current = live }, [live])
+  useEffect(() => {
+    if (!focus) return
+    const at = locate(liveRef.current, focus.key)
+    const m = mapRef.current
+    if (!at || !m) return
+    m.flyTo({ center: [at.pos.lon, at.pos.lat], zoom: Math.max(m.getZoom(), at.zoom), duration: 900, essential: true })
+  }, [focus])
 
   const onMouseMove = (e: MapLayerMouseEvent) => {
     const id = (e.features?.[0]?.properties?.id as string | undefined) ?? null
@@ -144,18 +181,36 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
       id = (hit[0]?.properties?.id as string | undefined) ?? null
     } catch { /* style not loaded yet */ }
     setPinnedId(id)
+    setMenu(false)
+    onSelect?.(null)
   }
   const closeCard = () => { setPinnedId(null); setHoverId(null) }
 
+  /** Props that make a marker pick itself (and not also click the map under it). */
+  const pick = (key: string) => ({
+    onClick: (e: MarkerEvent<MouseEvent>) => {
+      e.originalEvent.stopPropagation()
+      setPinnedId(null)
+      onSelect?.(key === selected ? null : key)
+    },
+    style: { cursor: 'pointer', zIndex: key === selected ? 5 : undefined },
+  })
+  const selCls = (key: string) => (key === selected ? ' mk-sel' : '')
+
   // frame everything once, on first render (the sectors only when nothing else is up)
-  const [bounds] = useState(() => {
+  const framePts = (): LatLon[] => {
     const pts: LatLon[] = [
       ...live.stations.map(s => s.pos), ...live.carriers.map(c => c.pos), ...live.tankers.map(t => t.pos), ...live.players.map(p => p.pos),
       ...(live.hot_zones ?? []).map(h => h.pos), ...(live.iads ?? []).flatMap(n => n.sites.map(s => s.pos)), ...(live.ship_decks ?? []).map(d => d.pos),
     ]
     if (!pts.length) pts.push(...drawn.flatMap(d => d.ring.map(([lon, lat]) => ({ lat, lon }))))
-    return boundsOf(pts, 4000)
-  })
+    return pts
+  }
+  const [bounds] = useState(() => boundsOf(framePts(), 4000))
+  const frameAll = () => {
+    const b = boundsOf(framePts(), 4000)
+    if (b) mapRef.current?.fitBounds(b, { padding: 40, maxZoom: 14, duration: 700 })
+  }
 
   const shapes = useMemo<FeatureCollection>(() => {
     const f: Feature[] = []
@@ -188,9 +243,12 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
     return { type: 'FeatureCollection', features: f }
   }, [live])
 
+  const hiddenCount = [show.stations, hasThreats ? show.threats : true, show.air, show.labels, drawn.length ? sec.on : true].filter(v => !v).length
+
   return (
-    <div className="relative">
+    <div className="relative h-full">
       <RangeMap
+        mapRef={mapRef}
         height={height} bounds={bounds}
         onZoom={e => setZoom(e.viewState.zoom)} onLoad={e => setZoom(e.target.getZoom())}
         interactiveLayerIds={[SECTOR_HIT_LAYER]}
@@ -231,13 +289,14 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
         {show.stations && live.stations.map(s => {
           const I = STATION_ICON[s.kind]
           const hot = s.hot_by.length > 0
+          const key = `station:${s.id}`
           return (
-            <Marker key={s.id} latitude={s.pos.lat} longitude={s.pos.lon} anchor="left" offset={[-10, 0]}>
-              <div className="flex items-center gap-1" title={`${s.name}${s.note ? ` — ${s.note}` : ''}`}>
-                <span className="grid place-items-center" style={{ width: 20, height: 20, borderRadius: 2, background: 'var(--panel)', border: `1.5px solid ${hot ? 'var(--datum)' : 'var(--line-2)'}`, color: hot ? 'var(--datum)' : 'var(--haze)' }}>
+            <Marker key={s.id} latitude={s.pos.lat} longitude={s.pos.lon} anchor="left" offset={[-10, 0]} {...pick(key)}>
+              <div className={`flex items-center gap-1${selCls(key)}`} title={`${s.name}${s.note ? ` — ${s.note}` : ''}`}>
+                <span className="mk-box" style={{ borderColor: hot ? 'var(--datum)' : undefined, color: hot ? 'var(--datum)' : 'var(--haze)' }}>
                   <I size={13} />
                 </span>
-                {detail >= 1 && (
+                {(detail >= 1 || key === selected) && (
                   <span className="map-label" style={{ color: hot ? 'var(--datum)' : undefined }}>
                     {s.name.replace(/^Range /, '')}{detail >= 2 && s.targets_total > 1 ? ` ${s.targets_alive}/${s.targets_total}` : ''}
                   </span>
@@ -247,38 +306,42 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
           )
         })}
 
-        {show.threats && hotZones.map(h => (
-          <Marker key={h.id} latitude={h.pos.lat} longitude={h.pos.lon} anchor="left" offset={[-11, 0]}>
-            <div className="flex items-center gap-1.5" title={`${h.name}: ${h.bandits} bandit(s) up, ${h.ground_alive}/${h.ground_total} ground targets${h.awacs ? ` · AWACS ${h.awacs}` : ''}`}>
-              <span className="grid place-items-center" style={{ width: 22, height: 22, borderRadius: 2, background: 'var(--panel)', border: `1.5px solid ${HOT}`, color: HOT }}>
-                <Explosion size={14} />
-              </span>
-              {detail >= 0 && (
-                <span className="map-label" style={{ color: HOT }}>
-                  <b>{h.name}</b> · {h.bandits ? `${h.bandits} bandit${h.bandits === 1 ? '' : 's'}` : 'quiet'}
-                  {detail >= 1 && h.players.length > 0 && <> · {h.players.join(', ')}</>}
-                  {detail >= 2 && <><br />ground {h.ground_alive}/{h.ground_total}{h.awacs ? ` · ${h.awacs}` : ''}</>}
+        {show.threats && hotZones.map(h => {
+          const key = `hz:${h.id}`
+          return (
+            <Marker key={h.id} latitude={h.pos.lat} longitude={h.pos.lon} anchor="left" offset={[-11, 0]} {...pick(key)}>
+              <div className={`flex items-center gap-1.5${selCls(key)}`} title={`${h.name}: ${h.bandits} bandit(s) up, ${h.ground_alive}/${h.ground_total} ground targets${h.awacs ? ` · AWACS ${h.awacs}` : ''}`}>
+                <span className="mk-box" style={{ width: 22, height: 22, borderColor: HOT, color: HOT }}>
+                  <Explosion size={14} />
                 </span>
-              )}
-            </div>
-          </Marker>
-        ))}
+                {detail >= 0 && (
+                  <span className="map-label" style={{ color: HOT }}>
+                    <b>{h.name}</b> · {h.bandits ? `${h.bandits} bandit${h.bandits === 1 ? '' : 's'}` : 'quiet'}
+                    {detail >= 1 && h.players.length > 0 && <> · {h.players.join(', ')}</>}
+                    {detail >= 2 && <><br />ground {h.ground_alive}/{h.ground_total}{h.awacs ? ` · ${h.awacs}` : ''}</>}
+                  </span>
+                )}
+              </div>
+            </Marker>
+          )
+        })}
 
         {show.threats && iads.flatMap(n => n.sites.map(s => {
           const dead = s.units_alive === 0
           const I = isRadarOnly(s.system) ? Radar : Sam
           const c = dead ? 'var(--dim)' : s.emitting ? 'var(--wave)' : 'var(--haze)'
+          const key = `site:${n.id}/${s.id}`
           return (
-            <Marker key={`${n.id}/${s.id}`} latitude={s.pos.lat} longitude={s.pos.lon} anchor="left" offset={[-10, 0]}>
-              <div className="flex items-center gap-1" title={`${n.name} · ${s.name} (${s.system}) · ${dead ? 'destroyed' : s.emitting ? 'RADAR UP' : 'radar dark'} · ${s.units_alive}/${s.units_total} alive${n.weapons_free ? '' : ' · weapons hold'}`}>
-                <span className="grid place-items-center" style={{
-                  width: 20, height: 20, borderRadius: 2, background: 'var(--panel)', color: c, opacity: dead ? 0.6 : 1,
-                  border: `1.5px solid ${s.emitting && !dead ? 'var(--wave)' : 'var(--line-2)'}`,
+            <Marker key={`${n.id}/${s.id}`} latitude={s.pos.lat} longitude={s.pos.lon} anchor="left" offset={[-10, 0]} {...pick(key)}>
+              <div className={`flex items-center gap-1${selCls(key)}`} title={`${n.name} · ${s.name} (${s.system}) · ${dead ? 'destroyed' : s.emitting ? 'RADAR UP' : 'radar dark'} · ${s.units_alive}/${s.units_total} alive${n.weapons_free ? '' : ' · weapons hold'}`}>
+                <span className="mk-box" style={{
+                  color: c, opacity: dead ? 0.6 : 1,
+                  borderColor: s.emitting && !dead ? 'var(--wave)' : undefined,
                   boxShadow: s.emitting && !dead ? '0 0 0 3px var(--wave-soft)' : undefined,
                 }}>
                   <I size={13} />
                 </span>
-                {detail >= 1 && (
+                {(detail >= 1 || key === selected) && (
                   <span className="map-label" style={{ color: s.emitting && !dead ? 'var(--wave)' : undefined, textDecoration: dead ? 'line-through' : undefined }}>
                     {s.name}{detail >= 2 && <> · {s.system} · {dead ? 'destroyed' : s.emitting ? 'EMITTING' : 'dark'}</>}
                   </span>
@@ -288,18 +351,21 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
           )
         }))}
 
-        {show.threats && jammers.map(j => (
-          <Marker key={j.id} latitude={j.pos.lat} longitude={j.pos.lon} anchor="left" offset={[-9, 0]}>
-            <div className="flex items-center gap-1" title={`${j.name} (${j.side}) · GPS ${j.gps} · radio ${j.radio}${j.alive ? '' : ' · destroyed'}`}>
-              <span style={{ color: j.alive ? EW : 'var(--dim)', display: 'inline-flex' }}><Antenna size={16} /></span>
-              {detail >= 1 && (
-                <span className="map-label" style={{ color: j.alive ? EW : undefined }}>
-                  {j.name}{detail >= 2 && <> · GPS {j.gps}{j.radio !== 'off' ? ` · radio ${j.radio}` : ''}</>}
-                </span>
-              )}
-            </div>
-          </Marker>
-        ))}
+        {show.threats && jammers.map(j => {
+          const key = `jam:${j.id}`
+          return (
+            <Marker key={j.id} latitude={j.pos.lat} longitude={j.pos.lon} anchor="left" offset={[-9, 0]} {...pick(key)}>
+              <div className={`flex items-center gap-1${selCls(key)}`} title={`${j.name} (${j.side}) · GPS ${j.gps} · radio ${j.radio}${j.alive ? '' : ' · destroyed'}`}>
+                <span className="mk-free" style={{ color: j.alive ? EW : 'var(--dim)' }}><Antenna size={16} /></span>
+                {(detail >= 1 || key === selected) && (
+                  <span className="map-label" style={{ color: j.alive ? EW : undefined }}>
+                    {j.name}{detail >= 2 && <> · GPS {j.gps}{j.radio !== 'off' ? ` · radio ${j.radio}` : ''}</>}
+                  </span>
+                )}
+              </div>
+            </Marker>
+          )
+        })}
 
         {show.stations && csar.map(c => (
           <Marker key={`${c.area}/${c.pilot}`} latitude={c.area_pos.lat} longitude={c.area_pos.lon} anchor="left" offset={[-10, 0]}>
@@ -316,100 +382,123 @@ export function LiveMap({ live, height }: { live: RangeLive; height: number | st
           </Marker>
         ))}
 
-        {show.stations && decks.map(d => (
-          <Marker key={d.id} latitude={d.pos.lat} longitude={d.pos.lon} anchor="left" offset={[-9, 0]}>
-            <div className="flex items-center gap-1.5">
-              <span style={{ color: 'var(--chalk)', transform: `rotate(${d.heading_deg}deg)`, display: 'inline-flex', filter: 'drop-shadow(0 0 2px var(--map-bg))' }}><Ship size={18} /></span>
-              {detail >= 1 && (
-                <span className="map-label">
-                  {d.name}{detail >= 2 && <> · {pad3(d.heading_deg)}° {fmt(d.speed_kts)} kt{d.tacan ? ` · ${d.tacan}` : ''}</>}
-                </span>
-              )}
-            </div>
-          </Marker>
-        ))}
+        {show.stations && decks.map(d => {
+          const key = `deck:${d.id}`
+          return (
+            <Marker key={d.id} latitude={d.pos.lat} longitude={d.pos.lon} anchor="left" offset={[-9, 0]} {...pick(key)}>
+              <div className={`flex items-center gap-1.5${selCls(key)}`}>
+                <span className="mk-free" style={{ color: 'var(--chalk)', transform: `rotate(${d.heading_deg}deg)` }}><Ship size={18} /></span>
+                {(detail >= 1 || key === selected) && (
+                  <span className="map-label">
+                    {d.name}{detail >= 2 && <> · {pad3(d.heading_deg)}° {fmt(d.speed_kts)} kt{d.tacan ? ` · ${d.tacan}` : ''}</>}
+                  </span>
+                )}
+              </div>
+            </Marker>
+          )
+        })}
 
-        {live.carriers.map(c => (
-          <Marker key={c.id} latitude={c.pos.lat} longitude={c.pos.lon} anchor="left" offset={[-11, 0]}>
-            <div className="flex items-center gap-1.5">
-              <span style={{ color: 'var(--ball)', transform: `rotate(${c.brc_deg}deg)`, display: 'inline-flex' }}><Carrier size={22} /></span>
-              {detail >= 0 && (
-                <span className="map-label">
-                  <b>{c.name.split(' ')[0]}</b>{detail >= 1 && <> BRC {pad3(c.brc_deg)} · FB {pad3(c.fb_deg)}</>}
-                  {detail >= 2 && <><br />WOD {fmt(c.wind_over_deck_kts, 1)} kt · {c.recovery_open ? <span style={{ color: 'var(--datum)' }}>RECOVERY OPEN</span> : 'deck closed'}</>}
-                </span>
-              )}
-            </div>
-          </Marker>
-        ))}
+        {live.carriers.map(c => {
+          const key = `carrier:${c.id}`
+          return (
+            <Marker key={c.id} latitude={c.pos.lat} longitude={c.pos.lon} anchor="left" offset={[-11, 0]} {...pick(key)}>
+              <div className={`flex items-center gap-1.5${selCls(key)}`}>
+                <span className="mk-free" style={{ color: 'var(--ball)', transform: `rotate(${c.brc_deg}deg)` }}><Carrier size={22} /></span>
+                {detail >= 0 && (
+                  <span className="map-label">
+                    <b>{c.name.split(' ')[0]}</b>{detail >= 1 && <> BRC {pad3(c.brc_deg)} · FB {pad3(c.fb_deg)}</>}
+                    {detail >= 2 && <><br />WOD {fmt(c.wind_over_deck_kts, 1)} kt · {c.recovery_open ? <span style={{ color: 'var(--datum)' }}>RECOVERY OPEN</span> : 'deck closed'}</>}
+                  </span>
+                )}
+              </div>
+            </Marker>
+          )
+        })}
 
-        {show.air && live.tankers.filter(t => t.state !== 'dead').map(t => (
-          <Marker key={t.id} latitude={t.pos.lat} longitude={t.pos.lon} anchor="left" offset={[-9, 0]}>
-            <div className="flex items-center gap-1.5" style={{ opacity: t.state === 'rtb' ? 0.55 : 1 }}>
-              <span style={{ color: 'var(--sky)', transform: `rotate(${t.heading_deg}deg)`, display: 'inline-flex' }}><Aircraft size={18} /></span>
-              {detail >= 0 && (
-                <span className="map-label" style={{ color: 'var(--sky)' }}>
-                  <Refuel size={11} style={{ display: 'inline', verticalAlign: '-1px' }} /> {t.callsign}{detail >= 1 && <> · {t.tacan ?? airframe(t.unit_type)}</>}
-                  {detail >= 2 && <><br />{airframe(t.unit_type)} · {t.freq_mhz.toFixed(3)} · FL{Math.round(t.alt_ft / 100)}</>}
-                </span>
-              )}
-            </div>
-          </Marker>
-        ))}
+        {show.air && live.tankers.filter(t => t.state !== 'dead').map(t => {
+          const key = `tanker:${t.id}`
+          return (
+            <Marker key={t.id} latitude={t.pos.lat} longitude={t.pos.lon} anchor="left" offset={[-9, 0]} {...pick(key)}>
+              <div className={`flex items-center gap-1.5${selCls(key)}`} style={{ opacity: t.state === 'rtb' ? 0.55 : 1 }}>
+                <span className="mk-free" style={{ color: 'var(--sky)', transform: `rotate(${t.heading_deg}deg)` }}><Aircraft size={18} /></span>
+                {detail >= 0 && (
+                  <span className="map-label" style={{ color: 'var(--sky)' }}>
+                    <Refuel size={11} style={{ display: 'inline', verticalAlign: '-1px' }} /> {t.callsign}{detail >= 1 && <> · {t.tacan ?? airframe(t.unit_type)}</>}
+                    {detail >= 2 && <><br />{airframe(t.unit_type)} · {t.freq_mhz.toFixed(3)} · FL{Math.round(t.alt_ft / 100)}</>}
+                  </span>
+                )}
+              </div>
+            </Marker>
+          )
+        })}
 
-        {show.air && live.spawns.map(s => (
-          <Marker key={s.id} latitude={s.pos.lat} longitude={s.pos.lon} anchor="left" offset={[-5, 0]}>
-            <div className="flex items-center gap-1.5">
-              <span style={{ width: 10, height: 10, background: 'var(--wave)', transform: 'rotate(45deg)', display: 'inline-block', border: '1.5px solid var(--map-bg)' }} />
-              {detail >= 1 && <span className="map-label" style={{ color: 'var(--wave)' }}>{s.label.split(' · ')[0]} ({s.owner_name})</span>}
-            </div>
-          </Marker>
-        ))}
+        {show.air && live.spawns.map(s => {
+          const key = `spawn:${s.id}`
+          return (
+            <Marker key={s.id} latitude={s.pos.lat} longitude={s.pos.lon} anchor="left" offset={[-5, 0]} {...pick(key)}>
+              <div className={`flex items-center gap-1.5${selCls(key)}`}>
+                <span className="mk-free" style={{ width: 10, height: 10, background: 'var(--wave)', transform: 'rotate(45deg)', border: '1.5px solid var(--map-bg)' }} />
+                {(detail >= 1 || key === selected) && <span className="map-label" style={{ color: 'var(--wave)' }}>{s.label.split(' · ')[0]} ({s.owner_name})</span>}
+              </div>
+            </Marker>
+          )
+        })}
 
         {show.air && live.players.map(p => {
           const I = ROTARY.test(p.unit_type) ? Helicopter : Aircraft
+          const key = `player:${p.ucid}`
           return (
-            <Marker key={p.ucid} latitude={p.pos.lat} longitude={p.pos.lon} anchor="left" offset={[-8, 0]}>
-              <div className="flex items-center gap-1" title={`${p.name} · ${airframe(p.unit_type)}${p.activity ? ` · ${p.activity}` : ''}`}>
-                <span style={{ color: p.in_air ? 'var(--chalk)' : 'var(--dim)', transform: `rotate(${p.heading_deg}deg)`, display: 'inline-flex', filter: 'drop-shadow(0 0 2px var(--map-bg))' }}>
+            <Marker key={p.ucid} latitude={p.pos.lat} longitude={p.pos.lon} anchor="left" offset={[-8, 0]} {...pick(key)}>
+              <div className={`flex items-center gap-1${selCls(key)}`} title={`${p.name} · ${airframe(p.unit_type)}${p.activity ? ` · ${p.activity}` : ''}`}>
+                <span className="mk-free" style={{ color: p.in_air ? 'var(--chalk)' : 'var(--dim)', transform: `rotate(${p.heading_deg}deg)` }}>
                   <I size={16} strokeWidth={2} />
                 </span>
-                {detail >= 1 && <span className="map-label">{p.name}</span>}
+                {(detail >= 1 || key === selected) && <span className="map-label">{p.name}</span>}
               </div>
             </Marker>
           )
         })}
       </RangeMap>
-      <div className="absolute left-2 top-2 flex flex-col items-start gap-1.5" style={{ maxWidth: 'calc(100% - 56px)' }}>
-        <div className="flex flex-wrap items-start gap-1.5">
-          <div className="seg map-seg" role="group" aria-label="Map layers">
-            {drawn.length > 0 && (
-              <button aria-pressed={sec.on} onClick={() => setSec(s => ({ ...s, on: !s.on }))} title="The range's areas, as the F10 map draws them">Sectors</button>
-            )}
-            <button aria-pressed={show.stations} onClick={() => setShow(s => ({ ...s, stations: !s.stations }))}>Stations</button>
-            {hasThreats && (
-              <button aria-pressed={show.threats} onClick={() => setShow(s => ({ ...s, threats: !s.threats }))} title="Air defences, hot zones and jammers">Threats</button>
-            )}
-            <button aria-pressed={show.air} onClick={() => setShow(s => ({ ...s, air: !s.air }))}>Traffic</button>
-            <button aria-pressed={show.labels} onClick={() => setShow(s => ({ ...s, labels: !s.labels }))}>Labels</button>
-          </div>
+
+      <div className="absolute left-2 top-2 flex flex-col items-start gap-1.5 z-[4]" style={{ maxWidth: 'calc(100% - 56px)' }}>
+        <div className="flex items-center gap-1.5">
+          <button className={`map-btn${menu ? ' on' : ''}`} onClick={() => setMenu(m => !m)} aria-expanded={menu} aria-haspopup="true">
+            <LayersIcon size={15} /> Layers
+            {hiddenCount > 0 && <span className="map-btn-badge" title={`${hiddenCount} layer${hiddenCount === 1 ? '' : 's'} hidden`}>{hiddenCount} off</span>}
+          </button>
+          <button className="map-btn" onClick={frameAll} title="Show the whole range" aria-label="Show the whole range">
+            <Maximize2 size={14} />
+          </button>
           {sectorsOn && (
-            <>
-              <div className="seg map-seg" role="group" aria-label="Show sectors for">
-                {SIDES.map(o => (
-                  <button key={o.v} aria-pressed={sec.side === o.v} title={o.title} onClick={() => setSec(s => ({ ...s, side: o.v }))}>
-                    {o.v !== 'all' && <span className="dot" style={{ background: o.v === 'blue' ? 'var(--sky)' : 'var(--wave)', marginRight: 5, verticalAlign: '1px' }} />}
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-              <div className="seg map-seg">
-                <button aria-pressed={sec.key} aria-expanded={sec.key} onClick={() => setSec(s => ({ ...s, key: !s.key }))} title="What the colours mean">Key</button>
-              </div>
-            </>
+            <button className={`map-btn${sec.key ? ' on' : ''}`} onClick={() => setSec(s => ({ ...s, key: !s.key }))} aria-expanded={sec.key} title="What the sector colours mean">
+              Key
+            </button>
           )}
         </div>
-        {sectorsOn && sec.key && <SectorLegend drawn={shown} light={light} canHover={canHover} />}
+        {menu && (
+          <div className="map-pop" role="group" aria-label="Map layers">
+            <div className="caps mb-1" style={{ fontSize: 9.5 }}>Show on the map</div>
+            {drawn.length > 0 && <Toggle on={sec.on} onChange={() => setSec(s => ({ ...s, on: !s.on }))} hint="The range's areas, as the F10 map draws them">Sectors</Toggle>}
+            <Toggle on={show.stations} onChange={() => setShow(s => ({ ...s, stations: !s.stations }))} hint="Targets, scoring rings, ship decks, CSAR areas">Stations</Toggle>
+            {hasThreats && <Toggle on={show.threats} onChange={() => setShow(s => ({ ...s, threats: !s.threats }))} hint="Air defences, hot zones and jammers">Threats</Toggle>}
+            <Toggle on={show.air} onChange={() => setShow(s => ({ ...s, air: !s.air }))} hint="Players, tankers and spawned groups">Traffic</Toggle>
+            <Toggle on={show.labels} onChange={() => setShow(s => ({ ...s, labels: !s.labels }))} hint="Names, frequencies and details (more as you zoom in)">Labels</Toggle>
+            {sectorsOn && (
+              <>
+                <div className="caps mt-2.5 mb-1" style={{ fontSize: 9.5 }}>Sectors for</div>
+                <div className="seg map-seg" role="group" aria-label="Show sectors for">
+                  {SIDES.map(o => (
+                    <button key={o.v} aria-pressed={sec.side === o.v} title={o.title} onClick={() => setSec(s => ({ ...s, side: o.v }))}>
+                      {o.v !== 'all' && <span className="dot" style={{ background: o.v === 'blue' ? 'var(--sky)' : 'var(--wave)', marginRight: 5, verticalAlign: '1px' }} />}
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+        {!menu && sectorsOn && sec.key && <SectorLegend drawn={shown} light={light} canHover={canHover} />}
       </div>
       <SectorTip ref={tipRef} d={hovered} light={light} />
       {pinned && <SectorCard d={pinned} light={light} onClose={closeCard} />}

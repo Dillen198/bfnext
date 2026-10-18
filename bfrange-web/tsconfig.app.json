@@ -29,7 +29,8 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+    "resolveJsonModule": true
   },
-  "include": ["src", "../shared/icons"]
+  "include": ["src", "../shared/icons", "../shared/carriers/decks.json"]
 }

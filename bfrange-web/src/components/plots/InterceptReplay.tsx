@@ -8,7 +8,7 @@ import { Pause, Play } from '@icons'
 import { fmt, mToFt } from '../../lib/format'
 import { NM, bearingDeg, distanceM, norm180, toLocal } from '../../lib/geo'
 import type { MissileResult, TrackPt } from '../../types'
-import { indexAtTime, linear, niceCeil, usePlayback } from './scale'
+import { indexAtTime, linear, niceCeil, usePlayback, usePlotW } from './scale'
 
 export function InterceptReplay({ missile, target, r }: { missile: TrackPt[]; target: TrackPt[]; r: MissileResult }) {
   const origin = missile[0] ?? target[0]
@@ -21,7 +21,7 @@ export function InterceptReplay({ missile, target, r }: { missile: TrackPt[]; ta
     return { m: missile.map(f), g: target.map(f) }
   }, [missile, target, origin])
 
-  const W = 900, H = 520, pad = 24
+  const W = usePlotW(), H = W < 600 ? 400 : 520, pad = 24
   const all = [...loc.m, ...loc.g]
   const minE = Math.min(...all.map(p => p.east)), maxE = Math.max(...all.map(p => p.east))
   const minN = Math.min(...all.map(p => p.north)), maxN = Math.max(...all.map(p => p.north))

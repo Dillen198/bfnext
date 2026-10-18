@@ -184,6 +184,10 @@ fn order_checked(
 }
 
 fn order(lua: MizLua, ctx: &mut Context, id: FormationId, order: Order, now: DateTime<Utc>) -> bool {
+    if ctx.groundwar.rt.gave_up_on(id, &order, now) {
+        debug!("ground war AI: not sending formation {id} on {order:?} again: it got stuck on it");
+        return false;
+    }
     match ctx.db.order_formation(&mut ctx.groundwar.rt, lua, id, order, None, now) {
         Ok(what) => {
             info!("ground war AI: {what}");

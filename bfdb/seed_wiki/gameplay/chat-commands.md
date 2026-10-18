@@ -217,7 +217,11 @@ Delete deployed troops/groups.
 ```
 
 **Important**:
-- Gives **50% refund** of deployment cost!
+- Gives **50% refund** of deployment cost, if you paid for it with points.
+  Units a commander put down from the treasury refund nothing
+- Commanders can also delete units **nobody owns** (put down by the HQ or an
+  admin) and dismount squads: they're disbanded, with nothing refunded. A
+  squad holding a base it has just captured can't be deleted
 - Permanent action
 - Clean removal
 

@@ -7,14 +7,18 @@ them.
 ![Rescue helicopter hoisting a downed pilot](/api/wiki/images/f0af8d1d-8ae3-4a78-a361-27d14e55aa33)
 
 ```
-F10 → CSAR
+F10 → Cargo → CSAR        (or C-130 Cargo → CSAR)
+F10 → CSAR                (slots with no Cargo menu)
 ├── List Downed Pilots
 ├── Request Nearest Pilot Smoke
 ├── Pick Up Downed Pilot (manual)
 └── Deliver Rescued Pilots (manual)
 ```
 
-The menu appears for every slot when CSAR is enabled on the server (it is, on
+In any slot with a **Cargo** menu, CSAR sits inside it; other slots have it at
+the top level. (DCS only shows ten top-level entries, and this keeps **Info**
+from being pushed off the end.) The menu appears for every slot when CSAR is
+enabled on the server (it is, on
 the live mission). Actually *carrying* a pilot needs an airframe with pilot
 slots — see the capacity table below.
 

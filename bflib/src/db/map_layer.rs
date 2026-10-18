@@ -184,6 +184,12 @@ fn shape_outline() -> Color {
     Color::black(0.80)
 }
 
+/// Fill opacity for the glyphs drawn on top of the map (convoy chevrons,
+/// fire-mission bursts, task stars). Solid, they sat on objectives and hid
+/// the objective's own ring and label underneath; the dark outline still
+/// carries the shape.
+const ICON_FILL_A: f32 = 0.35;
+
 fn v3(x: f64, y: f64) -> LuaVec3 {
     LuaVec3(Vector3::new(x, 0., y))
 }
@@ -261,7 +267,7 @@ impl ConvoyMarks {
             900.,
             heading_deg,
             shape_outline(),
-            side_color(side, 0.95),
+            side_color(side, ICON_FILL_A),
             side_filter(side),
             msgs,
         );
@@ -284,7 +290,7 @@ impl ConvoyMarks {
             900.,
             heading_deg,
             shape_outline(),
-            side_color(side, 0.95),
+            side_color(side, ICON_FILL_A),
             side_filter(side),
             msgs,
         );
@@ -537,7 +543,7 @@ impl FireOverlay {
             (radius_m * 0.45).clamp(300., 1200.),
             8,
             shape_outline(),
-            col,
+            side_color(side, ICON_FILL_A),
             SideFilter::All,
             msgs,
         );
@@ -863,7 +869,7 @@ impl TaskMarks {
             1_000.,
             5,
             shape_outline(),
-            Color::new(1., 0.82, 0.29, 1.),
+            Color::new(1., 0.82, 0.29, ICON_FILL_A),
             side_filter(task.side),
             msgs,
         );

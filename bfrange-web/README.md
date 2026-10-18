@@ -12,15 +12,25 @@ mirrored by hand from `bfprotocols/src/range/mod.rs` in `src/types.ts`.
 
 | Route | Page |
 |---|---|
-| `/` | Live: map (range sectors with a colour key and side filter, players, stations + rings, tankers, carriers, arenas, spawns), carrier ops, tankers on station, stations, live results feed |
+| `/` | Range control: the live map fills the frame (sectors with a colour key and side filter, players, stations + rings, tankers, carriers, arenas, spawns, threats); the dock beside it has the situation (clock, wind, QNH) and tabs for the results feed, traffic, the boat, threats and stations. Picking a thing on the map or in the dock picks it in both; `?focus=<key>` opens with the camera on it |
 | `/greenie` | Greenie board |
 | `/results` | All results, filterable (URL holds the filters) |
 | `/stations/:id` | One target's impact group: CEP, mean point of impact |
 | `/pilot/:ucid`, `/me` | Pilot record: scorecards, insights, qualifications, trends |
-| `/result/:id` | Debrief: facts, interactive plot from the track, the rendered card, PNG / Tacview downloads |
-| `/spawn` | Spawner (login + linked DCS account) |
+| `/result/:id` | Debrief: facts, the interactive 2D plot from the track or the **3D replay** (2D / 3D switch), the result card (the LSO pass record / range score sheet / record form), card PNG, Tacview clip, **Web Tacview** (the session in the dashboard's flight replay, following the pilot, just before the result) and the full session download |
+| `/spawn` | Spawner (login + linked DCS account): searchable catalogue, one item set up at a time, "again" for your last five, time left on everything you have up, a warning when an around-you spawn needs you airborne |
+| `/brief` | Range brief: frequencies, TACANs, weather, every target and SAM site with coordinates (DDM / DMS / MGRS / decimal), laser codes, sectors; prints as a kneeboard card |
 | `/calc` | Bomb release, wind over deck, tanker planner |
 | `/leaderboards` | Bombing CEP, strafe, LSO points, AAR, duel ELO, missile defence |
+| `/brand/` | Static brand sheet (`public/brand/`): the mark, favicon and lockups, with PNG downloads |
+
+Every page sits in the same frame (`components/Shell.tsx`): a rail grouped by
+what you are doing (range, debrief, compete, tools), a top bar that always
+shows whether the range is live, and search on Ctrl/⌘ K or `/`
+(`components/CommandPalette.tsx`: pages, stations, tankers, pilots flying now,
+every pilot record). On a phone the rail becomes a drawer and the five
+cockpit pages sit in a bottom tab bar. A linked pilot gets a toast with a
+debrief link the moment one of their own results is graded, on any page.
 
 ## Develop
 
@@ -81,6 +91,7 @@ All read at **build** time (Vite inlines them). See `.env.example`.
 |---|---|---|
 | `VITE_API_BASE` | `https://api.vectorstrike.org` | bfdb origin, no trailing slash. Empty = same-origin `/api` (dev proxy). |
 | `VITE_RANGE_INSTANCE` | unset | Only set when one bfdb fronts several range servers: appended as `?instance=` to every call. Unset, bfdb picks its range instance. |
+| `VITE_DASHBOARD_URL` | `https://dashboard.vectorstrike.org` | The dashboard; "Web Tacview" opens its `/replay/<rec>?focus=&t=` there. |
 | `VITE_MOCK` | unset | `1` = serve everything from `src/mock/`. |
 | `VITE_BFDB_URL` | `http://localhost:8880` | Dev proxy target when `VITE_API_BASE` is empty. |
 
@@ -132,23 +143,105 @@ src/
   api.ts            API client (+ lazy mock switch)
   types.ts          wire types, mirrored from bfprotocols/src/range/mod.rs
   lib/              pure logic: lso (parser port), grading (thresholds),
-                    ballistics (bfdb port), wod, aarPlan, geo, format, headline
-  components/       shared UI; plots/ holds the SVG debrief plots
+                    ballistics (bfdb port), wod, aarPlan, geo, coords (DDM/DMS/
+                    MGRS), select (one key per live thing, shared by map, dock
+                    and search), format, headline
+  components/       shared UI (Shell, CommandPalette, RangeMark); plots/ holds the SVG debrief plots
                     (TrapSheet, BombPlot, StrafePit, AarPlots,
                     InterceptReplay, TrackMap/PathReplay)
-  pages/            one file per route; live/, debrief/, calc/ hold their parts
+  pages/            one file per route; live/ (map, dock, feed), debrief/, calc/ hold their parts
+  components/three/ the 3D debrief: our own models built to each type's real
+                    dimensions (models.ts), the carrier from the engine's deck
+                    geometry (carrier.ts), the scene and cameras (scene.ts)
   context/          auth (/api/range/me), theme, toasts
   mock/             VITE_MOCK fixtures and the in-browser API
 ```
 
 Icons come from the repo-wide set in `shared/icons` via the `@icons` alias
-(`Refuel` and `Calculator` were added there for this site).
+(`Refuel`, `Calculator`, `Copy`, `Check` and `Printer` were added there for this site).
 
 Design notes: one score scale everywhere (the greenie board colours are also
 the colours of every bomb/strafe/precision grade and 0–5 score), the amber
-"meatball" of the Fresnel lens is the accent and the brand mark, numbers are
-always monospace. Dark by default, with a light theme (remembered per
-browser).
+"meatball" of the Fresnel lens is the accent, numbers are always monospace.
+Dark by default, with a light theme (remembered per browser).
+
+### The result cards
+
+bfdb draws them (`bfdb/src/range/forms.rs`, `cards.rs`) and posts the same
+PNG to Discord: ink on paper, laid out as service forms with a
+classification line and a form number. The carrier pass is an LSO pass
+record (ship and pilot blocks, the grade and wire boxes, the LSO's
+shorthand as written and in plain words, glideslope / lineup / AoA /
+closure by groove position from the track, and the carrier class as a
+wireframe in side elevation, plan and deck detail with the pass drawn on
+it, from `bfdb/src/range/deckplan.rs`); a drop is a range score sheet; a
+field landing is a pattern record (the pattern in plan with every leg
+coloured, height against time, the final against a 3° glidepath, the
+rollout and the taxi); every other kind sits in the same form frame. In mock mode the trap, bomb and field
+landing cards are bfdb's own rendering of its test fixtures (`src/mock/cards/`,
+regenerate with `CARD_OUT=<dir> cargo test -p bfdb write_card_samples`).
+
+### Connected to the dashboard's web Tacview
+
+The dashboard's flight replay (`bfweb/src/replay`) reads every instance's
+Tacview recordings, the range's included. A debrief's **Web Tacview** button
+asks bfdb where the result is in it (`/api/range/result/<id>/replay`: the
+recording, the pilot's flight, a moment 25 s before) and opens it there;
+once the server has stopped writing that recording. The other way, a
+recording of the range server gets a **Range** tab in the replay listing
+every graded result in it (`/api/range/replay/<rec>/results`): jump to the
+moment following that pilot, or open the debrief here.
+
+### The debrief, 2D and 3D
+
+The carrier pass sheet, the 3D model and bfdb's LSO card all draw the ship
+from one file, `shared/carriers/decks.json` (read here by
+`lib/carrierDeck.ts`, in bfdb by `bfdb/src/range/deckplan.rs`): Nimitz,
+Forrestal, Admiral Kuznetsov, Charles de Gaulle and the Tarawa-class LHA,
+traced from scale plans and overhead photographs (sources in the file):
+flight deck, waterline, island, elevators, catapults or ski-jump runs,
+helicopter spots, lens, LSO platform and a side elevation. Its grading
+block is the engine's deck geometry (`CarrierKind::deck`: the landing point
+on the target wire, the stern's offset from the landing-area centreline,
+the deck angle, the wires), checked by a bfdb test, so the track meets the
+deck where the engine graded it. Its "Deck" zoom shows the ramp, the wires (the caught one
+highlighted), the touchdown point, the lens and the LSO platform.
+
+A field landing debrief reads the pattern the way the engine did
+(`lib/patternLegs.ts`, a port of `bfprotocols/src/range/pattern_legs.rs`):
+initial, break, downwind, base and final walked back from the touchdown,
+drawn to scale on the runway frame with the break, abeam, base and
+wings-level marks, then height and speed against time, the final against a
+3° ± 1° glidepath to the aim point, the touchdown on the runway, and the
+rollout and taxi on imagery (red where it went over 30 kt). The engine keeps
+following the aircraft after a full stop until it parks, its pilot leaves,
+it takes off again or ten minutes pass, so the record has the taxi too:
+time to clear the runway, the exit, taxi distance and time, top speed and
+stops.
+
+The 3D view plays a clip bfdb cuts from the server's Tacview recording
+around the result (`/api/range/result/<id>/clip`, `bfdb/src/range/clip.rs`):
+the pilot's aircraft with its recorded attitude, its weapons, the boat,
+aircraft that came within 15 km and what they fired, ground units around the
+impacts. Cameras: chase, cockpit, LSO (carrier passes, with the lens and
+the LSO's numbers on the HUD), target (ground attack, with time to impact),
+free orbit. Over land the ground is Esri imagery laid flat at the targets'
+height (no terrain relief yet); at sea it is the sea. Every model is built
+from primitives to the type's published length, span and height: no model
+files. three.js is only loaded when the 3D view is opened. In mock mode the
+clip is made from the record's track (`src/mock/clip.ts`), attitude worked
+out from the path.
+
+The brand mark (`components/RangeMark.tsx`, the same drawing as
+`public/brand/*.svg`) comes from the Vector Strike logo: the same ring broken
+at the top right, the same strike arrow leaving through the gap, with the
+letters swapped for a dashed scoring ring, the range's cross ticks and the
+amber shack. Under ~24 px it switches to the favicon drawing. As the loading
+indicator its scoring ring turns.
+
+daisyUI is loaded for its form resets and owns some short class names
+(`.dock`, `.drawer`, `.stat`, `.toast`...): the site's own classes avoid them
+(`.rdock`, `.nav-drawer`, `.kpi`, `.toast-stack`).
 
 ---
 

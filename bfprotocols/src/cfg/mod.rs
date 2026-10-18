@@ -40,7 +40,7 @@ mod command;
 mod economy;
 mod example;
 mod ground_war;
-pub use ground_war::{GarrisonCfg, GroundAiCfg, GroundCombatCfg, GroundWarCfg};
+pub use ground_war::{GarrisonCfg, GroundAiCfg, GroundCombatCfg, GroundWarCfg, PurchasedFormationCfg};
 mod hq;
 pub use hq::{EscortPolicy, HqAirCfg, HqAirTemplate, HqCfg, HqCostsCfg, HqPackagesCfg, HqGapFillCfg, HqLimitsCfg, HqRequestsCfg, HqStrategistCfg};
 
@@ -361,6 +361,43 @@ pub struct DeployableObjective {
     pub fuel_template: Option<String>,
     #[serde(default)]
     pub barracks_template: Option<String>,
+    /// Makes this objective a Fat Cow: a temporary forward arming and
+    /// refuelling point flown in by a heavy-lift helicopter. It is not
+    /// supplied by any logistics hub, so it only ever holds the stock it was
+    /// built with. bflib generates its templates (the pads named in
+    /// `pad_templates`, unless the mission already has them, and the CG Fat
+    /// Cow layout of fuel point, fire point, crew and guards), so the
+    /// defenses/ammo/fuel/barracks templates are not used. It is gone when
+    /// its two fuel points are destroyed.
+    #[serde(default)]
+    pub fat_cow: Option<FatCowCfg>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+// #[serde(deny_unknown_fields)]
+pub struct FatCowCfg {
+    /// Radius of the objective zone in meters. Regular FARPs use 2000; a
+    /// Fat Cow is a few helicopters on a field and wants something small.
+    #[serde(default = "default_fat_cow_radius")]
+    pub radius: u32,
+    /// Jet fuel the Fat Cow is built with, in kg
+    pub jet_fuel: u32,
+    /// Weapons the Fat Cow is built with, keyed by DCS warehouse item name
+    /// (e.g. "weapons.missiles.AGM_114K"), value is the quantity
+    #[serde(default)]
+    pub weapons: FxHashMap<String, u32>,
+    /// Unit type of the crew and guards. Default "Soldier M4 GRG" for blue,
+    /// "Paratrooper AKS-74" for red.
+    #[serde(default)]
+    pub soldier: Option<String>,
+    /// Unit type of the guard detail's MANPAD. Default "Soldier stinger" for
+    /// blue, "SA-18 Igla-S manpad" for red.
+    #[serde(default)]
+    pub manpad: Option<String>,
+}
+
+fn default_fat_cow_radius() -> u32 {
+    500
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, schemars::JsonSchema)]
@@ -1262,6 +1299,14 @@ pub struct WarehouseConfig {
     /// capture, which is the original behaviour.
     #[serde(default)]
     pub captured_airframes: Option<CapturedAirframeConfig>,
+    /// Percentage (0-100) of a captured base's airframe capacity the captors
+    /// start with, for each type they produce -- the quick-reaction force
+    /// flown in on capture while the supply line catches up. 0 (the default)
+    /// means a captured base holds only what was salvaged and waits for
+    /// transports. Rounded up, so any nonzero value gives at least one of
+    /// each type the base can hold.
+    #[serde(default)]
+    pub capture_airframe_stock_percent: u8,
 }
 
 fn default_route_block_margin() -> f64 {
@@ -2030,6 +2075,65 @@ pub struct BomberCfg {
     pub plane: AiPlaneCfg,
 }
 
+/// What a `Strike` action goes after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub enum StrikeMission {
+    /// Bomb an enemy objective's buildings (its logistics) -- an F-117 with
+    /// GBU-27s. Aimed at an enemy objective.
+    Precision,
+    /// Crater an enemy airfield's runways. Aimed at an enemy airbase.
+    Runway,
+    /// Missile or bomb attack on the ships of an enemy carrier group.
+    /// Aimed at the carrier group.
+    AntiShip,
+    /// Attack the enemy convoy or ground column nearest the marked point.
+    Interdiction,
+    /// Lay a line of bombs through the marked point.
+    Carpet,
+}
+
+impl StrikeMission {
+    /// Aimed at an enemy objective (else at a marked point).
+    pub fn targets_objective(self) -> bool {
+        matches!(self, Self::Precision | Self::Runway | Self::AntiShip)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Precision => "precision strike",
+            Self::Runway => "runway attack",
+            Self::AntiShip => "anti-ship strike",
+            Self::Interdiction => "interdiction",
+            Self::Carpet => "carpet bombing",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct StrikeCfg {
+    pub mission: StrikeMission,
+    pub plane: AiPlaneCfg,
+    /// DCS weapon flags the flight may use (14 guided bombs, 65536 anti-ship
+    /// missiles, 2147485694 any bomb, ...). Absent = a sensible default for
+    /// the mission.
+    #[serde(default)]
+    pub weapon_type: Option<u64>,
+    /// Aim points (buildings, runways, ships) to attack. Default 2.
+    #[serde(default = "default_strike_attacks")]
+    pub attacks: u32,
+    /// Length of a carpet-bombing line, metres. Default 1500.
+    #[serde(default = "default_carpet_length")]
+    pub carpet_length_m: f64,
+}
+
+fn default_strike_attacks() -> u32 {
+    2
+}
+
+fn default_carpet_length() -> f64 {
+    1_500.
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeployableCfg {
     pub name: String,
@@ -2185,6 +2289,9 @@ pub enum ActionKind {
     Tanker(AiPlaneCfg),
     Awacs(AwacsCfg),
     Bomber(BomberCfg),
+    /// A flight that attacks with its own weapons -- precision, runway,
+    /// anti-ship, interdiction or carpet bombing (`StrikeCfg::mission`).
+    Strike(StrikeCfg),
     Fighters(AiPlaneCfg),
     Attackers(AiPlaneCfg),
     Sead(AiPlaneCfg),
@@ -2221,6 +2328,29 @@ pub enum ActionKind {
     /// nearest friendly objective to rebuild a damaged friendly objective's
     /// garrison. Kill the convoy and the reinforcements never arrive.
     Reinforce(ReinforceCfg),
+    /// An AI heavy-lift helicopter flies from the nearest friendly field to
+    /// a map mark, lands, sets up a Fat Cow around itself, stays for
+    /// `duration_mins`, then packs it up and flies home. Flight settings
+    /// come from `helo_insertion`.
+    FatCow(FatCowActionCfg),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FatCowActionCfg {
+    /// The Fat Cow deployable to set up (the last element of its path,
+    /// e.g. "Fat Cow"). Its stock, pads and limit apply.
+    pub deployable: String,
+    /// AI helicopter group template to fly it. Default is the side's
+    /// `helo_insertion.aircraft_template`.
+    #[serde(default)]
+    pub aircraft_template: Option<String>,
+    /// How long it stays set up, in minutes.
+    #[serde(default = "default_fat_cow_duration")]
+    pub duration_mins: u32,
+}
+
+fn default_fat_cow_duration() -> u32 {
+    20
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -2324,6 +2454,36 @@ pub struct AutoResetOnVictory {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RearBaseProtectionCfg {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Objective names protected for each side. A base is only protected
+    /// while that side still owns it.
+    #[serde(default)]
+    pub bases: FxHashMap<Side, Vec<String>>,
+    /// Protected radius around each base, metres. Default 27780 (15 nm).
+    #[serde(default = "default_rear_base_radius")]
+    pub radius_m: f64,
+    /// Seconds an intruder may spend inside, in total, before it is
+    /// removed. Default 60.
+    #[serde(default = "default_rear_base_grace")]
+    pub grace_secs: u32,
+    /// Ignore aircraft at or below this altitude above ground, metres (a
+    /// helicopter crossing at treetop height is not a threat to the
+    /// airfield). 0 = protect at any height. Default 0.
+    #[serde(default)]
+    pub min_agl_m: f64,
+}
+
+fn default_rear_base_radius() -> f64 {
+    27_780.
+}
+
+fn default_rear_base_grace() -> u32 {
+    60
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 // #[serde(deny_unknown_fields)]
 pub struct LastStandCfg {
     /// Seconds of countdown once a side is at or below `trigger_count` primary objectives.
@@ -2408,6 +2568,32 @@ pub struct EraCfg {
     /// Map of era name → list of allowed Vehicle types.
     /// Vehicles not listed in the active era's list are denied.
     pub eras: FxHashMap<String, Vec<Vehicle>>,
+    /// Weapons banned in each era, matched case-insensitively as a
+    /// substring of the DCS weapon type or display name ("AIM_120" bans
+    /// every AMRAAM). A pilot who takes off carrying one gets
+    /// `banned_weapon_land_secs` to land; firing one, or still flying when
+    /// the time is up, destroys the aircraft and sends them to spectators.
+    #[serde(default)]
+    pub banned_weapons: FxHashMap<String, Vec<String>>,
+    #[serde(default = "default_banned_weapon_land_secs")]
+    pub banned_weapon_land_secs: u32,
+}
+
+fn default_banned_weapon_land_secs() -> u32 {
+    300
+}
+
+impl EraCfg {
+    /// The active era's ban that `weapon` (a type or display name) falls
+    /// under, if any.
+    pub fn banned(&self, weapon: &str) -> Option<&str> {
+        let w = weapon.to_lowercase();
+        self.banned_weapons
+            .get(self.current.as_str())?
+            .iter()
+            .find(|b| !b.is_empty() && w.contains(b.to_lowercase().as_str()))
+            .map(|b| b.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -3813,6 +3999,12 @@ pub struct Cfg {
     /// a victory in the stats when the condition is met.
     #[serde(default)]
     pub auto_reset: Option<AutoResetOnVictory>,
+    /// Longest a round may run, in days. Past it the round ends in a draw
+    /// (through the same countdown as a victory) and the campaign resets --
+    /// a theatre rotation's way of moving on from a front that froze.
+    /// Absent or 0 = no limit.
+    #[serde(default)]
+    pub max_round_days: Option<u32>,
     /// ucids in this list are able to run admin commands
     #[serde(default)]
     pub admins: FxHashMap<Ucid, String>,
@@ -4155,6 +4347,12 @@ pub struct Cfg {
     /// objective they own becomes threatened by enemy units.
     #[serde(default)]
     pub under_attack: Option<UnderAttackCfg>,
+    /// Rear-base protection: no enemy aircraft near a side's protected
+    /// airfields. An intruder is warned, and once it has spent `grace_secs`
+    /// inside (in total) it is destroyed and sent to spectators, and staff
+    /// get a `[REAR_BASE]` log line. Absent = off.
+    #[serde(default)]
+    pub rear_base_protection: Option<RearBaseProtectionCfg>,
     /// Deprecated / ignored. This once drew an "ARTY / COUNTER-BATTERY" text
     /// mark at a firing enemy battery, but it had no gameplay behind it and
     /// stacked overlapping copies when batteries repositioned, so the cue was

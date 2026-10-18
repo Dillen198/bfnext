@@ -196,11 +196,10 @@ fn spawn_convoy(db: &mut Db, from: ObjectiveId, to: ObjectiveId) -> Result<()> {
 #### 3. Naval Warfare System
 
 - **Priority**: Medium
-- **Status**: Partial. Carrier groups exist (`CarrierCfg`) and can be moved with a `CarrierWaypoint` action. Carriers and amphibious flat-tops get auto-generated TACAN, ICLS, ACLS and Link-4 (`bflib/src/navaids.rs`), and sea logistics routes exist (`spawn_sea_logistics_route`). **Still open:** amphibious operations, shore bombardment, anti-ship missions with proper tracking, and an investigation of the carrier aircraft spawn issue.
+- **Status**: Partial. Carrier groups exist (`CarrierCfg`) and can be moved with a `CarrierWaypoint` action. Carriers and amphibious flat-tops get auto-generated TACAN, ICLS, ACLS and Link-4 (`bflib/src/navaids.rs`), and sea logistics routes exist (`spawn_sea_logistics_route`). **Still open:** amphibious operations, shore bombardment, and anti-ship missions with proper tracking. Player aircraft spawn on carriers fine (verified in game, Oct 2026).
 - **Description**: Expand naval operations
 
 **Features**:
-- Fix aircraft spawn on carriers (known issue)
 - Naval logistics and resupply
 - Amphibious operations
 - Shore bombardment missions
@@ -208,68 +207,12 @@ fn spawn_convoy(db: &mut Db, from: ObjectiveId, to: ObjectiveId) -> Result<()> {
 
 **Current carrier implementation** (`bflib/src/admin.rs:800-900`):
 ```rust
-// Carrier repair/respawn exists but aircraft spawning has issues
+// Carrier repair/respawn
 pub fn repair_carrier(...) { ... }
 pub fn respawn_carrier(...) { ... }
 ```
 
 **Implementation Details**:
-
-**Aircraft Carrier Spawn Fix**:
-The issue is likely in spawn positioning. DCS requires specific spawn points on carriers.
-
-```rust
-// In bflib/src/spawnctx.rs, add carrier-aware spawning:
-
-impl SpawnCtx {
-    pub fn spawn_on_carrier(
-        &self,
-        carrier_unit: &Unit,
-        aircraft_type: Vehicle,
-        slot_number: u8,
-    ) -> Result<Group> {
-        // Get carrier's current position and heading
-        let carrier_pos = carrier_unit.get_position()?;
-        let carrier_heading = carrier_unit.get_heading()?;
-
-        // Calculate spawn position relative to carrier deck
-        // Slot positions are carrier-type specific
-        let slot_offset = get_carrier_slot_offset(
-            carrier_unit.get_type_name()?,
-            slot_number
-        )?;
-
-        // Transform to world coordinates
-        let spawn_pos = carrier_pos + rotate_vector(slot_offset, carrier_heading);
-
-        // Use "TakeOffParkingHot" for carrier spawns
-        let route = Route {
-            points: vec![Waypoint {
-                action: WaypointAction::TakeOffParkingHot,
-                airdromeId: None,
-                helipadId: Some(carrier_unit.get_id()?),
-                pos: spawn_pos,
-                ..Default::default()
-            }],
-        };
-
-        // ... continue spawn
-    }
-}
-
-fn get_carrier_slot_offset(carrier_type: &str, slot: u8) -> Result<Vector3<f64>> {
-    // Carrier-specific slot positions
-    match carrier_type {
-        "CVN_74_John_C__Stennis" => match slot {
-            1 => Ok(Vector3::new(-20.0, 20.0, 0.0)),
-            2 => Ok(Vector3::new(-40.0, 20.0, 0.0)),
-            // ... etc
-        },
-        "CV_1143_5_Admiral_Kuznetsov" => { ... },
-        _ => Err(anyhow!("Unknown carrier type: {}", carrier_type)),
-    }
-}
-```
 
 **Naval Logistics**:
 ```rust
@@ -1106,7 +1049,6 @@ fn on_troops_loaded(db: &mut Db, player: &Player, troops: &[TroopId]) -> Result<
 |---------|--------|----------|----------|-------|
 | Default JTAC laser codes | Done | - | `bfprotocols/src/cfg/mod.rs`, `bflib/src/jtac.rs` | `default_laser_code` (serde default 1688), applied when a JTAC spawns |
 | JTAC settings persistence | Done | - | `bflib/src/db/cargo.rs` | `InternalTroop.jtac` carries the `JtacState` through troop load/unload |
-| Carrier aircraft spawning | Buggy (unverified) | High | `bflib/src/spawnctx.rs` | Spawn position/timing issues, see Naval section; still needs an in-game repro |
 | Troop carrier system | Done | - | `bflib/src/db/cargo.rs` | Mechanized infantry: troops ride IFVs/APCs (`GroundVehiclePassengers`) |
 | Points message spam | Done | - | `bflib/src/db/player.rs` | Points message/stat only sent when `amount != 0` |
 | C-130 internal crates blocking | Done | - | `bflib/src/db/cargo.rs` | `spawn_crate` only counts the player's ground crates (`max_crates`) and free space; internally loaded crates no longer block spawning |

@@ -121,6 +121,85 @@ export interface JsonSchema {
   definitions?: Record<string, JsonSchema>
 }
 
+export interface Challenge {
+  label: string
+  progress: number
+  goal: number
+  xp: number
+  done: boolean
+}
+
+export interface Achievement {
+  key: string
+  label: string
+  value: number
+  tier: number
+  max_tier: number
+  next: number | null
+}
+
+/** GET /api/pilot/{ucid}/progression. */
+export interface PilotProgression {
+  /** The pilot's squadron tag, if any. */
+  squadron?: string | null
+  xp: number
+  level: number
+  level_xp: number
+  next_level_xp: number
+  daily: Challenge[]
+  weekly: Challenge[]
+  achievements: Achievement[]
+}
+
+export interface SquadronMember {
+  ucid: string
+  name: string
+  joined: string
+  /** XP earned for the squadron while a member. */
+  xp: number
+}
+
+export interface XpRow {
+  ucid: string
+  name: string
+  xp: number
+  level: number
+}
+
+export interface Squadron {
+  tag: string
+  name: string
+  owner: string
+  owner_name: string
+  created: string
+  member_count: number
+  xp: number
+  members?: SquadronMember[]
+}
+
+export interface RoundSummaryPilot {
+  ucid: string
+  name: string
+  air_kills: number
+  ground_kills: number
+  captures: number
+  logistics: number
+  deaths: number
+  hours: number
+}
+
+/** GET /api/rounds/{id}/summary: one round's totals and its top pilots. */
+export interface RoundSummary {
+  id: number
+  pilots: number
+  air_kills: number
+  ground_kills: number
+  captures: number
+  supply_runs: number
+  hours: number
+  top: RoundSummaryPilot[]
+}
+
 /** GET /api/rounds/{id}/report: the round over time. Ownership before an
  *  objective's first recorded capture is inferred (the loser held it), so
  *  the held counts are close rather than exact. */
@@ -501,7 +580,7 @@ export interface CommandMe {
 // ── Command map (bfprotocols::command) ─────────────────────────────────
 
 export type AssetKind = 'air' | 'convoy' | 'deployed' | 'troops' | 'artillery' | 'naval' | 'ground'
-export type AssetVerb = 'move' | 'fire' | 'station' | 'rtb' | 'sail'
+export type AssetVerb = 'move' | 'fire' | 'station' | 'rtb' | 'sail' | 'disband'
 
 export interface AssetUnit {
   typ: string
@@ -565,6 +644,20 @@ export interface CommandPicture {
   supply?: SupplyLine[]
   /** Our air defences and their reach. */
   defences?: DefenceRing[]
+  /** Formations bought from the treasury: the limits on an order. Absent
+   *  when the server doesn't sell them; what can be bought is in `orders`
+   *  under "formation:<deployable>", priced per copy. */
+  buy_formation?: FormationPurchase | null
+}
+
+export interface FormationPurchase {
+  min_count: number
+  max_count: number
+  /** Our formations in the field now, and the most we may have. */
+  in_field: number
+  max_in_field: number
+  /** How far our base may be from the first point of the route, metres. */
+  range_m: number
 }
 
 export interface SupplyLine {
@@ -589,7 +682,7 @@ export type OrderTarget = 'land' | 'point' | 'sea' | 'own_base' | 'enemy_base' |
 
 /** One entry of the order catalogue. */
 export interface OrderOption {
-  /** "action:<name>", "deploy:<name>", "op:ambush", "op:missile", "op:hunt". */
+  /** "action:<name>", "deploy:<name>", "formation:<name>", "op:ambush", "op:missile", "op:hunt". */
   key: string
   label: string
   category: string
@@ -609,12 +702,14 @@ export type CommandOrder =
   | { barrage: { at: LatLon } }
   | { station: { group: number; at: LatLon } }
   | { rtb: { group: number } }
+  | { disband: { group: number } }
   | { sail: { group: number; to: LatLon } }
   | { convoy: { to: number } }
   | { helo_supply: { to: number } }
   | { helo_troops: { to: number } }
   | { launch: { kind: HqOpKind; objective: number } }
   | { order: { key: string; at?: LatLon; objective?: number; to_objective?: number } }
+  | { buy_formation: { key: string; count: number; to: LatLon; via?: LatLon[] } }
 
 export interface CommandReply {
   ok: boolean
@@ -775,6 +870,9 @@ export interface Posture {
   players_enemy: number
   last_stand?: string
   victory_condition?: string
+  /** War-effort bar from this side's view, 0-100, and its perk tier (0-3). */
+  war_effort?: number
+  war_effort_tier?: number
 }
 
 export interface SituationWeather {
@@ -2114,10 +2212,13 @@ export const api = {
   /** Round history for the selected instance, or every instance's when
    *  `all` is set (each row carries its own `instance` id either way). */
   rounds: (all = false) => get<Round[]>(all ? '/rounds?instance=all' : '/rounds'),
+  roundSummary: (id: number) => get<RoundSummary | null>(`/rounds/${id}/summary`),
   roundReport: (id: number) => get<RoundReport | null>(`/rounds/${id}/report`),
   leaderboard: () => get<Pilot[]>('/leaderboard'),
   /** One round's leaderboard (needs a bfdb that takes ?round=). */
   leaderboardRound: (round: number) => get<Pilot[]>(`/leaderboard?round=${round}`),
+  /** The 50 pilots with the most XP. */
+  xpTop: () => get<XpRow[]>('/progression/top'),
   allPilots: () => get<PilotName[]>('/pilots'),
   objectives: (roundId?: number) =>
     get<Objective[]>(roundId ? `/objectives?round=${roundId}` : '/objectives'),
@@ -2176,6 +2277,16 @@ export const api = {
   replayRecordings: () => get<import('./replay/data').RecSummary[]>('/replay/recordings'),
   replayStatus: () => get<import('./replay/data').ReplayStatus>('/replay/status'),
   pilotBreakdown: (ucid: string) => get<TheaterBreakdown[]>(`/pilot/${ucid}/breakdown`),
+  pilotProgression: (ucid: string) => get<PilotProgression>(`/pilot/${ucid}/progression`),
+  pilotCardUrl: (ucid: string) => `${BASE}/pilot/${ucid}/card.png`,
+  /** Human GCI seat: speak `text` on the caller's side's GCI frequency. */
+  gciTransmit: (text: string) => post<{ ok: boolean }>('/gci/transmit', { text }),
+  squadrons: () => get<Squadron[]>('/squadrons'),
+  squadron: (tag: string) => get<Squadron>(`/squadrons/${encodeURIComponent(tag)}`),
+  createSquadron: (tag: string, name: string) => post<Squadron>('/squadrons', { tag, name }),
+  joinSquadron: (tag: string) => post<{ ok: boolean }>(`/squadrons/${encodeURIComponent(tag)}/join`, {}),
+  leaveSquadron: () => post<{ ok: boolean }>('/squadrons/leave', {}),
+  kickFromSquadron: (ucid: string) => post<{ ok: boolean }>('/squadrons/kick', { ucid }),
   pilotKills: (ucid: string) => get<PilotKill[]>(`/pilot/${ucid}/kills`),
   pilotDeploys: (ucid: string) => get<PilotDeploy[]>(`/pilot/${ucid}/deploys`),
   stats: () => get<Stats>('/stats'),

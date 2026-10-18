@@ -302,6 +302,15 @@ On the node, the Tacview extension needs `installation:` pointing at Tacview
   finished recording is also sent to.
 * Recordings pile up: prune them with the Cleanup service
   (`config/services/cleanup.yaml`), not by hand.
+* The site's 3D debrief and its "Tacview clip" download come from the same
+  folder: bfdb cuts the few minutes around a result out of the recording on
+  first ask (`/api/range/result/<id>/clip`, `.../clip.acmi`, see
+  `bfdb/src/range/clip.rs`) and keeps the finished cut under
+  `<db>.range-clips` next to the database. A cut of a session still being
+  recorded is served but not kept until the recording has passed the
+  result; a clip outlives the recording it came from, so pruning old
+  recordings does not break old debriefs. Clips are deleted after
+  `--range-track-days`, with the debrief tracks.
 
 ### 7. The bot's YAML
 

@@ -74,10 +74,11 @@ const PAGE_ITEMS: u32 = 10;
 /// deliberately *not* paged: every top-level menu is removed and rebuilt by its
 /// own fixed path ("Cargo", "JTAC>>", "Info", ...) from several places, and a
 /// `More >>` page would move those paths out from under the rebuild. So the
-/// root gets a budget instead. With Wingman, ten can be in use at once (only
-/// for an airframe that is recon-capable AND carries cargo and troops, which
-/// none does today); an eleventh top-level menu means restructuring, not just
-/// adding a line to `init_for_slot`.
+/// root gets a budget instead. CSAR goes inside the cargo menu when the slot
+/// has one, and Recon and Wingman share a "Flight" menu when a slot gets
+/// both, which keeps a cargo helo with every option on at ten; an
+/// eleventh top-level menu means restructuring, not just adding a line to
+/// `init_for_slot`.
 const ROOT_MENU_BUDGET: u32 = PAGE_ITEMS;
 
 impl Pager {
@@ -392,7 +393,7 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             let miz_gid = si.miz_gid;
             let si_side = si.side;
             let si_typ = si.typ.clone();
-            for name in ["GCI/EWR", "Cargo", "C-130 Cargo", "CSAR", "Troops", "Actions", "Recon", "Wingman"] {
+            for name in ["GCI/EWR", "Cargo", "C-130 Cargo", "CSAR", "Troops", "Actions", "Flight", "Recon", "Wingman"] {
                 if let Err(e) = mc.remove_submenu_for_group(miz_gid, GroupSubMenu::from(vec![name.into()])) {
                     warn!("slot {slot:?}: could not remove the old {name} menu: {e:?}");
                 }
@@ -408,19 +409,43 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             // slot on a later tick (every builder removes its own old menu
             // first, so a rebuild is safe).
             let mut failed: Vec<&'static str> = vec![];
-            let mut built = |name: &'static str, res: Result<()>| match res {
-                Ok(()) => root_menus += 1,
+            // `root` false for a menu nested under another one: it costs no
+            // root slot.
+            let mut built = |root: bool, name: &'static str, res: Result<()>| match res {
+                Ok(()) => root_menus += root as u32,
                 Err(e) => {
                     error!("slot {slot:?}: could not build the {name} menu: {e:?}");
                     failed.push(name);
                 }
             };
-            built("GCI/EWR", ewr::add_ewr_menu_for_group(&mc, miz_gid));
-            if ctx.db.recon_capable(&si_typ) {
-                built("Recon", recon::add_recon_menu_for_group(&mc, miz_gid));
+            built(true, "GCI/EWR", ewr::add_ewr_menu_for_group(&mc, miz_gid));
+            let recon = ctx.db.recon_capable(&si_typ);
+            let wingman = crate::airlife::wingman_offered(&cfg);
+            // A slot offered both shares one "Flight" root menu between them:
+            // a recon-capable cargo helo with wingmen on was the eleventh root
+            // menu, and DCS dropped Info. If "Flight" itself fails they fall
+            // back to the root.
+            let flight = if recon && wingman {
+                let res = mc.add_submenu_for_group(miz_gid, "Flight".into(), None);
+                let menu = res.as_ref().ok().cloned();
+                built(true, "Flight", res.map(|_| ()).map_err(anyhow::Error::from));
+                menu
+            } else {
+                None
+            };
+            if recon {
+                built(
+                    flight.is_none(),
+                    "Recon",
+                    recon::add_recon_menu_for_group(&mc, miz_gid, flight.clone()),
+                );
             }
-            if crate::airlife::wingman_offered(&cfg) {
-                built("Wingman", wingman::add_wingman_menu_for_group(&mc, miz_gid));
+            if wingman {
+                built(
+                    flight.is_none(),
+                    "Wingman",
+                    wingman::add_wingman_menu_for_group(&mc, miz_gid, flight.clone()),
+                );
             }
             let cap = CarryCap::from_typ(&cfg, si_typ.as_str());
 
@@ -433,36 +458,43 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
                 .map(|c| c.enabled_vehicles.contains(&si_typ))
                 .unwrap_or(false);
 
-            if is_c130 && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
-                built("C-130 Cargo", cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
-            } else if is_helo_dynamic && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
-                built("Cargo", cargo::add_helo_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
-            } else if cap.crates && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid) {
-                built("Cargo", cargo::add_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
+            let cargo_ok = ctx.db.ephemeral.cfg.rules.cargo.check(&ucid);
+            let mut cargo_root: Option<&'static str> = None;
+            if is_c130 && cargo_ok {
+                built(true, "C-130 Cargo", cargo::add_c130_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
+                cargo_root = Some("C-130 Cargo");
+            } else if is_helo_dynamic && cargo_ok {
+                built(true, "Cargo", cargo::add_helo_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
+                cargo_root = Some("Cargo");
+            } else if cap.crates && cargo_ok {
+                built(true, "Cargo", cargo::add_cargo_menu_for_group(&cfg, &mc, &si_side, miz_gid));
+                cargo_root = Some("Cargo");
             }
-            if ctx.db.ephemeral.cfg.csar.as_ref().map(|c| c.enabled).unwrap_or(false)
-                && ctx.db.ephemeral.cfg.rules.cargo.check(&ucid)
-            {
-                built("CSAR", cargo::add_csar_menu_for_group(&mc, miz_gid));
+            if ctx.db.ephemeral.cfg.csar.as_ref().map(|c| c.enabled).unwrap_or(false) && cargo_ok {
+                // Inside the cargo menu when there is one: a cargo helo with
+                // CSAR, troops, JTAC, actions, ground forces and a wingman
+                // was the eleventh root menu, and DCS dropped Info.
+                let parent = cargo_root.map(|n| GroupSubMenu::from(vec![n.into()]));
+                built(parent.is_none(), "CSAR", cargo::add_csar_menu_for_group(&mc, miz_gid, parent));
             }
             if cap.troops && ctx.db.ephemeral.cfg.rules.troops.check(&ucid) {
-                built("Troops", troop::add_troops_menu_for_group(&cfg, &mc, &si_side, miz_gid));
+                built(true, "Troops", troop::add_troops_menu_for_group(&cfg, &mc, &si_side, miz_gid));
             }
             if ctx.db.ephemeral.cfg.rules.jtac.check(&ucid) {
-                built("JTAC", jtac::init_jtac_menu_for_slot(ctx, lua, slot));
+                built(true, "JTAC", jtac::init_jtac_menu_for_slot(ctx, lua, slot));
             }
             if ctx.db.ephemeral.cfg.rules.actions.check(&ucid) {
-                built("Actions", action::init_action_menu_for_slot(ctx, lua, slot, &ucid));
+                built(true, "Actions", action::init_action_menu_for_slot(ctx, lua, slot, &ucid));
             }
             if cfg
                 .ground_war
                 .as_ref()
                 .map_or(false, |g| g.enabled && g.command_rule.check(&ucid))
             {
-                built("Ground Forces", ground::init_ground_menu_for_slot(&mc, miz_gid, ucid));
+                built(true, "Ground Forces", ground::init_ground_menu_for_slot(&mc, miz_gid, ucid));
             }
-            built("Objectives", objectives::init_objectives_menu_for_slot(ctx, lua, slot));
-            built("Info", info::init_info_menu_for_slot(ctx, lua, slot));
+            built(true, "Objectives", objectives::init_objectives_menu_for_slot(ctx, lua, slot));
+            built(true, "Info", info::init_info_menu_for_slot(ctx, lua, slot));
             if root_menus > ROOT_MENU_BUDGET {
                 error!(
                     "slot {slot:?}: {root_menus} top-level F10 menus but DCS shows only \

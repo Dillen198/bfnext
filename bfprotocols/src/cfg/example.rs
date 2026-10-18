@@ -570,6 +570,7 @@ gci: None,
                 ammo_template: Some("DEPRFARPAMMO".into()),
                 fuel_template: Some("RFLOGI".into()),
                 barracks_template: Some("DEPRFARPTENT".into()),
+                fat_cow: None,
             }),
             persist: PersistTyp::Forever,
             limit: 4,
@@ -592,7 +593,83 @@ gci: None,
             deprecated_logistics: None,
             deprecated_template: None,
         },
+        // Mi-8 sized kit. The weapon names are DCS warehouse item names
+        // (weapons.<category>.<name>, name from the DCS weapon declaration).
+        fat_cow_deployable(
+            "R",
+            9000,
+            [
+                ("weapons.missiles.AT_6", 8),
+                ("weapons.missiles.Vikhr_M", 24),
+                ("weapons.nurs.C_8", 80),
+            ],
+        ),
     ]
+}
+
+/// A heavy-lift helicopter kit (fuel bladder + ammo pallet) that sets up a
+/// small FARP holding only what it was flown in with. bflib generates the
+/// pads and the layout itself (see bflib's db::fat_cow), so no templates are
+/// needed in the mission.
+fn fat_cow_deployable<const N: usize>(
+    side: &str,
+    jet_fuel: u32,
+    weapons: [(&str, u32); N],
+) -> Deployable {
+    Deployable {
+        path: vec!["Fat Cow".into()],
+        kind: DeployableKind::Objective(DeployableObjective {
+            pad_templates: vec![
+                format!("DEP{side}COWPAD0").into(),
+                format!("DEP{side}COWPAD1").into(),
+            ],
+            defenses_template: None,
+            ammo_template: None,
+            fuel_template: None,
+            barracks_template: None,
+            fat_cow: Some(FatCowCfg {
+                radius: 500,
+                jet_fuel,
+                weapons: weapons
+                    .into_iter()
+                    .map(|(name, qty)| (String::from(name), qty))
+                    .collect(),
+                soldier: None,
+                manpad: None,
+            }),
+        }),
+        persist: PersistTyp::Forever,
+        limit: 2,
+        cost: 25,
+        limit_enforce: LimitEnforceTyp::DenyCrate,
+        crates: vec![
+            Crate {
+                name: "Fat Cow Fuel Bladder".into(),
+                weight: 1500,
+                required: 1,
+                pos_unit: None,
+                max_drop_height_agl: 5,
+                max_drop_speed: 5,
+                dcs_type: None,
+            },
+            Crate {
+                name: "Fat Cow Ammo Pallet".into(),
+                weight: 1000,
+                required: 1,
+                pos_unit: None,
+                max_drop_height_agl: 5,
+                max_drop_speed: 5,
+                dcs_type: None,
+            },
+        ],
+        repair_crate: None,
+        repair_cost: 0,
+        ewr: None,
+        jtac: None,
+        gci: None,
+        deprecated_logistics: None,
+        deprecated_template: None,
+    }
 }
 
 fn default_blue_deployables() -> Vec<Deployable> {
@@ -943,6 +1020,7 @@ gci: None,
                 ammo_template: Some("DEPBFARPAMMO".into()),
                 fuel_template: Some("DEPBFARPFUEL".into()),
                 barracks_template: Some("DEPBFARPTENT".into()),
+                fat_cow: None,
             }),
             persist: PersistTyp::Forever,
             limit: 4,
@@ -965,6 +1043,15 @@ gci: None,
             deprecated_logistics: None,
             deprecated_template: None,
         },
+        // CH-47 sized kit for AH-64 / OH-58 / UH-1 shooters
+        fat_cow_deployable(
+            "B",
+            9000,
+            [
+                ("weapons.missiles.AGM_114K", 16),
+                ("weapons.nurs.HYDRA_70_M151", 76),
+            ],
+        ),
     ]
 }
 
@@ -1617,6 +1704,20 @@ fn default_red_actions() -> IndexMap<String, Action, FxBuildHasher> {
             },
         ),
         (
+            "fat-cow".into(),
+            Action {
+                cost: 50,
+                penalty: None,
+                limit: Some(1),
+                geo_limit: ActionGeoLimit::Unlimited,
+                kind: ActionKind::FatCow(FatCowActionCfg {
+                    deployable: "Fat Cow".into(),
+                    aircraft_template: None,
+                    duration_mins: 20,
+                }),
+            },
+        ),
+        (
             "deploy-ewr".into(),
             Action {
                 cost: 50,
@@ -2061,6 +2162,20 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
             },
         ),
         (
+            "fat-cow".into(),
+            Action {
+                cost: 50,
+                penalty: None,
+                limit: Some(1),
+                geo_limit: ActionGeoLimit::Unlimited,
+                kind: ActionKind::FatCow(FatCowActionCfg {
+                    deployable: "Fat Cow".into(),
+                    aircraft_template: None,
+                    duration_mins: 20,
+                }),
+            },
+        ),
+        (
             "deploy-ewr".into(),
             Action {
                 cost: 50,
@@ -2336,6 +2451,7 @@ impl Default for Cfg {
                     min_health: 100,
                     exclude: FxHashSet::default(),
                 }),
+                capture_airframe_stock_percent: 50,
             }),
             weapon_target_exclusions: FxHashSet::default(),
             logistics_exclusion: 10000,
@@ -2464,6 +2580,8 @@ impl Default for Cfg {
             dismount_ttl_secs: None,
             last_stand: None,
             under_attack: None,
+            rear_base_protection: None,
+            max_round_days: None,
             counter_battery: None,
             era: None,
             radar_physics: None,

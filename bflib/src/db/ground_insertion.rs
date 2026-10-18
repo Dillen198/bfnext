@@ -114,7 +114,9 @@ pub(super) fn refund_or_divert(
             destination: mission.destination,
             why,
         }),
-        HeloMissionKind::ResourceDelivery { .. } => refunds.push((mission.player, mission.cost, why)),
+        HeloMissionKind::ResourceDelivery { .. } | HeloMissionKind::FatCow { .. } => {
+            refunds.push((mission.player, mission.cost, why))
+        }
     }
 }
 
@@ -614,7 +616,16 @@ impl Db {
                 self.end_ground_leg(&leg);
                 let dest_name = self.objective_name(leg.destination);
                 let origin_name = self.objective_name(leg.origin);
-                match self.paratroops_to_point(lua, &idx, at, leg.troop.clone(), leg.side, leg.player, leg.origin) {
+                match self.paratroops_to_point(
+                    lua,
+                    &idx,
+                    at,
+                    leg.troop.clone(),
+                    leg.side,
+                    leg.player,
+                    leg.origin,
+                    if leg.cost > 0 { 1. } else { 0. },
+                ) {
                     Ok(()) => {
                         info!("[HELO_GROUND] {} squad dismounted at {dest_name}", leg.id);
                         self.ephemeral.panel_to_player(

@@ -8,6 +8,9 @@ import { airframe, weaponName } from '../lib/format'
 import { gradeName } from '../lib/lso'
 import { headline } from '../lib/headline'
 import type { RangeRecord } from '../types'
+import trapSample from './cards/trap.png'
+import bombSample from './cards/bomb.png'
+import fieldSample from './cards/field_landing.png'
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 const svg = (w: number, h: number, body: string) =>
@@ -116,7 +119,18 @@ function genericCard(r: RangeRecord): string {
   `)
 }
 
+/**
+ * The real cards, as bfdb renders them, for the two kinds that have their
+ * own form (the LSO pass record, the range score sheet): samples written by
+ * `CARD_OUT=<dir> cargo test -p bfdb write_card_samples` and copied here.
+ * They show bfdb's fixture pass, not this mock record; the other kinds get
+ * the sketch below.
+ */
+const SAMPLES: Partial<Record<string, string>> = { trap: trapSample, bomb: bombSample, field_landing: fieldSample }
+
 export function mockCardDataUrl(r: RangeRecord): string {
+  const real = SAMPLES[r.result.kind]
+  if (real) return real
   const body = r.result.kind === 'bomb' ? bombCard(r) : r.result.kind === 'trap' ? trapCard(r) : genericCard(r)
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(body)}`
 }

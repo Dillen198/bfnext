@@ -466,7 +466,7 @@ fn think(
         if ctx.hq.side(side).failed.get(&key).map_or(false, |t| (now - *t).num_seconds() < FAILED_RETRY_SECS) {
             continue;
         }
-        if dispatch::launch(lua, ctx, perf, cfg, side, cand, now).is_ok() {
+        if dispatch::launch(lua, ctx, perf, cfg, side, None, cand, now).is_ok() {
             budget -= cand.cost;
             left -= 1;
             done.push((cand.kind.line(), cand.anchor));
@@ -868,6 +868,7 @@ pub(crate) fn commander_launch(
     kind: OpKind,
     objective: ObjectiveId,
     who: &str,
+    ucid: Option<Ucid>,
     now: DateTime<Utc>,
 ) -> Result<CompactString, CompactString> {
     let Some((_, cfg)) = cfg(ctx) else {
@@ -887,7 +888,7 @@ pub(crate) fn commander_launch(
     if treasury < c.cost {
         return Err(format_compact!("that costs {} and the treasury has {treasury}", c.cost));
     }
-    let detail = dispatch::launch(lua, ctx, perf, &cfg, side, &c, now)?;
+    let detail = dispatch::launch(lua, ctx, perf, &cfg, side, ucid, &c, now)?;
     ctx.hq.side(side).menu = None;
     ctx.hq.side(side).note(now, format_compact!("{who} ordered {} on {}: {detail}", kind.label(), c.name));
     // `command::order` tells the side who ordered it.

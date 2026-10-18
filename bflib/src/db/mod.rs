@@ -48,6 +48,7 @@ pub mod combat;
 pub mod cargo;
 pub mod economy;
 pub mod emergency_repair;
+pub mod fat_cow;
 pub mod ephemeral;
 pub mod events;
 pub mod formation;
@@ -57,6 +58,7 @@ pub mod ground_insertion;
 pub mod group;
 pub mod helo_route;
 pub mod intel;
+pub mod last_defenders;
 pub mod logistics;
 pub mod map_layer;
 pub mod markup;
@@ -66,7 +68,9 @@ pub mod persisted;
 pub mod player;
 pub mod recon;
 pub mod reinforce;
+pub mod tasking;
 pub mod tasks;
+pub mod war_effort;
 
 pub type Map<K, V> = immutable_chunkmap::map::Map<K, V, 256>;
 pub type MapM<K, V> = immutable_chunkmap::map::Map<K, V, 64>;
@@ -413,6 +417,7 @@ impl Db {
         GroupId::setseq(max(db.persisted.gid, GroupId::seq()));
         UnitId::setseq(max(db.persisted.uid, UnitId::seq()));
         db.ephemeral.set_cfg(miz, idx, cfg, to_bg)?;
+        db.load_veterans(path);
         // Restore the capture/last-stand timers that have to outlive a
         // restart (see Persisted::last_stand_state).
         db.ephemeral.last_stand_state = db.persisted.last_stand_state;
@@ -432,6 +437,30 @@ impl Db {
             }
         }
         Ok(db)
+    }
+
+    /// Read the veterans list (`bg::veterans_path`) and add everyone in this
+    /// save who is already past rookie mode.
+    fn load_veterans(&mut self, path: &Path) {
+        let vpath = crate::bg::veterans_path(path);
+        match fs::read(&vpath) {
+            Ok(buf) => match serde_json::from_slice::<Vec<dcso3::net::Ucid>>(&buf) {
+                Ok(v) => self.ephemeral.veterans.extend(v),
+                Err(e) => log::error!("the veterans list {vpath:?} is unreadable, {e:?}"),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => log::error!("could not read the veterans list {vpath:?}, {e:?}"),
+        }
+        let before = self.ephemeral.veterans.len();
+        for (ucid, p) in self.persisted.players() {
+            if p.sorties >= player::ROOKIE_SORTIES {
+                self.ephemeral.veterans.insert(*ucid);
+            }
+        }
+        self.ephemeral.veterans_path = Some(vpath);
+        if self.ephemeral.veterans.len() != before {
+            self.ephemeral.save_veterans();
+        }
     }
 
     pub fn maybe_snapshot(&mut self) -> Option<Persisted> {

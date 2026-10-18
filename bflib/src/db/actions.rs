@@ -37,7 +37,7 @@ use dcso3::{
     coalition::Side,
     controller::{
         ActionTyp, AiOption, AlarmState, AltType, BeaconSystem, BeaconType, Command,
-        GroundOption, MissionPoint, OrbitPattern, PointType, Task, TacanBand, TurnMethod,
+        GroundOption, GroundRoe, MissionPoint, NavalOption, OrbitPattern, PointType, Task, TacanBand, TurnMethod,
         VehicleFormation,
     },
     env::miz::MizIndex,
@@ -55,7 +55,7 @@ use fxhash::FxHashSet;
 use log::{debug, error, info, warn};
 use rand::{Rng, thread_rng};
 use smallvec::{SmallVec, smallvec};
-use std::{cmp::max, f64, vec};
+use std::{cmp::max, vec};
 
 /// Build the task that activates a TACAN beacon for an AI aircraft, if the
 /// action's config asked for one. Falls back to the first 3 alphanumeric
@@ -185,6 +185,7 @@ pub enum ActionArgs {
     CarrierRepair(WithObj<()>),
     CarrierRespawn(WithObj<()>),
     NavalCruiseMissileStrike(WithObj<NavalCruiseMissileCfg>),
+    Strike(WithPos<bfprotocols::cfg::StrikeCfg>),
     /// Player-triggered indirect fire support (artillery / armor barrage at a map-mark position).
     Artillery(WithPos<ArtilleryCfg>),
     /// Player-triggered reconnaissance flight over a map-mark position.
@@ -195,6 +196,8 @@ pub enum ActionArgs {
     RemoveTask(WithTask<RemoveTaskCfg>),
     /// Send a reinforcement convoy to a friendly objective.
     Reinforce(WithObj<ReinforceCfg>),
+    /// Fly an AI Fat Cow to a map-mark position.
+    FatCow(WithPos<bfprotocols::cfg::FatCowActionCfg>),
 }
 
 impl ActionArgs {
@@ -343,6 +346,7 @@ impl ActionArgs {
             ActionKind::Nuke(c) => Ok(Self::Nuke(pos(db, lua, side, c, s)?)),
             ActionKind::Paratrooper(c) => Ok(Self::Paratrooper(pos(db, lua, side, c, s)?)),
             ActionKind::Deployable(c) => Ok(Self::Deployable(pos(db, lua, side, c, s)?)),
+            ActionKind::FatCow(c) => Ok(Self::FatCow(pos(db, lua, side, c, s)?)),
             ActionKind::LogisticsRepair(c) => Ok(Self::LogisticsRepair(obj(db, c, s)?)),
             ActionKind::LogisticsTransfer(c) => Ok(Self::LogisticsTransfer(from_to(db, c, s)?)),
             ActionKind::AwacsWaypoint => Ok(Self::AwacsWaypoint(pos_group(db, lua, side, (), s)?)),
@@ -350,6 +354,7 @@ impl ActionArgs {
                 Ok(Self::TankerWaypoint(pos_group(db, lua, side, (), s)?))
             }
             ActionKind::Bomber(c) => Ok(Self::Bomber(jtac(c, s)?)),
+            ActionKind::Strike(c) => Ok(Self::Strike(pos(db, lua, side, c, s)?)),
             ActionKind::Move(c) => Ok(Self::Move(pos_group(db, lua, side, c, s)?)),
             ActionKind::CruiseMissileSpawn(c) => {
                 Ok(Self::CruiseMissileSpawn(pos(db, lua, side, c, s)?))
@@ -411,8 +416,10 @@ impl ActionArgs {
             Self::CruiseMissileSpawn(c) => Some(c.pos),
             Self::CruiseMissileWaypoint(c) => Some(c.pos),
             Self::Bomber(_) => None,
+            Self::Strike(c) => Some(c.pos),
             Self::Rtb(c) => Some(c.pos),
             Self::Deployable(c) => Some(c.pos),
+            Self::FatCow(c) => Some(c.pos),
             Self::Drone(c) => Some(c.pos),
             Self::DroneWaypoint(c) => Some(c.pos),
             Self::Fighters(c) => Some(c.pos),
@@ -505,7 +512,7 @@ fn racetrack_dist_and_heading(
 ) -> (f64, f64) {
     match Db::objective_near_point(obj, pos, |o| o.owner == enemy) {
         None => (9999999., 0.),
-        Some((dist, hd, _)) => (dist, change_heading(hd, f64::consts::FRAC_PI_2)),
+        Some((dist, hd, _)) => (dist, change_heading(hd, std::f64::consts::FRAC_PI_2)),
     }
 }
 
@@ -543,6 +550,7 @@ fn action_spawns_group(kind: &ActionKind) -> bool {
         ActionKind::Tanker(_)
         | ActionKind::Awacs(_)
         | ActionKind::Bomber(_)
+        | ActionKind::Strike(_)
         | ActionKind::CruiseMissileSpawn(_)
         | ActionKind::Fighters(_)
         | ActionKind::Attackers(_)
@@ -570,7 +578,10 @@ fn action_spawns_group(kind: &ActionKind) -> bool {
         | ActionKind::NavalCruiseMissileStrike(_)
         | ActionKind::Artillery(_)
         | ActionKind::AddTask(_)
-        | ActionKind::RemoveTask(_) => false,
+        | ActionKind::RemoveTask(_)
+        // Its helicopter is a helo mission, not an action group; its limit
+        // is counted from those (see start_action_inner).
+        | ActionKind::FatCow(_) => false,
     }
 }
 
@@ -594,6 +605,7 @@ pub(crate) fn waypoint_accepts(waypoint: &ActionKind, group: &ActionKind) -> boo
             ActionKind::Tanker(_)
             | ActionKind::Awacs(_)
             | ActionKind::Bomber(_)
+            | ActionKind::Strike(_)
             | ActionKind::CruiseMissileSpawn(_)
             | ActionKind::Drone(_)
             | ActionKind::Recon(_)
@@ -612,6 +624,24 @@ fn group_position(lua: MizLua, name: &str) -> Result<Vector2> {
         .context("getting unit")?
         .get_point()?;
     Ok(Vector2::new(pos.x, pos.z))
+}
+
+/// One thing a strike attacks; `Db::strike_mission` turns each into a DCS
+/// attack task.
+#[derive(Debug, Clone, Copy)]
+enum StrikeAim {
+    Bomb(Vector2),
+    MapObject(Vector2),
+    Group(dcso3::env::miz::GroupId),
+    Runway(dcso3::airbase::RunwayId),
+    Carpet(Vector2),
+}
+
+fn group_airborne(lua: MizLua, name: &str) -> bool {
+    Group::get_by_name(lua, name)
+        .and_then(|g| g.get_unit(1))
+        .and_then(|u| u.in_air())
+        .unwrap_or(false)
 }
 
 impl Db {
@@ -671,6 +701,45 @@ impl Db {
         ucid: Option<Ucid>,
         cmd: ActionCmd,
     ) -> Result<()> {
+        self.start_action_inner(lua, perf, spctx, idx, jtacs, side, ucid, false, cmd)
+    }
+
+    /// Start an action the side's treasury has already paid for (a command
+    /// panel order). `owner` is the commander who gave it: a group it puts
+    /// on the map is theirs -- they can -delete what it delivers and get the
+    /// credit for it -- but they are charged nothing and refunded nothing
+    /// (paid_by records them with 0 paid, and what it drops gets
+    /// cost_fraction 0). Orders to existing groups (waypoints, RTB) carry no
+    /// owner, so they don't hand the flight to whoever retasked it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_treasury_action(
+        &mut self,
+        lua: MizLua,
+        perf: &mut PerfInner,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        jtacs: &Jtacs,
+        side: Side,
+        owner: Option<Ucid>,
+        cmd: ActionCmd,
+    ) -> Result<()> {
+        let owner = owner.filter(|_| action_spawns_group(&cmd.action.kind));
+        self.start_action_inner(lua, perf, spctx, idx, jtacs, side, owner, true, cmd)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_action_inner(
+        &mut self,
+        lua: MizLua,
+        perf: &mut PerfInner,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        jtacs: &Jtacs,
+        side: Side,
+        ucid: Option<Ucid>,
+        treasury_paid: bool,
+        cmd: ActionCmd,
+    ) -> Result<()> {
         let cost = match &cmd.action.kind {
             ActionKind::Nuke(nc) => {
                 nuke_cost(cmd.action.cost, nc.cost_scale, self.persisted.nukes_used)
@@ -716,8 +785,13 @@ impl Db {
             },
             _ => cmd.action.cost,
         };
+        // The war-effort bar's tier-2 perk: cheaper actions for the side
+        // pushing it.
+        let cost = (cost as f64 * self.persisted.war_effort.action_cost_factor(side)).round() as u32;
+        // the treasury already paid; the owner is charged nothing
+        let cost = if treasury_paid { 0 } else { cost };
         if let Some(ucid) = ucid.as_ref() {
-            if !self.ephemeral.cfg.rules.actions.check(ucid) {
+            if !treasury_paid && !self.ephemeral.cfg.rules.actions.check(ucid) {
                 bail!("you are not authorized for actions")
             }
             match self.persisted.players.get(ucid) {
@@ -750,7 +824,9 @@ impl Db {
         // own (nuke, waypoints, carrier orders, fires, tasks) have nothing to
         // count, so for those it remains a per-server-session budget.
         if let Some(limit) = cmd.action.limit {
-            let n = if action_spawns_group(&cmd.action.kind) {
+            let n = if let ActionKind::FatCow(_) = &cmd.action.kind {
+                self.ai_fat_cows_out(side, &cmd.name)
+            } else if action_spawns_group(&cmd.action.kind) {
                 self.persisted
                     .actions
                     .into_iter()
@@ -797,6 +873,9 @@ impl Db {
             ActionArgs::AwacsWaypoint(args) => self
                 .move_awacs(spctx, side, ucid.clone(), args)
                 .context("moving awacs")?,
+            ActionArgs::Strike(args) => self
+                .strike(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .context("calling strike")?,
             ActionArgs::Bomber(args) => self
                 .bomber_strike(
                     perf,
@@ -816,6 +895,20 @@ impl Db {
             ActionArgs::CruiseMissileSpawn(args) => self
                 .cruise_missile(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
                 .context("calling cruise missile bomber")?,
+            ActionArgs::FatCow(args) => {
+                self.call_ai_fat_cow(
+                    lua,
+                    side,
+                    ucid.clone(),
+                    &name,
+                    cost,
+                    &args.cfg,
+                    args.pos,
+                    Utc::now(),
+                )
+                .context("calling the fat cow")?;
+                None
+            }
             ActionArgs::Deployable(args) => self
                 .ai_deploy(
                     lua,
@@ -827,6 +920,7 @@ impl Db {
                     name,
                     cmd.action,
                     args,
+                    if treasury_paid { 0. } else { 1. },
                 )
                 .context("calling ai deployment")?,
             ActionArgs::Fighters(args) => self
@@ -940,11 +1034,13 @@ impl Db {
                 action: cmd.name.clone(),
                 gid,
             });
-            self.adjust_points(
-                ucid,
-                -(cost as i32),
-                &format!("perform action {}", cmd.name),
-            );
+            if cost > 0 {
+                self.adjust_points(
+                    ucid,
+                    -(cost as i32),
+                    &format!("perform action {}", cmd.name),
+                );
+            }
         }
         *self
             .ephemeral
@@ -1189,6 +1285,7 @@ impl Db {
             } if matches!(
                 spec.kind,
                 ActionKind::Bomber(_)
+                    | ActionKind::Strike(_)
                     | ActionKind::Paratrooper(_)
                     | ActionKind::Deployable(_)
                     | ActionKind::LogisticsRepair(_)
@@ -1248,10 +1345,11 @@ impl Db {
         let gid = args.group;
         let group = group!(self, gid)?;
         let pos = group_position(spctx.lua(), &group.name).context("getting pos")?;
+        let station = args.pos;
         let mission = self
             .drone_mission(side, ucid, pos, args)
             .context("generate drone mission")?;
-        self.set_ai_mission(spctx, gid, mission)
+        self.set_station_mission(spctx, gid, station, ucid, mission)
             .context("setting ai mission")?;
         Ok(None)
     }
@@ -1454,10 +1552,11 @@ impl Db {
         let gid = args.group;
         let group = group!(self, gid)?;
         let pos = group_position(spctx.lua(), &group.name)?;
+        let station = args.pos;
         let mission = self
             .ai_fighters_mission(side, ucid, pos, args)
             .context("generate fighters mission")?;
-        self.set_ai_mission(spctx, gid, mission)
+        self.set_station_mission(spctx, gid, station, ucid, mission)
             .context("setting fighters mission")?;
         Ok(None)
     }
@@ -1652,10 +1751,11 @@ impl Db {
         let gid = args.group;
         let group = group!(self, gid)?;
         let pos = group_position(spctx.lua(), &group.name)?;
+        let station = args.pos;
         let mission = self
             .ai_attackers_mission(side, ucid, pos, args)
             .context("generate attackers mission")?;
-        self.set_ai_mission(spctx, gid, mission)
+        self.set_station_mission(spctx, gid, station, ucid, mission)
             .context("setting ai mission")?;
         Ok(None)
     }
@@ -1670,10 +1770,11 @@ impl Db {
         let gid = args.group;
         let group = group!(self, gid)?;
         let pos = group_position(spctx.lua(), &group.name)?;
+        let station = args.pos;
         let mission = self
             .ai_sead_mission(side, ucid, pos, args)
             .context("generate sead mission")?;
-        self.set_ai_mission(spctx, gid, mission)
+        self.set_station_mission(spctx, gid, station, ucid, mission)
             .context("setting ai mission")?;
         Ok(None)
     }
@@ -2377,7 +2478,12 @@ impl Db {
                     altitude_type: None,
                     counter_battery_radius: None,
                 };
-                dcs_group.get_controller()?.push_task(task)?;
+                let con = dcs_group.get_controller()?;
+                // Carrier groups keep their .miz template's ROE, and a ship on
+                // weapon hold or return fire takes this task and never
+                // launches. The commander's own ship orders set it the same way.
+                con.set_option(AiOption::Naval(NavalOption::Roe(GroundRoe::WeaponFree)))?;
+                con.push_task(task)?;
                 self.ephemeral.naval_strike_fired.insert(name.clone(), (cruise, now));
                 info!(
                     "Naval cruise missile strike: {name} of carrier group {cg_id:?} launching {want} of its {cruise} cruise missiles at {target_name} ({:.0} km)",
@@ -2456,10 +2562,11 @@ impl Db {
         let gid = args.group;
         let group = group!(self, gid)?;
         let pos = group_position(spctx.lua(), &group.name)?;
+        let station = args.pos;
         let mission = self
             .tanker_mission(side, ucid, pos, args)
             .context("generate tanker mission")?;
-        self.set_ai_mission(spctx, gid, mission)?;
+        self.set_station_mission(spctx, gid, station, ucid, mission)?;
         Ok(None)
     }
 
@@ -2511,10 +2618,11 @@ impl Db {
         let gid = args.group;
         let group = group!(self, gid)?;
         let pos = group_position(spctx.lua(), &group.name)?;
+        let station = args.pos;
         let mission = self
             .cruise_missile_mission(side, ucid, pos, args)
             .context("generating CruiseMissile mission")?;
-        self.set_ai_mission(spctx, gid, mission)
+        self.set_station_mission(spctx, gid, station, ucid, mission)
             .context("setting ai mission")?;
         Ok(Some(gid))
     }
@@ -2688,6 +2796,8 @@ impl Db {
         name: String,
         action: Action,
         args: WithPos<DeployableCfg>,
+        // what the owner paid of it: 0 when the treasury did
+        cost_fraction: f32,
     ) -> Result<Option<GroupId>> {
         match args.cfg.plane.as_ref() {
             Some(plane) => Ok(Some(self.add_and_spawn_ai_air(
@@ -2715,6 +2825,7 @@ impl Db {
                     args.cfg.name,
                     side,
                     ucid.unwrap_or_default(),
+                    cost_fraction,
                 )?;
                 Ok(None)
             }
@@ -2843,6 +2954,7 @@ impl Db {
                     bomber_cfg.plane.altitude_typ.clone(),
                     bomber_cfg.plane.speed,
                 ),
+                ActionKind::Strike(s) => (s.plane.altitude, s.plane.altitude_typ.clone(), s.plane.speed),
                 ActionKind::CruiseMissileSpawn(ai_plane_cfg) => (
                     ai_plane_cfg.altitude,
                     ai_plane_cfg.altitude_typ.clone(),
@@ -2956,6 +3068,258 @@ impl Db {
         )?))
     }
 
+    /// The `Strike` actions: a flight off a friendly field that attacks with
+    /// its own weapons -- DCS does the damage, so the kill, scenery and
+    /// logistics bookkeeping pay out as for a player's bombs.
+    fn strike(
+        &mut self,
+        perf: &mut PerfInner,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        side: Side,
+        ucid: Option<Ucid>,
+        name: String,
+        action: Action,
+        args: WithPos<bfprotocols::cfg::StrikeCfg>,
+    ) -> Result<Option<GroupId>> {
+        let cfg = args.cfg.clone();
+        let (target, aims, what) = self.strike_aims(spctx.lua(), side, &cfg, args.pos)?;
+        info!(
+            "strike: {side:?} {} on {what}: {} aim point(s)",
+            cfg.mission.label(),
+            aims.len()
+        );
+        Ok(Some(self.add_and_spawn_ai_air(
+            perf,
+            spctx,
+            idx,
+            side,
+            &ucid,
+            name,
+            action,
+            0.,
+            &WithPos { cfg: cfg.plane.clone(), pos: target },
+            Some(target),
+            BitFlags::empty(),
+            move |db, gid, launch| db.strike_mission(gid, launch, target, &cfg, aims),
+        )?))
+    }
+
+    /// Where a strike goes and what it hits there: (target point, aim
+    /// points, a name for the log).
+    fn strike_aims(
+        &self,
+        lua: MizLua,
+        side: Side,
+        cfg: &bfprotocols::cfg::StrikeCfg,
+        pos: Vector2,
+    ) -> Result<(Vector2, Vec<StrikeAim>, std::string::String)> {
+        use bfprotocols::cfg::StrikeMission as M;
+        let enemy = side.opposite();
+        let attacks = cfg.attacks.clamp(1, 8) as usize;
+        let near_enemy_objective = |radius: f64| {
+            Self::objective_near_point(&self.persisted.objectives, pos, |o| o.owner == enemy)
+                .filter(|(d, _, _)| *d <= radius)
+                .map(|(_, _, o)| o)
+        };
+        let group_id = |name: &str| Group::get_by_name(lua, name).and_then(|g| g.id()).ok();
+        match cfg.mission {
+            M::Precision => {
+                let obj = near_enemy_objective(8_000.)
+                    .ok_or_else(|| anyhow!("pick an enemy objective to strike"))?;
+                let mut buildings: Vec<Vector2> = self
+                    .ephemeral
+                    .tracked_scenery
+                    .values()
+                    .filter(|s| s.objective == obj.id)
+                    .map(|s| s.pos)
+                    .collect();
+                let c = obj.pos();
+                buildings.sort_by(|a, b| (a - c).norm().total_cmp(&(b - c).norm()));
+                buildings.truncate(attacks);
+                let aims = if buildings.is_empty() {
+                    vec![StrikeAim::Bomb(c)]
+                } else {
+                    buildings.into_iter().map(StrikeAim::MapObject).collect()
+                };
+                Ok((c, aims, obj.name.to_string()))
+            }
+            M::Runway => {
+                let obj = near_enemy_objective(8_000.)
+                    .filter(|o| matches!(o.kind, ObjectiveKind::Airbase))
+                    .ok_or_else(|| anyhow!("pick an enemy airbase for a runway attack"))?;
+                let runways: Vec<StrikeAim> = self
+                    .ephemeral
+                    .resolve_airbase(lua, &self.persisted, &obj.id)
+                    .and_then(|ab| ab.get_runways().ok())
+                    .map(|rs| {
+                        rs.into_iter()
+                            .filter_map(|r| r.ok())
+                            .filter_map(|r| r.id().ok())
+                            .take(attacks)
+                            .map(StrikeAim::Runway)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let aims = if runways.is_empty() { vec![StrikeAim::Bomb(obj.pos())] } else { runways };
+                Ok((obj.pos(), aims, obj.name.to_string()))
+            }
+            M::AntiShip => {
+                let obj = near_enemy_objective(40_000.)
+                    .filter(|o| o.kind.is_carrier_group())
+                    .ok_or_else(|| anyhow!("pick an enemy carrier group for an anti-ship strike"))?;
+                let mut names: Vec<std::string::String> = obj
+                    .groups
+                    .get(&enemy)
+                    .into_iter()
+                    .flat_map(|gs| gs.into_iter())
+                    .filter_map(|gid| self.persisted.groups.get(gid))
+                    .map(|g| g.name.to_string())
+                    .collect();
+                if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &obj.kind {
+                    names.push(carrier_template.to_string());
+                }
+                let mut aims: Vec<StrikeAim> = vec![];
+                for n in names {
+                    if let Some(id) = group_id(&n)
+                        && !aims.iter().any(|a| matches!(a, StrikeAim::Group(g) if *g == id))
+                    {
+                        aims.push(StrikeAim::Group(id));
+                    }
+                }
+                aims.truncate(attacks);
+                if aims.is_empty() {
+                    bail!("{} has no ships in the water to attack", obj.name)
+                }
+                // The ships move: aim the route at where the group is now.
+                Ok((obj.pos(), aims, obj.name.to_string()))
+            }
+            M::Interdiction => {
+                const RADIUS: f64 = 15_000.;
+                let mut best: Option<(f64, std::string::String, Vector2)> = None;
+                for (gid, g) in &self.persisted.groups {
+                    if g.side != enemy || g.kind != Some(dcso3::group::GroupCategory::Ground) {
+                        continue;
+                    }
+                    let alive = g
+                        .units
+                        .into_iter()
+                        .any(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead));
+                    if !alive {
+                        continue;
+                    }
+                    let std::result::Result::Ok(c) = self.group_center(gid) else { continue };
+                    let d = (c - pos).norm();
+                    if d <= RADIUS && best.as_ref().map_or(true, |(bd, _, _)| d < *bd) {
+                        best = Some((d, g.name.to_string(), c));
+                    }
+                }
+                let (_, name, c) = best.ok_or_else(|| {
+                    anyhow!("no enemy convoy or column within {:.0} km of the mark", RADIUS / 1000.)
+                })?;
+                let id = group_id(&name).ok_or_else(|| anyhow!("{name} is not in DCS right now"))?;
+                Ok((c, vec![StrikeAim::Group(id)], name))
+            }
+            M::Carpet => Ok((pos, vec![StrikeAim::Carpet(pos)], "the marked point".into())),
+        }
+    }
+
+    /// Takeoff, an initial point 20 km short of the target where the attack
+    /// task starts (weapons held until then, so a stealth jet stays quiet),
+    /// the target, and home.
+    fn strike_mission<'lua>(
+        &mut self,
+        gid: GroupId,
+        launch: Vector2,
+        target: Vector2,
+        cfg: &bfprotocols::cfg::StrikeCfg,
+        aims: Vec<StrikeAim>,
+    ) -> Result<Vec<MissionPoint<'lua>>> {
+        use bfprotocols::cfg::StrikeMission as M;
+        use dcso3::controller::{AirOption, AirReactionToThreat, AirRoe, AttackParams, WeaponExpend};
+        let group = group!(self, gid)?;
+        let home = match &group.origin {
+            DeployKind::Action { rtb: Some(h), .. } => *h,
+            _ => launch,
+        };
+        let (alt, alt_typ, speed) = (cfg.plane.altitude, cfg.plane.altitude_typ.clone(), cfg.plane.speed);
+        let away = launch - target;
+        let ip = if away.norm() > 25_000. { target + away.normalize() * 20_000. } else { target + away * 0.5 };
+        // DCS weapon flags: 14 guided bombs, 2147485694 any bomb, 65536
+        // anti-ship missiles; None lets the AI pick.
+        let weapons = cfg.weapon_type.or(match cfg.mission {
+            M::Precision => Some(14),
+            M::Runway | M::Carpet => Some(2_147_485_694),
+            M::AntiShip => Some(65_536),
+            M::Interdiction => None,
+        });
+        let mission = cfg.mission;
+        let expend = move || match mission {
+            M::Precision => WeaponExpend::Two,
+            M::AntiShip | M::Interdiction => WeaponExpend::Half,
+            M::Runway | M::Carpet => WeaponExpend::All,
+        };
+        let params = || AttackParams {
+            weapon_type: weapons,
+            expend: Some(expend()),
+            direction: None,
+            altitude: None,
+            attack_qty_limit: None,
+            altitude_enabled: None,
+            direction_enabled: None,
+            point: None,
+            attack_qty: Some(1),
+            group_attack: Some(true),
+            x: None,
+            y: None,
+        };
+        let carpet = cfg.carpet_length_m.max(200.);
+        let attack_tasks = move || -> Vec<Task<'lua>> {
+            let mut v = vec![Task::WrappedOption(AiOption::Air(AirOption::Roe(AirRoe::WeaponFree)))];
+            for a in &aims {
+                v.push(match a {
+                    StrikeAim::Bomb(p) => Task::Bombing { point: LuaVec2(*p), params: params() },
+                    StrikeAim::MapObject(p) => Task::AttackMapObject { point: LuaVec2(*p), params: params() },
+                    StrikeAim::Group(g) => Task::AttackGroup { group: *g, params: params() },
+                    StrikeAim::Runway(r) => Task::BombRunway { runway: *r, params: params() },
+                    StrikeAim::Carpet(p) => Task::CarpetBombing {
+                        point: LuaVec2(*p),
+                        carpet_length: carpet,
+                        params: params(),
+                    },
+                });
+            }
+            v
+        };
+        let wpt = |name: &str, pos: Vector2, task: Task<'lua>| MissionPoint {
+            action: Some(ActionTyp::Air(TurnMethod::FlyOverPoint)),
+            typ: PointType::TurningPoint,
+            airdrome_id: None,
+            helipad: None,
+            time_re_fu_ar: None,
+            link_unit: None,
+            pos: LuaVec2(pos),
+            alt,
+            alt_typ: Some(alt_typ.clone()),
+            speed,
+            eta: None,
+            speed_locked: None,
+            eta_locked: None,
+            name: Some(name.into()),
+            task: Box::new(task),
+        };
+        let quiet = Task::ComboTask(vec![
+            Task::WrappedOption(AiOption::Air(AirOption::Roe(AirRoe::WeaponHold))),
+            Task::WrappedOption(AiOption::Air(AirOption::ReactionOnThreat(AirReactionToThreat::EvadeFire))),
+        ]);
+        Ok(vec![
+            wpt("takeoff", launch, quiet),
+            wpt("ip", ip, Task::ComboTask(attack_tasks())),
+            wpt("tgt", target, Task::ComboTask(vec![])),
+            wpt("rtb", home, Task::ComboTask(vec![])),
+        ])
+    }
+
     fn add_and_spawn_ai_air<'lua>(
         &mut self,
         perf: &mut PerfInner,
@@ -3027,6 +3391,10 @@ impl Db {
                 ActionKind::Awacs(_)
                     | ActionKind::Tanker(_)
                     | ActionKind::Bomber(_)
+                    | ActionKind::Strike(bfprotocols::cfg::StrikeCfg {
+                        mission: bfprotocols::cfg::StrikeMission::Carpet,
+                        ..
+                    })
                     | ActionKind::CruiseMissileSpawn(_)
                     | ActionKind::LogisticsTransfer(_)
                     | ActionKind::LogisticsRepair(_)
@@ -3242,10 +3610,11 @@ impl Db {
         let gid = args.group;
         let group = group!(self, gid)?;
         let pos = group_position(spctx.lua(), &group.name)?;
+        let station = args.pos;
         let mission = self
             .awacs_mission(side, ucid, pos, args)
             .context("generating awacs mission")?;
-        self.set_ai_mission(spctx, gid, mission)
+        self.set_station_mission(spctx, gid, station, ucid, mission)
             .context("setting ai mission")?;
         Ok(None)
     }
@@ -3380,6 +3749,7 @@ impl Db {
                     | ActionKind::Move(_)
                     | ActionKind::Rtb
                     | ActionKind::Deployable(_)
+                    | ActionKind::FatCow(_)
                     | ActionKind::Paratrooper(_)
                     | ActionKind::Bomber(_)
                     | ActionKind::Nuke(_)
@@ -3392,6 +3762,7 @@ impl Db {
                     | ActionKind::AddTask(_)
                     | ActionKind::RemoveTask(_)
                     | ActionKind::Reinforce(_)
+                    | ActionKind::Strike(_)
                     | ActionKind::NavalCruiseMissileStrike(_) => bail!("not a race tracker"),
                 }
             }
@@ -3424,7 +3795,7 @@ impl Db {
             }
             OrbitPattern::RaceTrack => {
                 let point1 = args.pos
-                    + pointing_towards2(change_heading(heading, -f64::consts::PI)) * 30_000.;
+                    + pointing_towards2(change_heading(heading, -std::f64::consts::PI)) * 30_000.;
                 let point2 = args.pos + pointing_towards2(heading) * 30_000.;
                 marks.insert(self.ephemeral.msgs().mark_to_side(
                     side,
@@ -3566,6 +3937,95 @@ impl Db {
         )
     }
 
+    /// Give a re-stationed flight its new mission: now if it is in the air,
+    /// once it is (`flush_pending_air_stations`) if it is still on the
+    /// ground. A `set_task` on the ramp replaces the takeoff waypoint with a
+    /// turning point on its own stand, and the flight never taxis -- which is
+    /// what a commander's Station order on a freshly bought AWACS did.
+    fn set_station_mission<'lua>(
+        &mut self,
+        spctx: &SpawnCtx<'lua>,
+        gid: GroupId,
+        station: Vector2,
+        ucid: Option<Ucid>,
+        mission: Vec<MissionPoint<'lua>>,
+    ) -> Result<()> {
+        let name = group!(self, gid)?.name.clone();
+        if group_airborne(spctx.lua(), &name) {
+            self.ephemeral.pending_air_station.remove(&gid);
+            return self.set_ai_mission(spctx, gid, mission);
+        }
+        info!("{name} is still on the ground -- its new station is given once it is airborne");
+        self.ephemeral.pending_air_station.insert(gid, (station, ucid));
+        Ok(())
+    }
+
+    /// The station mission for whichever kind of AI flight `args.group` is.
+    fn station_mission<'lua>(
+        &mut self,
+        side: Side,
+        ucid: Option<Ucid>,
+        spawn_pos: Vector2,
+        args: WithPosAndGroup<()>,
+    ) -> Result<Vec<MissionPoint<'lua>>> {
+        let kind = match &group!(self, args.group)?.origin {
+            DeployKind::Action { spec, .. } => spec.kind.clone(),
+            _ => bail!("not an AI flight"),
+        };
+        match kind {
+            ActionKind::Awacs(_) => self.awacs_mission(side, ucid, spawn_pos, args),
+            ActionKind::Tanker(_) => self.tanker_mission(side, ucid, spawn_pos, args),
+            ActionKind::Drone(_) => self.drone_mission(side, ucid, spawn_pos, args),
+            ActionKind::Fighters(_) => self.ai_fighters_mission(side, ucid, spawn_pos, args),
+            ActionKind::Attackers(_) => self.ai_attackers_mission(side, ucid, spawn_pos, args),
+            ActionKind::Sead(_) => self.ai_sead_mission(side, ucid, spawn_pos, args),
+            ActionKind::CruiseMissileSpawn(_) => {
+                self.cruise_missile_mission(side, ucid, spawn_pos, args)
+            }
+            _ => bail!("this flight can't be given a station"),
+        }
+    }
+
+    /// Station orders held while their flight was on the ground (see
+    /// `set_station_mission`), given as soon as it is up.
+    pub(crate) fn flush_pending_air_stations(&mut self, lua: MizLua) {
+        if self.ephemeral.pending_air_station.is_empty() {
+            return;
+        }
+        let pending: Vec<(GroupId, Vector2, Option<Ucid>)> = self
+            .ephemeral
+            .pending_air_station
+            .iter()
+            .map(|(gid, (pos, ucid))| (*gid, *pos, *ucid))
+            .collect();
+        let spctx = match SpawnCtx::new(lua) {
+            std::result::Result::Ok(s) => s,
+            Err(e) => {
+                error!("flush_pending_air_stations: spawn ctx: {e:?}");
+                return;
+            }
+        };
+        for (gid, station, ucid) in pending {
+            let Some(group) = self.persisted.groups.get(&gid) else {
+                self.ephemeral.pending_air_station.remove(&gid);
+                continue;
+            };
+            let (name, side) = (group.name.clone(), group.side);
+            if !group_airborne(lua, &name) {
+                continue;
+            }
+            self.ephemeral.pending_air_station.remove(&gid);
+            let args = WithPosAndGroup { cfg: (), pos: station, group: gid };
+            let res = group_position(lua, &name)
+                .and_then(|pos| self.station_mission(side, ucid, pos, args))
+                .and_then(|mission| self.set_ai_mission(&spctx, gid, mission));
+            match res {
+                Err(e) => warn!("{name} is airborne but its held station order failed: {e:?}"),
+                _ => info!("{name} is airborne, flying to the station it was given on the ground"),
+            }
+        }
+    }
+
     fn set_ai_mission<'lua>(
         &mut self,
         spctx: &SpawnCtx<'lua>,
@@ -3665,6 +4125,7 @@ impl Db {
         dep: String,
         side: Side,
         ucid: Ucid,
+        cost_fraction: f32,
     ) -> Result<()> {
         let spec = self
             .ephemeral
@@ -3713,7 +4174,7 @@ impl Db {
                     player: ucid,
                     moved_by: None,
                     spec: spec.clone(),
-                    cost_fraction: 1.,
+                    cost_fraction,
                     origin: None,
                     jtac: None,
                 };
@@ -3751,6 +4212,9 @@ impl Db {
         side: Side,
         ucid: Ucid,
         origin: ObjectiveId,
+        // share of the squad the player paid for (0 when the treasury did),
+        // which is what a -delete refunds them
+        cost_fraction: f32,
     ) -> Result<()> {
         let troop_cfg = self
             .ephemeral
@@ -3771,7 +4235,7 @@ impl Db {
             moved_by: None,
             spec: troop_cfg.clone(),
             origin: Some(origin),
-            cost_fraction: 1.,
+            cost_fraction,
             jtac: None,
         };
         let spctx = SpawnCtx::new(lua)?;
@@ -3822,8 +4286,9 @@ impl Db {
         let mut to_bomb: SmallVec<[(BomberCfg, Vector2, Side); 2]> = smallvec![];
         let mut to_repair: SmallVec<[(Vector2, Option<Ucid>, Side); 2]> = smallvec![];
         let mut to_transfer: SmallVec<[(Vector2, Vector2, Option<Ucid>, Side); 2]> = smallvec![];
-        let mut to_deploy: SmallVec<[(Vector2, String, Side, Ucid); 2]> = smallvec![];
-        let mut to_paratroop: SmallVec<[(Vector2, String, Side, Ucid, ObjectiveId); 2]> =
+        // the last field is the owner's cost_fraction: 0 for a treasury-paid order
+        let mut to_deploy: SmallVec<[(Vector2, String, Side, Ucid, f32); 2]> = smallvec![];
+        let mut to_paratroop: SmallVec<[(Vector2, String, Side, Ucid, ObjectiveId, f32); 2]> =
             smallvec![];
         // (payer, points, group name) for flights that made it home after an
         // RTB order. Applied after the pass, through adjust_points.
@@ -3863,6 +4328,7 @@ impl Db {
                 ..
             } = &mut group.origin
             {
+                let cost_fraction = if matches!(*paid_by, Some((_, 0))) { 0. } else { 1. };
                 match &spec.kind {
                     ActionKind::Awacs(AwacsCfg { plane: ai, .. })
                     | ActionKind::Fighters(ai)
@@ -3886,6 +4352,22 @@ impl Db {
                             }
                         }
                         // SEAD groups now require manual RTB - no automatic RTB based on ammunition
+                    }
+                    // DCS does a strike's damage; the flight only has to
+                    // get there and come home.
+                    ActionKind::Strike(_) => {
+                        if let Some(target) = *destination {
+                            if at_dest!(group, target, 10_000.) {
+                                destination.take();
+                            }
+                        }
+                        if destination.is_none() {
+                            if let Some(target) = *rtb {
+                                if at_dest!(group, target, 10_000.) {
+                                    to_delete.push(*gid);
+                                }
+                            }
+                        }
                     }
                     ActionKind::Bomber(b) => {
                         if let Some(target) = *destination {
@@ -3912,7 +4394,12 @@ impl Db {
                                 // go to them, and straight into their points
                                 // without a stat or a reason.
                                 let refund = (spec.cost as f64 * 0.25).ceil() as i32;
-                                if let Some(ucid) = (*paid_by).map(|(u, _)| u).or(*player)
+                                // paid_by with 0 paid: the treasury bought it
+                                let payer = match *paid_by {
+                                    Some((u, paid)) => (paid > 0).then_some(u),
+                                    None => *player,
+                                };
+                                if let Some(ucid) = payer
                                     && refund > 0
                                 {
                                     to_refund.push((ucid, refund, group.name.clone()));
@@ -3951,6 +4438,7 @@ impl Db {
                                         group.side,
                                         ucid,
                                         origin,
+                                        cost_fraction,
                                     )),
                                     // Nothing can deploy these troops. Say so
                                     // once and let the flight go home, instead
@@ -3980,6 +4468,7 @@ impl Db {
                                         d.name.clone(),
                                         group.side,
                                         ucid,
+                                        cost_fraction,
                                     )),
                                     None => error!(
                                         "advance_actions: deployable group {gid:?} can't deploy without a ucid"
@@ -4010,6 +4499,7 @@ impl Db {
                     | ActionKind::CarrierRespawn
                     | ActionKind::Artillery(_)
                     | ActionKind::AddTask(_)
+                    | ActionKind::FatCow(_)
                     | ActionKind::RemoveTask(_)
                     | ActionKind::NavalCruiseMissileStrike(_) => {
                         error!("advance_actions: {gid:?} should not be a group")
@@ -4042,8 +4532,11 @@ impl Db {
                                     self.ephemeral.units_able_to_move.swap_remove(uid);
                                 }
                                 Some(unit) => {
+                                    // troops/dismounts stay tracked (see unit_born)
                                     if !unit.tags.contains(UnitTag::Driveable)
                                         && !unit.tags.contains(UnitTag::Boat)
+                                        && !self.persisted.troops.contains(gid)
+                                        && !self.persisted.dismounts.contains(gid)
                                     {
                                         self.ephemeral.units_able_to_move.swap_remove(uid);
                                     }
@@ -4099,9 +4592,9 @@ impl Db {
                 );
             }
         }
-        for (dst, troop, side, ucid, origin) in to_paratroop {
+        for (dst, troop, side, ucid, origin, cost_fraction) in to_paratroop {
             if let Err(e) =
-                self.paratroops_to_point(lua, idx, dst, troop, side, ucid.clone(), origin)
+                self.paratroops_to_point(lua, idx, dst, troop, side, ucid.clone(), origin, cost_fraction)
             {
                 self.ephemeral.panel_to_player(
                     &self.persisted,
@@ -4111,8 +4604,8 @@ impl Db {
                 )
             }
         }
-        for (dst, dep, side, ucid) in to_deploy {
-            if let Err(e) = self.deployable_to_point(lua, idx, dst, dep, side, ucid.clone()) {
+        for (dst, dep, side, ucid, cost_fraction) in to_deploy {
+            if let Err(e) = self.deployable_to_point(lua, idx, dst, dep, side, ucid.clone(), cost_fraction) {
                 self.ephemeral.panel_to_player(
                     &self.persisted,
                     10,

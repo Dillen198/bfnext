@@ -12,7 +12,8 @@ switched on separately per server.
 ## Electronic warfare
 
 Command centres and naval bases (and any other kind the server picks) host a **jammer
-truck**. It sits dark until enemy aircraft come within
+truck**. It isn't even in DCS until enemy aircraft come within about 1.25×
+its activation range, and then sits dark until they come within
 {{cfg:modern_war.ew.activation_radius_m|80000}} m. Then it switches on and
 stays on for at least {{cfg:modern_war.ew.min_on_secs|180}} seconds.
 

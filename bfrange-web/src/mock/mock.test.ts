@@ -17,7 +17,8 @@ describe('mock range API', () => {
     for (const s of items.slice(0, 20)) {
       expect('track' in s).toBe(false)
       expect(s.headline.length).toBeGreaterThan(10)
-      expect(s.card_png.startsWith('data:image/svg+xml')).toBe(true)
+      // trap and bomb show bfdb's own rendered samples; the rest an inline sketch
+      expect(s.card_png.startsWith('data:image/svg+xml') || /\.png($|\?)/.test(s.card_png)).toBe(true)
     }
   })
 

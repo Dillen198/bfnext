@@ -831,3 +831,21 @@ export const Calculator = createIcon('Calculator', <>
   <path d="M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01" />
   <path d="M16 16v2.5" />
 </>)
+
+/** COPY -- two offset sheets; the front one is the copy. */
+export const Copy = createIcon('Copy', <>
+  <path d="M8.5 8.5h12v12h-12z" />
+  <path d="M15.5 5.5v-2h-12v12h2" />
+</>)
+
+/** CHECK -- a single tick, for "done" states (copied, saved). */
+export const Check = createIcon('Check', <>
+  <path d="m4.5 12.5 5 5 10-11" />
+</>)
+
+/** PRINTER -- paper tray over the body, sheet out of the front. */
+export const Printer = createIcon('Printer', <>
+  <path d="M6.5 8.5v-6h11v6" />
+  <path d="M6.5 17.5h-4v-9h19v9h-4" />
+  <path d="M6.5 13.5h11v8h-11z" />
+</>)

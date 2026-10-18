@@ -33,7 +33,7 @@ use bfprotocols::{
 };
 use chrono::{prelude::*, Duration};
 use compact_str::{format_compact, CompactString};
-use dcso3::{coalition::Side, MizLua};
+use dcso3::{coalition::Side, net::Ucid, MizLua};
 use fxhash::FxHashSet;
 use log::{info, warn};
 
@@ -49,7 +49,14 @@ fn action_groups(ctx: &Context, side: Side) -> FxHashSet<GroupId> {
     ctx.db.actions().filter(|g| g.side == side).map(|g| g.id).collect()
 }
 
-fn run_action(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, side: Side, c: &Cand) -> Result<Option<GroupId>, CompactString> {
+fn run_action(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    side: Side,
+    owner: Option<Ucid>,
+    c: &Cand,
+) -> Result<Option<GroupId>, CompactString> {
     let (name, action) = c.action.clone().ok_or_else(|| CompactString::from("no action configured"))?;
     let args = match &action.kind {
         ActionKind::Recon(cfg) => ActionArgs::Recon(WithPos { cfg: cfg.clone(), pos: c.pos }),
@@ -78,12 +85,22 @@ fn run_action(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, side: Side, 
     let spctx = SpawnCtx::new(lua).map_err(err)?;
     let before = action_groups(ctx, side);
     ctx.db
-        .start_action(lua, perf, &spctx, &ctx.idx, &ctx.jtac, side, None, ActionCmd { name, action, args })
+        .start_treasury_action(lua, perf, &spctx, &ctx.idx, &ctx.jtac, side, owner, ActionCmd { name, action, args })
         .map_err(err)?;
     Ok(action_groups(ctx, side).difference(&before).next().copied())
 }
 
-fn launch_inner(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, cfg: &HqCfg, side: Side, c: &Cand, now: DateTime<Utc>) -> Res {
+#[allow(clippy::too_many_arguments)]
+fn launch_inner(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    cfg: &HqCfg,
+    side: Side,
+    owner: Option<Ucid>,
+    c: &Cand,
+    now: DateTime<Utc>,
+) -> Res {
     match c.kind {
         OpKind::Cap | OpKind::Strike | OpKind::Sead => {
             let (_, action) = c.action.clone().ok_or_else(|| CompactString::from("no action configured"))?;
@@ -98,7 +115,7 @@ fn launch_inner(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, cfg: &HqCf
             Ok((Handle::Package { gid, expires }, format_compact!("{name} airborne")))
         }
         OpKind::Recon | OpKind::Reinforce | OpKind::Bomber | OpKind::Awacs | OpKind::Tanker | OpKind::AirRepair => {
-            let gid = run_action(lua, ctx, perf, side, c)?;
+            let gid = run_action(lua, ctx, perf, side, owner, c)?;
             match gid {
                 Some(gid) => Ok((Handle::Group(gid), "under way".into())),
                 // The action ran but there is no group to follow.
@@ -106,12 +123,12 @@ fn launch_inner(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, cfg: &HqCf
             }
         }
         OpKind::NavalStrike => {
-            run_action(lua, ctx, perf, side, c)?;
+            run_action(lua, ctx, perf, side, owner, c)?;
             Ok((Handle::Fired, "missiles away".into()))
         }
         OpKind::Artillery => {
             if c.action.is_some() {
-                run_action(lua, ctx, perf, side, c)?;
+                run_action(lua, ctx, perf, side, owner, c)?;
             } else {
                 let cfg = ctx
                     .db
@@ -185,7 +202,7 @@ fn launch_inner(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, cfg: &HqCf
         }
         OpKind::HeloTroops => {
             let dest = c.target.ok_or_else(|| CompactString::from("no destination"))?;
-            let id = ctx.db.call_helo_troop_insertion(lua, side, None, dest, now).map_err(err)?;
+            let id = ctx.db.call_helo_troop_insertion(lua, side, owner, true, dest, now).map_err(err)?;
             ctx.db.ephemeral.hq_watch.insert(id.clone());
             Ok((Handle::Transport(id), "helo starting up".into()))
         }
@@ -252,17 +269,20 @@ fn package_flights(
 }
 
 /// Run `c`, charge for it and start following it. Ok is what to tell the
-/// side.
+/// side. `owner` is the commander who ordered it (None when the HQ decided
+/// on its own): what it puts on the ground is theirs.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn launch(
     lua: MizLua,
     ctx: &mut Context,
     perf: &mut PerfInner,
     cfg: &HqCfg,
     side: Side,
+    owner: Option<Ucid>,
     c: &Cand,
     now: DateTime<Utc>,
 ) -> Result<CompactString, CompactString> {
-    let (handle, detail) = match launch_inner(lua, ctx, perf, cfg, side, c, now) {
+    let (handle, detail) = match launch_inner(lua, ctx, perf, cfg, side, owner, c, now) {
         Ok(r) => r,
         Err(e) => {
             info!("hq: {side:?} {} on {} would not launch: {e}", c.kind.label(), c.name);

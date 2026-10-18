@@ -510,6 +510,19 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
         let Some(side) = ctx.db.player(&ifo.ucid).map(|p| p.side) else {
             return reply!("you aren't registered yet -- take a slot first");
         };
+        // Unowned ground units and dismounts: a commander may clear them away,
+        // for nothing back. Everyone else gets the usual ownership answer.
+        if let Ok(gid) = s.trim().parse::<GroupId>()
+            && ctx.db.disbandable(side, &gid).is_ok()
+        {
+            return match crate::command::may_order(ctx, &ifo.ucid, side) {
+                Err(e) => reply!("group {gid} belongs to no one; {e}"),
+                Ok(()) => match ctx.db.disband(side, &gid) {
+                    Err(e) => reply!("could not disband group {gid} {e:?}"),
+                    Ok(()) => reply!("disbanded {gid} (unowned, nothing refunded)"),
+                },
+            };
+        }
         match s.trim().parse::<GroupId>() {
             Err(e) => reply!("delete expected a group id {e:?}"),
             Ok(id) => match ctx.db.group(&id) {
@@ -552,12 +565,18 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                         match ctx.db.delete_group(&id) {
                             Err(e) => reply!("could not delete group {id} {e:?}"),
                             Ok(()) => match origin {
+                                // No base paid: a command-panel deployment
+                                // the treasury bought has cost_fraction 0,
+                                // so the commander gets no points back for it.
                                 None => {
-                                    ctx.db.adjust_points(
-                                        &player,
-                                        points,
-                                        &format_compact!("reclaimed {id}"),
-                                    );
+                                    let points = (points as f32 * cost_fraction).ceil() as i32;
+                                    if points > 0 {
+                                        ctx.db.adjust_points(
+                                            &player,
+                                            points,
+                                            &format_compact!("reclaimed {id}"),
+                                        );
+                                    }
                                     reply!("deleted {id}")
                                 }
                                 Some(oid) => {
@@ -577,7 +596,7 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                         reply!("can't delete a downed pilot this way")
                     }
                     DeployKind::Dismount { .. } => {
-                        reply!("can't delete a dismount group this way")
+                        reply!("can't delete that dismount group now -- it is holding a base it just captured")
                     }
                     DeployKind::Troop {
                         player,
@@ -663,6 +682,12 @@ fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHash
                 action.cost
             )),
             ActionKind::Bomber(_) => None,
+            ActionKind::Strike(s) => Some(format_compact!(
+                "-action {name} <key> | {} with real weapons at key, a mark point{}. cost {}",
+                s.mission.label(),
+                if s.mission.targets_objective() { " on an enemy objective" } else { "" },
+                action.cost
+            )),
             ActionKind::CruiseMissileSpawn(_) => Some(format_compact!(
                 "-action {name} <key> | Spawn a cruise missile bomber at key, a mark point. cost {}",
                 action.cost
@@ -674,6 +699,12 @@ fn action_help(ctx: &mut Context, actions: &IndexMap<String, Action, FxBuildHash
             ActionKind::Deployable(d) => Some(format_compact!(
                 "-action {name} <key> | Ai deploy a {} at key a mark point. cost {}",
                 d.name,
+                action.cost
+            )),
+            ActionKind::FatCow(f) => Some(format_compact!(
+                "-action {name} <key> | AI {} flown to the mark point for {} minutes. cost {}",
+                f.deployable,
+                f.duration_mins,
                 action.cost
             )),
             ActionKind::Drone(_) => Some(format_compact!(

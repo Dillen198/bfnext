@@ -15,7 +15,7 @@ for more details.
 */
 
 use super::{
-    Db, Map, MapM, MapS, Set,
+    Db, Map, MapM, MapS, Set, fat_cow,
     group::{DeployKind, SpawnedGroup, SpawnedUnit},
     logistics::{Inventory, LogiStage, Warehouse},
 };
@@ -29,7 +29,7 @@ use crate::{
 use anyhow::{Context, Result, anyhow};
 use bfprotocols::{
     cfg::{
-        Deployable, DeployableObjective, UnitTag, Vehicle, VictoryCondition, MATERIEL_ITEM,
+        Deployable, DeployableKind, DeployableObjective, FatCowCfg, UnitTag, Vehicle, VictoryCondition, MATERIEL_ITEM,
         fmt_mult, split_by_weight,
     },
     db::{
@@ -40,7 +40,6 @@ use bfprotocols::{
 };
 use chrono::{Duration, prelude::*};
 use compact_str::{CompactString, format_compact};
-use core::f64;
 use dcso3::{
     LuaVec2, LuaVec3, MizLua, Quad2, String, Vector2, Vector3,
     airbase::Airbase,
@@ -559,6 +558,17 @@ impl Objective {
         }
     }
 
+    /// The Fat Cow config, if this objective is a Fat Cow FARP.
+    pub fn fat_cow(&self) -> Option<&FatCowCfg> {
+        match &self.kind {
+            ObjectiveKind::Farp { spec, .. } => match &spec.kind {
+                DeployableKind::Objective(parts) => parts.fat_cow.as_ref(),
+                DeployableKind::Group { .. } => None,
+            },
+            _ => None,
+        }
+    }
+
     pub fn is_airbase(&self) -> bool {
         match &self.kind {
             ObjectiveKind::Airbase => true,
@@ -878,7 +888,11 @@ impl Db {
             .cfg
             .logi_from_scenery
             .as_ref()
-            .filter(|_| !matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }));
+            // A Fat Cow is its trucks: kill them and it closes, whatever
+            // buildings happen to be standing in its zone.
+            .filter(|_| {
+                !matches!(obj.kind, ObjectiveKind::CarrierGroup { .. }) && obj.fat_cow().is_none()
+            });
         if let Some(sc) = scenery_cfg {
             // logi IS the surviving-buildings fraction -- there are no logi
             // groups. Objectives the scan found nothing at use the fallback.
@@ -952,6 +966,7 @@ impl Db {
             self.ephemeral.return_pad_template(&pad_template);
         }
         self.persisted.farps.remove_cow(oid);
+        self.persisted.fat_cow_expiry.remove_cow(oid);
         self.persisted.special_sam_sites.remove_cow(oid);
         self.ephemeral.airbase_by_oid.remove(oid);
         self.ephemeral.remove_objective_markup(oid);
@@ -970,6 +985,23 @@ impl Db {
         spec: &Deployable,
         parts: &DeployableObjective,
     ) -> Result<ObjectiveId> {
+        self.add_farp_facing(lua, spctx, idx, side, pos, 0., spec, parts)
+    }
+
+    /// `add_farp` for a FARP laid out around something facing `heading`. Only
+    /// a Fat Cow cares: `pos` is then the helicopter that brought it, and its
+    /// pad and layout go around it as in `fat_cow`.
+    pub fn add_farp_facing(
+        &mut self,
+        lua: MizLua,
+        spctx: &SpawnCtx,
+        idx: &MizIndex,
+        side: Side,
+        pos: Vector2,
+        heading: f64,
+        spec: &Deployable,
+        parts: &DeployableObjective,
+    ) -> Result<ObjectiveId> {
         let now = Utc::now();
         let land = Land::singleton(spctx.lua())?;
         let DeployableObjective {
@@ -978,6 +1010,7 @@ impl Db {
             ammo_template,
             fuel_template,
             barracks_template,
+            fat_cow,
         } = parts;
         let location = {
             let mut points: SmallVec<[Vector2; 16]> = smallvec![];
@@ -1011,12 +1044,46 @@ impl Db {
             acc_points!(ammo);
             acc_points!(fuel);
             acc_points!(barracks);
-            if points.is_empty() {
+            if points.is_empty() || fat_cow.is_some() {
                 SpawnLoc::AtPosWithCenter { pos, center: pos }
             } else {
                 let center = centroid2d(points);
                 SpawnLoc::AtPosWithCenter { pos, center }
             }
+        };
+        // What to spawn once the unpacker is out of the way, and where. A
+        // Fat Cow's layout is placed piece by piece around the helicopter;
+        // everything else keeps its template's shape around `pos`.
+        let components: SmallVec<[(String, SpawnLoc); 8]> = match fat_cow {
+            None => [defenses_template, ammo_template, fuel_template, barracks_template]
+                .into_iter()
+                .flatten()
+                .map(|name| (name.clone(), location.clone()))
+                .collect(),
+            Some(_) => fat_cow::part_templates(side)?
+                .into_iter()
+                .map(|name| {
+                    let template = spctx.get_template_ref(idx, GroupKind::Any, side, &name)?;
+                    let local = centroid2d(
+                        template
+                            .group
+                            .units()?
+                            .into_iter()
+                            .map(|u| Ok(u?.pos()?))
+                            .collect::<Result<SmallVec<[Vector2; 8]>>>()?,
+                    );
+                    let at = SpawnLoc::AtPosExact {
+                        pos: fat_cow::place(pos, heading, local),
+                        group_heading: heading,
+                    };
+                    Ok((name, at))
+                })
+                .collect::<Result<_>>()?,
+        };
+        // The pad is the objective's position from here on.
+        let pos = match fat_cow {
+            None => pos,
+            Some(_) => fat_cow::place(pos, heading, fat_cow::pad_offset()),
         };
         let dep_name = spec
             .path
@@ -1060,18 +1127,13 @@ impl Db {
         }
         // delay the spawn of the other components so the unpacker can
         // get out of the way
-        for name in [
-            &defenses_template,
-            &ammo_template,
-            &fuel_template,
-            &barracks_template,
-        ] {
-            if let Some(name) = name {
+        for (name, location) in components {
+            {
                 let gid = match self.add_and_queue_group(
                     spctx,
                     idx,
                     side,
-                    location.clone(),
+                    location,
                     &name,
                     DeployKind::Objective { origin: oid },
                     BitFlags::empty(),
@@ -1082,6 +1144,7 @@ impl Db {
                         for gid in &groups {
                             let _ = self.delete_group(gid);
                         }
+                        self.ephemeral.return_pad_template(&pad_template);
                         return Err(e);
                     }
                 };
@@ -1098,7 +1161,8 @@ impl Db {
             let utm_zone = get_utm_zone().unwrap_or_else(|_| String::from("UK"));
             let mut n = 0;
             loop {
-                let name = String::from(format_compact!("farp {} {n}", utm_zone));
+                let kind = if fat_cow.is_some() { "fat cow" } else { "farp" };
+                let name = String::from(format_compact!("{kind} {} {n}", utm_zone));
                 if self.persisted.objectives_by_name.get(&name).is_none() {
                     break name;
                 } else {
@@ -1119,7 +1183,10 @@ impl Db {
                 mobile,
                 pad_template: pad_template.clone(),
             },
-            zone: Zone::Circle { pos, radius: 2000. },
+            zone: Zone::Circle {
+                pos,
+                radius: fat_cow.as_ref().map(|c| c.radius as f64).unwrap_or(2000.),
+            },
             owner: side,
             health: 100,
             logi: 100,
@@ -1177,6 +1244,10 @@ impl Db {
         self.ephemeral.airbase_by_oid.insert(oid, airbase);
         self.init_farp_warehouse(&oid)
             .context("initializing farp warehouse")?;
+        // A Fat Cow is stocked once, from what it flew in with;
+        // setup_supply_lines leaves it without a hub.
+        self.stock_fat_cow_warehouse(&oid)
+            .context("stocking fat cow warehouse")?;
         self.setup_supply_lines().context("setup supply lines")?;
         let now = chrono::Utc::now();
         let trs = self
@@ -2276,15 +2347,36 @@ impl Db {
                 let remaining = (delay - elapsed).num_seconds();
                 let prev = self.ephemeral.victory_countdown_last.replace(remaining);
                 if countdown_announce_due(prev, remaining) {
-                    self.ephemeral.msgs().panel_to_all(
-                        10,
-                        true,
+                    let msg = if side == Side::Neutral {
+                        format_compact!(
+                            "The round has run its full length and ends in a draw. The server will reset in {}",
+                            fmt_countdown(remaining)
+                        )
+                    } else {
                         format_compact!(
                             "{side} has won. The server will reset in {}",
                             fmt_countdown(remaining)
-                        ),
-                    );
+                        )
+                    };
+                    self.ephemeral.msgs().panel_to_all(10, true, msg);
                 }
+                return None;
+            }
+        }
+        // A round that has run `max_round_days` ends in a draw (`Neutral`).
+        let started = match self.persisted.round_started {
+            Some(t) => t,
+            None => {
+                self.persisted.round_started = Some(now);
+                self.ephemeral.dirty();
+                now
+            }
+        };
+        if let Some(days) = self.ephemeral.cfg.max_round_days.filter(|d| *d > 0) {
+            if now - started >= Duration::days(days as i64) {
+                info!("round has run {days} day(s): ending it in a draw");
+                self.ephemeral.victory = Some((now, Side::Neutral));
+                self.ephemeral.victory_countdown_last = None;
                 return None;
             }
         }
@@ -2931,6 +3023,7 @@ impl Db {
                     side: new_owner,
                     by: ucids.clone(),
                 });
+                self.war_effort_capture(new_owner, now);
                 if let Some(capture) = self.ephemeral.cfg.points.as_ref().map(|p| p.capture) {
                     if !ucids.is_empty() {
                         let shares = split_by_weight(capture as i32, &vec![1.; ucids.len()]);

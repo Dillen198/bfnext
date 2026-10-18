@@ -55,6 +55,17 @@ fn visible(ctx: &ReplayCtx, cfg: &InstanceCfg, sid: Option<Uuid>) -> bool {
     cfg.public || crate::session_is_admin(&ctx.db, sid)
 }
 
+/// Whether `sum` is past its instance's `replay_delay_secs` (always, for an
+/// admin or with no delay set).
+fn released(ctx: &ReplayCtx, sid: Option<Uuid>, sum: &super::RecSummary) -> bool {
+    let delay = ctx.db.instances().get(&sum.instance).map(|c| c.replay_delay_secs).unwrap_or(0);
+    if delay == 0 || crate::session_is_admin(&ctx.db, sid) {
+        return true;
+    }
+    let ended = sum.start_ms + sum.duration_ms;
+    chrono::Utc::now().timestamp_millis() - ended >= (delay as i64).saturating_mul(1000)
+}
+
 fn instance(ctx: &ReplayCtx, q: &Q) -> Result<Arc<InstanceCfg>, Response> {
     let reg = ctx.db.instances();
     if let Some(name) = q.get("server") {
@@ -95,7 +106,10 @@ async fn h_recordings(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, q: Q) -> Response 
     let before = q.get("before").and_then(|s| s.parse().ok());
     let limit = q.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50usize).clamp(1, 500);
     match block_in_place(|| ctx.recordings(&cfg.id, before, limit)) {
-        Ok(v) => reply_json(StatusCode::OK, &v),
+        Ok(mut v) => {
+            v.retain(|s| released(&ctx, sid, s));
+            reply_json(StatusCode::OK, &v)
+        }
         Err(e) => internal(e),
     }
 }
@@ -108,7 +122,7 @@ async fn serve(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String, file: String,
         Err(e) => return internal(e),
     };
     let ok = ctx.db.instances().get(&sum.instance).map(|c| visible(&ctx, c, sid)).unwrap_or(false);
-    if !ok {
+    if !ok || !released(&ctx, sid, &sum) {
         return err(StatusCode::NOT_FOUND, format!("no recording {id:?}"));
     }
     let Some(dir) = ctx.rec_dir(&id) else {
@@ -138,7 +152,9 @@ async fn h_humans(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String) -> Respons
         Ok(None) => return err(StatusCode::NOT_FOUND, format!("no recording {id:?}")),
         Err(e) => return internal(e),
     };
-    if !ctx.db.instances().get(&sum.instance).map(|c| visible(&ctx, c, sid)).unwrap_or(false) {
+    if !ctx.db.instances().get(&sum.instance).map(|c| visible(&ctx, c, sid)).unwrap_or(false)
+        || !released(&ctx, sid, &sum)
+    {
         return err(StatusCode::NOT_FOUND, format!("no recording {id:?}"));
     }
     match block_in_place(|| ctx.humans(&id)) {
@@ -158,7 +174,7 @@ async fn h_acmi(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, id: String) -> Response 
     let Some(cfg) = ctx.db.instances().get(&sum.instance).cloned() else {
         return err(StatusCode::NOT_FOUND, format!("no recording {id:?}"));
     };
-    if !visible(&ctx, &cfg, sid) {
+    if !visible(&ctx, &cfg, sid) || !released(&ctx, sid, &sum) {
         return err(StatusCode::NOT_FOUND, format!("no recording {id:?}"));
     }
     let Some(dir) = cfg.tacview_dir.clone() else {
@@ -241,6 +257,7 @@ async fn h_pilot(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, ucid: String, q: Q) -> 
                 // A same-named pilot is not this one.
                 f.ucid.as_deref().map(|x| x == ucid).unwrap_or(true)
                     && reg.get(&f.instance).map(|c| visible(&ctx, c, sid)).unwrap_or(false)
+                    && ctx.summary(&f.rec).ok().flatten().map_or(true, |s| released(&ctx, sid, &s))
             });
             reply_json(StatusCode::OK, &v)
         }

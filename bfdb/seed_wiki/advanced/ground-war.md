@@ -104,7 +104,10 @@ A base's garrison doesn't sit and wait to be shot:
   {{cfg:garrison.qrf_delay_secs|60}} s brings a **quick reaction force**: the
   nearest idle formation, or a new one raised at a neighbouring base.
 - **It moves about.** While a live base is quiet, some of its armour shifts
-  to new spots inside the base every few minutes.
+  to new spots inside the base every few minutes. Airfields are the
+  exception: nothing patrols an airfield, and no ground unit is ever moved to
+  within 150 m of a runway or taxiway, so aircraft can always take off and
+  land.
 - **Mobile SAM sites relocate.** An SA-6, SA-8, SA-11, Tor or NASAMS site that
   has fired moves somewhere else inside its base a minute or two later, and
   every so often anyway. Where it ends up is kept, so a site is rarely where

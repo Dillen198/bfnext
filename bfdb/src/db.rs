@@ -1,4 +1,5 @@
 use crate::db_id;
+use crate::progression::XpEvent;
 use anyhow::{anyhow, bail, Context, Result};
 use arrayvec::ArrayVec;
 use bfprotocols::{
@@ -1003,6 +1004,9 @@ pub(crate) struct StatsDbInner {
     exclude: Option<Regex>,
     db: Db,
     pilots: Pilots,
+    /// XP, levels and challenges (`crate::progression`).
+    progress: crate::progression::Progression,
+    squadrons: crate::squadrons::Squadrons,
     seq: Tree<(Scenario, RoundId), DateTime<Utc>>,
     round: Tree<(Scenario, RoundId), Round>,
     /// Pre-`session_v2` records (bincode `Cfg`). Moved over at startup where
@@ -1439,6 +1443,8 @@ impl StatsDb {
             exclude,
             db: db.clone(),
             pilots: Pilots::new(&db)?,
+            progress: crate::progression::Progression::new(&db)?,
+            squadrons: crate::squadrons::Squadrons::new(&db)?,
             seq: Tree::open(&db, "seq")?,
             round: Tree::open(&db, "round")?,
             session: Tree::open(&db, "session")?,
@@ -2686,6 +2692,15 @@ impl StatsDb {
                             |p| up(&mut p.total),
                             |a| up(a),
                         )?;
+                        // No XP for a teamkill.
+                        if ctx.public && shot.shooter.side() != dead.victim.side() {
+                            let ev = match (&dead.victim, air) {
+                                (Who::Player { .. }, _) => XpEvent::PlayerKill,
+                                (_, true) => XpEvent::AiAirKill,
+                                (_, false) => XpEvent::AiGroundKill,
+                            };
+                            self.award_xp(*ucid, ev, dead.time)?;
+                        }
                     }
                     EnId::Player(*ucid)
                 }
@@ -2701,6 +2716,62 @@ impl StatsDb {
             })?;
         }
         Ok(())
+    }
+
+    /// Score `ev` and credit what it paid to the pilot's squadron.
+    fn award_xp(&self, ucid: Ucid, ev: XpEvent, ts: DateTime<Utc>) -> Result<u64> {
+        let gained = self.progress.award(ucid, ev, ts)?;
+        self.squadrons.add_xp(&ucid, gained, ts)?;
+        Ok(gained)
+    }
+
+    /// A pilot's XP, level, challenges, achievements and squadron.
+    pub(crate) fn pilot_progression(&self, ucid: &Ucid) -> Result<serde_json::Value> {
+        let total = self.pilots.pilots.get(ucid)?.map(|p| p.total).unwrap_or_default();
+        let mut v = self.progress.report(ucid, &total, Utc::now())?;
+        v["squadron"] = serde_json::json!(self.squadrons.of(ucid)?);
+        Ok(v)
+    }
+
+    pub(crate) fn squadrons(&self) -> &crate::squadrons::Squadrons {
+        &self.squadrons
+    }
+
+    /// The pilot card PNG (`crate::pilot_card`).
+    pub(crate) fn pilot_card_png(&self, ucid: &Ucid) -> Result<Option<Vec<u8>>> {
+        let Some(pilot) = self.pilots.pilots.get(ucid)? else { return Ok(None) };
+        let name = pilot.name.last().map(|n| n.to_string()).unwrap_or_default();
+        let xp = self.progress.xp_of(ucid)?;
+        let squadron = self.squadrons.of(ucid)?;
+        let report = self.progress.report(ucid, &pilot.total, Utc::now())?;
+        let badges = report["achievements"]
+            .as_array()
+            .map(|a| a.iter().filter(|x| x["tier"].as_u64().unwrap_or(0) > 0).count())
+            .unwrap_or(0);
+        let svg = crate::pilot_card::svg(&crate::pilot_card::CardInput {
+            name: &name,
+            squadron: squadron.as_deref(),
+            level: crate::progression::level_of(xp),
+            xp,
+            total: &pilot.total,
+            badges,
+        });
+        Ok(Some(crate::range::cards::png(&svg)?))
+    }
+
+    /// The `n` pilots with the most XP: (ucid, name, xp, level).
+    pub(crate) fn xp_leaderboard(&self, n: usize) -> Result<Vec<(Ucid, String, u64, u64)>> {
+        let mut out = vec![];
+        for (ucid, xp, level) in self.progress.top(n)? {
+            let name = self
+                .pilots
+                .pilots
+                .get(&ucid)?
+                .and_then(|p| p.name.last().cloned())
+                .unwrap_or_default();
+            out.push((ucid, name, xp, level));
+        }
+        Ok(out)
     }
 
     #[allow(dead_code)]
@@ -3750,6 +3821,7 @@ impl StatsDb {
             ("playbooks/cas-with-jtac", "Flying CAS With a JTAC", "Playbooks", 3, include_str!("../seed_wiki/playbooks/cas-with-jtac.md")),
             ("playbooks/running-crates", "Running Crates & Building a Base", "Playbooks", 4, include_str!("../seed_wiki/playbooks/running-crates.md")),
             ("playbooks/calling-support", "Calling AWACS, Tankers & CAP", "Playbooks", 5, include_str!("../seed_wiki/playbooks/calling-support.md")),
+            ("playbooks/flight-replay", "Debriefing With Flight Replay", "Playbooks", 6, include_str!("../seed_wiki/playbooks/flight-replay.md")),
             ("gameplay/objectives", "Objectives", "Core Gameplay", 0, include_str!("../seed_wiki/gameplay/objectives.md")),
             ("gameplay/reading-the-map", "Reading the F10 Map", "Core Gameplay", 1, include_str!("../seed_wiki/gameplay/reading-the-map.md")),
             ("gameplay/capturing-objectives", "Capturing Objectives", "Core Gameplay", 2, include_str!("../seed_wiki/gameplay/capturing-objectives.md")),
@@ -3763,6 +3835,11 @@ impl StatsDb {
             ("gameplay/war-economy", "Materiel & the War Economy", "Core Gameplay", 10, include_str!("../seed_wiki/gameplay/war-economy.md")),
             ("gameplay/navaids", "Navaids & Approaches", "Core Gameplay", 11, include_str!("../seed_wiki/gameplay/navaids.md")),
             ("gameplay/carrier-ops", "Carrier Operations", "Core Gameplay", 12, include_str!("../seed_wiki/gameplay/carrier-ops.md")),
+            ("gameplay/your-task", "Your Task & Rookie Mode", "Core Gameplay", 13, include_str!("../seed_wiki/gameplay/your-task.md")),
+            ("gameplay/war-effort", "The War Effort Bar", "Core Gameplay", 14, include_str!("../seed_wiki/gameplay/war-effort.md")),
+            ("gameplay/progression", "XP, Levels & Squadrons", "Core Gameplay", 15, include_str!("../seed_wiki/gameplay/progression.md")),
+            ("gameplay/round-rules", "Rear Bases, Era Weapons & Round Length", "Core Gameplay", 16, include_str!("../seed_wiki/gameplay/round-rules.md")),
+            ("gameplay/war-diary", "The War Diary", "Core Gameplay", 17, include_str!("../seed_wiki/gameplay/war-diary.md")),
             ("f10-menu/overview", "Overview", "F10 Menu Systems", 0, include_str!("../seed_wiki/f10-menu/overview.md")),
             ("f10-menu/actions", "Actions Menu", "F10 Menu Systems", 1, include_str!("../seed_wiki/f10-menu/actions.md")),
             ("f10-menu/jtac", "JTAC System", "F10 Menu Systems", 2, include_str!("../seed_wiki/f10-menu/jtac.md")),
@@ -3792,6 +3869,7 @@ impl StatsDb {
             ("advanced/ground-war", "Ground War: Formations on the March", "Advanced Topics", 9, include_str!("../seed_wiki/advanced/ground-war.md")),
             ("advanced/theatre-hq", "Theatre HQ: the AI Commander", "Advanced Topics", 10, include_str!("../seed_wiki/advanced/theatre-hq.md")),
             ("advanced/command", "Command: the Commander's Map", "Advanced Topics", 11, include_str!("../seed_wiki/advanced/command.md")),
+            ("advanced/strike-missions", "AI Strike Missions", "Advanced Topics", 12, include_str!("../seed_wiki/advanced/strike-missions.md")),
         ];
         let mut refreshed = 0u32;
         for (slug, title, section, order, content) in seed {
@@ -4752,7 +4830,10 @@ impl StatsDb {
                         ctx.public,
                         |pilot| pilot.total.captures += 1,
                         |agg| agg.captures += 1,
-                    )?
+                    )?;
+                    if ctx.public {
+                        self.award_xp(ucid, XpEvent::Capture, time)?;
+                    }
                 }
             }
             Stat::Repair { id: _, by } => {
@@ -4763,6 +4844,9 @@ impl StatsDb {
                     |pilot| pilot.total.repairs += 1,
                     |agg| agg.repairs += 1,
                 )?;
+                if ctx.public {
+                    self.award_xp(by, XpEvent::Repair, time)?;
+                }
             }
             Stat::SupplyTransfer { from: _, to: _, by } => {
                 self.pilots.with_pilot_and_aggregates(
@@ -4772,6 +4856,9 @@ impl StatsDb {
                     |pilot| pilot.total.supply_transfers += 1,
                     |agg| agg.supply_transfers += 1,
                 )?;
+                if ctx.public {
+                    self.award_xp(by, XpEvent::Supply, time)?;
+                }
             }
             Stat::EquipmentInventory { id, item, amount } => {
                 self.equipment
@@ -4813,6 +4900,9 @@ impl StatsDb {
                     |p| p.total.troops += 1,
                     |a| a.troops += 1,
                 )?;
+                if ctx.public {
+                    self.award_xp(by, XpEvent::Troops, time)?;
+                }
                 // The group row is created later (from Stat::Unit once the units
                 // actually spawn in DCS -- the deploy is queued), so tag it if
                 // present but never fail the whole stat over a missing row.
@@ -4845,6 +4935,9 @@ impl StatsDb {
                     |p| p.total.deploys += 1,
                     |a| a.deploys += 1,
                 )?;
+                if ctx.public {
+                    self.award_xp(by, XpEvent::Deploy, time)?;
+                }
                 // See DeployTroop above -- the group row may not exist yet.
                 // Recording the deploy (counter + log) must not depend on it.
                 if let Err(e) = self.with_group((ctx.round, gid), |group| {
@@ -4880,6 +4973,9 @@ impl StatsDb {
                     |p| p.total.farps += 1,
                     |a| a.farps += 1,
                 )?;
+                if ctx.public {
+                    self.award_xp(by, XpEvent::Farp, time)?;
+                }
                 self.with_objective((ctx.round, oid), |o| o.by = Some(by))?;
             }
             Stat::Register {
@@ -5131,9 +5227,13 @@ impl StatsDb {
                 };
                 self.combat_log.insert(&key, &serde_json::to_string(&line)?)?;
             }
+            Stat::PilotXp { id, xp, reason: _ } => {
+                if ctx.public {
+                    self.award_xp(id, XpEvent::Bonus(xp), time)?;
+                }
+            }
             Stat::ConvoyDestroyed { .. }
             | Stat::CampaignEvent { .. }
-            | Stat::PilotXp { .. }
             | Stat::AirRouteDelivered { .. }
             | Stat::AirRouteDestroyed { .. }
             | Stat::SeaRouteDelivered { .. }
@@ -5639,6 +5739,10 @@ impl StatsDb {
         self.deploy_seen.clear()?;
         self.trail_points.clear()?;
         self.round_instance.clear()?;
+        // XP is scored from the same replay, so it goes too or it doubles.
+        // Squadron rosters stay; only their XP is zeroed.
+        self.progress.clear()?;
+        self.squadrons.reset_xp()?;
         for st in self.0.states.values() {
             if let Ok(mut w) = st.latest_weather.write() {
                 *w = None;

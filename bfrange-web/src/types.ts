@@ -508,6 +508,47 @@ export interface FieldLandingResult {
   threshold_pos?: GeoPt
   aim_point_m?: number
   runway_length_m?: number
+  runway_width_m?: number
+  /** how the pattern into the landing was flown (missing on older records) */
+  pattern?: FieldPattern | null
+  /** the rollout and taxi after a full stop (missing on older records and touch-and-goes) */
+  taxi?: FieldTaxi | null
+}
+
+/** bfprotocols `FieldPattern`: runway frame, metres from the landing threshold, heights AGL. */
+export interface FieldPattern {
+  /** "overhead", "downwind", "straight_in" or "other" */
+  kind: string
+  side?: 'left' | 'right' | null
+  initial_alt_ft?: number | null
+  break_alt_ft?: number | null
+  /** metres along the runway from the threshold where the break started */
+  break_at_m?: number | null
+  downwind_alt_ft?: number | null
+  /** downwind spacing abeam the threshold, nm */
+  abeam_nm?: number | null
+  abeam_alt_ft?: number | null
+  /** metres along from the threshold where the base turn started (negative = before it) */
+  base_at_m?: number | null
+  rollout_nm?: number | null
+  rollout_alt_ft?: number | null
+  final_gs_kts?: number | null
+  pattern_time_s?: number | null
+  calls: string[]
+}
+
+/** bfprotocols `FieldTaxi`. */
+export interface FieldTaxi {
+  rollout_m: number
+  rollout_s: number
+  runway_clear_s?: number | null
+  exit_at_m?: number | null
+  taxi_time_s: number
+  taxi_distance_m: number
+  max_taxi_kts: number
+  stops: number
+  end: 'parked' | 'stopped_on_runway' | 'left' | 'took_off' | 'timeout' | string
+  calls: string[]
 }
 
 // ─── CSAR ──────────────────────────────────────────────────────────────────
@@ -1181,4 +1222,49 @@ export interface GreenieQuery {
   days?: number
   carrier?: string
   unit_type?: string
+}
+
+// ─── debrief clips (`bfdb/src/range/clip.rs`) ──────────────────────────────
+
+/** One object in a debrief clip; `t` is seconds relative to the result. */
+export interface ClipObj {
+  /** Tacview object id, hex */
+  id: string
+  /** air, helo, missile, bomb, rocket, torpedo, carrier, ship, sam, armor, vehicle, infantry, static */
+  kind: string
+  /** self, weapon (launched by self), threat (fired near self), boat, air, ground */
+  role: 'self' | 'weapon' | 'threat' | 'boat' | 'air' | 'ground'
+  name?: string
+  pilot?: string
+  group?: string
+  color?: string
+  coalition?: string
+  parent?: string
+  t: number[]
+  lat: number[]
+  lon: number[]
+  /** metres MSL */
+  alt: number[]
+  /** degrees as Tacview has them (yaw = true heading); empty when not recorded */
+  roll: number[]
+  pitch: number[]
+  yaw: number[]
+  gone?: number
+  destroyed: boolean
+}
+
+/** The few minutes of the server's Tacview recording around one result. */
+export interface Clip {
+  v: number
+  reference_time: string | null
+  /** recording seconds of the result */
+  event_s: number
+  /** the window, relative to the result */
+  t0: number
+  t1: number
+  /** false while the recording is still short of the window's end */
+  complete: boolean
+  self_id: string | null
+  source: string
+  objects: ClipObj[]
 }

@@ -17,6 +17,8 @@ export interface MapPoint extends LatLon {
   label: string
   color: string
   shape?: 'dot' | 'ring' | 'diamond'
+  /** which side of the point the label goes (default right) */
+  side?: 'left' | 'right'
 }
 
 const PALETTE = ['var(--ball)', 'var(--sky)', 'var(--wave)', 'var(--datum)', '#c28cff', '#ff8fd1']
@@ -31,8 +33,8 @@ function resolve(c: string): string {
 function PointMarker({ p }: { p: MapPoint }) {
   const shape = p.shape ?? 'dot'
   return (
-    <Marker latitude={p.lat} longitude={p.lon} anchor="left" offset={[-6, 0]}>
-      <div className="flex items-center gap-1.5">
+    <Marker latitude={p.lat} longitude={p.lon} anchor={p.side === 'left' ? 'right' : 'left'} offset={[p.side === 'left' ? 6 : -6, 0]}>
+      <div className={`flex items-center gap-1.5${p.side === 'left' ? ' flex-row-reverse' : ''}`}>
         <span
           style={{
             width: 12, height: 12, flex: 'none', display: 'inline-block',
@@ -49,12 +51,15 @@ function PointMarker({ p }: { p: MapPoint }) {
 }
 
 /** Static tracks + labelled points. */
-export function TrackMap({ lines, points, height = 360 }: {
+export function TrackMap({ lines, points, height = 360, imagery = false, pad = 400 }: {
   lines: { id: string; pts: LatLon[]; color: string; dashed?: boolean }[]
   points: MapPoint[]
   height?: number
+  imagery?: boolean
+  /** metres of margin round the tracks */
+  pad?: number
 }) {
-  const bounds = useMemo(() => boundsOf([...lines.flatMap(l => l.pts), ...points], 400), [lines, points])
+  const bounds = useMemo(() => boundsOf([...lines.flatMap(l => l.pts), ...points], pad), [lines, points, pad])
   const fc = useMemo<FeatureCollection>(() => ({
     type: 'FeatureCollection',
     features: lines.map(l => ({
@@ -64,7 +69,7 @@ export function TrackMap({ lines, points, height = 360 }: {
     })),
   }), [lines])
   return (
-    <RangeMap height={height} bounds={bounds}>
+    <RangeMap height={height} bounds={bounds} imagery={imagery}>
       <Source id="tracks" type="geojson" data={fc}>
         <Layer id="tracks-solid" type="line" filter={['==', ['get', 'dashed'], 0]} paint={{ 'line-color': ['get', 'color'], 'line-width': 2.5 }} />
         <Layer id="tracks-dashed" type="line" filter={['==', ['get', 'dashed'], 1]} paint={{ 'line-color': ['get', 'color'], 'line-width': 2, 'line-dasharray': [2, 2] }} />

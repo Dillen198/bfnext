@@ -218,6 +218,7 @@
       "min_health": 100,
       "exclude": []
     },
+    "capture_airframe_stock_percent": 50,
     "materiel": {
       "enabled": true,
       "hub_production": 2000,
@@ -808,6 +809,15 @@
   "limited_lives": false,
   "actions": {
     "Red": {
+      "Fat Cow (AI)": {
+        "kind": { "FatCow": {
+          "deployable": "Fat Cow",
+          "aircraft_template": "RFATCOW",
+          "duration_mins": 20
+        }},
+        "cost": 50,
+        "limit": 1
+      },
       "Naval Strike": {
         "kind": {
           "NavalCruiseMissileStrike": {
@@ -1160,6 +1170,41 @@
       }
     },
     "Blue": {
+      "Fat Cow (AI)": {
+        "kind": { "FatCow": {
+          "deployable": "Fat Cow",
+          "aircraft_template": "BFATCOW",
+          "duration_mins": 20
+        }},
+        "cost": 50,
+        "limit": 1
+      },
+      "F-117 Precision Strike": {
+        "kind": {
+          "Strike": {
+            "mission": "Precision",
+            "attacks": 2,
+            "plane": {
+              "kind": "FixedWing",
+              "template": "BPOINTSTRIKE",
+              "altitude": 7000,
+              "altitude_typ": "BARO",
+              "speed": 250,
+              "duration": null,
+              "freq": null,
+              "tacan_channel": null,
+              "tacan_band": null,
+              "tacan_callsign": null,
+              "callsign_id": null,
+              "callsign_number": null
+            }
+          }
+        },
+        "cost": 150,
+        "penalty": 100,
+        "limit": 2,
+        "geo_limit": "Unlimited"
+      },
       "Naval Strike": {
         "kind": {
           "NavalCruiseMissileStrike": {
@@ -1580,6 +1625,49 @@
   },
   "deployables": {
     "Red": [
+      {
+        "path": ["Fat Cow"],
+        "kind": {
+          "Objective": {
+            "pad_templates": ["DEPRCOWPAD0", "DEPRCOWPAD1"],
+            "fat_cow": {
+              "radius": 500,
+              "jet_fuel": 9000,
+              "weapons": {
+                "weapons.missiles.Vikhr_M": 24,
+                "weapons.missiles.AT_6": 8,
+                "weapons.missiles.Ataka_9M120": 16,
+                "weapons.missiles.Ataka_9M120F": 8,
+                "weapons.missiles.Ataka_9M220": 4,
+                "weapons.missiles.Igla_1E": 8,
+                "weapons.missiles.P_60": 4,
+                "weapons.nurs.C_8": 80,
+                "weapons.nurs.C_8OFP2": 40,
+                "weapons.nurs.C_8OM": 20,
+                "weapons.nurs.C_8CM": 20,
+                "weapons.nurs.C_13": 20,
+                "weapons.nurs.C_5": 64,
+                "weapons.nurs.S_5KP": 32,
+                "weapons.nurs.C_24": 4
+              }
+            }
+          }
+        },
+        "persist": "Forever",
+        "limit": 2,
+        "limit_enforce": "DenyCrate",
+        "cost": 25,
+        "crates": [
+          { "name": "Fat Cow Fuel Bladder", "weight": 1500, "required": 1, "pos_unit": null,
+            "max_drop_height_agl": 5, "max_drop_speed": 5, "dcs_type": null },
+          { "name": "Fat Cow Ammo Pallet", "weight": 1000, "required": 1, "pos_unit": null,
+            "max_drop_height_agl": 5, "max_drop_speed": 5, "dcs_type": null }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "ewr": null,
+        "jtac": null
+      },
       {
         "path": [
           "SAM - Medium Range",
@@ -2716,6 +2804,58 @@
     ],
     "Blue": [
       {
+        "path": ["Fat Cow"],
+        "kind": {
+          "Objective": {
+            "pad_templates": ["DEPBCOWPAD0", "DEPBCOWPAD1"],
+            "fat_cow": {
+              "radius": 500,
+              "jet_fuel": 9000,
+              "weapons": {
+                "weapons.missiles.AGM_114K": 16,
+                "weapons.missiles.AGM_114": 8,
+                "weapons.missiles.AGR_20A": 14,
+                "weapons.missiles.OH58D_FIM_92": 4,
+                "weapons.missiles.HOT3_MBDA": 8,
+                "weapons.missiles.Mistral": 4,
+                "weapons.missiles.CHAP_AIM92": 4,
+                "weapons.nurs.HYDRA_70_M151": 76,
+                "weapons.nurs.HYDRA_70_M151_M433": 38,
+                "weapons.nurs.HYDRA_70_M229": 38,
+                "weapons.nurs.HYDRA_70_M274": 14,
+                "weapons.nurs.HYDRA_70_M257": 14,
+                "weapons.nurs.HYDRA_70_M156": 14,
+                "weapons.nurs.HYDRA_70_M259": 7,
+                "weapons.nurs.HYDRA_70_MK1": 14,
+                "weapons.nurs.HYDRA_70_MK5": 14,
+                "weapons.nurs.SNEB_TYPE251_H1": 16,
+                "weapons.nurs.SNEB_TYPE253_H1": 16,
+                "weapons.bombs.OH58D_Red_Smoke_Grenade": 4,
+                "weapons.bombs.OH58D_Blue_Smoke_Grenade": 4,
+                "weapons.bombs.OH58D_Green_Smoke_Grenade": 4,
+                "weapons.bombs.OH58D_Yellow_Smoke_Grenade": 4,
+                "weapons.bombs.OH58D_Violet_Smoke_Grenade": 4,
+                "weapons.bombs.OH58D_White_Smoke_Grenade": 4
+              }
+            }
+          }
+        },
+        "persist": "Forever",
+        "limit": 2,
+        "limit_enforce": "DenyCrate",
+        "cost": 25,
+        "crates": [
+          { "name": "Fat Cow Fuel Bladder", "weight": 1500, "required": 1, "pos_unit": null,
+            "max_drop_height_agl": 5, "max_drop_speed": 5, "dcs_type": null },
+          { "name": "Fat Cow Ammo Pallet", "weight": 1000, "required": 1, "pos_unit": null,
+            "max_drop_height_agl": 5, "max_drop_speed": 5, "dcs_type": null }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "ewr": null,
+        "jtac": null
+      },
+      {
         "path": [
           "SAM - Short Range",
           "Roland"
@@ -3747,6 +3887,17 @@
     ]
   },
   "unit_classification": {
+    "FireExtinguisher01": [
+      "Unarmed"
+    ],
+    "M32-10C_01": [
+      "Unarmed"
+    ],
+    "Paratrooper AKS-74": [
+      "Infantry", 
+      "SR", 
+      "SmallArms"
+    ],
     "TZ-22_KrAZ": [
       "Logistics", 
       "Unarmed"
@@ -5245,6 +5396,9 @@
     "F-15ESE": [
       "Aircraft"
     ],
+    "F-117A": [
+      "Aircraft"
+    ],
     "B-1B": [
       "Aircraft"
     ],
@@ -6580,75 +6734,187 @@
     "objective_fund_period_secs": 120,
     "action_reserve": 300,
     "holding_bonus_per_objective": 5,
+    "objective_start_points": 500,
+    "barrage_cost": 150,
+    "ambush_cost": 100,
+    "cap_cost": 250,
+    "cap_min_friendly_pilots": 1,
+    "cap_cooldown_secs": 300,
     "hq": {
+      "enabled": true,
+      "sides": ["Blue", "Red"],
+      "think_secs": 120,
+      "emergency_think_secs": 30,
+      "max_new_ops_per_think": 2,
+      "max_spend_fraction": 0.4,
+      "cost_scale": 1.0,
+      "objective_funding_share": 0.5,
+      "costs": {
+        "cap": 250,
+        "strike": 300,
+        "sead": 300,
+        "recon": 120,
+        "artillery": 150,
+        "missile_strike": 225,
+        "ambush": 100,
+        "convoy": 80,
+        "helo_supply": 120,
+        "helo_troops": 180,
+        "reinforce": 250,
+        "bomber": 350,
+        "awacs": 200,
+        "tanker": 150,
+        "naval_strike": 250,
+        "air_repair": 150
+      },
+      "limits": {
+        "air": 3,
+        "recon": 1,
+        "logistics": 3,
+        "troops": 2,
+        "reinforce": 1,
+        "bomber": 1,
+        "awacs": 1,
+        "tanker": 1,
+        "fires_cooldown_secs": 600
+      },
+      "packages": {
+        "escort_bombers": "always",
+        "escort_strikes": "threatened",
+        "escort_flights": 1,
+        "sead_with_strikes": true,
+        "escort_engage_m": 60000
+      },
+      "gap_fill": {
+        "full_until_players": 2,
+        "fade_out_players": 16,
+        "min_factor": 0.25,
+        "per_human_cut": 0.35
+      },
+      "package_lifetime_secs": 2700,
+      "_air_note": "CAP tiers mirror reactive CAP's cap_templates_* (same .miz groups, same weights and min_threat). No sead roster: the .miz has no SEAD groups and neither side has a Sead action, so the HQ runs no SEAD (sead_with_strikes is a no-op) until BSEAD/RSEAD-style groups are added and listed under sead. Red has no fixed-wing strike group; its heavy strikes go through the Tu-22M3 Bomber action instead.",
       "air": {
         "Blue": {
           "cap": [
             {
+              "label": "F/A-18C pair",
+              "weight": 4,
+              "min_threat": 0,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "BCAPF18C", "altitude": 8000, "altitude_typ": "BARO", "speed": 250 }
+            },
+            {
               "label": "F-15C",
-              "plane": {
-                "kind": "FixedWing",
-                "duration": 3600,
-                "template": "BFIGHTERS",
-                "altitude": 8000,
-                "altitude_typ": "BARO",
-                "speed": 260
-              }
+              "weight": 2,
+              "min_threat": 0,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "BFIGHTERS", "altitude": 8000, "altitude_typ": "BARO", "speed": 260 }
+            },
+            {
+              "label": "F-16C pair",
+              "weight": 4,
+              "min_threat": 3,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "BCAPF16C", "altitude": 8000, "altitude_typ": "BARO", "speed": 250 }
+            },
+            {
+              "label": "F-14B pair",
+              "weight": 2,
+              "min_threat": 3,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "BCAPF14BU", "altitude": 8000, "altitude_typ": "BARO", "speed": 250 }
+            },
+            {
+              "label": "F-15E pair",
+              "weight": 5,
+              "min_threat": 5,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "BCAPF15E", "altitude": 8000, "altitude_typ": "BARO", "speed": 260 }
             }
           ],
           "strike": [
             {
               "label": "Attack helicopters",
               "max_air_defence": 0,
-              "targets": [
-                "armor"
-              ],
-              "plane": {
-                "kind": "Helicopter",
-                "duration": 2700,
-                "template": "BATTACKHELI",
-                "altitude": 150,
-                "altitude_typ": "RADIO",
-                "speed": 60
-              }
+              "max_threat": 1,
+              "targets": ["armor"],
+              "plane": { "kind": "Helicopter", "duration": 2700, "template": "BATTACKHELI", "altitude": 150, "altitude_typ": "RADIO", "speed": 60 }
+            },
+            {
+              "label": "F-117 precision strike",
+              "targets": ["base", "sam"],
+              "plane": { "kind": "FixedWing", "duration": 2700, "template": "BPOINTSTRIKE", "altitude": 7000, "altitude_typ": "BARO", "speed": 250 }
             }
-          ]
+          ],
+          "sead": []
         },
         "Red": {
           "cap": [
             {
+              "label": "MiG-29 pair",
+              "weight": 4,
+              "min_threat": 0,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "RCAPMIG29", "altitude": 8000, "altitude_typ": "BARO", "speed": 250 }
+            },
+            {
               "label": "J-11A",
-              "plane": {
-                "kind": "FixedWing",
-                "duration": 3600,
-                "template": "RFIGHTERS",
-                "altitude": 8000,
-                "altitude_typ": "BARO",
-                "speed": 260
-              }
+              "weight": 2,
+              "min_threat": 0,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "RFIGHTERS", "altitude": 8000, "altitude_typ": "BARO", "speed": 260 }
+            },
+            {
+              "label": "J-11A pair",
+              "weight": 4,
+              "min_threat": 3,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "RCAPJ11A", "altitude": 8000, "altitude_typ": "BARO", "speed": 250 }
+            },
+            {
+              "label": "JF-17 pair",
+              "weight": 2,
+              "min_threat": 3,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "RCAPJF17", "altitude": 8000, "altitude_typ": "BARO", "speed": 250 }
+            },
+            {
+              "label": "MiG-31 pair",
+              "weight": 5,
+              "min_threat": 5,
+              "plane": { "kind": "FixedWing", "duration": 3600, "template": "RCAPMIG31", "altitude": 8000, "altitude_typ": "BARO", "speed": 260 }
             }
           ],
           "strike": [
             {
               "label": "Ka-50",
               "max_air_defence": 0,
-              "targets": [
-                "armor"
-              ],
-              "plane": {
-                "kind": "Helicopter",
-                "duration": 2700,
-                "template": "RATTACKHELI",
-                "altitude": 150,
-                "altitude_typ": "RADIO",
-                "speed": 60
-              }
+              "max_threat": 1,
+              "targets": ["armor"],
+              "plane": { "kind": "Helicopter", "duration": 2700, "template": "RATTACKHELI", "altitude": 150, "altitude_typ": "RADIO", "speed": 60 }
             }
-          ]
+          ],
+          "sead": []
         }
-      }
+      },
+      "actions_blue": [],
+      "actions_red": [],
+      "max_air_range_m": 180000,
+      "max_ground_range_m": 60000,
+      "resupply_below_pct": 60,
+      "post_tasks": true,
+      "max_tasks": 3,
+      "announce": true,
+      "steer_ground_war": true,
+      "run_when_empty": false,
+      "requests": {
+        "enabled": true,
+        "cooldown_secs": 300,
+        "ttl_secs": 1200,
+        "max_open_per_side": 6,
+        "bonus": 1.6
+      },
+      "strategist": {
+        "enabled": true,
+        "max_directive_secs": 2400,
+        "max_weight": 2.5
+      },
+      "override_rule": "NeverAllowed",
+      "override_max_secs": 7200
     }
   },
+  "dismount_ttl_secs": 3600,
   "dismount": {
     "BTR-82A": {
       "template": {
@@ -15551,10 +15817,11 @@
     },
     "civil_traffic": {
       "min_players": 1,
-      "max_active": 4,
-      "spawn_interval_secs": 300,
+      "max_active": 10,
+      "spawn_interval_secs": 120,
       "country": "UN_PEACEKEEPERS",
-      "max_ships": 3,
+      "max_ships": 5,
+      "ship_spawn_interval_secs": 600,
       "shootdown_penalty_points": 500,
       "shootdown_treasury_penalty": 1000
     }
@@ -15674,5 +15941,19 @@
     "sam_scoot_secs": 90,
     "sam_redeploy_secs": 2700,
     "sam_move_m": 1500
+  },
+  "last_stand": {
+    "countdown_secs": 3600,
+    "trigger_count": 1
+  },
+  "under_attack": {
+    "cooldown_secs": 180
+  },
+  "population_scaling": {
+    "enabled": true,
+    "min_defenders": 1,
+    "capture_time_mult_when_undefended": 2.0,
+    "scale_by_imbalance": true,
+    "max_capture_time_mult": 3.0
   }
 }

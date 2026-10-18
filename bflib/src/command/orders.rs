@@ -37,8 +37,8 @@ use crate::{
     Context,
 };
 use bfprotocols::{
-    cfg::{Action, ActionKind, DeployableKind, UnitTag},
-    command::{Asset, AssetKind, AssetUnit, LatLon, OrderOption, OrderTarget, Verb},
+    cfg::{Action, ActionKind, Deployable, DeployableKind, GroundWarCfg, PurchasedFormationCfg, UnitTag},
+    command::{Asset, AssetKind, AssetUnit, FormationPurchase, LatLon, OrderOption, OrderTarget, Verb},
     db::{group::GroupId, objective::ObjectiveId},
     hq::OpKind,
     perf::PerfInner,
@@ -103,6 +103,10 @@ fn meta(kind: &ActionKind) -> Option<(&'static str, OrderTarget, &'static str)> 
         ActionKind::CarrierRepair => ("Naval", OwnBase, "repairs a damaged carrier group"),
         ActionKind::CarrierRespawn => ("Naval", OwnBase, "a sunk carrier group sails again from its naval base"),
         ActionKind::NavalCruiseMissileStrike(_) => ("Naval", EnemyBase, "our ships launch cruise missiles at the base"),
+        ActionKind::Strike(s) if s.mission.targets_objective() => {
+            ("Air", EnemyBase, "a strike flight hits the base with its own weapons")
+        }
+        ActionKind::Strike(_) => ("Air", Point, "a strike flight attacks what is at the point"),
         _ => return None,
     })
 }
@@ -158,6 +162,31 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
                 detail: format!(
                     "drives out from our nearest base, by road, to the point (within {:.0} km of a base)",
                     ctx.db.ephemeral.cfg.command.deploy_range_m / 1000.
+                ),
+                why_not: why,
+            });
+        }
+    }
+    if let (Some(gw), Some(deps)) = (purchase_cfg(ctx), ctx.db.ephemeral.cfg.deployables.get(&side)) {
+        let p = &gw.purchase;
+        let in_field = ctx.db.formations().filter(|f| f.side == side).count();
+        for d in deps.iter().filter(|d| purchasable(p, d)) {
+            let name = d.path.join(" / ");
+            let cost = copy_cost(ctx, p, d);
+            let mut why = why_not_cost(ctx, side, cost * p.min_count.max(1) as i64);
+            if in_field >= gw.max_formations_per_side as usize && why.is_empty() {
+                why = format!("{in_field} of {} formations already in the field", gw.max_formations_per_side);
+            }
+            out.push(OrderOption {
+                key: format!("formation:{name}"),
+                label: d.path.last().map(|s| s.to_string()).unwrap_or_else(|| name.clone()),
+                category: "Formations".into(),
+                target: OrderTarget::Land,
+                cost,
+                detail: format!(
+                    "{}-{} of them set out together from our nearest base, as one formation, along the route you draw",
+                    p.min_count.max(1),
+                    p.max_count.max(p.min_count.max(1))
                 ),
                 why_not: why,
             });
@@ -219,6 +248,61 @@ pub(super) fn catalog(ctx: &Context, side: Side) -> Vec<OrderOption> {
         });
     }
     out
+}
+
+/// The ground war's config when it sells formations.
+fn purchase_cfg(ctx: &Context) -> Option<&GroundWarCfg> {
+    ctx.db.ephemeral.cfg.ground_war.as_ref().filter(|c| c.enabled && c.purchase.enabled)
+}
+
+/// Can `d` be bought as a formation? A radar or a GCI station is no
+/// manoeuvre force; drivability is checked against the template when ordered.
+fn purchasable(p: &PurchasedFormationCfg, d: &Deployable) -> bool {
+    d.kind.is_group()
+        && d.ewr.is_none()
+        && d.gci.is_none()
+        && (p.deployables.is_empty() || {
+            let name = d.path.join(" / ");
+            p.deployables.iter().any(|n| n.as_str() == name)
+        })
+}
+
+/// The treasury price of one copy of `d` in a purchased formation.
+fn copy_cost(ctx: &Context, p: &PurchasedFormationCfg, d: &Deployable) -> i64 {
+    ((scaled(ctx, (d.cost as i64).max(10)) as f64) * p.cost_factor.max(0.)).round() as i64
+}
+
+/// The limits on buying a formation, for the picture.
+pub(super) fn formation_purchase(ctx: &Context, side: Side) -> Option<FormationPurchase> {
+    let gw = purchase_cfg(ctx)?;
+    let min = gw.purchase.min_count.max(1);
+    Some(FormationPurchase {
+        min_count: min,
+        max_count: gw.purchase.max_count.max(min),
+        in_field: ctx.db.formations().filter(|f| f.side == side).count() as u32,
+        max_in_field: gw.max_formations_per_side,
+        range_m: ctx.db.ephemeral.cfg.command.deploy_range_m,
+    })
+}
+
+/// Our nearest base within `deploy_range_m` of `pos` that ground forces can
+/// set out from: not under threat, not at sea, not a special SAM site.
+fn deploy_base(ctx: &Context, side: Side, pos: Vector2) -> Result<(ObjectiveId, Vector2), CompactString> {
+    let reach = ctx.db.ephemeral.cfg.command.deploy_range_m;
+    ctx.db
+        .objectives()
+        .filter(|(_, o)| {
+            o.owner() == side
+                && !o.threatened()
+                && !o.kind().is_carrier_group()
+                && !o.kind().is_naval_base()
+                && !o.kind().is_special_sam_site()
+        })
+        .map(|(id, o)| (*id, o.pos(), dist(o.pos(), pos)))
+        .filter(|(_, _, d)| *d <= reach)
+        .min_by(|a, b| a.2.total_cmp(&b.2))
+        .map(|(id, p, _)| (id, p))
+        .ok_or_else(|| format_compact!("none of our bases is within {:.0} km of that point", reach / 1000.))
 }
 
 fn deployed_count(ctx: &Context, side: Side, path: &[dcso3::String]) -> usize {
@@ -292,18 +376,21 @@ fn enemy_base(ctx: &Context, side: Side, id: Option<i64>) -> Result<ObjectiveId,
 
 /// Run a configured action through the engine as the side, with its real
 /// name (so its limit counts) and no player charged: the caller pays.
+/// `owner` (the ordering commander) owns any group it puts on the map.
+#[allow(clippy::too_many_arguments)]
 fn start(
     lua: MizLua,
     ctx: &mut Context,
     perf: &mut PerfInner,
     side: Side,
+    owner: Option<Ucid>,
     name: &str,
     action: Action,
     args: ActionArgs,
 ) -> Result<(), CompactString> {
     let spctx = SpawnCtx::new(lua).map_err(err)?;
     let cmd = ActionCmd { name: name.into(), action, args };
-    ctx.db.start_action(lua, perf, &spctx, &ctx.idx, &ctx.jtac, side, None, cmd).map_err(err)
+    ctx.db.start_treasury_action(lua, perf, &spctx, &ctx.idx, &ctx.jtac, side, owner, cmd).map_err(err)
 }
 
 /// Carry out a catalogue order. Returns what to announce; the caller has
@@ -314,6 +401,7 @@ pub(super) fn order(
     ctx: &mut Context,
     perf: &mut PerfInner,
     side: Side,
+    ucid: Option<Ucid>,
     key: &str,
     at: Option<LatLon>,
     objective: Option<i64>,
@@ -382,6 +470,7 @@ pub(super) fn order(
                     ActionKind::Artillery(c) => ActionArgs::Artillery(WithPos { cfg: c.clone(), pos }),
                     ActionKind::Paratrooper(c) => ActionArgs::Paratrooper(WithPos { cfg: c.clone(), pos }),
                     ActionKind::Deployable(c) => ActionArgs::Deployable(WithPos { cfg: c.clone(), pos }),
+                    ActionKind::Strike(c) => ActionArgs::Strike(WithPos { cfg: c.clone(), pos }),
                     ActionKind::Bomber(c) => {
                         let jtac = ctx
                             .jtac
@@ -414,6 +503,14 @@ pub(super) fn order(
                 };
                 (args, format!("at {}", objective_name(ctx, &oid)))
             }
+            (ActionKind::Strike(c), OrderTarget::EnemyBase) => {
+                let oid = enemy_base(ctx, side, objective)?;
+                let pos = ctx.db.objective(&oid).map(|o| o.pos()).map_err(|e| format_compact!("{e}"))?;
+                (
+                    ActionArgs::Strike(WithPos { cfg: c.clone(), pos }),
+                    format!("on {}", objective_name(ctx, &oid)),
+                )
+            }
             (ActionKind::NavalCruiseMissileStrike(c), OrderTarget::EnemyBase) => {
                 let oid = enemy_base(ctx, side, objective)?;
                 (
@@ -434,12 +531,12 @@ pub(super) fn order(
             }
             _ => return Err("that order needs a different target".into()),
         };
-        start(lua, ctx, perf, side, name, action, args)?;
+        start(lua, ctx, perf, side, ucid, name, action, args)?;
         pay(ctx, side, cost);
         return Ok(format_compact!("{name} {what} ({cost} from the treasury)"));
     }
     if let Some(name) = key.strip_prefix("deploy:") {
-        return deploy(lua, ctx, side, name, need_point()?);
+        return deploy(lua, ctx, side, ucid, name, need_point()?);
     }
     match key {
         "op:ambush" => {
@@ -511,7 +608,14 @@ pub(super) fn order(
 /// A deployment by road: the units are put together at our nearest base in
 /// range and drive to the point, where they set up. On the way they are a
 /// convoy anyone can find and kill.
-fn deploy(lua: MizLua, ctx: &mut Context, side: Side, name: &str, pos: Vector2) -> Result<CompactString, CompactString> {
+fn deploy(
+    lua: MizLua,
+    ctx: &mut Context,
+    side: Side,
+    ucid: Option<Ucid>,
+    name: &str,
+    pos: Vector2,
+) -> Result<CompactString, CompactString> {
     let spec = ctx
         .db
         .ephemeral
@@ -536,35 +640,20 @@ fn deploy(lua: MizLua, ctx: &mut Context, side: Side, name: &str, pos: Vector2) 
     if let Some(b) = in_enemy_base(ctx, side, pos) {
         return Err(format_compact!("that is inside {b}"));
     }
-    let reach = ctx.db.ephemeral.cfg.command.deploy_range_m;
-    let mut bases: Vec<(ObjectiveId, Vector2, f64)> = ctx
-        .db
-        .objectives()
-        .filter(|(_, o)| {
-            o.owner() == side
-                && !o.threatened()
-                && !o.kind().is_carrier_group()
-                && !o.kind().is_naval_base()
-                && !o.kind().is_special_sam_site()
-        })
-        .map(|(id, o)| (*id, o.pos(), dist(o.pos(), pos)))
-        .filter(|(_, _, d)| *d <= reach)
-        .collect();
-    if bases.is_empty() {
-        return Err(format_compact!("none of our bases is within {:.0} km of that point", reach / 1000.));
-    }
-    bases.sort_by(|a, b| a.2.total_cmp(&b.2));
-    let (from, from_pos, _) = bases[0];
+    let (from, from_pos) = deploy_base(ctx, side, pos)?;
     let plan = ctx
         .db
         .plan_drive(lua, from_pos, pos, true)
         .ok_or_else(|| CompactString::from("no way to drive there"))?;
     let spctx = SpawnCtx::new(lua).map_err(err)?;
+    // Owned by the commander who ordered it, so they can -delete it and are
+    // credited for what it does. The treasury paid, not them, so
+    // cost_fraction 0 means a -delete refunds them nothing.
     let origin = DeployKind::Deployed {
-        player: Ucid::default(),
+        player: ucid.unwrap_or_default(),
         moved_by: None,
         spec: spec.clone(),
-        cost_fraction: 1.0,
+        cost_fraction: 0.0,
         origin: None,
         jtac: None,
     };
@@ -580,6 +669,62 @@ fn deploy(lua: MizLua, ctx: &mut Context, side: Side, name: &str, pos: Vector2) 
         plan.route_m / 1000.,
         if plan.by_road { "by road" } else { "across country" }
     ))
+}
+
+/// A purchased formation: `count` copies of a deployable's template, built
+/// at our nearest base to the start of the route and sent along it as one
+/// formation (`Db::buy_formation`), paid from the treasury.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn buy_formation(
+    lua: MizLua,
+    ctx: &mut Context,
+    side: Side,
+    ucid: Option<Ucid>,
+    key: &str,
+    count: u32,
+    to: LatLon,
+    via: &[LatLon],
+    now: DateTime<Utc>,
+) -> Result<CompactString, CompactString> {
+    let gw = purchase_cfg(ctx).ok_or_else(|| CompactString::from("this server doesn't sell formations"))?;
+    let p = gw.purchase.clone();
+    let name = key.strip_prefix("formation:").ok_or_else(|| format_compact!("no such formation: {key}"))?;
+    let spec = ctx
+        .db
+        .ephemeral
+        .cfg
+        .deployables
+        .get(&side)
+        .and_then(|d| d.iter().find(|d| d.path.join(" / ") == name))
+        .filter(|d| purchasable(&p, d))
+        .cloned()
+        .ok_or_else(|| format_compact!("{side:?} can't buy {name} as a formation"))?;
+    let DeployableKind::Group { template } = &spec.kind else {
+        return Err("bases are built by their crates, not ordered".into());
+    };
+    let (min, max) = (p.min_count.max(1), p.max_count.max(p.min_count.max(1)));
+    if count < min || count > max {
+        return Err(format_compact!("a formation is {min} to {max} of them"));
+    }
+    let cost = copy_cost(ctx, &p, &spec) * count as i64;
+    afford(ctx, side, cost)?;
+    let to = from_ll(lua, to)?;
+    let mut wps = Vec::with_capacity(via.len());
+    for ll in via {
+        wps.push(from_ll(lua, *ll)?);
+    }
+    let first = wps.first().copied().unwrap_or(to);
+    let (from, _) = deploy_base(ctx, side, first)?;
+    let (_, what) = ctx
+        .db
+        .buy_formation(&mut ctx.groundwar.rt, lua, &ctx.idx, side, from, &spec, template, count, to, &wps, ucid, now)
+        .map_err(err)?;
+    pay(ctx, side, cost);
+    if let Some(u) = ucid {
+        ctx.groundwar.last_order.insert(u, now);
+    }
+    info!("command: {side:?} bought {count} x {name} at {}", objective_name(ctx, &from));
+    Ok(format_compact!("{what} ({cost} from the treasury)"))
 }
 
 /// A naval hunter group at sea: real DCS ships, outside the campaign db.

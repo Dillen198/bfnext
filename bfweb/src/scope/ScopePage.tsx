@@ -21,6 +21,7 @@ import CursorInfo from './CursorInfo'
 import ObjectInfo from './ObjectInfo'
 import ObjectMarker from './ObjectMarker'
 import SettingsModal from './SettingsModal'
+import GciSeat from './GciSeat'
 import Spinner from './Spinner'
 import { colorMode, filterObject } from './entity'
 import {
@@ -602,6 +603,7 @@ export default function ScopePage(): ReactElement {
         settings={settings}
         setSettings={(s) => setSettings({ ...s })}
       />
+      <GciSeat />
     </div>
   )
 }

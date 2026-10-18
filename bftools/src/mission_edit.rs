@@ -327,6 +327,13 @@ impl LoadedMiz {
                     .context("extracting mission")?;
                 compact_mission_arrays(&mission)
                     .with_context(|| format_compact!("compacting group arrays in {path:?}"))?;
+                let n = replace_unloadable_pads(&mission)
+                    .with_context(|| format_compact!("replacing helipads in {path:?}"))?;
+                if n > 0 {
+                    warn!(
+                        "{path:?}: {n} FARP_SINGLE_01 helipad(s) turned into Invisible FARPs --                          the dedicated server can't load that model and crashes loading the mission"
+                    );
+                }
             }
             if **file_name == "warehouses" {
                 warehouses = lua
@@ -374,6 +381,47 @@ fn vehicle(
                 .map(|r| Ok(r?.1)),
         ))
     }
+}
+
+/// Helipad statics the dedicated server can't load: DCS 2.9.30's server
+/// logs "Can't open model FARP_SINGLE_01" and then crashes in
+/// `wHeliport::spawnLaunchPadGroupStep` while loading the mission. Each is
+/// (type, replacement type, replacement shape_name). An Invisible FARP is the
+/// same single pad with the same radio fields, and has no model to fail on.
+const UNLOADABLE_PADS: &[(&str, &str, &str)] =
+    &[("FARP_SINGLE_01", "Invisible FARP", "invisiblefarp")];
+
+/// Swap every helipad static of an `UNLOADABLE_PADS` type for its stand-in,
+/// keeping its name, unit id, position and radio. Returns how many changed.
+fn replace_unloadable_pads(mission: &Table) -> Result<usize> {
+    let mut n = 0;
+    let Ok(coalitions) = mission.raw_get::<_, Table>("coalition") else {
+        return Ok(0);
+    };
+    for coa in coalitions.pairs::<Value, Table>() {
+        let (_, coa) = coa?;
+        let Ok(countries) = coa.raw_get::<_, Table>("country") else { continue };
+        for country in countries.pairs::<Value, Table>() {
+            let (_, country) = country?;
+            let Ok(statics) = country.raw_get::<_, Table>("static") else { continue };
+            let Ok(groups) = statics.raw_get::<_, Table>("group") else { continue };
+            for group in groups.pairs::<Value, Table>() {
+                let (_, group) = group?;
+                let Ok(units) = group.raw_get::<_, Table>("units") else { continue };
+                for unit in units.pairs::<Value, Table>() {
+                    let (_, unit) = unit?;
+                    let typ: Option<std::string::String> = unit.raw_get("type")?;
+                    let Some(typ) = typ else { continue };
+                    if let Some((_, to, shape)) = UNLOADABLE_PADS.iter().find(|(t, _, _)| *t == typ) {
+                        unit.raw_set("type", *to)?;
+                        unit.raw_set("shape_name", *shape)?;
+                        n += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok(n)
 }
 
 /// Renumber an array-shaped table to 1..n, keeping its elements in key

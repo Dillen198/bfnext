@@ -121,7 +121,8 @@ the top of the list, marked with a `*`.
 ```
 -delete <troop-id>
 ```
-Gives 50% refund
+Gives a 50% refund if you paid for them with points (nothing for troops a
+commander inserted from the treasury)
 
 ## See Also
 

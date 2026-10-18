@@ -145,6 +145,12 @@ pub struct Posture {
     /// How the round is won, when the config states one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub victory_condition: Option<String>,
+    /// The war-effort bar from this side's point of view, 0-100, and the
+    /// perk tier it has reached (0-3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub war_effort: Option<f64>,
+    #[serde(default)]
+    pub war_effort_tier: u8,
 }
 
 /// Surface weather at the theatre reference point.
@@ -438,6 +444,8 @@ mod tests {
                 players_enemy: 5,
                 last_stand: None,
                 victory_condition: Some("hold every primary objective".into()),
+                war_effort: Some(62.),
+                war_effort_tier: 1,
             },
             weather: None,
             tasking: vec![Task {

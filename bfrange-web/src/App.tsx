@@ -1,8 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react'
-import { Link, Route, Routes, useNavigate } from 'react-router-dom'
-import { TopBar } from './components/TopBar'
+import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { Shell } from './components/Shell'
 import { Loading } from './components/States'
-import { MOCK } from './api'
 import LivePage from './pages/LivePage'
 import { AFTER_LOGIN_KEY, useAuth } from './context/AuthContext'
 
@@ -14,6 +13,7 @@ const PilotPage = lazy(() => import('./pages/PilotPage'))
 const MePage = lazy(() => import('./pages/MePage'))
 const ResultPage = lazy(() => import('./pages/ResultPage'))
 const SpawnPage = lazy(() => import('./pages/SpawnPage'))
+const BriefPage = lazy(() => import('./pages/BriefPage'))
 const CalcPage = lazy(() => import('./pages/CalcPage'))
 const LeaderboardsPage = lazy(() => import('./pages/LeaderboardsPage'))
 
@@ -24,7 +24,7 @@ function NotFound() {
         <h1 className="display">Off the range</h1>
       </div>
       <p className="muted">
-        There is nothing at this address. <Link to="/" className="underline">Back to the live range</Link>.
+        There is nothing at this address. <Link to="/" className="underline">Back to range control</Link>.
       </p>
     </div>
   )
@@ -46,11 +46,12 @@ function ReturnAfterLogin() {
 }
 
 export default function App() {
+  const loc = useLocation()
   return (
     <>
       <ReturnAfterLogin />
-      <TopBar />
-      <main className="flex-1 flex flex-col">
+      {/* range control is the one full-bleed page: the map fills the frame */}
+      <Shell bleed={loc.pathname === '/'}>
         <Suspense fallback={<Loading />}>
           <Routes>
             <Route path="/" element={<LivePage />} />
@@ -61,19 +62,13 @@ export default function App() {
             <Route path="/me" element={<MePage />} />
             <Route path="/result/:id" element={<ResultPage />} />
             <Route path="/spawn" element={<SpawnPage />} />
+            <Route path="/brief" element={<BriefPage />} />
             <Route path="/calc" element={<CalcPage />} />
             <Route path="/leaderboards" element={<LeaderboardsPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
-      </main>
-      <footer className="border-t border-[var(--line)] mt-auto">
-        <div className="wrap py-4 flex flex-wrap gap-x-6 gap-y-1 text-[12px] dim">
-          <span>Vector Strike training range</span>
-          <span>Scores are graded by the range engine; the site only explains them.</span>
-          {MOCK && <span style={{ color: 'var(--ball)' }}>Mock mode: fixture data, nothing reaches the server.</span>}
-        </div>
-      </footer>
+      </Shell>
     </>
   )
 }

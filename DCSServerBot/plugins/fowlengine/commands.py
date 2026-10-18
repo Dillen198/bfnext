@@ -495,6 +495,7 @@ class FowlEngine(Plugin):
         # War diary feed: server name -> {"posted": [ids], "seen": {id: ts}}.
         # Persisted, so a restart never posts a dispatch twice.
         self.news_feed_state = {}
+        self.rotation_index = {}        # server name -> index into its rotation.theatres
         # Staged DLL / bftools.exe an admin asked to "apply when empty":
         # server name -> {"by", "utc", "attempts", "why"}. Persisted (fsync'd),
         # so a bot restart or a crash of the whole box doesn't drop the ask.
@@ -535,6 +536,7 @@ class FowlEngine(Plugin):
                     self.range_status_msg_ids = state.get('range_status_msg_ids') or {}
                     self.range_feed_cursors = state.get('range_feed_cursors') or {}
                     self.news_feed_state = state.get('news_feed_state') or {}
+                    self.rotation_index = state.get('rotation_index') or {}
                     self.stage_apply_when_empty = state.get('stage_apply_when_empty') or {}
             except Exception as ex:
                 self.log.error(f"Failed to load Fowl Engine state: {ex}")
@@ -542,6 +544,7 @@ class FowlEngine(Plugin):
         self._instances_cache = None
         self._range_fail_counts = {}     # server name -> consecutive feed/status failures
         self._range_warned = set()       # (server name, reason) already logged once
+        self._bfdb_down = {}             # api_url -> when it was first found unreachable
         self._briefing_down = {}         # (server name, side) -> why /api/situation is 503
         self._news_fail_counts = {}      # server name -> consecutive news feed failures
         self._gci_relay_tasks = {}  # server name -> asyncio.Task (GCI transcript relay)
@@ -675,6 +678,37 @@ class FowlEngine(Plugin):
         if key not in self._range_warned:
             self._range_warned.add(key)
             self.log.warning(message)
+
+    def _bfdb_failed(self, api_url: str, where: str, ex: BaseException) -> bool:
+        """Whether `ex` just means bfdb is down or restarting. If so it is
+        logged once per outage (here) and the caller logs nothing; otherwise
+        it returns False and the caller logs the error as usual.
+
+        A bfdb outage used to log an ERROR from every poller and relay, with
+        tracebacks, every few seconds -- dozens of lines, and a dozen separate
+        issues in the report, for one restart."""
+        import aiohttp
+        restarting = bool(self.procman and self.procman.busy)
+        outage = restarting or isinstance(
+            ex, (aiohttp.ClientConnectionError, asyncio.TimeoutError, ConnectionError)
+        ) or str(ex) == "engine log websocket closed"
+        if not outage:
+            return False
+        if api_url not in self._bfdb_down:
+            self._bfdb_down[api_url] = time.time()
+            why = "being restarted" if restarting else f"{type(ex).__name__}: {ex or '(no message)'}"
+            self.log.warning(
+                f"FowlEngine: bfdb at {api_url} is unreachable ({why}); "
+                f"polling and relays retry quietly until it is back"
+            )
+        else:
+            self.log.debug(f"FowlEngine: {where}: bfdb at {api_url} still down ({type(ex).__name__})")
+        return True
+
+    def _bfdb_ok(self, api_url: str) -> None:
+        since = self._bfdb_down.pop(api_url, None)
+        if since is not None:
+            self.log.info(f"FowlEngine: bfdb at {api_url} is reachable again after {time.time() - since:.0f}s")
 
     async def cog_load(self) -> None:
         await super().cog_load()
@@ -1187,6 +1221,7 @@ class FowlEngine(Plugin):
                     'range_status_msg_ids': self.range_status_msg_ids,
                     'range_feed_cursors': self.range_feed_cursors,
                     'news_feed_state': self.news_feed_state,
+                    'rotation_index': self.rotation_index,
                     'stage_apply_when_empty': self.stage_apply_when_empty,
                 }, f)
                 f.flush()
@@ -1218,11 +1253,11 @@ class FowlEngine(Plugin):
                 dash = (config.get("dashboard_url") or "").rstrip("/")
                 async with aiohttp.ClientSession() as session:
                     sp = srv_params(server.name)
-                    async with session.get(f"{api_url}/api/stats", params=sp) as resp:
+                    async with session.get(f"{api_url}/api/stats", params=sp, timeout=10) as resp:
                         if resp.status != 200:
                             continue
                         stats = await resp.json()
-                    async with session.get(f"{api_url}/api/objectives", params=sp) as resp:
+                    async with session.get(f"{api_url}/api/objectives", params=sp, timeout=10) as resp:
                         objs = await resp.json() if resp.status == 200 else []
                     captures = []
                     try:
@@ -1342,6 +1377,8 @@ class FowlEngine(Plugin):
                     self._mapsnap[server.name]["uploaded"] = True
                 
             except Exception as ex:
+                if self._bfdb_failed(api_url, f"status embed for {server.name}", ex):
+                    continue
                 import traceback
                 self.log.error(f"Error updating Fowl Engine status: {ex}\n{traceback.format_exc()}")
 
@@ -1724,6 +1761,8 @@ class FowlEngine(Plugin):
                 await self._upsert_embed(self.perf_msg_ids, server.name, channel, embed, "performance embed")
 
             except Exception as ex:
+                if self._bfdb_failed(api_url, f"perf embed for {server.name}", ex):
+                    continue
                 import traceback
                 self.log.error(f"Error updating Fowl Engine perf status: {ex}\n{traceback.format_exc()}")
 
@@ -1867,6 +1906,7 @@ class FowlEngine(Plugin):
                     cookie = await bfdb_login(http, api_url, username, password)
                     async with http.ws_connect(ws_url, headers={"Cookie": f"session={cookie}"}, timeout=10) as ws:
                         self.log.info(f"FowlEngine: GCI transcript relay connected for {server.name}")
+                        self._bfdb_ok(api_url)
                         async for msg in ws:
                             if msg.type != aiohttp.WSMsgType.TEXT:
                                 break
@@ -1886,8 +1926,9 @@ class FowlEngine(Plugin):
             except asyncio.CancelledError:
                 raise
             except Exception as ex:
-                self.log.error(f"FowlEngine: GCI transcript relay error for {server.name}: "
-                               f"{type(ex).__name__}: {ex or '(no message)'}")
+                if not self._bfdb_failed(api_url, f"GCI transcript relay for {server.name}", ex):
+                    self.log.error(f"FowlEngine: GCI transcript relay error for {server.name}: "
+                                   f"{type(ex).__name__}: {ex or '(no message)'}")
             await asyncio.sleep(ENGINE_LOG_RECONNECT_SECS)
 
     # ── GCI & links embed (complements DCSServerBot's server-status embed) ──
@@ -2301,7 +2342,97 @@ class FowlEngine(Plugin):
             self._kill_cursor.pop(server_name, None)
             self._kill_streaks.setdefault(server_name, {}).clear()
             self._kill_announced.setdefault(server_name, {}).clear()
+            await self._announce_rotation(server_name, rid)
 
+    # ── theatre rotation ─────────────────────────────────────────────────
+    # `rotation: {theatres: [...], channel: <id>}` per server. The bot keeps
+    # the schedule, posts it at every new round and runs the vote; the switch
+    # itself (the BFWeather base mission and the campaign config) stays an
+    # admin's job, recorded with /fe_rotation_advance.
+
+    def _rotation(self, server_name: str):
+        server = self.bot.servers.get(server_name)
+        cfg = (self.get_config(server) or {}) if server else {}
+        rot = cfg.get('rotation') or {}
+        theatres = [str(t) for t in (rot.get('theatres') or []) if str(t).strip()]
+        return rot, theatres
+
+    def _rotation_lines(self, server_name: str) -> list[str]:
+        _, theatres = self._rotation(server_name)
+        if not theatres:
+            return []
+        cur = self.rotation_index.get(server_name, 0) % len(theatres)
+        lines = []
+        for i in range(len(theatres)):
+            t = theatres[(cur + i) % len(theatres)]
+            lines.append(("**Now:** " if i == 0 else ("**Next:** " if i == 1 else f"{i + 1}. ")) + t)
+        return lines
+
+    async def _announce_rotation(self, server_name: str, rid):
+        rot, theatres = self._rotation(server_name)
+        if not theatres or not rot.get('channel'):
+            return
+        channel = self.bot.get_channel(int(rot['channel']))
+        if not channel:
+            return
+        embed = self._vs_embed(f"Round {rid} has started", color=discord.Color.gold())
+        embed.description = "\n".join(self._rotation_lines(server_name)) + \
+            "\n\nVote on what comes next with `/fe_rotation_vote`."
+        try:
+            await channel.send(embed=embed)
+        except Exception as ex:
+            self.log.warning(f"FowlEngine: rotation announcement failed for {server_name}: {ex}")
+
+    @command(description='Show the theatre rotation: what is flying now and what comes next.')
+    @app_commands.guild_only()
+    async def fe_rotation(self, interaction: discord.Interaction,
+                          server: app_commands.Transform[Server, utils.ServerTransformer()]):
+        lines = self._rotation_lines(server.name)
+        if not lines:
+            await interaction.response.send_message(
+                f"No rotation is configured for {server.name}.", ephemeral=True)
+            return
+        embed = self._vs_embed(f"Theatre rotation -- {server.name}", color=discord.Color.gold())
+        embed.description = "\n".join(lines)
+        await interaction.response.send_message(embed=embed)
+
+    @command(description='Open a poll for the next theatre in the rotation.')
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def fe_rotation_vote(self, interaction: discord.Interaction,
+                               server: app_commands.Transform[Server, utils.ServerTransformer()],
+                               hours: Optional[int] = 24):
+        _, theatres = self._rotation(server.name)
+        if len(theatres) < 2:
+            await interaction.response.send_message("The rotation needs at least two theatres to vote on.",
+                                                    ephemeral=True)
+            return
+        cur = self.rotation_index.get(server.name, 0) % len(theatres)
+        options = [t for i, t in enumerate(theatres) if i != cur][:10]
+        if not hasattr(discord, 'Poll'):
+            await interaction.response.send_message(
+                "This bot's discord.py has no polls. Options: " + ", ".join(options), ephemeral=True)
+            return
+        from datetime import timedelta
+        poll = discord.Poll(question=f"Next theatre on {server.name}?"[:300],
+                            duration=timedelta(hours=max(1, min(int(hours or 24), 168))))
+        for o in options:
+            poll.add_answer(text=o[:55])
+        await interaction.response.send_message(poll=poll)
+
+    @command(description='Record that the server has moved on to the next theatre in the rotation.')
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def fe_rotation_advance(self, interaction: discord.Interaction,
+                                  server: app_commands.Transform[Server, utils.ServerTransformer()]):
+        _, theatres = self._rotation(server.name)
+        if not theatres:
+            await interaction.response.send_message(f"No rotation is configured for {server.name}.",
+                                                    ephemeral=True)
+            return
+        self.rotation_index[server.name] = (self.rotation_index.get(server.name, 0) + 1) % len(theatres)
+        self.save_state()
+        await interaction.response.send_message("\n".join(self._rotation_lines(server.name)))
 
     async def _campaign_event_poll(self, server: Server):
         config = self.get_config(server) or {}
@@ -2346,15 +2477,17 @@ class FowlEngine(Plugin):
                 # str(asyncio.TimeoutError()) (and several aiohttp timeout
                 # subclasses) is "" by default -- include the exception type
                 # so a bare-colon log line doesn't hide what actually failed.
-                self.log.error(
-                    f"FowlEngine: campaign event poll error for {server.name} ({api_url}): "
-                    f"{type(ex).__name__}: {ex or '(no message)'}"
-                )
+                if not self._bfdb_failed(api_url, f"campaign poll for {server.name}", ex):
+                    self.log.error(
+                        f"FowlEngine: campaign event poll error for {server.name} ({api_url}): "
+                        f"{type(ex).__name__}: {ex or '(no message)'}"
+                    )
                 any_failed = True
 
             if any_failed:
                 consecutive_failures += 1
-                if consecutive_failures in (1, 5) or consecutive_failures % 30 == 0:
+                if api_url not in self._bfdb_down and (
+                        consecutive_failures in (1, 5) or consecutive_failures % 30 == 0):
                     self.log.error(
                         f"FowlEngine: campaign polling for {server.name} has failed "
                         f"{consecutive_failures} time(s) in a row -- is bfdb reachable at {api_url}?"
@@ -2362,19 +2495,27 @@ class FowlEngine(Plugin):
                 await asyncio.sleep(CAMPAIGN_RECONNECT_SECS)
             else:
                 consecutive_failures = 0
+                self._bfdb_ok(api_url)
                 await asyncio.sleep(CAMPAIGN_POLL_SECS)
 
     async def _poll_step(self, server_name: str, api_url: str, endpoint: str, coro) -> bool:
         """Runs one poll sub-step in isolation so a hung/broken endpoint
         doesn't also block the others in the same cycle. Returns True if it failed."""
+        if api_url in self._bfdb_down and endpoint != "/api/stats (round check)":
+            # bfdb is down: the first step of the cycle probes it, the rest
+            # wait for the next cycle rather than each failing on their own.
+            coro.close()
+            return True
         try:
             await coro
+            self._bfdb_ok(api_url)
             return False
         except Exception as ex:
-            self.log.error(
-                f"FowlEngine: {endpoint} poll failed for {server_name} ({api_url}): "
-                f"{type(ex).__name__}: {ex or '(no message)'}"
-            )
+            if not self._bfdb_failed(api_url, f"{endpoint} poll for {server_name}", ex):
+                self.log.error(
+                    f"FowlEngine: {endpoint} poll failed for {server_name} ({api_url}): "
+                    f"{type(ex).__name__}: {ex or '(no message)'}"
+                )
             return True
 
     async def _poll_objective_changes(self, session, api_url, server_name, faction_channels, messages, obj_state):
@@ -2632,16 +2773,18 @@ class FowlEngine(Plugin):
                         ws_url, headers={"Cookie": f"session={session_cookie}"}, timeout=10
                     ) as ws:
                         self.log.info(f"FowlEngine: engine log relay connected for {server.name}")
+                        self._bfdb_ok(api_url)
                         await self._pump_engine_log(ws, channel, server.name)
             except asyncio.CancelledError:
                 raise
             except Exception as ex:
                 # Same blank-message pitfall as _campaign_event_poll: bare
                 # timeouts stringify to "", so include the exception type.
-                self.log.error(
-                    f"FowlEngine: engine log relay error for {server.name}: "
-                    f"{type(ex).__name__}: {ex or '(no message)'}"
-                )
+                if not self._bfdb_failed(api_url, f"engine log relay for {server.name}", ex):
+                    self.log.error(
+                        f"FowlEngine: engine log relay error for {server.name}: "
+                        f"{type(ex).__name__}: {ex or '(no message)'}"
+                    )
             await asyncio.sleep(ENGINE_LOG_RECONNECT_SECS)
 
     async def _pump_engine_log(self, ws, channel: discord.abc.Messageable, server_name: str):
@@ -3151,6 +3294,37 @@ class FowlEngine(Plugin):
         if health <= 20:
             embed.add_field(name="Status", value=f"{icon('pending')} Ready to capture!", inline=False)
         await interaction.followup.send(embed=embed)
+
+    @command(description='Show a pilot card: level, squadron and headline stats.')
+    @app_commands.guild_only()
+    async def fe_card(self, interaction: discord.Interaction, member: Optional[discord.Member] = None):
+        target = member or interaction.user
+        await interaction.response.defer()
+        ucid = self.bot.get_ucid_by_member(target, verified=True)
+        if asyncio.iscoroutine(ucid):
+            ucid = await ucid
+        if not ucid:
+            who = "You are" if target == interaction.user else f"{target.display_name} is"
+            await interaction.followup.send(
+                f"{who} not linked to a game account yet -- use /linkme, then -linkme <token> in DCS chat.")
+            return
+        config = self.get_config() or {}
+        api_url = config.get("api_url", "http://localhost:8880")
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{api_url}/api/pilot/{ucid}/card.png", timeout=15) as resp:
+                    if resp.status == 404:
+                        await interaction.followup.send("No stats for that pilot yet -- fly a sortie first.")
+                        return
+                    if resp.status != 200:
+                        await interaction.followup.send(f"Could not draw the card (bfdb answered {resp.status}).")
+                        return
+                    png = await resp.read()
+        except Exception as ex:
+            await interaction.followup.send(f"Error: {ex}")
+            return
+        await interaction.followup.send(file=discord.File(io.BytesIO(png), filename="pilot-card.png"))
 
     @command(description='Get the link to the Fowl Engine web dashboard.')
     @app_commands.guild_only()

@@ -58,6 +58,9 @@ mod command;
 mod groundfeed;
 mod news_image;
 mod db;
+mod progression;
+mod squadrons;
+mod pilot_card;
 mod db_id;
 mod atc;
 mod gci;
@@ -966,6 +969,67 @@ async fn api_rounds(
             .collect();
         Ok(serde_json::to_string(&entries)?)
     })?;
+    Ok(json_response(data))
+}
+
+/// GET /api/rounds/{id}/summary -- one round's top pilots and its totals,
+/// for the round history page. A per-round leaderboard walks the whole
+/// aggregates tree, so it is its own (cached) request, made only for the
+/// round someone opens.
+async fn api_round_summary(
+    id: u64,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let data = cached_json(format!("round_summary:{}:{id}", inst.id), || -> Result<String> {
+        let rid = db::RoundId(id);
+        if db.round_instance_of(rid) != inst.id {
+            return Ok("null".into());
+        }
+        let mut pilots = db.pilot_leaderboard(Some(rid))?;
+        let (mut air, mut ground, mut captures, mut supply, mut hours) = (0u32, 0u32, 0u32, 0u32, 0f32);
+        for (_, _, a) in &pilots {
+            air += a.air_kills;
+            ground += a.ground_kills;
+            captures += a.captures;
+            supply += a.supply_transfers;
+            hours += a.hours;
+        }
+        // Best all-round effort first: kills, captures and logistics all count.
+        let score = |a: &db::Aggregates| {
+            (a.air_kills + a.ground_kills) as u64 * 10
+                + a.captures as u64 * 30
+                + (a.supply_transfers + a.repairs + a.troops + a.farps + a.deploys) as u64 * 5
+        };
+        pilots.sort_by(|x, y| score(&y.2).cmp(&score(&x.2)));
+        let top: Vec<_> = pilots
+            .iter()
+            .take(5)
+            .map(|(ucid, name, a)| {
+                serde_json::json!({
+                    "ucid": ucid,
+                    "name": name,
+                    "air_kills": a.air_kills,
+                    "ground_kills": a.ground_kills,
+                    "captures": a.captures,
+                    "logistics": a.supply_transfers + a.repairs + a.troops + a.farps + a.deploys,
+                    "deaths": a.deaths,
+                    "hours": a.hours,
+                })
+            })
+            .collect();
+        Ok(serde_json::to_string(&serde_json::json!({
+            "id": id,
+            "pilots": pilots.len(),
+            "air_kills": air,
+            "ground_kills": ground,
+            "captures": captures,
+            "supply_runs": supply,
+            "hours": hours,
+            "top": top,
+        }))?)
+    })
+    .await?;
     Ok(json_response(data))
 }
 
@@ -1950,6 +2014,214 @@ async fn api_pilot_breakdown(
         })).collect();
         Ok(serde_json::to_string(&entries)?)
     })?;
+    Ok(json_response(data))
+}
+
+/// GET /api/pilot/:ucid/progression -- XP, level, today's and this week's
+/// challenges, and achievement tiers (`progression.rs`).
+async fn api_pilot_progression(
+    ucid: String,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+        Ok(serde_json::to_string(&db.pilot_progression(&ucid)?)?)
+    })?;
+    Ok(json_response(data))
+}
+
+#[derive(Deserialize)]
+struct GciTransmitBody {
+    text: std::string::String,
+}
+
+/// POST /api/gci/transmit {text} -- the human GCI seat: an admin or a side's
+/// commander types a call on the Map page and the GCI voice speaks it on
+/// that side's frequency over SRS.
+async fn api_gci_transmit(
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    session_id: Option<Uuid>,
+    body: GciTransmitBody,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let allowed = c.god_mode
+        || c.session.is_admin
+        || c.ucid
+            .as_ref()
+            .map(|u| task::block_in_place(|| command::is_commander(&db, &inst, u, c.side)).unwrap_or(false))
+            .unwrap_or(false);
+    if !allowed {
+        return Err(websec::forbidden("only your side's commanders and admins can take the GCI seat").into());
+    }
+    let text = body.text.trim();
+    if text.is_empty() || text.chars().count() > 200 {
+        return Err(websec::bad_request("a call is 1 to 200 characters").into());
+    }
+    gci::human_call(&inst.id, c.side, text).map_err(|e| websec::bad_request(e))?;
+    log::info!("[{}] human GCI ({}, {:?}): {text}", inst.id, c.session.username, c.side);
+    Ok(json_response(r#"{"ok":true}"#.into()))
+}
+
+/// The linked player behind a browser session, for the squadron routes.
+async fn session_player(
+    session_id: Option<Uuid>,
+    db: &StatsDb,
+    bot_cfg: &Option<BotLinkConfig>,
+) -> std::result::Result<dcso3::net::Ucid, Error> {
+    let sid = session_id.ok_or_else(|| websec::unauthorized("sign in with Discord first"))?;
+    let session = task::block_in_place(|| db.get_session(sid))?
+        .ok_or_else(|| websec::unauthorized("session expired"))?;
+    let ucid = resolve_ucid_via_bot(bot_cfg, &session.discord_id).await.ok_or_else(|| {
+        websec::forbidden(
+            "account not linked -- type -linkme <token> in DCS chat (get the token with /linkme in Discord)",
+        )
+    })?;
+    Ok(ucid)
+}
+
+fn squadron_json(db: &StatsDb, s: &squadrons::Squadron, members: bool) -> serde_json::Value {
+    let mut v = serde_json::json!({
+        "tag": s.tag,
+        "name": s.name,
+        "owner": s.owner,
+        "owner_name": db.pilot_name(&s.owner).unwrap_or_default(),
+        "created": s.created.to_rfc3339(),
+        "member_count": s.members.len(),
+        "xp": s.xp,
+    });
+    if members {
+        let mut m: Vec<_> = s
+            .members
+            .iter()
+            .map(|m| serde_json::json!({
+                "ucid": m.ucid,
+                "name": db.pilot_name(&m.ucid).unwrap_or_default(),
+                "joined": m.joined.to_rfc3339(),
+                "xp": m.xp,
+            }))
+            .collect();
+        m.sort_by(|a, b| b["xp"].as_u64().cmp(&a["xp"].as_u64()));
+        v["members"] = serde_json::Value::Array(m);
+    }
+    v
+}
+
+/// GET /api/squadrons -- every squadron, by XP served.
+async fn api_squadrons(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let v: Vec<_> = db.squadrons().all()?.iter().map(|s| squadron_json(&db, s, false)).collect();
+        Ok(serde_json::to_string(&v)?)
+    })?;
+    Ok(json_response(data))
+}
+
+/// GET /api/squadrons/{tag} -- one squadron with its members.
+async fn api_squadron(tag: String, db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<String> {
+        let s = db
+            .squadrons()
+            .get(&tag)
+            .map_err(|e| websec::bad_request(e.to_string()))?
+            .ok_or_else(|| websec::not_found(format!("no squadron {tag}")))?;
+        Ok(serde_json::to_string(&squadron_json(&db, &s, true))?)
+    })?;
+    Ok(json_response(data))
+}
+
+#[derive(Deserialize)]
+struct SquadronCreateBody {
+    tag: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct SquadronKickBody {
+    ucid: String,
+}
+
+/// POST /api/squadrons {tag, name} -- the signed-in pilot founds a squadron.
+async fn api_squadron_create(
+    session_id: Option<Uuid>,
+    body: SquadronCreateBody,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = session_player(session_id, &db, &bot_cfg).await?;
+    let data = task::block_in_place(|| -> Result<String> {
+        let s = db
+            .squadrons()
+            .create(ucid, &body.tag, &body.name)
+            .map_err(|e| websec::bad_request(e.to_string()))?;
+        Ok(serde_json::to_string(&squadron_json(&db, &s, true))?)
+    })?;
+    Ok(json_response(data))
+}
+
+/// POST /api/squadrons/{tag}/join -- the signed-in pilot joins.
+async fn api_squadron_join(
+    tag: String,
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = session_player(session_id, &db, &bot_cfg).await?;
+    task::block_in_place(|| db.squadrons().join(ucid, &tag)).map_err(|e| websec::bad_request(e.to_string()))?;
+    Ok(json_response(r#"{"ok":true}"#.into()))
+}
+
+/// POST /api/squadrons/leave -- the signed-in pilot leaves their squadron.
+async fn api_squadron_leave(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = session_player(session_id, &db, &bot_cfg).await?;
+    task::block_in_place(|| db.squadrons().leave(ucid, None)).map_err(|e| websec::bad_request(e.to_string()))?;
+    Ok(json_response(r#"{"ok":true}"#.into()))
+}
+
+/// POST /api/squadrons/kick {ucid} -- the owner removes a member.
+async fn api_squadron_kick(
+    session_id: Option<Uuid>,
+    body: SquadronKickBody,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let by = session_player(session_id, &db, &bot_cfg).await?;
+    let target: dcso3::net::Ucid = body.ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+    task::block_in_place(|| db.squadrons().leave(target, Some(by)))
+        .map_err(|e| websec::bad_request(e.to_string()))?;
+    Ok(json_response(r#"{"ok":true}"#.into()))
+}
+
+/// GET /api/pilot/:ucid/card.png -- the shareable pilot card.
+async fn api_pilot_card(ucid: String, db: StatsDb) -> std::result::Result<Response, Error> {
+    let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+    let png = task::block_in_place(|| db.pilot_card_png(&ucid))?
+        .ok_or_else(|| websec::not_found("no such pilot"))?;
+    let mut r = Response::new(png.into());
+    let h = r.headers_mut();
+    h.insert(warp::http::header::CONTENT_TYPE, warp::http::HeaderValue::from_static("image/png"));
+    h.insert(warp::http::header::CACHE_CONTROL, warp::http::HeaderValue::from_static("public, max-age=300"));
+    Ok(r)
+}
+
+/// GET /api/progression/top -- the 50 pilots with the most XP.
+async fn api_xp_leaderboard(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+    let data = cached_json("xp_leaderboard".into(), || -> Result<String> {
+        let rows: Vec<_> = db
+            .xp_leaderboard(50)?
+            .into_iter()
+            .map(|(ucid, name, xp, level)| serde_json::json!({
+                "ucid": ucid, "name": name, "xp": xp, "level": level,
+            }))
+            .collect();
+        Ok(serde_json::to_string(&rows)?)
+    })
+    .await?;
     Ok(json_response(data))
 }
 
@@ -7379,6 +7651,7 @@ fn registry_from_args(args: &Args) -> Result<Registry> {
             kind: Default::default(),
             range_jsonl: None,
             tacview_dir: None,
+            replay_delay_secs: 0,
         })),
     }
 }
@@ -7416,6 +7689,7 @@ fn open_db_offline(args: &Args, db_path: PathBuf) -> Result<StatsDb> {
             kind: Default::default(),
             range_jsonl: None,
             tacview_dir: None,
+            replay_delay_secs: 0,
         });
     }
     StatsDb::new(&std::collections::HashMap::new(), db_path, reg, None, None)
@@ -7724,11 +7998,17 @@ async fn main() -> Result<()> {
     // ── Training range (kind: "range" instances) ─────────────────────────
     // Ingests each range instance's range.jsonl and serves /api/range/*. The
     // routes exist either way (they answer 400 when no range is configured).
+    let range_clip_dir = {
+        let mut p = args.db.clone().into_os_string();
+        p.push(".range-clips");
+        PathBuf::from(p)
+    };
     let range_ctx = range::RangeCtx::new(
         db.clone(),
         bot_link_cfg.clone(),
         &args.range_site_url,
         &args.public_api_url,
+        range_clip_dir,
     )?;
     range::spawn_tasks(&range_ctx, args.range_track_days);
     let range_routes = range::api::routes(range_ctx.clone());
@@ -7741,6 +8021,7 @@ async fn main() -> Result<()> {
     });
     let replay_ctx = replay::ReplayCtx::new(db.clone(), replay_dir, args.replay_days.max(1))?;
     replay::spawn_tasks(&replay_ctx);
+    let _ = range_ctx.replay.set(replay_ctx.clone());
     let replay_routes = replay::api::routes(replay_ctx);
 
     // ── Load campaign config JSON (served at /api/config) ────────────────
@@ -7844,6 +8125,11 @@ async fn main() -> Result<()> {
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(with_instance(db.clone()))
         .then(api_rounds);
+
+    let round_summary = warp::path!("api" / "rounds" / u64 / "summary")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_round_summary);
 
     let round_report = warp::path!("api" / "rounds" / u64 / "report")
         .and(with_db(db.clone()))
@@ -7955,6 +8241,73 @@ async fn main() -> Result<()> {
     let pilot_breakdown = warp::path!("api" / "pilot" / String / "breakdown")
         .and(with_db(db.clone()))
         .then(api_pilot_breakdown);
+
+    let squadron_list = warp::path!("api" / "squadrons")
+        .and(warp::get())
+        .and(with_db(db.clone()))
+        .then(api_squadrons);
+    let squadron_one = warp::path!("api" / "squadrons" / String)
+        .and(warp::get())
+        .and(with_db(db.clone()))
+        .then(api_squadron);
+    let squadron_create = warp::path!("api" / "squadrons")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<SquadronCreateBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_squadron_create);
+    let squadron_join = warp::path!("api" / "squadrons" / String / "join")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_squadron_join);
+    let squadron_leave = warp::path!("api" / "squadrons" / "leave")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_squadron_leave);
+    let squadron_kick = warp::path!("api" / "squadrons" / "kick")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<SquadronKickBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_squadron_kick);
+    let pilot_card = warp::path!("api" / "pilot" / String / "card.png")
+        .and(with_db(db.clone()))
+        .then(api_pilot_card);
+    let gci_transmit = warp::path!("api" / "gci" / "transmit")
+        .and(warp::post())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<GciTransmitBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_gci_transmit);
+    let squadron_routes = gci_transmit
+        .or(squadron_leave)
+        .or(squadron_kick)
+        .or(squadron_list)
+        .or(squadron_create)
+        .or(squadron_join)
+        .or(squadron_one)
+        .or(pilot_card)
+        .boxed();
+
+    let pilot_progression = warp::path!("api" / "pilot" / String / "progression")
+        .and(with_db(db.clone()))
+        .then(api_pilot_progression);
+
+    let xp_leaderboard = warp::path!("api" / "progression" / "top")
+        .and(with_db(db.clone()))
+        .then(api_xp_leaderboard);
 
     let pilot_kills_route = warp::path!("api" / "pilot" / String / "kills")
         .and(with_db(db.clone()))
@@ -9000,6 +9353,7 @@ async fn main() -> Result<()> {
     // Box sub-chains to avoid warp filter type overflow
     let api_routes = instances_route
         .or(rounds)
+        .or(round_summary)
         .or(round_report)
         .or(health)
         .or(version)
@@ -9020,6 +9374,9 @@ async fn main() -> Result<()> {
         .or(pilot_sorties)
         .or(pilot_sortie)
         .or(pilot_breakdown)
+        .or(pilot_progression)
+        .or(xp_leaderboard)
+        .or(squadron_routes)
         .or(pilot_kills_route)
         .or(pilot_deploys_route)
         .or(pilot)

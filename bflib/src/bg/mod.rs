@@ -176,6 +176,17 @@ pub(crate) fn reset_marker_path(path: &Path) -> PathBuf {
     p
 }
 
+/// Pilots who are past rookie mode (`db::player::ROOKIE_SORTIES`), kept next
+/// to the save. The save is deleted at the end of a round and the sortie
+/// counts with it; this file is not, so a veteran stays one in the next round.
+pub(crate) fn veterans_path(path: &Path) -> PathBuf {
+    let mut p = PathBuf::from(path);
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".veterans");
+    p.set_file_name(name);
+    p
+}
+
 /// Every file a missing live save could be recovered from: the timestamped
 /// backups `save` leaves behind and the temp file of an interrupted save.
 /// Empty if the campaign was deliberately reset (see `reset_marker_path`).
@@ -394,6 +405,8 @@ fn rotate_log(path: &Path) {
 pub(super) enum Task {
     SaveState(PathBuf, Persisted),
     ResetState(PathBuf),
+    /// Write the veterans list (`veterans_path`).
+    SaveVeterans(PathBuf, Vec<dcso3::net::Ucid>),
     CfgLoaded {
         sortie: dcso3::String,
         cfg: Arc<Cfg>,
@@ -430,6 +443,7 @@ impl Task {
         match self {
             Task::SaveState(..) => "SaveState",
             Task::ResetState(..) => "ResetState",
+            Task::SaveVeterans(..) => "SaveVeterans",
             Task::CfgLoaded { .. } => "CfgLoaded",
             Task::SaveConfig(..) => "SaveConfig",
             Task::RewriteMissionWeather { .. } => "RewriteMissionWeather",
@@ -838,6 +852,18 @@ impl<'a> Background<'a> {
                 Ok(()) => (),
                 Err(e) => error!("failed to reset state {path:?}, {e:?}"),
             },
+            Task::SaveVeterans(path, vets) => {
+                let res = serde_json::to_vec(&vets).map_err(anyhow::Error::from).and_then(|buf| {
+                    let mut tmp = path.clone();
+                    tmp.set_extension("veterans.tmp");
+                    fs::write(&tmp, buf)?;
+                    fs::rename(&tmp, &path)?;
+                    Ok(())
+                });
+                if let Err(e) = res {
+                    error!("failed to save the veterans list to {path:?}, {e:?}")
+                }
+            }
             Task::SaveConfig(path, cfg) => match cfg.save(&path) {
                 Ok(()) => (),
                 Err(e) => error!("failed to save config {e:?}"),

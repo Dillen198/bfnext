@@ -27,6 +27,7 @@ import type {
 } from '../types'
 import { greenie, leaderboards, pilotProfile, stationImpacts, within } from './aggregate'
 import { mockCardDataUrl } from './cards'
+import { mockClip } from './clip'
 import { CALIBRATION, CATALOG, WEAPON_DB } from './catalog'
 import { buildLive, spawnPosition } from './live'
 import { bombRecord, randomRecord, recordOfKind, trapRecord } from './records'
@@ -352,6 +353,38 @@ export const mockApi: RangeApi = {
         lines.push(`${oid},T=${p.lon.toFixed(6)}|${p.lat.toFixed(6)}|${p.alt_m.toFixed(0)}${j === 0 ? `,Name=${name}` : ''}`)
       })
     })
+    return new Blob([lines.join('\n')], { type: 'text/plain' })
+  },
+
+  async clip(id) {
+    await latency()
+    const r = records.find(x => x.id === id)
+    const c = r ? mockClip(r) : null
+    if (!c) throw new ApiError(404, 'no Tacview recording covers this result')
+    return c
+  },
+
+  async replayLink() {
+    await latency()
+    throw new ApiError(404, 'mock mode: there is no dashboard replay to open')
+  },
+
+  async clipAcmi(id) {
+    const r = records.find(x => x.id === id)
+    const c = r ? mockClip(r) : null
+    if (!c) return null
+    const lines = ['FileType=text/acmi/tacview', 'FileVersion=2.2', `0,ReferenceTime=${c.reference_time}`, `0,Title=${r!.pilot.name} · ${r!.result.kind}`]
+    const ev = c.objects.flatMap((o, oi) => o.t.map((t, si) => ({ t, oi, si }))).sort((a, b) => a.t - b.t || a.oi - b.oi)
+    const seen = new Set<number>()
+    let frame: number | null = null
+    for (const e of ev) {
+      if (frame !== e.t) { lines.push(`#${(c.event_s + e.t).toFixed(2)}`); frame = e.t }
+      const o = c.objects[e.oi]
+      const att = o.roll.length ? `|${o.roll[e.si].toFixed(1)}|${o.pitch[e.si].toFixed(1)}|${o.yaw[e.si].toFixed(1)}` : ''
+      const head = seen.has(e.oi) ? '' : `,Type=${o.kind === 'carrier' ? 'Sea+Watercraft+AircraftCarrier' : o.kind === 'bomb' ? 'Weapon+Bomb' : o.kind === 'missile' ? 'Weapon+Missile' : o.kind === 'helo' ? 'Air+Rotorcraft' : o.role === 'ground' ? 'Ground+Vehicle' : 'Air+FixedWing'}${o.name ? `,Name=${o.name}` : ''}${o.pilot ? `,Pilot=${o.pilot}` : ''}`
+      seen.add(e.oi)
+      lines.push(`${o.id},T=${o.lon[e.si].toFixed(6)}|${o.lat[e.si].toFixed(6)}|${o.alt[e.si].toFixed(1)}${att}${head}`)
+    }
     return new Blob([lines.join('\n')], { type: 'text/plain' })
   },
 
