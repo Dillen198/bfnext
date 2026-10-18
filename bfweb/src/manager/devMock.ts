@@ -322,11 +322,43 @@ const backupHandlers: Record<string, (args: Record<string, unknown>) => unknown>
   }),
 }
 
+const newboxDefaults = {
+  profile: 'range', install_python: true, install_postgres: true, pg_password: '', pg_port: 5432,
+  bot_dir: 'C:\\DCSServerBot', discord_token: '', guild_id: '', owner_id: '', admin_role: 'Staff', create_channels: true,
+  channels: { server_status: '', chat: '', range_status: '', range_results: '', greenie: '', admin: '', audit: '' },
+  install_dcs: true, dcs_dir: 'C:\\Program Files\\Eagle Dynamics\\DCS World Server', ed_user: '', ed_password: '',
+  install_srs: true, srs_dir: 'C:\\Program Files\\DCS-SimpleRadio-Standalone', tacview_setup: '',
+  instance: 'DCS.range', server_name: '[VS] Vector Strike | Training Range', server_password: '', max_players: 32,
+  dcs_port: 10328, srs_port: 5005, engine_source: 'github', engine_repo: 'Dillen198/bfnext', engine_channel: 'stable',
+  engine_folder: '', engine_public_key: '', public_api_url: 'https://range-api.vectorstrike.org',
+  range_site_url: 'https://range.vectorstrike.org', main_pc_ip: '', discord_client_secret: '',
+  firewall: true, overwrite_config: false, install_service: true,
+}
+
+const newboxHandlers: Record<string, (args: Record<string, unknown>) => unknown> = {
+  newbox_state: () => ({
+    defaults: newboxDefaults, hostname: 'RANGE-PC', account: 'RANGE-PC\\Admin', saved_games: 'C:\\Users\\Admin\\Saved Games',
+    have: [
+      { what: 'Python 3.11+', ok: false, detail: 'not found' },
+      { what: 'PostgreSQL', ok: false, detail: 'not found' },
+      { what: 'DCSServerBot', ok: false, detail: 'not at C:\\DCSServerBot' },
+      { what: 'DCS World Server', ok: false, detail: 'not installed' },
+      { what: 'SRS', ok: false, detail: 'not installed' },
+      { what: 'Tacview', ok: false, detail: 'not installed' },
+      { what: 'Saved Games\\DCS.range', ok: false, detail: 'C:\\Users\\Admin\\Saved Games\\DCS.range' },
+    ],
+    winget: true, dcs_free_bytes: 410e9, bot_version: 'v3.0.4.27', engine_files_needed: ['bfrange.dll', 'bfdb.exe', 'netidx.exe'],
+  }),
+  newbox_discord_check: () => ({ bot_name: 'Range Control', app_id: '1500000000000000000', in_guild: false, guild_name: null,
+    invite_url: 'https://discord.com/oauth2/authorize?client_id=1500000000000000000&scope=bot+applications.commands&permissions=8' }),
+  newbox_start: () => startMockJob('newbox'),
+}
+
 export function installDevMock(): void {
   ;(window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
     invoke: async (cmd: string, args: Record<string, unknown>) => {
       await new Promise(r => setTimeout(r, 150))
-      const h = handlers[cmd] ?? botHandlers[cmd] ?? backupHandlers[cmd]
+      const h = handlers[cmd] ?? botHandlers[cmd] ?? backupHandlers[cmd] ?? newboxHandlers[cmd]
       return h ? h(args ?? {}) : 'done (mock)'
     },
     transformCallback: () => 0,

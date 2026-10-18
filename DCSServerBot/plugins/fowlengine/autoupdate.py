@@ -112,8 +112,13 @@ AUTOUPDATE_SOURCE = "autoupdate"
 ROLLBACK_SOURCE = "rollback"
 
 # Every file a release may carry, and what it is.
-ENGINE_FILES = ("bflib.dll", "bfrange.dll", "bfdb.exe", "bftools.exe")
+ENGINE_FILES = ("bflib.dll", "bfrange.dll", "bfdb.exe", "bftools.exe", "netidx.exe")
 DLL_FILES = ("bflib.dll", "bfrange.dll")
+# What `files:` means when it is left out. netidx.exe is opt-in: a box set up
+# by hand runs whatever `cargo install netidx-tools` gave it, from PATH, and
+# a release must not quietly put a different one in front of that. A box Fowl
+# Engine Manager set up lists it.
+DEFAULT_FILES = tuple(f for f in ENGINE_FILES if f != "netidx.exe")
 BOT_PLUGIN_ZIP = "fowlengine-bot.zip"
 MANIFEST = "manifest.json"
 MANIFEST_SIG = "manifest.json.sig"
@@ -200,7 +205,7 @@ class UpdateConfig:
     tag_prefix: str = "engine-"
     channel: str = "stable"              # stable | beta
     check_minutes: float = 15.0
-    files: tuple = ENGINE_FILES
+    files: tuple = DEFAULT_FILES
     apply: str = "when_idle"
     bfdb_apply: str = "when_idle"
     idle_minutes: float = 10.0
@@ -1069,9 +1074,13 @@ class Updater:
                     self._sidecar_for(dll, meta, latest, names))
                 out.append(f"{dll} → {', '.join(names)}")
 
-        # bfdb.exe + bftools.exe -> the global staging dir
+        # bfdb.exe + bftools.exe + netidx.exe -> the global staging dir.
+        # netidx.exe goes in whenever procman next starts the resolver (the
+        # running one holds the file open): a bfdb restart with none running,
+        # or the next bot start.
         for name, live in (("bfdb.exe", getattr(self.procman, "exe", None) if self.procman else None),
-                           ("bftools.exe", self.bftools_path())):
+                           ("bftools.exe", self.bftools_path()),
+                           ("netidx.exe", getattr(self.procman, "netidx_install_path", None) if self.procman else None)):
             meta = files.get(name)
             if not meta or not self._want_file(name) or not live:
                 continue

@@ -5,13 +5,7 @@ import {
   mgr, type AppState, type BackupPlan, type BackupJob, type FoundBackup, type RestorePreview, type VerifyReport,
 } from './tauri'
 import { Card, Btn, Field, Note, Result, Pill } from './ui'
-import { useAction, input, OK, AMBER, RED, MONO, DIM, fmtWhen } from './style'
-
-function fmtBytes(b: number): string {
-  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(1)} GB`
-  if (b >= 1024 ** 2) return `${Math.round(b / 1024 ** 2)} MB`
-  return `${Math.max(1, Math.round(b / 1024))} KB`
-}
+import { useAction, input, OK, AMBER, RED, MONO, DIM, fmtWhen, fmtBytes } from './style'
 
 const check: React.CSSProperties = { fontSize: '0.72rem', cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: 8 }
 
@@ -120,10 +114,10 @@ function LogView({ job }: { job: BackupJob }) {
   )
 }
 
-function JobPanel({ job }: { job: BackupJob }) {
+export function JobPanel({ job }: { job: BackupJob }) {
   const pct = job.total_bytes > 0 ? Math.min(100, (job.done_bytes / job.total_bytes) * 100) : 0
   const failed = !!job.error
-  const title = job.kind === 'backup' ? 'Backup' : job.kind === 'verify' ? 'Backup check' : 'Restore'
+  const title = job.kind === 'backup' ? 'Backup' : job.kind === 'verify' ? 'Backup check' : job.kind === 'newbox' ? 'New box' : 'Restore'
   return (
     <Card
       icon={job.running ? <RotateCcw size={13} style={{ color: AMBER }} /> : failed || job.report?.ok === false ? <X size={13} style={{ color: RED }} /> : <CheckCircle2 size={13} style={{ color: OK }} />}

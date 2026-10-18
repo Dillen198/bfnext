@@ -32,13 +32,12 @@ class FowlEngineEventListener(EventListener["FowlEngine"]):
         if not config:
             return
             
+        # .get, not `in`: a range server's section sets these to null
         channel_id = None
-        if event_type == 'alert' and 'alerts_channel' in config:
+        if event_type in ['alert', 'capture', 'neutral', 'ready_to_capture'] and config.get('alerts_channel'):
             channel_id = int(config['alerts_channel'])
-        elif event_type == 'achievement' and 'achievements_channel' in config:
+        elif event_type == 'achievement' and config.get('achievements_channel'):
             channel_id = int(config['achievements_channel'])
-        elif event_type in ['capture', 'neutral', 'ready_to_capture'] and 'alerts_channel' in config:
-            channel_id = int(config['alerts_channel'])
             
         if channel_id:
             channel = self.plugin.bot.get_channel(channel_id)

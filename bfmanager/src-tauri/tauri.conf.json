@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5190",
     "beforeDevCommand": "npm --prefix ../bfweb run dev:manager",
-    "beforeBuildCommand": "npm --prefix ../bfweb run build:manager && node scripts/stage-bot.mjs"
+    "beforeBuildCommand": "npm --prefix ../bfweb run build:manager && node scripts/stage-bot.mjs && node scripts/stage-range.mjs"
   },
   "app": {
     "windows": [
@@ -52,7 +52,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "resources/bot/": "bot/"
+      "resources/bot/": "bot/",
+      "resources/range/": "range/"
     },
     "createUpdaterArtifacts": false,
     "windows": {

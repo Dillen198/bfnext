@@ -1161,6 +1161,16 @@ const RPC_FAIL_THRESHOLD: u32 = 3;
 /// How often the open breaker lets one call through to see if the engine is
 /// back. Matches the sortie-discovery poll.
 const RPC_PROBE_SECS: u64 = 10;
+/// Every procedure bfrange publishes (bfrange/src/bg.rs). A range instance is
+/// asked for nothing else.
+const RANGE_PROCS: &[&str] = &[
+    "query-range",
+    "query-range-catalog",
+    "query-weapons",
+    "range-spawn",
+    "range-despawn",
+    "range-reset-station",
+];
 
 /// How long an instance's `stats.jsonl` may go without growing before the
 /// reader says so, and how often it repeats itself afterwards. Long enough
@@ -1997,6 +2007,13 @@ impl StatsDb {
         guard_kind: RpcGuard,
     ) -> Result<netidx::publisher::Value> {
         use netidx_protocols::rpc::client::Proc;
+        // A campaign route that lands on a range (a request with no
+        // ?instance= on a range-only box, where the range is the default)
+        // would wait out its timeout on a procedure bfrange never publishes,
+        // and three of those open the breaker for the range's own calls too.
+        if inst.cfg.is_range() && !RANGE_PROCS.contains(&proc_name) {
+            bail!("instance {:?} is a training range: it has no {proc_name}", inst.cfg.id);
+        }
         let (subscriber, base) = match (&inst.subscriber, &inst.base) {
             (Some(s), Some(b)) => (s, b),
             _ => bail!("instance {:?} has no netidx base configured", inst.cfg.id),

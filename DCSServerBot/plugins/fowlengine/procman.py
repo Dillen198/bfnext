@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import socket
@@ -316,6 +317,8 @@ class Procman:
         # (the default) keeps the old single-server shape, where the flat
         # netidx_base/stats_jsonl/... keys above describe the only server.
         self.instances_cfg = list(self.cfg.get("instances") or [])
+        # Top-level, not under bfdb: the bot's own range links read it too.
+        self.range_site_url = (config or {}).get("range_site_url") or None
 
         self._bfdb: Optional[subprocess.Popen] = None
         self._resolver: Optional[subprocess.Popen] = None
@@ -336,6 +339,11 @@ class Procman:
         self._fail_count = 0
         self._first_fail: Optional[float] = None
         self._last_restart = 0.0
+        # "bfdb is not installed" was said; quiet until an exe appears
+        self._missing_exe_noted = False
+        # The port the resolver listens on, from its config (see
+        # _resolver_config); what the "is it up" checks probe.
+        self._resolver_port = NETIDX_RESOLVER_PORT
         self._last_swap_note: Optional[str] = None
 
         # For the Ops page: when bfdb last came up, how often it has been
@@ -366,6 +374,7 @@ class Procman:
         self.gci_cfg = (config or {}).get("gci", {}) or {}
         self.ops_key = ((config or {}).get("ops_api") or {}).get("api_key") or None
         self.instances_cfg = list(self.cfg.get("instances") or [])
+        self.range_site_url = (config or {}).get("range_site_url") or None
 
     # ---- config helpers ---------------------------------------------------
 
@@ -1097,6 +1106,11 @@ class Procman:
             "--news-image-style": (c.get("news_image_style") or None),
             "--news-image-daily-per-instance": _opt_int(c.get("news_image_daily_per_instance")),
             "--news-image-daily-global": _opt_int(c.get("news_image_daily_global")),
+            # The public origin of THIS bfdb, for absolute card-image URLs in
+            # the range's Discord embeds. bfdb defaults to the campaign box's
+            # api.vectorstrike.org, which is wrong on a range box of its own.
+            "--public-api-url": (c.get("public_api_url") or None),
+            "--range-site-url": self.range_site_url,
         }
         if instances_file:
             # Multi-instance: every per-server path/port/base lives in the file,
@@ -1203,7 +1217,7 @@ class Procman:
             "relaunches": self.relaunches,
             "last_exit_code": self.last_exit_code,
             "failing_checks": self._fail_count,
-            "resolver_listening": _port_listening("127.0.0.1", NETIDX_RESOLVER_PORT, 0.5),
+            "resolver_listening": _port_listening("127.0.0.1", self._resolver_port, 0.5),
             "resolver_owned": self._resolver is not None and self._resolver.poll() is None,
             "last_swap": self._last_swap_note,
             "probation": self.probation,
@@ -1229,6 +1243,108 @@ class Procman:
             out.append(a)
         return " ".join(out)
 
+    # ---- netidx resolver -------------------------------------------------
+
+    @property
+    def netidx_install_path(self) -> Optional[str]:
+        """Where a staged netidx.exe goes: `bfdb.netidx_exe`, else
+        <home>/netidx.exe. None without either."""
+        explicit = self._resolved("netidx_exe")
+        if explicit:
+            return explicit
+        return os.path.join(self.home, "netidx.exe") if self.home else None
+
+    def _netidx_cmd(self) -> str:
+        """The resolver binary: `bfdb.netidx_exe`, else <home>/netidx.exe once
+        one is there (a fresh box gets it from the release), else `netidx` on
+        PATH (a box set up with `cargo install netidx-tools`). A bare name is
+        looked up from the bot's own folder on Windows, not from `home`, hence
+        the full path."""
+        local = self.netidx_install_path
+        if local and (self._resolved("netidx_exe") or os.path.exists(local)):
+            return local
+        return "netidx"
+
+    def _resolver_config(self) -> Optional[str]:
+        """`bfdb.netidx_resolver_config`, else a loopback-only one written to
+        <home>/netidx-resolver.json the first time (resolver-server will not
+        start without -c)."""
+        rcfg = self._resolved("netidx_resolver_config")
+        if rcfg or not self.home:
+            return rcfg
+        path = os.path.join(self.home, "netidx-resolver.json")
+        if not os.path.exists(path):
+            cfg = {
+                "parent": None,
+                "children": [],
+                "member_servers": [{
+                    "pid_file": "",
+                    "addr": f"127.0.0.1:{NETIDX_RESOLVER_PORT}",
+                    "max_connections": 768,
+                    "hello_timeout": 10,
+                    "reader_ttl": 60,
+                    "writer_ttl": 120,
+                    "id_map_type": "DoNotMap",
+                    "auth": "Anonymous",
+                }],
+                "perms": {"/": {"Anonymous": "swlpd"}},
+            }
+            try:
+                os.makedirs(self.home, exist_ok=True)
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(cfg, fh, indent=4)
+                self.log.info(f"FowlEngine/procman: wrote a loopback netidx resolver config to {path}")
+            except OSError as ex:
+                self.log.error(f"FowlEngine/procman: failed to write {path}: {ex}")
+                return None
+        return path
+
+    @staticmethod
+    def _resolver_port_of(rcfg: Optional[str]) -> int:
+        """The port the resolver config says it listens on (its first member
+        server's `addr`), else netidx's usual 4564."""
+        if rcfg:
+            try:
+                with open(rcfg, "r", encoding="utf-8") as fh:
+                    addr = str(json.load(fh)["member_servers"][0]["addr"])
+                port = addr.rpartition(":")[2]
+                if port.isdigit():
+                    return int(port)
+            except (OSError, ValueError, KeyError, IndexError, TypeError):
+                pass
+        return NETIDX_RESOLVER_PORT
+
+    def _ensure_client_config(self) -> None:
+        """bfdb, and bfrange inside DCS (the same Windows account), read
+        netidx's default client config and refuse to start without one. A box
+        set up by hand has had one since day one; a fresh box has none, so the
+        loopback one is written where netidx looks first,
+        %APPDATA%\\netidx\\client.json. An existing one is never touched."""
+        if os.environ.get("NETIDX_CFG"):
+            return
+        appdata = os.environ.get("APPDATA")
+        if not appdata:
+            return
+        path = os.path.join(appdata, "netidx", "client.json")
+        others = [
+            os.path.join(os.path.expanduser("~"), ".config", "netidx", "client.json"),
+            r"C:\netidx\client.json",
+        ]
+        if any(os.path.exists(c) for c in [path, *others]):
+            return
+        client = {
+            "base": "/",
+            "addrs": [[f"127.0.0.1:{self._resolver_port}", "Anonymous"]],
+            "default_auth": "Anonymous",
+        }
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(client, fh, indent=2)
+            self.log.warning(f"FowlEngine/procman: no netidx client config on this PC -- wrote a loopback one to {path}")
+        except OSError as ex:
+            self.log.error(f"FowlEngine/procman: failed to write {path}: {ex} -- bfdb will not start without one")
+
     async def _start_resolver(self) -> None:
         # One resolver serves every instance -- they are kept apart by their
         # distinct netidx bases, not by separate resolvers.
@@ -1237,41 +1353,56 @@ class Procman:
                 return
         elif not self.cfg.get("netidx_base"):
             return
-        if _port_listening("127.0.0.1", NETIDX_RESOLVER_PORT):
+        override = self.cfg.get("netidx_resolver_cmd")
+        rcfg = None if override else self._resolver_config()
+        self._resolver_port = port = self._resolver_port_of(rcfg)
+        self._ensure_client_config()
+        if _port_listening("127.0.0.1", port):
             self.log.info(
                 "FowlEngine/procman: netidx resolver already listening on "
-                f"127.0.0.1:{NETIDX_RESOLVER_PORT} -- leaving it alone"
+                f"127.0.0.1:{port} -- leaving it alone"
             )
             return
         # don't stack a second resolver on top of one that's still coming up
         if self._resolver is not None and self._resolver.poll() is None:
             self.log.info("FowlEngine/procman: netidx resolver child already spawned -- waiting on it")
         else:
-            rcfg = self._resolved("netidx_resolver_config")
-            override = self.cfg.get("netidx_resolver_cmd")
             if override:
                 # exact command wins -- use it to pin whatever your installed
                 # netidx version actually wants (run it by hand first to find out)
-                cmd = list(override)
+                cmd = shlex.split(override, posix=False) if isinstance(override, str) else list(override)
             else:
-                cmd = ["netidx", "resolver-server", "-f"]
+                # nothing runs it right now, so a staged netidx.exe can go in
+                target = self.netidx_install_path
+                if target and self.pending_info("netidx.exe"):
+                    note = self.apply_staged("netidx.exe", target)
+                    if note:
+                        await self._safe_notify(f"{icon('build')} netidx: {note}")
+                cmd = [self._netidx_cmd(), "resolver-server", "-f"]
                 if rcfg:
                     cmd += ["-c", rcfg]
             log_path = os.path.join(self.home, "procman-netidx.log") if self.home else None
             try:
                 out = open(log_path, "ab", buffering=0) if log_path else subprocess.DEVNULL
-                self._resolver = subprocess.Popen(cmd, cwd=self.home or None, stdout=out, stderr=out)
+                try:
+                    self._resolver = subprocess.Popen(
+                        cmd, cwd=self.home or None, stdout=out, stderr=out,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                finally:
+                    if out is not subprocess.DEVNULL:
+                        out.close()  # the child has its own handle
                 self.log.info(f"FowlEngine/procman: spawned netidx resolver ({' '.join(cmd)}) -> {log_path}")
             except OSError as ex:
                 self.log.error(
-                    f"FowlEngine/procman: could not start netidx resolver ({ex}) -- "
-                    "is netidx-tools on PATH for the bot's account? live engine features will be degraded"
+                    f"FowlEngine/procman: could not start netidx resolver ({ex}) -- no netidx.exe at "
+                    f"{self.netidx_install_path} (bfdb.netidx_exe) and none on PATH for the bot's account? "
+                    "live engine features will be degraded"
                 )
                 return
         # give it a moment to bind before bfdb tries to subscribe
         for _ in range(20):
-            if _port_listening("127.0.0.1", NETIDX_RESOLVER_PORT):
-                self.log.info(f"FowlEngine/procman: netidx resolver is listening on 127.0.0.1:{NETIDX_RESOLVER_PORT}")
+            if _port_listening("127.0.0.1", port):
+                self.log.info(f"FowlEngine/procman: netidx resolver is listening on 127.0.0.1:{port}")
                 return
             if self._resolver is not None and self._resolver.poll() is not None:
                 tail = ""
@@ -1289,7 +1420,7 @@ class Procman:
                 return
             await asyncio.sleep(0.25)
         self.log.error(
-            f"FowlEngine/procman: netidx resolver still not listening on 127.0.0.1:{NETIDX_RESOLVER_PORT} "
+            f"FowlEngine/procman: netidx resolver still not listening on 127.0.0.1:{port} "
             "after 5s -- check procman-netidx.log and %APPDATA%\\netidx\\client.json for the bot's account"
         )
 
@@ -1508,13 +1639,18 @@ class Procman:
             )
 
     async def stop(self, *, stop_resolver: Optional[bool] = None) -> None:
+        """Stop bfdb for good (bot shutdown). `own_resolver: true` takes the
+        resolver down with it."""
+        if stop_resolver is None:
+            stop_resolver = bool(self.cfg.get("own_resolver"))
         async with self._op_lock:
             await self._stop_unlocked(stop_resolver=stop_resolver)
 
-    async def _stop_unlocked(self, *, stop_resolver: Optional[bool] = None) -> None:
+    async def _stop_unlocked(self, *, stop_resolver: bool = False) -> None:
+        # A bfdb restart leaves the resolver alone even when we own it: the
+        # engine in DCS publishes through it, and loses everything it
+        # published when it goes.
         await self._stop_bfdb()
-        if stop_resolver is None:
-            stop_resolver = bool(self.cfg.get("own_resolver"))
         if stop_resolver:
             await self._terminate(self._resolver, "netidx resolver")
             self._resolver = None
@@ -1711,6 +1847,19 @@ class Procman:
         cooldown = int(self.cfg.get("restart_cooldown", 120))
         if time.time() - self._last_restart < cooldown:
             return
+
+        if not self.is_running() and not (self.exe and os.path.exists(self.exe)) \
+                and not self.pending_info("bfdb.exe"):
+            # A fresh box waiting for its first bfdb.exe: nothing to relaunch,
+            # and saying so every cooldown would bury the ops channel.
+            if not self._missing_exe_noted:
+                self._missing_exe_noted = True
+                await self._safe_notify(
+                    f"{icon('warning')} **bfdb is not installed** (no `{self.exe}`) -- it starts as "
+                    f"soon as auto-update or an admin-channel upload stages one."
+                )
+            return
+        self._missing_exe_noted = False
 
         why = "hung" if self.is_running() else "not running"
         self.log.error(f"FowlEngine/procman: bfdb {why} -- relaunching")

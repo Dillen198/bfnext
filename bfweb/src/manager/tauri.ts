@@ -291,7 +291,7 @@ export interface BackupOptions {
 
 export interface BackupJob {
   id: number
-  kind: 'backup' | 'restore' | 'verify'
+  kind: 'backup' | 'restore' | 'verify' | 'newbox'
   running: boolean
   phase: string
   done_bytes: number
@@ -395,6 +395,80 @@ export interface RestoreOptions {
   desktop_user: string | null
 }
 
+// ── New box (newbox.rs) ──────────────────────────────────────────────────────
+
+export interface NewBoxChannels {
+  server_status: string
+  chat: string
+  range_status: string
+  range_results: string
+  greenie: string
+  admin: string
+  audit: string
+}
+
+export interface NewBoxOptions {
+  profile: 'range'
+  install_python: boolean
+  install_postgres: boolean
+  pg_password: string
+  pg_port: number
+  bot_dir: string
+  discord_token: string
+  guild_id: string
+  owner_id: string
+  admin_role: string
+  create_channels: boolean
+  channels: NewBoxChannels
+  install_dcs: boolean
+  dcs_dir: string
+  ed_user: string
+  ed_password: string
+  install_srs: boolean
+  srs_dir: string
+  tacview_setup: string
+  instance: string
+  server_name: string
+  server_password: string
+  max_players: number
+  dcs_port: number
+  srs_port: number
+  engine_source: 'github' | 'folder' | 'skip'
+  engine_repo: string
+  engine_channel: 'stable' | 'beta'
+  engine_folder: string
+  engine_public_key: string
+  public_api_url: string
+  range_site_url: string
+  main_pc_ip: string
+  discord_client_secret: string
+  firewall: boolean
+  overwrite_config: boolean
+  install_service: boolean
+}
+
+export interface NewBoxHave { what: string; ok: boolean; detail: string }
+
+export interface NewBoxState {
+  defaults: NewBoxOptions
+  hostname: string
+  account: string
+  saved_games: string
+  have: NewBoxHave[]
+  winget: boolean
+  dcs_free_bytes: number | null
+  bot_version: string
+  engine_files_needed: string[]
+}
+
+export interface DiscordCheck {
+  bot_name: string
+  app_id: string
+  invite_url: string
+  in_guild: boolean
+  guild_name: string | null
+}
+
 // ── commands ─────────────────────────────────────────────────────────────────
 
 export const mgr = {
@@ -438,6 +512,11 @@ export const mgr = {
   restoreStart:     (opts: RestoreOptions) => invoke<void>('restore_start', { opts }),
   revealBackup:     (path: string) => invoke<void>('reveal_backup', { path }),
   verifyBackup:     (zip: string) => invoke<void>('verify_backup', { zip }),
+  newboxState:      () => invoke<NewBoxState>('newbox_state'),
+  newboxStart:      (opts: NewBoxOptions) => invoke<void>('newbox_start', { opts }),
+  newboxDiscordCheck: (token: string, guildId: string) =>
+                      invoke<DiscordCheck>('newbox_discord_check', { token, guildId }),
+  newboxDcsLogin:   (dcsDir: string, instance: string) => invoke<void>('newbox_dcs_login', { dcsDir, instance }),
 }
 
 // ── the api.ts transport: the OPS page's requests, answered locally ──────────

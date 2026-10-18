@@ -12,6 +12,7 @@ pub mod bot;
 pub mod botcfg;
 pub mod config;
 pub mod desktop;
+pub mod newbox;
 pub mod update;
 #[cfg(windows)]
 pub mod winsvc;
@@ -554,6 +555,30 @@ async fn reveal_backup(path: String) -> CmdResult<()> {
     blocking(move || backup::reveal(&path)).await
 }
 
+// ---- New box: a fresh PC set up end to end (newbox.rs) -------------------------------
+//
+// Runs as a job in the same slot as backup/restore; the tab polls backup_job.
+
+#[tauri::command]
+async fn newbox_state() -> CmdResult<newbox::NewBoxState> {
+    blocking(|| Ok(newbox::inspect())).await
+}
+
+#[tauri::command]
+async fn newbox_start(opts: newbox::NewBoxOptions) -> CmdResult<()> {
+    blocking(move || newbox::start(opts)).await
+}
+
+#[tauri::command]
+async fn newbox_discord_check(token: String, guild_id: String) -> CmdResult<newbox::DiscordCheck> {
+    blocking(move || newbox::discord_check(&token, &guild_id)).await
+}
+
+#[tauri::command]
+async fn newbox_dcs_login(dcs_dir: String, instance: String) -> CmdResult<()> {
+    blocking(move || newbox::open_dcs_login(&dcs_dir, &instance)).await
+}
+
 // ---- the window lives in the tray -------------------------------------------------
 //
 // Closing the window hides it; the tray icon brings it back and its menu can
@@ -717,6 +742,10 @@ pub fn run() {
             restore_start,
             reveal_backup,
             verify_backup,
+            newbox_state,
+            newbox_start,
+            newbox_discord_check,
+            newbox_dcs_login,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Fowl Engine Manager");

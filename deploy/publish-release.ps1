@@ -41,7 +41,11 @@ param(
     [string]$Tag,
     [ValidateSet("stable", "beta")][string]$Channel = "stable",
     [string]$Notes = "",
-    [string[]]$Files = @("bflib.dll", "bfdb.exe", "bftools.exe", "bfrange.dll"),
+    [string[]]$Files = @("bflib.dll", "bfdb.exe", "bftools.exe", "bfrange.dll", "netidx.exe"),
+    # netidx.exe is the resolver procman runs. Not ours: netidx-tools from
+    # crates.io, pinned to the netidx line the engine and bfdb link against
+    # (Cargo.lock), so a fresh box gets a resolver that speaks their protocol.
+    [string]$NetidxToolsVersion = "0.27.2",
     [switch]$WorkingTree,
     [switch]$AllowDirty,
     [string]$Folder,
@@ -319,6 +323,15 @@ try {
             try { Run "cargo build --release (bftools)" { cargo build --release } } finally { Pop-Location }
             $env:CARGO_TARGET_DIR = $TargetDir
         }
+        if ($want["netidx.exe"]) {
+            # --root keeps it out of ~/.cargo/bin; re-running with the same
+            # version is a no-op, so this costs one build per pin
+            $env:CARGO_TARGET_DIR = "$TargetDir-netidx"
+            Run "cargo install netidx-tools $NetidxToolsVersion" {
+                cargo install netidx-tools --version "=$NetidxToolsVersion" --locked --root "$TargetDir-netidx"
+            }
+            $env:CARGO_TARGET_DIR = $TargetDir
+        }
     }
 
     # ---- collect + manifest ---------------------------------------------------------
@@ -327,12 +340,13 @@ try {
     New-Item -ItemType Directory -Force $OutDir -ErrorAction Stop | Out-Null
     $built = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     $manifestFiles = [ordered]@{}
-    foreach ($name in @("bflib.dll", "bfrange.dll", "bfdb.exe", "bftools.exe")) {
+    foreach ($name in @("bflib.dll", "bfrange.dll", "bfdb.exe", "bftools.exe", "netidx.exe")) {
         if (-not $want[$name]) { continue }
         $from = if ($name -eq "bftools.exe") {
             @("$TargetDir-bftools\release\bftools.exe", (Join-Path $src "bftools\target\release\bftools.exe")) |
                 Where-Object { Test-Path $_ } | Select-Object -First 1
-        } else { Join-Path $TargetDir "release\$name" }
+        } elseif ($name -eq "netidx.exe") { "$TargetDir-netidx\bin\netidx.exe" }
+        else { Join-Path $TargetDir "release\$name" }
         if (-not $from -or -not (Test-Path $from)) { throw "$name was not built (looked for $from)" }
         Copy-Item $from (Join-Path $OutDir $name) -ErrorAction Stop
         $item = Get-Item (Join-Path $OutDir $name)
@@ -340,7 +354,7 @@ try {
             sha256 = (Get-FileHash $item.FullName -Algorithm SHA256).Hash.ToLower()
             size   = $item.Length
             # with -SkipBuild nobody knows which commit produced the file
-            git    = if ($SkipBuild) { $null } else { $gitLabel }
+            git    = if ($SkipBuild) { $null } elseif ($name -eq "netidx.exe") { "netidx-tools $NetidxToolsVersion" } else { $gitLabel }
             built  = $item.LastWriteTimeUtc.ToString("yyyy-MM-ddTHH:mm:ssZ")
         }
         Say ("  {0,-12} {1,8:N1} MB  {2}" -f $name, ($item.Length / 1MB), $manifestFiles[$name].sha256.Substring(0, 12)) "Gray"

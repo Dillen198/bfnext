@@ -3482,6 +3482,14 @@ async fn api_admin_reset(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
+    // On a range-only box the range is the default, and with one instance a
+    // reset takes the whole-database path: every pilot and round gone.
+    if inst.cfg.is_range() {
+        return Err(Error(websec::bad_request(format!(
+            "{} is a training range: it has no campaign to reset",
+            inst.id
+        ))));
+    }
     task::block_in_place(|| db.reset_campaign_data_for(&inst))?;
     log::info!("ADMIN: campaign data reset by admin");
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
@@ -7300,6 +7308,14 @@ async fn api_instances(
             })
         })
         .collect();
+    // "default" names a row of this list, or nothing: on a range-only box the
+    // default is the range, which the campaign listing leaves out, and a
+    // default the client can't find makes it query that range anyway.
+    let default = if rows.iter().any(|r| r["id"] == default.as_str()) {
+        serde_json::Value::from(default)
+    } else {
+        rows.first().map(|r| r["id"].clone()).unwrap_or(serde_json::Value::Null)
+    };
     Ok(warp::reply::json(&serde_json::json!({
         "default": default,
         "instances": rows,
@@ -8182,7 +8198,8 @@ async fn main() -> Result<()> {
             .as_ref()
             .and_then(|p| gci::from_file(p))
             .or_else(|| {
-                if id == *db.instances().default_id() {
+                // never a range's: it has no GCI picture to serve
+                if id == *db.instances().default_id() && !cfg.is_range() {
                     gci_cfg.clone()
                 } else {
                     None

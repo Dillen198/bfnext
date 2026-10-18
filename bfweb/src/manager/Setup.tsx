@@ -20,7 +20,9 @@ function Step({ n, title, done, children }: { n: number; title: string; done: bo
   )
 }
 
-export default function Setup({ state: s, onDone, onRestore }: { state: AppState; onDone: () => void; onRestore?: () => void }) {
+export default function Setup({ state: s, onDone, onRestore, onNewBox }: {
+  state: AppState; onDone: () => void; onRestore?: () => void; onNewBox?: () => void
+}) {
   const act = useAction()
   const [dir, setDir] = useState(s.config.bot_dir ?? '')
   const [found, setFound] = useState<string[] | null>(null)
@@ -78,6 +80,13 @@ export default function Setup({ state: s, onDone, onRestore }: { state: AppState
           Reinstalled Windows or moving to a new PC? If you have a Fowl Engine backup zip, restore it instead: it puts DCSServerBot,
           the DCS servers, the campaign and the database back and installs the service.{' '}
           <Btn primary onClick={onRestore}>Restore from a backup</Btn>
+        </Note>
+      )}
+      {!s.bot_dir_valid && onNewBox && (
+        <Note>
+          A fresh PC with nothing on it yet? New box installs everything -- Python, PostgreSQL, DCSServerBot, DCS World Server,
+          SRS -- and sets it up as the training range, with its own Discord bot.{' '}
+          <Btn onClick={onNewBox}>Set up a new box</Btn>
         </Note>
       )}
       <Result r={act.result} onClose={act.clear} />

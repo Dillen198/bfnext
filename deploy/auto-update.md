@@ -92,7 +92,17 @@ The key is a `tauri signer` (minisign) key, the same kind Fowl Engine Manager
 uses, but a **separate** one -- a leaked manager key must not be able to ship
 an engine, and the other way round.
 
-One-time, on the PC you publish from (user action):
+**The current key** was made on 2026-10-18 on the dev PC:
+`%USERPROFILE%\.tauri\fowl-engine.key` (no password, like the manager key),
+key id `44D2C7BA11CC8E7D`, public line
+`RWR9jswRusfSRC2fVoaMvrwZddjj3YniodFFkNwbp3y1f7hH3BddUIB0`. Its public half is
+also `bfmanager/src-tauri/engine.pub`, which Fowl Engine Manager's New box
+wizard checks engine releases with and writes into the new box's
+`fowlengine.yaml`. Back up the secret key off that PC: losing it means
+rotating (below).
+
+One-time, on the PC you publish from (user action; done once already, see
+above):
 
 ```powershell
 cd bfmanager; npm ci --ignore-scripts

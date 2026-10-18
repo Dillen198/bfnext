@@ -181,8 +181,14 @@ DEFAULT:
     site_address: "127.0.0.1:8766"
     netidx_base: "/local/fowl/campaign"          # blank -> run bfdb offline, no resolver
     sortie: ""                                   # leave blank: bfdb asks the resolver where the engine publishes. NOT a display name -- that is `label`.
-    netidx_resolver_config: "E:\\Github\\bfnext-vector\\netidx-resolver.json"
-    own_resolver: false                          # true -> also stop the resolver on bot shutdown
+    netidx_resolver_config: "E:\\Github\\bfnext-vector\\netidx-resolver.json"   # blank -> a loopback one, written to <home>\netidx-resolver.json
+    # netidx_exe: ""                             # the resolver binary; blank -> <home>\netidx.exe if there, else `netidx` on PATH
+    own_resolver: false                          # true -> also stop the resolver on bot shutdown (never on a bfdb restart)
+    # With no netidx client config on the PC (%APPDATA%\netidx\client.json,
+    # ~\.config\netidx\client.json, C:\netidx\client.json, NETIDX_CFG) a
+    # loopback one is written to %APPDATA%\netidx\client.json: bfdb and the
+    # engine inside DCS will not start without one.
+    # public_api_url: "https://api.vectorstrike.org"   # this bfdb's public origin, for range card images in Discord
     engine_config: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\ODFv2_CFG"
     config: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\campaign.json"
     stats_jsonl: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\Logs\\stats.jsonl"
@@ -460,7 +466,9 @@ DEFAULT:
     # file's contents). Every release's manifest.json.sig must verify against
     # it; without it nothing is ever staged. See deploy/auto-update.md,
     # "Signing releases". Not the Fowl Engine Manager key -- a separate one.
-    public_key: ""
+    # This is the engine key made on 2026-10-18 (key id 44D2C7BA11CC8E7D,
+    # also bfmanager/src-tauri/engine.pub).
+    public_key: "RWR9jswRusfSRC2fVoaMvrwZddjj3YniodFFkNwbp3y1f7hH3BddUIB0"
     source: github                 # github | folder
     repo: "Dillen198/bfnext"
     token: ""                      # optional: a private repo, or to lift the 60/h API limit
@@ -469,6 +477,10 @@ DEFAULT:
     channel: stable                # (OPS) stable | beta (beta also takes GitHub pre-releases)
     check_minutes: 15              # (OPS)
     files: [bflib.dll, bfrange.dll, bfdb.exe, bftools.exe]
+    # A training range box of its own: [bfrange.dll, bfdb.exe, netidx.exe].
+    # netidx.exe is never fetched unless listed here; it goes to
+    # bfdb.netidx_exe (default <bfdb.home>\netidx.exe) the next time the
+    # resolver is started.
     # When a staged build goes live:
     #   next_restart  at the next scheduled DCS restart (what a manual upload does)
     #   when_idle     as soon as that DCS server has had no players for idle_minutes

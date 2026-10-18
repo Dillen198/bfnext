@@ -1782,3 +1782,117 @@ def test_bot_zip_carries_community_plugin_code_but_never_their_yaml():
     here = Path(__file__).resolve().parent.parent / "plugins"
     for p in au.COMMUNITY_PLUGINS:
         assert (here / p / "commands.py").is_file(), p
+
+
+# ---- a range-only box: netidx from the release, no hand-made config ---------------
+
+def _bare_pm(tmp_path, **bfdb):
+    cfg = {"bfdb": {"manage": True, "home": str(tmp_path), "exe": str(tmp_path / "bfdb.exe"), **bfdb}}
+    notes = []
+
+    async def notify(msg):
+        notes.append(msg)
+    pm = pmmod.Procman(log, cfg, notify)
+    return pm, notes
+
+
+def test_netidx_exe_from_home_then_path(tmp_path):
+    pm, _ = _bare_pm(tmp_path)
+    # nothing installed: PATH, as on a box set up with cargo install
+    assert pm._netidx_cmd() == "netidx"
+    assert pm.netidx_install_path == str(tmp_path / "netidx.exe")
+    (tmp_path / "netidx.exe").write_bytes(b"x")
+    assert pm._netidx_cmd() == str(tmp_path / "netidx.exe")
+    pm2, _ = _bare_pm(tmp_path, netidx_exe=str(tmp_path / "bin" / "netidx.exe"))
+    assert pm2._netidx_cmd() == str(tmp_path / "bin" / "netidx.exe")
+
+
+def test_resolver_config_written_once_and_port_read(tmp_path):
+    pm, _ = _bare_pm(tmp_path)
+    path = pm._resolver_config()
+    assert path == str(tmp_path / "netidx-resolver.json")
+    cfg = json.loads(Path(path).read_text())
+    assert cfg["member_servers"][0]["addr"] == "127.0.0.1:4564"
+    assert pm._resolver_port_of(path) == 4564
+    cfg["member_servers"][0]["addr"] = "127.0.0.1:4570"
+    Path(path).write_text(json.dumps(cfg))
+    assert pm._resolver_config() == path  # an existing one is left as it is
+    assert pm._resolver_port_of(path) == 4570
+    assert pm._resolver_port_of(None) == 4564
+    explicit = tmp_path / "mine.json"
+    pm2, _ = _bare_pm(tmp_path, netidx_resolver_config=str(explicit))
+    assert pm2._resolver_config() == str(explicit)
+
+
+def test_client_config_only_when_none_exists(tmp_path, monkeypatch):
+    appdata = tmp_path / "appdata"
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "profile"))
+    monkeypatch.setenv("HOME", str(tmp_path / "profile"))
+    monkeypatch.delenv("NETIDX_CFG", raising=False)
+    monkeypatch.setattr(pmmod.os.path, "exists",
+                        lambda p, _real=os.path.exists: False if p == r"C:\netidx\client.json" else _real(p))
+    pm, _ = _bare_pm(tmp_path)
+    pm._resolver_port = 4570
+    pm._ensure_client_config()
+    client = json.loads((appdata / "netidx" / "client.json").read_text())
+    assert client["addrs"] == [["127.0.0.1:4570", "Anonymous"]]
+    (appdata / "netidx" / "client.json").write_text("{}")
+    pm._ensure_client_config()
+    assert (appdata / "netidx" / "client.json").read_text() == "{}"  # never overwritten
+
+
+def test_missing_bfdb_exe_is_said_once(tmp_path):
+    pm, notes = _bare_pm(tmp_path, health_failures=1, restart_cooldown=0)
+
+    async def unhealthy():
+        return False
+    pm.health_ok = unhealthy
+    restarted = []
+
+    async def fake_restart(pw):
+        restarted.append(pw)
+    pm.restart = fake_restart
+
+    async def go():
+        for _ in range(3):
+            await pm.supervise_tick("pw")
+    asyncio.run(go())
+    assert not restarted
+    assert len(notes) == 1 and "not installed" in notes[0]
+
+
+def test_bfdb_restart_keeps_an_owned_resolver(tmp_path):
+    pm, _ = _bare_pm(tmp_path, own_resolver=True)
+    stopped = []
+
+    async def fake_stop_bfdb():
+        stopped.append("bfdb")
+
+    async def fake_term(proc, label):
+        stopped.append(label)
+    pm._stop_bfdb = fake_stop_bfdb
+    pm._terminate = fake_term
+    asyncio.run(pm._stop_unlocked())
+    assert stopped == ["bfdb"]
+    asyncio.run(pm.stop())
+    assert stopped == ["bfdb", "bfdb", "netidx resolver"]
+
+
+def test_public_api_and_range_site_flags(tmp_path):
+    cfg = {"range_site_url": "https://range.example.org",
+           "bfdb": {"manage": True, "home": str(tmp_path), "public_api_url": "https://range-api.example.org"}}
+
+    async def notify(msg):
+        pass
+    pm = pmmod.Procman(log, cfg, notify)
+    args = pm._build_args("pw", False, instances_file=str(tmp_path / "instances.json"))
+    assert args[args.index("--public-api-url") + 1] == "https://range-api.example.org"
+    assert args[args.index("--range-site-url") + 1] == "https://range.example.org"
+
+
+def test_netidx_exe_is_opt_in():
+    assert "netidx.exe" in au.ENGINE_FILES
+    assert "netidx.exe" not in au.UpdateConfig().files
+    c = au.UpdateConfig.from_dicts({"files": ["bfrange.dll", "bfdb.exe", "netidx.exe"]})
+    assert c.files == ("bfrange.dll", "bfdb.exe", "netidx.exe")

@@ -154,7 +154,7 @@ pub struct Manifest {
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct Job {
     pub id: u64,
-    /// backup | restore
+    /// backup | restore | verify | newbox
     pub kind: String,
     pub running: bool,
     pub phase: String,
@@ -182,7 +182,7 @@ static JOB: Mutex<Option<Job>> = Mutex::new(None);
 static DONE: AtomicU64 = AtomicU64::new(0);
 static CANCEL: AtomicBool = AtomicBool::new(false);
 
-fn with_job(f: impl FnOnce(&mut Job)) {
+pub(crate) fn with_job(f: impl FnOnce(&mut Job)) {
     if let Ok(mut g) = JOB.lock() {
         if let Some(j) = g.as_mut() {
             f(j);
@@ -190,7 +190,7 @@ fn with_job(f: impl FnOnce(&mut Job)) {
     }
 }
 
-fn phase(p: &str) {
+pub(crate) fn phase(p: &str) {
     log::info!("{p}");
     with_job(|j| {
         j.phase = p.to_string();
@@ -198,12 +198,12 @@ fn phase(p: &str) {
     });
 }
 
-fn note(line: String) {
+pub(crate) fn note(line: String) {
     log::info!("{line}");
     with_job(|j| j.log.push(line));
 }
 
-fn warn(line: String) {
+pub(crate) fn warn(line: String) {
     log::warn!("{line}");
     with_job(|j| {
         j.log.push(format!("WARNING: {line}"));
@@ -211,11 +211,11 @@ fn warn(line: String) {
     });
 }
 
-fn next_step(s: String) {
+pub(crate) fn next_step(s: String) {
     with_job(|j| j.next_steps.push(s));
 }
 
-fn cancelled() -> Result<()> {
+pub(crate) fn cancelled() -> Result<()> {
     if CANCEL.load(Ordering::Relaxed) {
         bail!("cancelled");
     }
@@ -235,7 +235,17 @@ pub fn cancel_job() {
     CANCEL.store(true, Ordering::Relaxed);
 }
 
-fn spawn(kind: &str, f: impl FnOnce() -> Result<String> + Send + 'static) -> Result<()> {
+/// The progress bar's position, for a job that measures something other
+/// than bytes read through `Counting` (a folder an installer is filling).
+pub(crate) fn set_done(n: u64) {
+    DONE.store(n, Ordering::Relaxed);
+}
+
+pub(crate) fn is_cancelled() -> bool {
+    CANCEL.load(Ordering::Relaxed)
+}
+
+pub(crate) fn spawn(kind: &str, f: impl FnOnce() -> Result<String> + Send + 'static) -> Result<()> {
     let mut g = JOB.lock().map_err(|_| anyhow!("job lock poisoned"))?;
     if g.as_ref().map(|j| j.running).unwrap_or(false) {
         bail!("a {} is already running", g.as_ref().map(|j| j.kind.clone()).unwrap_or_default());
@@ -331,7 +341,7 @@ fn now() -> String {
 
 // ---- small helpers ----------------------------------------------------------------------
 
-fn hidden(program: &str) -> std::process::Command {
+pub(crate) fn hidden(program: &str) -> std::process::Command {
     #[allow(unused_mut)]
     let mut c = std::process::Command::new(program);
     #[cfg(windows)]
@@ -703,7 +713,7 @@ pub fn postgres_bins() -> Vec<(u32, PathBuf)> {
     found
 }
 
-fn exe(bin: &Path, name: &str) -> PathBuf {
+pub(crate) fn exe(bin: &Path, name: &str) -> PathBuf {
     let p = bin.join(format!("{name}.exe"));
     if p.is_file() {
         p
@@ -798,7 +808,7 @@ pub fn netidx_config_dirs(profile: Option<&Path>) -> Vec<PathBuf> {
 /// Put `dir` on the machine PATH if it isn't there, so procman (in the bot's
 /// session) finds netidx.exe. Refuses to write a PATH it couldn't read
 /// properly rather than risk clobbering it.
-fn ensure_on_machine_path(dir: &Path) -> Result<bool> {
+pub(crate) fn ensure_on_machine_path(dir: &Path) -> Result<bool> {
     // the round-trip test must not edit the dev box's real PATH
     if cfg!(test) {
         return Ok(false);
@@ -1419,8 +1429,8 @@ impl Drop for RestartBot {
     }
 }
 
-struct Counting<R> {
-    inner: R,
+pub(crate) struct Counting<R> {
+    pub(crate) inner: R,
 }
 
 impl<R: Read> Read for Counting<R> {
@@ -2506,7 +2516,7 @@ fn check_target(to: &str) -> Result<PathBuf> {
     Ok(p)
 }
 
-fn winget(args: &[&str]) -> Result<()> {
+pub(crate) fn winget(args: &[&str]) -> Result<()> {
     let out = hidden("winget.exe")
         .args(args)
         .args(["--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"])
@@ -2910,11 +2920,11 @@ fn run_restore(opts: RestoreOptions) -> Result<String> {
     ))
 }
 
-fn sql_lit(s: &str) -> String {
+pub(crate) fn sql_lit(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-fn sql_ident(s: &str) -> String {
+pub(crate) fn sql_ident(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 

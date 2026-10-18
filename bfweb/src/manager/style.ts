@@ -38,6 +38,12 @@ export function useAction() {
   return { busy, result, run, clear: () => setResult(null) }
 }
 
+export function fmtBytes(b: number): string {
+  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(1)} GB`
+  if (b >= 1024 ** 2) return `${Math.round(b / 1024 ** 2)} MB`
+  return `${Math.max(1, Math.round(b / 1024))} KB`
+}
+
 export function fmtDur(secs?: number | null): string {
   if (secs == null) return '—'
   const s = Math.max(0, Math.floor(secs))
