@@ -80,7 +80,7 @@ export function RangeMap({
   const style = useMemo(() => mapStyleFor(theme, imagery), [theme, imagery])
   const initialViewState = bounds
     ? { bounds, fitBoundsOptions: { padding: 40, maxZoom: 14 } }
-    : { latitude: center?.lat ?? 42, longitude: center?.lon ?? 41.8, zoom }
+    : { latitude: center?.lat ?? 14.3, longitude: center?.lon ?? 145.2, zoom }
   return (
     <div className={`map-shell ${className ?? ''}`} style={{ height }}>
       <Map

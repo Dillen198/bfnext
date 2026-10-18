@@ -1710,14 +1710,16 @@ mod tests {
         c.validate().unwrap();
         assert_eq!(c.carriers[0].recovery_tanker.as_ref().unwrap().typ, "A-6E");
         assert!(c.stations.iter().any(|s| s.kind == StationKind::StrafePit));
-        // the training sectors: both sides get one of each
-        assert_eq!(c.iads.len(), 2);
-        assert_eq!(c.hot_zones.len(), 2);
-        assert_eq!(c.jammers.len(), 2);
-        assert_eq!(c.low_level.len(), 2);
-        assert_eq!(c.csar.areas.len(), 2);
-        assert_eq!(c.ship_decks.len(), 4);
-        assert_eq!(c.stations.iter().filter(|s| s.tier.is_some()).count(), 6);
+        // the training sectors: blue only on the Marianas, one of each
+        assert_eq!(c.iads.len(), 1);
+        assert_eq!(c.hot_zones.len(), 1);
+        assert_eq!(c.jammers.len(), 1);
+        assert_eq!(c.low_level.len(), 1);
+        assert_eq!(c.csar.areas.len(), 1);
+        assert_eq!(c.ship_decks.len(), 2);
+        assert_eq!(c.stations.iter().filter(|s| s.tier.is_some()).count(), 3);
+        // the real airspace comes through as polygons
+        assert!(c.sectors.iter().any(|s| s.id == "w-517" && s.shape.polygon.is_some()));
         assert!(c.iads.iter().all(|n| n.engage_within.is_some()));
         assert!(c.sectors.iter().any(|s| s.kind == SectorKind::LowLevel && s.shape.polygon.is_some()));
     }

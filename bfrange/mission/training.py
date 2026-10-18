@@ -49,6 +49,10 @@ def _circle_of(sid):
         return sh[1], sh[2]
     if sh[0] == "rect":
         return sh[1], math.hypot(sh[2], sh[3]) / 2
+    if sh[0] == "poly":
+        c = layout.centre(sid)
+        return c, max(math.hypot((a - c[0]) * 111_132.0, (o - c[1]) * 111_320.0 * math.cos(math.radians(c[0])))
+                      for a, o in sh[1])
     raise ValueError(sh[0])
 
 

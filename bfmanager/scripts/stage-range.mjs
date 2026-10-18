@@ -2,7 +2,7 @@
 // into src-tauri/resources/range/, which Tauri bundles next to the exe as
 // range\ (src-tauri/src/newbox.rs reads it from there):
 //
-//   VS_Range_Caucasus.miz   the range mission  (bfrange/mission/dist/, built by
+//   VS_Range_Marianas.miz   the range mission  (bfrange/mission/dist/, built by
 //                           bfrange/mission/build_range_miz.py -- copy a rebuilt
 //                           one there to ship it)
 //   VSRANGE_RANGE           its range config   (bfrange/RANGE_CFG.sample.json)
@@ -22,7 +22,7 @@ const repo = join(here, '..', '..')
 const out = join(here, '..', 'src-tauri', 'resources', 'range')
 
 const FILES = [
-  ['bfrange/mission/dist/VS_Range_Caucasus.miz', 'VS_Range_Caucasus.miz'],
+  ['bfrange/mission/dist/VS_Range_Marianas.miz', 'VS_Range_Marianas.miz'],
   ['bfrange/RANGE_CFG.sample.json', 'VSRANGE_RANGE'],
   ['bfrange/lua/bfrange_hooks.lua', 'bfrange_hooks.lua'],
   ['scripts/Export.lua', 'Export.lua'],

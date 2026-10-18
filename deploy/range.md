@@ -16,9 +16,9 @@ Every step, in order. The sections further down have the detail.
 | # | Do | Where the detail is |
 |---|---|---|
 | 1 | **Build the three binaries/apps** on the dev box: `. .\setup-build.ps1`, then `cargo build --release --package=bfrange` (`target\release\bfrange.dll`) and `cargo build --release --package=bfdb` (the new bfdb with the range module); `cd bfrange-web; npm install; npm run build` for the site. | `bfrange/README.md`, `bfrange-web/README.md` |
-| 2 | **Build the mission.** `python bfrange/mission/build_range_miz.py` writes `VS_Range_Caucasus.miz` and its config `VSRANGE_RANGE` to `E:\Saved Games\DCS\Missions\Vector\range\` (already done once; re-run after editing `bfrange/mission/layout.py`). Sortie is `VSRANGE`. The mission loads bfrange through its init script, so there is no trigger to add. | "The range mission" below |
-| 3 | **Check it in the Mission Editor.** Open the `.miz`: the F10 map shows the 27 coloured sectors. Look at the target zones inside the ground sectors (`R1-*`, `R2-*`, `R11-*`...) and the helicopter zones (`H1-*`, `H2-*`, `H11-*`, `H12-*`): they should sit on open, flat ground, and each `H*-PINNACLE` on a hill top. To move one, edit `bfrange/mission/layout.py` and re-run the builder (zones, config and drawings move together); a zone dragged in the ME is overwritten by the next build. The engine moves any single target that lands in water to the bank. | "The range mission" |
-| 4 | **Create the server's Saved Games folder** `DCS.range` (copy a campaign instance's `Config\`), set `serverSettings.lua` name/port/password and put `VS_Range_Caucasus.miz` in its mission list. | DCSServerBot step 1 |
+| 2 | **Build the mission.** `python bfrange/mission/build_range_miz.py` writes `VS_Range_Marianas.miz` and its config `VSRANGE_RANGE` to `E:\Saved Games\DCS\Missions\Vector\range\` (already done once; re-run after editing `bfrange/mission/layout.py`). Sortie is `VSRANGE`. The mission loads bfrange through its init script, so there is no trigger to add. | "The range mission" below |
+| 3 | **Check it in the Mission Editor.** Open the `.miz`: the F10 map shows the real range complex airspace in grey and the 22 coloured sectors inside it. Look at the target zones on the islands (`R7201-*` on Farallon de Medinilla, `TN1-*`, `TN2-*`, `EW1-*` on Tinian, `S1-*` on Rota, `HZ1-*` on Saipan) and the helicopter zones (`H1-*` round Andersen): they should sit on dry land, and `H1-PINNACLE` on Mt Santa Rosa. They were placed on satellite imagery, not probed in the sim. To move one, edit `bfrange/mission/layout.py` and re-run the builder (zones, config and drawings move together); a zone dragged in the ME is overwritten by the next build. The engine moves any single target that lands in water to the bank. | "The range mission" |
+| 4 | **Create the server's Saved Games folder** `DCS.range` (copy a campaign instance's `Config\`), set `serverSettings.lua` name/port/password and put `VS_Range_Marianas.miz` in its mission list. | DCSServerBot step 1 |
 | 5 | **Copy the engine files** into `DCS.range`: `Scripts\bfrange.dll`, `Scripts\Hooks\bfrange_hooks.lua` (and **not** bflib's hooks), `Scripts\Export.lua` + `Scripts\bf_export_port.lua` (`return 42004`), and the config as `DCS.range\VSRANGE_RANGE`. | DCSServerBot steps 2, 3, 5 |
 | 6 | **Tacview** on the instance, export path `DCS.range\Tacview`. | DCSServerBot step 6 |
 | 7 | **Bot YAML**: paste the four blocks from `DCSServerBot/config/SAMPLE-range-server.md` (nodes, servers, scheduler, fowlengine), with your Discord channel ids for `range_status_channel`, `range_results_channel`, `greenie_channel`. No BFWeather on this instance. | DCSServerBot step 7 |
@@ -29,32 +29,35 @@ Every step, in order. The sections further down have the detail.
 
 ### The range mission
 
-`bfrange/mission/build_range_miz.py` derives the mission from the RGW2008
-Caucasus campaign file (for its theatre, weather, options, dictionary and
-airfield warehouses), strips every campaign group, zone, trigger and drawing,
-and adds:
+`bfrange/mission/build_range_miz.py` derives the mission from the Marianas
+SUA mission (`bfrange/mission/donor/marianas_sua.miz`: the theatre, weather,
+options, dictionary, airfield warehouses and the briefing pictures -- the
+NAVFAC range complex chart and the Andersen plates), replaces its drawings
+with the range's own, and adds:
 
-* **CVN-72** (Supercarrier, LSO on) at 41.70 N 41.00 E and **LHA-1** (Tarawa)
-  beside it, both immortal and weapons-hold. The engine steers them into the
-  wind and lights TACAN 72X / 71X, ICLS 11 / 12, ACLS and Link-4 336.0.
+* **CVN-72** (Supercarrier, LSO on) at 13.10 N 145.35 E, south-east of Guam,
+  and **LHA-1** (Tarawa) beside it, both immortal and weapons-hold. The engine
+  steers them into the wind and lights TACAN 72X / 71X, ICLS 11 / 12, ACLS and
+  Link-4 336.0.
 * **Deck slots** (dynamic spawn can't use a Supercarrier deck): F/A-18C x4,
   F-14B x2, F-14A x2 on CVN-72; AV-8B x2 and UH-1H x2 on LHA-1.
 * **Dynamic spawn + hot start + dynamic cargo, unlimited aircraft, weapons and
-  fuel** at the home fields: blue Batumi, Kobuleti, Senaki, Kutaisi,
-  Tbilisi-Lochini, Soganlug, Vaziani; red Mozdok, Beslan, Nalchik, Mineralnye
-  Vody, Maykop, Krymsk. Every other field is neutral. Any airframe, any
-  weapon, hot or cold.
-* **Combined Arms**: 2 tactical commanders, 2 JTAC/operators and 2 observers
-  per side, 1 Game Master.
-* **27 sectors over the whole map**, one job each, drawn on the F10 map
-  (`bfrange/mission/layout.py`; the table is in `bfrange/README.md`). Blue's
-  ground ranges are east and south of Tbilisi (R-1 to R-3, G-1), red's on the
-  steppe north of Mozdok (R-11 to R-13, G-11) and on the Kuban for Maykop and
-  Krymsk (R-14); helicopter areas at Vaziani, Kutaisi, Mozdok and Nalchik;
-  fight areas, BVR, duels, anti-ship, the carrier and most tanker tracks over
-  the Black Sea. Each side's sectors are on its own drawing layer.
-* **55 trigger zones** inside them, one per thing the config places, named
-  `<SECTOR>-<WHAT>` (`R1-BOMB`, `R12-CONVOY-END`, `H2-PINNACLE`).
+  fuel** at Andersen AFB and Won Pat on Guam. Blue only: there are no red
+  slots, the opposition is AI. Rota, Saipan and Tinian are neutral (they sit
+  under the IADS, the hot zone and the jammer).
+* **Combined Arms**: 2 tactical commanders, 2 JTAC/operators and 2 observers,
+  1 Game Master.
+* **The real Mariana Islands Range Complex airspace** drawn in grey with its
+  real names (ATCAA 2, 3A/B/C, 5, 6, R-7201A) and the published refuelling
+  tracks' entry and exit lines (RIO, MIRAGE, LUXOR), and **22 sectors** inside
+  it, one job each (`bfrange/mission/layout.py`; the table is in
+  `bfrange/README.md`): W-517 for air-to-air, ATCAA 1 for BVR, R-7201 at
+  Farallon de Medinilla for bombing, Tinian's lease area for CAS, tiered
+  targets and jamming, an IADS on Rota, a hot zone on Saipan, helicopters,
+  gunnery, CSAR and a low-level route on Guam, the carrier and anti-ship
+  sectors at sea.
+* **43 trigger zones** inside them, one per thing the config places, named
+  `<SECTOR>-<WHAT>` (`R7201-BOMB`, `TN1-CONVOY-END`, `H1-PINNACLE`).
 * a clear June morning, sortie `VSRANGE`, and a training briefing.
 
 Everything else -- targets, strafe pits, tankers (incl. the A-6E recovery
@@ -70,25 +73,26 @@ client groups in the ME if you want them.
 
 A 20-minute smoke test that exercises every part of the chain:
 
-1. Slot in at Vaziani (dynamic spawn), open **F10 > Range > Range status**:
+1. Slot in at Andersen (dynamic spawn), open **F10 > Range > Range status**:
    stations, tankers and both carriers listed with bearing/range. Then
-   **F10 > Range > Sectors: what is where**: blue's sectors and the shared
-   ones, nearest first; the F10 map shows the same coloured areas.
-2. Fly east from Vaziani into **R-1 SAMGORI**: an `Entering R-1 SAMGORI
-   (AIR-TO-GROUND)` message says what it is for. Drop one bomb on the bomb
-   circle: an in-cockpit `RANGE R-1 Samgori - Bomb Circle: ... o'clock`
+   **F10 > Range > Sectors: what is where**: every sector, nearest first;
+   the F10 map shows the same coloured areas inside the grey airspace.
+2. Fly north up the chain to **R-7201 FDM** (Farallon de Medinilla, about
+   150 nm): an `Entering R-7201 FDM (AIR-TO-GROUND)` message says what it is
+   for. Drop one bomb on the bomb circle: an in-cockpit
+   `RANGE R-7201 FDM - Bomb Circle: ... o'clock`
    message; the card appears in
    `#range-results` and on range.vectorstrike.org.
 3. **Air-to-Air > Set-up selection**: MiG-29S, Fox 2, BFM offensive, then
    **FIGHT'S ON**; take a missile shot at you and check the missile trainer
    says `SPLASH` or `DEFEATED`.
-4. Join **Texaco 2** (sector AR-4, KC-135, TACAN 54Y, 254.0, over Kartli west
-   of Tbilisi) and plug:
+4. Join **Arco 1** on **AR MIRAGE** (KC-135MPRS, TACAN 52Y, 252.0, next to
+   FDM; fly the entry line from the ARIP to the ARCP) and plug:
    `contact` / `disconnect` calls and an AAR grade after you leave.
 5. From the CVN-72 deck: one pass. The trap card shows DCS's LSO grade (if it
    graded) or ours, the decoded comment and the trap sheet.
-6. In a helicopter at Vaziani: ask the ground crew (F8) for cargo, load it
-   with the cargo loader, fly it to the **H-1 Vaziani - Precision Pad** or a
+6. In a helicopter at Andersen: ask the ground crew (F8) for cargo, load it
+   with the cargo loader, fly it to the **H-1 Andersen - Precision Pad** or a
    course DZ/LZ and
    unload it: a `CARGO ... delivered to ...` message and a "Cargo delivery
    (internal)" card. (**F10 > Range > Helicopter > Dynamic cargo** lists
@@ -252,7 +256,7 @@ so it is shared by every instance on the node, and this node already has
 `_G['package'] = nil` on every start, and re-does it after a DCS update. Check
 those four lines are commented out if the range misbehaves after an update.
 
-The generated `VS_Range_Caucasus.miz` already loads the engine through its
+The generated `VS_Range_Marianas.miz` already loads the engine through its
 mission init script (`l10n/DEFAULT/bfrange_mizinit.lua`); nothing to add. For a
 mission you build yourself, add a trigger: **MISSION START**, no condition,
 action **DO SCRIPT** with the three lines from `bfrange/lua/bfrange_mizinit.lua`:

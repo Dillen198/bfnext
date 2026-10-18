@@ -45,9 +45,9 @@ pub const BOT_TAG: &str = "v3.0.4.27";
 
 /// ED's updater on its own: a stable URL, unlike the GUI installer's.
 const DCS_UPDATER_URL: &str = "https://cdn.digitalcombatsimulator.com/files/DCS_updater_64bit.zip";
-/// What a range server needs: the base game, its map, and the Supercarrier
-/// (CVN-72 is one).
-const DCS_MODULES: &[&str] = &["WORLD", "CAUCASUS_terrain", "SUPERCARRIER"];
+/// What a range server needs: the base game, its map (the Mariana Islands,
+/// free), and the Supercarrier (CVN-72 is one).
+const DCS_MODULES: &[&str] = &["WORLD", "MARIANAISLANDS_terrain", "SUPERCARRIER"];
 
 const SRS_REPO: &str = "ciribob/DCS-SimpleRadioStandalone";
 const TACVIEW_PAGE: &str = "https://www.tacview.net/download/latest/en/";
@@ -55,7 +55,7 @@ const TACVIEW_PAGE: &str = "https://www.tacview.net/download/latest/en/";
 /// The engine files a range box runs.
 const RANGE_ENGINE_FILES: &[&str] = &["bfrange.dll", "bfdb.exe", "netidx.exe"];
 
-const RANGE_MISSION: &str = "VS_Range_Caucasus.miz";
+const RANGE_MISSION: &str = "VS_Range_Marianas.miz";
 const RANGE_CFG: &str = "VSRANGE_RANGE";
 const RANGE_NETIDX_BASE: &str = "/local/fowl/range";
 const RANGE_EXPORT_PORT: u16 = 42004;
@@ -724,7 +724,7 @@ fn run(mut o: NewBoxOptions) -> Result<String> {
             Err(e) if is_cancelled() => return Err(e),
             Err(e) => {
                 warn(format!("DCS World Server was not installed: {e:#}"));
-                next_step("Install DCS World Server (digitalcombatsimulator.com > Downloads > Dedicated Server) with Caucasus and the Supercarrier, then run New box again.".into());
+                next_step("Install DCS World Server (digitalcombatsimulator.com > Downloads > Dedicated Server) with the Mariana Islands map and the Supercarrier, then run New box again.".into());
             }
         }
     }
@@ -1568,7 +1568,7 @@ fn install_dcs(o: &NewBoxOptions) -> Result<bool> {
     }
     if let Some(free) = crate::backup::free_space(&dir.ancestors().last().map(Path::to_path_buf).unwrap_or_else(|| dir.clone())) {
         if free < 60 * 1024 * 1024 * 1024 {
-            bail!("only {} free for DCS -- it needs about 60 GB with Caucasus and the Supercarrier", crate::backup::fmt_bytes(free));
+            bail!("only {} free for DCS -- it needs about 60 GB with the Mariana Islands and the Supercarrier", crate::backup::fmt_bytes(free));
         }
     }
     phase("Downloading ED's updater");
@@ -1603,7 +1603,7 @@ fn install_dcs(o: &NewBoxOptions) -> Result<bool> {
         &boot,
         &["--quiet", "update"],
         &dir,
-        "Installing DCS World Server with Caucasus and the Supercarrier -- tens of GB, this takes a while",
+        "Installing DCS World Server with the Mariana Islands and the Supercarrier -- tens of GB, this takes a while",
     );
     let _ = std::fs::remove_file(&boot);
     r?;

@@ -37,65 +37,69 @@ Its netidx RPCs are published under `<netidx_base>/<sortie>/api/`: `query-range`
 ## The range mission
 
 **The ready-made one:** `python bfrange/mission/build_range_miz.py` builds
-`VS_Range_Caucasus.miz` (sortie `VSRANGE`) and its config `VSRANGE_RANGE`,
-derived from the RGW2008 Caucasus mission. It has the Supercarrier CVN-72
-and LHA-1 with deck slots, dynamic spawn with every airframe at 7 blue and 6
-red fields, and Combined Arms slots. `bfrange/RANGE_CFG.sample.json` is the
-same config. `deploy/range.md` ("Setup, start to finish") walks through
-deploying it.
+`VS_Range_Marianas.miz` (sortie `VSRANGE`) and its config `VSRANGE_RANGE`,
+derived from the Marianas SUA mission (`bfrange/mission/donor/`). It has the
+Supercarrier CVN-72 and LHA-1 with deck slots, dynamic spawn with every
+airframe at Andersen AFB and Won Pat, and Combined Arms slots. Blue only: the
+opposition is AI. `bfrange/RANGE_CFG.sample.json` is the same config.
+`deploy/range.md` ("Setup, start to finish") walks through deploying it.
 
-**Sectors.** The whole theatre is divided into 45 sectors with one job each,
-defined once in `bfrange/mission/layout.py`. The builder turns that table
-into the trigger zones (`<SECTOR>-<WHAT>`, e.g. `R1-BOMB`, `H2-PINNACLE`),
-the config's `sectors`, and Mission Editor drawings: each sector outlined and
-lightly filled in its discipline's colour with a two-line tag (name and
-kind; tanker tracks and the carrier keep their frequencies), SAM threat
-rings, jammer radii, low-level routes as lines with their gates, and a
-colour legend in the open sea. There are no summary boxes: DCS draws text
-at a fixed screen size, so at theatre zoom they covered the ranges; what
-each sector is for is on F10 and announced when you fly in. A side's sectors are drawn on that side's layer
-(only that coalition sees them), the shared ones on Common. The engine lists
-them on **F10 > Range > Sectors** (nearest first, bearing and range) and tells
-a player what a sector is for when they fly into it (once per 15 min per
-sector).
+**The real airspace.** The layout follows the Mariana Islands Range Complex
+as the US uses it. Its special use airspace is drawn on F10 in dotted grey
+with the real names: ATCAA 2, 3A/B/C, 5 and 6, and R-7201A (12 nm round
+Farallon de Medinilla). The published refuelling tracks are drawn as well:
+RIO, MIRAGE and LUXOR with their entry lines (ARIP to ARCP) and exit lines.
+The boundaries come from the Marianas SUA mission's drawings and land on
+whole arc minutes. W-517 is traced from the NAVFAC "Airspace in the Mariana
+Islands Range Complex" chart, so it is good to about a minute. Positions use
+the terrain's own transverse Mercator (`bfrange/mission/tmproj.py`, with the
+same parameters pydcs uses).
 
-| Sector | Side | For |
+**Sectors.** The range's 22 sectors sit inside that airspace, one job each,
+and are defined once in `bfrange/mission/layout.py`. W-517, ATCAA 1, R-7201
+and the AR tracks are the real airspace itself. Where two sectors overlap,
+the engine reports the smaller one, so R-7201 inside W-13A reads the way it
+does on a chart. From that table the builder makes:
+
+* the trigger zones (`<SECTOR>-<WHAT>`, for example `R7201-BOMB`, `H1-PINNACLE`),
+* the config's `sectors`,
+* the Mission Editor drawings: each sector outlined and lightly filled in its
+  discipline's colour with a two-line tag (name and kind; tanker tracks and
+  the carrier keep their frequencies), plus SAM threat rings, the jammer
+  radius, the low-level route and a colour legend.
+
+The engine lists the sectors on **F10 > Range > Sectors** (nearest first,
+with bearing and range). It tells a player what a sector is for when they
+fly into it, once per 15 minutes per sector.
+
+| Sector | Where | For |
 |---|---|---|
-| R-1 SAMGORI | blue | bomb circle, strafe pit (east of Vaziani) |
-| R-2 IORI | blue | tactical array (laser 1688), convoy, JDAM targets, JTAC Axeman |
-| R-3 TETRI TSKARO | blue | SA-8 threat range (hills south-west of Tbilisi) |
-| G-1 LILO | blue | Combined Arms gunnery lane |
-| H-1 VAZIANI, H-2 TSKALTUBO | blue | helicopter courses; H-2 is mountain flying north of Kutaisi |
-| MOA KAKHETI | blue | BFM over the mountains, floor 8,000 ft |
-| AR-4 TEXACO 2 | blue | KC-135 track over Kartli |
-| R-11 STEPNOYE | red | bomb circle, strafe pit (steppe north of Mozdok) |
-| R-12 KARST | red | tactical array (laser 1511), convoy, JDAM targets, JTAC Topor |
-| R-13 ACHIKULAK | red | SA-8 threat range |
-| R-14 KUBAN | red | bomb circle, strafe pit, tactical array (laser 1512) for Maykop and Krymsk |
-| G-11 STARODUB | red | Combined Arms gunnery lane |
-| H-11 MOZDOK, H-12 NALCHIK | red | helicopter courses; H-12 is foothill flying |
-| MOA NOGAI | red | BFM over the steppe |
-| AR-5, AR-6 | red | IL-78M tracks, north and over the sea west |
-| CV OPAREA | all | CVN-72 and LHA-1 |
-| W-1, W-2 / W-3 / W-4 | all | BFM / BVR / blue-vs-red duels, over the sea |
-| AS-1 SHIPPING | all | merchant ships for anti-ship weapons |
-| AR-1, AR-2, AR-3 | blue | KC-135, KC-135MPRS, KC-130 over the sea |
-| S-1 AKHALKALAKI / S-11 KURSAVKA | blue / red | **live SEAD/IADS**: red kit (EWR, SA-2/3/6/11/10, Pantsir) on the Javakheti plateau; NATO kit (EWR, Patriot, Hawk, NASAMS, IRIS-T SLM, Roland, Gepard) on the Stavropol upland |
-| R-4 GAREJI / R-15 EDISSEYA | blue / red | **tiered** targets: easy, medium (AAA), hard (SHORAD) |
-| EW-1 TSALKA / EW-11 TEREK | blue / red | **GPS jammer** over coordinate targets |
-| HZ-1 LIAKHVI / HZ-11 ZELENCHUK | blue / red | **hot zone**: AI CAP, SHORAD and targets that fight back; AWACS Overlord 1 (251.5) / Focus 1 (124.5) |
-| LL-1 KOLKHETI / LL-11 PSEKUPS | blue / red | **low-level route**, 8 gates, below 500 ft AGL at 420 kts |
-| CS-1 BAKHMARO / CS-11 CHEGEM | blue / red | **CSAR** areas, beacons 350 / 400 kHz |
-| PT-1 SENAKI / PT-11 MINERALNYE VODY | blue / red | pattern fields (every runway landing everywhere is graded) |
-| FD-1 KOBULETI / FD-11 UTRISH | blue / red | **frigate decks**: Perry 41X and Arleigh Burke 42X / Neustrashimy 43X and Project 22160 44X |
-| AS-2 SUKHUMI / AS-3 TAMAN | all | **escorted convoys**: red warships (Krivak, Neustrashimy, Tor-armed Project 22160) / NATO (Arleigh Burke, Perry), weapons free |
+| W-517 | warning area SW of Guam | BFM / ACM set-ups, duels, live missile shots |
+| ATCAA 1 (W-11) | south-east of Guam | BVR presentations, Fox 1 / Fox 3 defence |
+| AR RIO, AR MIRAGE, AR LUXOR | the published tracks | KC-135 51Y 251.0, KC-135MPRS 52Y 252.0, KC-135 54Y 254.0 |
+| AR SHELL (LOCAL) | west of Guam | KC-130 53Y 253.0, helicopters too |
+| R-7201 FDM | Farallon de Medinilla | bomb circle, strafe pit (run in 029 from the SSW), coordinate targets |
+| TN-1 NORTH FIELD | Tinian | tactical array (laser 1688), convoy on the old runways, JDAM targets, JTAC Axeman 133.0 |
+| TN-2 TINIAN MLA | Tinian | **tiered** targets: easy, medium (AAA), hard (SHORAD) |
+| EW-1 TINIAN SOUTH | Tinian | **GPS jammer** over coordinate targets |
+| R-3 AGUIJAN | Aguijan | SA-8 threat emitter, radar on, weapons hold |
+| S-1 ROTA | Rota | **live SEAD/IADS**: EWR, SA-2/3/6/11/10, Pantsir |
+| HZ-1 SAIPAN | Saipan | **hot zone**: AI CAP, SHORAD and targets that fight back; AWACS Overlord 1 (251.5) |
+| H-1 ANDERSEN | Guam | helicopter courses: pads at Andersen, confined LZ at Andersen South, pinnacle on Mt Santa Rosa |
+| G-1 NORTHWEST FIELD | Guam | Combined Arms gunnery lane |
+| PT-1 ANDERSEN | Guam | pattern field (every runway landing everywhere is graded) |
+| CS-1 SOUTH GUAM | Guam | **CSAR** round Mt Lamlam, beacon 350 kHz |
+| LL-1 GUAM COAST | Guam | **low-level route**, Ritidian to Orote, 8 gates, below 500 ft AGL at 420 kts |
+| CV OPAREA | south-east of Guam | CVN-72 and LHA-1 |
+| FD-1 APRA | off Apra Harbor | **frigate decks**: Perry 41X and Arleigh Burke 42X |
+| AS-1 SINKEX | in W-517 | undefended hulks for anti-ship weapons |
+| AS-2 ESCORTED CONVOY | in W-13B | red warships (Krivak, Neustrashimy, Tor-armed Project 22160), weapons free |
 
-Ground sectors were placed against DCS's own 1:1M raster chart of the
-theatre: open, low ground, clear of towns, rivers and each other. They were not
-probed in the sim, so open the mission in the Mission Editor once and look at
-the target zones; the pinnacles (`H*-PINNACLE`) especially want a hill top.
-Move a sector by editing `layout.py` and re-running the builder: zones,
-config and drawings move together.
+The target zones were placed on satellite imagery (Esri World Imagery) and
+not probed in the sim. Open the mission in the Mission Editor once and check
+them; `H1-PINNACLE` especially should be on the hill top. To move a sector,
+edit `layout.py` and re-run the builder: the zones, config and drawings move
+together.
 
 **Building your own**, on any map. The mission only has to contain what a
 script cannot create; the engine spawns everything else from the config.
