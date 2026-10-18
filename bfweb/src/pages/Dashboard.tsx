@@ -27,6 +27,7 @@ import { attentionList, TONE, type Attention } from '../lib/objectives'
 import { ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts'
 import { classifyTargetClass, TARGET_CLASS_COLOR, fmtTimeZ, windDir, visStr, cloudStr } from '../lib/format'
 import { useRound } from '../context/RoundContext'
+import { useFlagBackground } from '../lib/flags'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -385,6 +386,11 @@ function TerritoryTrend({ roundId }: { roundId: number | null }) {
 export default function Dashboard() {
   const navigate = useNavigate()
   const { selectedRound } = useRound()
+  // The selected server's flags behind the KPI strip and the territory panel.
+  // Capped: on a phone the strip wraps to three rows, and full-height flags
+  // would grow wide enough to sit under every number.
+  const kpiFlags = useFlagBackground('var(--bg-chrome)', 'var(--bg-chrome-solid)', 'bold', 'min(100%, 80px)')
+  const territoryFlags = useFlagBackground('var(--bg-card)', 'var(--bg-card-solid)', 'soft')
 
   const onlineQ = useQuery({ queryKey: ['online'], queryFn: api.online, refetchInterval: 10_000 })
   const { data: online     = [] } = onlineQ
@@ -470,7 +476,7 @@ export default function Dashboard() {
       )}
 
       {/* ── KPI strip ── */}
-      <div className="kpi-strip">
+      <div className="kpi-strip" style={kpiFlags}>
         <KpiCell label="ONLINE" value={online.length} icon={PilotIcon}
           sub={`${blue.length} blu · ${red.length} red`} />
         <KpiCell label="AIRBORNE" value={inAir} icon={Aircraft} color="var(--accent)"
@@ -551,7 +557,7 @@ export default function Dashboard() {
           )}
 
           {/* Territory */}
-          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="TERRITORY CONTROL" icon={Activity} iconColor="var(--yellow)" style={{ flexShrink: 0 }}>
+          <PanelBase size="sm" bodyStyle={PANEL_BODY} title="TERRITORY CONTROL" icon={Activity} iconColor="var(--yellow)" style={{ flexShrink: 0, ...territoryFlags }}>
             <TerritoryBar objectives={objectives} />
             <TerritoryTrend roundId={roundId} />
           </PanelBase>

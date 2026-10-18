@@ -10,6 +10,7 @@ import { useInstance } from '../context/InstanceContext'
 import LogoMark from './LogoMark'
 import Backdrop from './Backdrop'
 import StatusBanner from './StatusBanner'
+import { useFlagBackground } from '../lib/flags'
 import { getDevUser } from '../lib/devAuth'
 import {
   Sitrep,
@@ -260,6 +261,8 @@ function CampaignSelect({
 
 export default function Layout() {
   const { user, logout } = useAuth()
+  // The selected server's flags behind the top bar, on every page.
+  const topbarFlags = useFlagBackground('var(--bg-chrome)', 'var(--bg-chrome-solid)', 'bold')
   const navigate = useNavigate()
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
@@ -380,7 +383,7 @@ export default function Layout() {
       {/* ══════════════════════════════════════════════════════════
           TOP BAR
           ══════════════════════════════════════════════════════════ */}
-      <header className="topbar">
+      <header className="topbar" style={topbarFlags}>
 
         {/* Mobile nav toggle */}
         <button
