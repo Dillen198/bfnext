@@ -306,6 +306,12 @@ a { color: inherit; }
 }
 @media (min-width: 760px) { .live-strip { grid-template-columns: repeat(var(--cols, 2), 1fr) auto; } }
 .live-cell { padding: 14px 18px; border-bottom: 1px solid var(--border-light); min-width: 0; }
+/* Each server's flags behind its cell, as on the /servers cards. */
+.live-cell { position: relative; overflow: hidden; }
+.live-cell > :not(.flag-backdrop) { position: relative; z-index: 1; }
+/* The cell is small and sits on the hero picture: the flags need a little more to register. */
+.live-cell .flag-backdrop { opacity: 0.42; }
+.live-cell .flag-backdrop .flag:not(.flag-cloth) { filter: saturate(0.8) brightness(0.8); }
 @media (min-width: 760px) { .live-cell { border-bottom: none; border-right: 1px solid var(--border-light); } .live-cell:last-child { border-right: none; } }
 .live-cell:last-child { border-bottom: none; }
 .live-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }

@@ -3,6 +3,7 @@ import { ArrowRight, Support } from '@icons'
 import { campaign, links, wiki } from '../config/campaign'
 import { roundDay, useServerStates, useTheatreLive, type ServerRow } from '../live'
 import { StatusTag, TerritoryBar } from './Bits'
+import FlagBackdrop from './Flags'
 
 function LiveCell({ row }: { row: ServerRow }) {
   const t = row.theatre
@@ -13,6 +14,7 @@ function LiveCell({ row }: { row: ServerRow }) {
   const why = row.notices[0]?.title
   return (
     <div className="live-cell">
+      {t.profile && <FlagBackdrop flags={t.profile.flags} />}
       <div className="live-head">
         <span className="live-name">{t.label}</span>
         <StatusTag state={row.state} />
