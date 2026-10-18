@@ -350,7 +350,10 @@ What the plugin does with a `kind: range` server:
   recovery window, stations hot/cold, who is flying) from bfdb
   `/api/range/live`;
 * posts every graded result to `range_results_channel` (and traps also to
-  `greenie_channel`) as bfdb's embed with the debrief card attached, polling
+  `greenie_channel`) as bfdb's embed with the debrief card attached and a
+  row of link buttons under it (Debrief, 3D replay, Web Tacview, Tacview
+  clip; Web Tacview goes through the debrief, which finds the result in the
+  dashboard's replay once the server has finished that recording), polling
   `/api/range/feed` every 15 s; at most 10 posts per poll, any catch-up
   beyond that collapses into one summary line. It remembers the last result
   it posted across bot restarts, and a brand-new setup starts from "now"

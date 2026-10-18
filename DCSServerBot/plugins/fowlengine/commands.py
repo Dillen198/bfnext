@@ -4899,15 +4899,31 @@ class FowlEngine(Plugin):
                 self.log.debug(f"FowlEngine: range card {url} not downloaded: {ex}")
         return emb, png
 
+    @staticmethod
+    def _link_view(links) -> Optional[discord.ui.View]:
+        """bfdb's links (debrief, 3D replay, web Tacview, Tacview clip) as a row
+        of link buttons. Link buttons have no callback, so the view needs no
+        timeout and nothing to listen for after a restart."""
+        if not links:
+            return None
+        view = discord.ui.View(timeout=None)
+        for l in links:
+            view.add_item(discord.ui.Button(style=discord.ButtonStyle.link, label=l["label"], url=l["url"]))
+        return view
+
     async def _send_range_result(self, channel, rid: str, emb: dict, png: bytes | None) -> None:
         embed = self._embed_from_dict(emb)
+        kw = {"embed": embed}
+        view = self._link_view(emb.get("links"))
+        if view is not None:
+            kw["view"] = view
         if png:
             fname = rangefeed.attachment_name(rid)
             embed.set_image(url=f"attachment://{fname}")
-            await channel.send(embed=embed, file=discord.File(io.BytesIO(png), filename=fname))
+            await channel.send(file=discord.File(io.BytesIO(png), filename=fname), **kw)
         else:
             # falls back to the absolute image URL bfdb put in the embed, if any
-            await channel.send(embed=embed)
+            await channel.send(**kw)
 
     # ── War diary -> news_channel ───────────────────────────────────────────
     # Per server, in its own section of fowlengine.yaml:

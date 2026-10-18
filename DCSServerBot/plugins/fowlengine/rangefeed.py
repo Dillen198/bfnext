@@ -52,6 +52,9 @@ _FIELD_NAME_MAX = 256
 _FIELD_VALUE_MAX = 1024
 _FOOTER_MAX = 2048
 _TOTAL_MAX = 6000
+# link buttons under a post: one row of five, Discord caps a label at 80
+_LINKS_MAX = 5
+_LINK_LABEL_MAX = 80
 _ZWSP = "​"
 
 _MIN_TS = datetime.min.replace(tzinfo=timezone.utc)
@@ -317,7 +320,18 @@ def normalize_embed(data) -> dict:
         "footer": _clip(_s(footer).strip(), _FOOTER_MAX),
         "image": _url(d.get("image")),
         "thumbnail": _url(d.get("thumbnail")),
+        "links": [],
     }
+    # bfdb's ways into the result (debrief, 3D, web Tacview, clip): link
+    # buttons, so not part of the embed's 6000-character total
+    seen = set()
+    for l in (d.get("links") or []):
+        if not isinstance(l, dict) or len(out["links"]) >= _LINKS_MAX:
+            continue
+        label, url = _clip(_s(l.get("label")).strip(), _LINK_LABEL_MAX), _url(l.get("url"))
+        if label and url and url not in seen:
+            seen.add(url)
+            out["links"].append({"label": label, "url": url})
     for f in (d.get("fields") or [])[:_FIELDS_MAX]:
         if not isinstance(f, dict):
             continue

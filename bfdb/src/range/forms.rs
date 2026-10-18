@@ -424,7 +424,10 @@ pub(crate) fn trap_form(rec: &RangeRecord, t: &TrapResult) -> String {
     let det_hi = det_ys.iter().cloned().fold(f64::NEG_INFINITY, f64::max).max(70.) + 12.;
     let det_h = (det_hi - det_lo) * det_scale;
 
-    let y_draw = 452.;
+    // the lens row, then the drawings under it
+    let lens_y = 452.;
+    let lens_h = 170.;
+    let y_draw = lens_y + lens_h + 14.;
     // the side elevation under the deck detail: the same scale, no exaggeration
     let top_z = p.side_silhouette.iter().chain(p.side_island.iter().flatten()).map(|q| q.1).fold(p.g.deck_height_m + 20., f64::max);
     let (el_lo, el_hi) = (-(p.draft + 9.), top_z + 8.);
@@ -584,6 +587,35 @@ pub(crate) fn trap_form(rec: &RangeRecord, t: &TrapResult) -> String {
         text_f(&mut s, gx + 228., y, v, 11.5, TEXT, Anchor::End, true, MONO);
     }
 
+    // ── the lens at each position, as the pilot saw it ──
+    panel_title(&mut s, PX, lens_y + 12., "THE LENS (IFLOLS) · the ball at each position", &format!("one cell ≈ {LENS_DEG_PER_CELL:.2}° · bottom two cells red · wave-off lights lit on a wave-off"));
+    let lw = PW / 5.;
+    let ly0 = lens_y + 22.;
+    for (j, (k, from, to)) in wins.iter().enumerate().take(4) {
+        let vals: Vec<f64> = groove.iter().filter(|q| q.x_m <= *from && q.x_m > *to).map(|q| q.gse_deg).collect();
+        let g = (!vals.is_empty()).then(|| vals.iter().sum::<f64>() / vals.len() as f64);
+        let x0 = PX + j as f64 * lw;
+        s.rect(x0 + 3., ly0, lw - 6., lens_h - 10., PANEL, Some((TEXT, 1.)), 0.);
+        text_f(&mut s, x0 + 12., ly0 + 18., k, 13., TEXT, Anchor::Start, true, MONO);
+        let wo = matches!(t.outcome, PassOutcome::Waveoff) && j == 3;
+        draw_lens(&mut s, x0 + lw / 2., ly0 + 84., 0.92, g, wo);
+        let (txt, col) = match g {
+            Some(g) => (format!("{g:+.2}° · {}", ball_say(g)), gs_band(g)),
+            None => ("no reading".to_string(), MUTED),
+        };
+        text_f(&mut s, x0 + lw / 2., ly0 + lens_h - 20., &txt, 11., col, Anchor::Middle, true, MONO);
+    }
+    // the key
+    let x0 = PX + 4. * lw;
+    s.rect(x0 + 3., ly0, lw - 6., lens_h - 10., "none", Some((TEXT, 1.)), 0.);
+    s.text(x0 + 12., ly0 + 18., "READING THE LENS", 9.5, MUTED, Anchor::Start, true);
+    let key: [(&str, &str); 4] = [("#ffb000", "ball: above the datum is high"), ("#2fd16b", "datum lights: on glideslope"), ("#ff3b30", "wave-off lights: go around"), ("#24452f", "cut lights: power / roger ball")];
+    for (i, (c, l)) in key.iter().enumerate() {
+        let y = ly0 + 42. + i as f64 * 26.;
+        s.circle(x0 + 20., y - 4., 5., c, Some((TEXT, 0.6)), None);
+        s.text(x0 + 32., y, l, 10.5, TEXT, Anchor::Start, false);
+    }
+
     // ── side elevation: glideslope ──
     let tx = |x: f64| PX + (x - x_fwd) * sxm;
     let sy0 = y_draw + 22.;
@@ -652,8 +684,10 @@ pub(crate) fn trap_form(rec: &RangeRecord, t: &TrapResult) -> String {
     // ── plan view: lineup, to scale ──
     let py0 = sy0 + side_h + 52.;
     let pcy = py0 + plan_h / 2.;
-    let ty = |y: f64| pcy + y * sxm;
-    panel_title(&mut s, PX, py0 - 10., "PLAN VIEW · LINEUP", "to scale · port up");
+    // seen from above: the stern is on the right, so the ship heads left and
+    // its port side is down the page (starboard, + y, up)
+    let ty = |y: f64| pcy - y * sxm;
+    panel_title(&mut s, PX, py0 - 10., "PLAN VIEW · LINEUP", "to scale · seen from above · port down");
     s.clip("fplan", PX, py0, PW, plan_h);
     s.rect(PX, py0, PW, plan_h, PANEL, Some((TEXT, 1.)), 0.);
     s.raw(r#"<g clip-path="url(#fplan)">"#);
@@ -697,8 +731,8 @@ pub(crate) fn trap_form(rec: &RangeRecord, t: &TrapResult) -> String {
     // ── deck detail ──
     let dy0 = py0 + plan_h + 52.;
     let dtx = |x: f64| PX + (x - det_fwd) * det_scale;
-    let dty = |y: f64| dy0 + (y - det_lo) * det_scale;
-    panel_title(&mut s, PX, dy0 - 10., &format!("DECK DETAIL · {}", p.name), "to scale · traced from scale plans · wires, catapults, elevators, lens, LSO");
+    let dty = |y: f64| dy0 + (det_hi - y) * det_scale;
+    panel_title(&mut s, PX, dy0 - 10., &format!("DECK DETAIL · {}", p.name), "seen from above · port down · to scale · wires, catapults, elevators, lens, LSO");
     s.clip("fdeck", PX, dy0, PW, det_h);
     s.rect(PX, dy0, PW, det_h, PANEL, Some((TEXT, 1.)), 0.);
     draw_plan(&mut s, &p, &dtx, &dty, true, caught, "fdeck");
@@ -742,6 +776,100 @@ pub(crate) fn trap_form(rec: &RangeRecord, t: &TrapResult) -> String {
     }
     foot(&mut s, rec);
     s.finish()
+}
+
+// ── the lens (IFLOLS) ───────────────────────────────────────────────────
+
+/// Cells in the IFLOLS source and the glideslope error one cell stands for:
+/// the ball runs about ±0.8° from the top cell to the bottom one.
+pub(crate) const LENS_CELLS: usize = 12;
+pub(crate) const LENS_DEG_PER_CELL: f64 = 1.6 / LENS_CELLS as f64;
+
+/// Where the ball is, in cells from the top of the source (6 = the middle,
+/// level with the datum lights), and whether it has gone off the lens.
+pub(crate) fn ball_pos(gse: f64) -> (f64, bool) {
+    let p = LENS_CELLS as f64 / 2. - gse / LENS_DEG_PER_CELL;
+    (p, p < 0.25 || p > LENS_CELLS as f64 - 0.25)
+}
+
+/// The cells the ball lights: the one or two whose middles are nearest it
+/// (on glideslope it straddles the datum, lighting the two middle cells).
+pub(crate) fn lit_cells(p: f64) -> Vec<usize> {
+    (0..LENS_CELLS).filter(|i| (p - (*i as f64 + 0.5)).abs() < 0.75).collect()
+}
+
+/// The ball in words: "centred", "1.5 cells high", "off the bottom".
+pub(crate) fn ball_say(gse: f64) -> String {
+    let (p, off) = ball_pos(gse);
+    if off {
+        return if gse > 0. { "off the top".into() } else { "off the bottom".into() };
+    }
+    let c = ((LENS_CELLS as f64 / 2. - p) * 2.).round() / 2.;
+    let red = lit_cells(p).iter().any(|i| *i >= LENS_CELLS - 2);
+    if c.abs() < 0.5 {
+        return "centred".into();
+    }
+    let n = if c.fract() == 0. { format!("{:.0}", c.abs()) } else { format!("{:.1}", c.abs()) };
+    format!("{n} cell{} {}{}", if c.abs() == 1. { "" } else { "s" }, if c > 0. { "high" } else { "low" }, if red { ", red" } else { "" })
+}
+
+/// The IFLOLS as the pilot sees it, centred on (cx, cy): the source's twelve
+/// cells with the ball (red in the bottom two), ten green datum lights each
+/// side level with the centre, the red wave-off lights either side of the
+/// source and the green cut lights over it. `gse` None draws the lens dark.
+fn draw_lens(s: &mut Svg, cx: f64, cy: f64, k: f64, gse: Option<f64>, waveoff: bool) {
+    let cell = 7. * k;
+    let src_w = 15. * k;
+    let src_h = cell * LENS_CELLS as f64;
+    let (top, half) = (cy - src_h / 2., src_w / 2. + 22. * k + 9. * 7. * k);
+    s.rect(cx - half - 6. * k, top - 26. * k, 2. * (half + 6. * k), src_h + 40. * k, "#16191d", Some((TEXT, 1.)), 4. * k);
+    // the source and the ball
+    let ball = gse.map(ball_pos);
+    let lit_now: Vec<usize> = match ball {
+        Some((p, false)) => lit_cells(p),
+        _ => vec![],
+    };
+    for i in 0..LENS_CELLS {
+        let lit = lit_now.contains(&i);
+        let red = i >= LENS_CELLS - 2;
+        let fill = match (lit, red) {
+            (true, true) => "#ff3b30",
+            (true, false) => "#ffb000",
+            (false, true) => "#3a1d1b",
+            (false, false) => "#3a3020",
+        };
+        s.rect(cx - src_w / 2., top + i as f64 * cell + 0.6, src_w, cell - 1.2, fill, None, 1.);
+    }
+    match ball {
+        Some((p, false)) => {
+            let red = lit_now.iter().any(|i| *i >= LENS_CELLS - 2);
+            let _ = write!(s.b, r#"<circle cx="{:.1}" cy="{:.1}" r="{:.1}" fill="{}" opacity="0.35"/>"#, n(cx), n(top + p * cell), n(cell * 1.3), if red { "#ff3b30" } else { "#ffb000" });
+        }
+        // off the lens: nothing shows on the real thing; mark which way it went
+        Some((_, true)) => {
+            let up = gse.unwrap_or(0.) > 0.;
+            let (y0, d) = if up { (top - 3. * k, -6. * k) } else { (top + src_h + 3. * k, 6. * k) };
+            let _ = write!(s.b, r#"<path d="M{:.1} {:.1}L{:.1} {:.1}L{:.1} {:.1}Z" fill="{}"/>"#, n(cx - 6. * k), n(y0), n(cx), n(y0 + d), n(cx + 6. * k), n(y0), if up { "#ffb000" } else { "#ff3b30" });
+        }
+        None => (),
+    }
+    // datum lights: ten each side, level with the middle of the source
+    for side in [-1., 1.] {
+        for j in 0..10 {
+            let x = cx + side * (src_w / 2. + 22. * k + j as f64 * 7. * k);
+            s.circle(x, cy, 2.6 * k, "#2fd16b", None, None);
+        }
+        // wave-off lights: a column of four each side of the source, above the datum
+        for j in 0..4 {
+            let x = cx + side * (src_w / 2. + 10. * k);
+            let y = top + 2. * k + j as f64 * 7. * k;
+            s.circle(x, y, 2.6 * k, if waveoff { "#ff3b30" } else { "#4a2422" }, None, None);
+        }
+    }
+    // cut lights: four over the source
+    for j in 0..4 {
+        s.circle(cx + (j as f64 - 1.5) * 7. * k, top - 13. * k, 2.4 * k, "#24452f", None, None);
+    }
 }
 
 // ── the bombing score sheet ─────────────────────────────────────────────
@@ -1381,6 +1509,18 @@ mod tests {
             assert!(svg.contains("FIELD LANDING / PATTERN RECORD") && !svg.contains("NaN"));
             assert!(super::super::cards::png(&svg).is_ok());
         }
+    }
+
+    #[test]
+    fn the_lens_matches_the_site() {
+        // the same cases as bfrange-web/src/lib/lens.test.ts
+        assert_eq!(lit_cells(ball_pos(0.).0), vec![5, 6]);
+        assert_eq!(ball_say(0.), "centred");
+        assert_eq!(ball_say(0.2), "1.5 cells high");
+        assert_eq!(lit_cells(ball_pos(0.2).0), vec![4]);
+        assert!(ball_say(-0.7).ends_with("low, red"));
+        assert_eq!(ball_say(1.9), "off the top");
+        assert_eq!(ball_say(-1.2), "off the bottom");
     }
 
     /// `CARD_OUT=<dir> cargo test -p bfdb write_card_samples` writes every card as a PNG to look at.

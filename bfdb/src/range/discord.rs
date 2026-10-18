@@ -11,9 +11,22 @@
 //!
 //! The trap embed mirrors the classic "Trap Attempt Detected" LSO card:
 //! title, a bold `pilot | airframe | CASE n | Day` line, then the grade, the
-//! raw LSO comment and its plain-English decoding.
+//! raw LSO comment and its plain-English decoding, and the ship and its class
+//! (from the same deck file the cards and the site draw).
+//!
+//! A field landing is grouped the way an instructor reads it out -- the
+//! touchdown, the approach, the pattern, the rollout and taxi -- each one
+//! field of a few short lines, so it reads the same on a phone (where
+//! Discord stacks inline fields one under the other) as on a desktop.
+//!
+//! `links` (`[{"label","url"}]`) are the debrief's own ways in: the debrief,
+//! the 3D replay, the dashboard's web Tacview and the Tacview clip. The bot
+//! shows them as link buttons under the post. Web Tacview goes through the
+//! debrief (`?open=tacview`), which asks bfdb where the result is in the
+//! replay when it is clicked: when the post goes out the server is still
+//! writing the recording, so there is no replay link to give yet.
 
-use super::RangeCtx;
+use super::{deckplan, RangeCtx};
 use bfprotocols::range::{
     lso, BombQuality, CsarOutcome, EngagementOutcome, FieldLandingOutcome, HotZoneOutcome,
     MissileOutcome, PrecisionQuality, RangeRecord, RangeResult, StrafeQuality,
@@ -208,11 +221,6 @@ pub(crate) fn from_threshold(m: f64) -> String {
     }
 }
 
-/// "+12.0 m (long)": a signed distance with the word for its sign.
-pub(crate) fn signed(v: f64, unit: &str, pos: &str, neg: &str) -> String {
-    format!("{v:+.1} {unit} ({})", if v >= 0. { pos } else { neg })
-}
-
 fn f(name: &str, value: impl Into<String>, inline: bool) -> (String, String, bool) {
     let v: String = value.into();
     (name.to_string(), if v.is_empty() { "-".into() } else { v }, inline)
@@ -245,6 +253,16 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
             if let Some(p) = t.points {
                 o.push(f("Points", format!("{p:.1}"), true));
             }
+            let plan = deckplan::plan_for(&t.carrier_type);
+            let ship = if t.carrier.is_empty() { plan.hull_no.clone().unwrap_or_default() } else { t.carrier.clone() };
+            // the deck file's names are capitals for the drawings: "Nimitz class (CVN)" here
+            let class = plan
+                .name
+                .split(' ')
+                .map(|w| if w.starts_with('(') { w.to_string() } else if w.eq_ignore_ascii_case("class") || w.eq_ignore_ascii_case("de") { w.to_lowercase() } else { cap(&w.to_lowercase()) })
+                .collect::<Vec<_>>()
+                .join(" ");
+            o.push(f("Ship", if ship.is_empty() { class } else { format!("{ship} · {class}") }, true));
         }
         RangeResult::Bomb(b) => {
             let w = if b.weapon_display.is_empty() { &b.weapon } else { &b.weapon_display };
@@ -451,35 +469,7 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
                 o.push(f("Calls", l.calls.join("\n"), false));
             }
         }
-        RangeResult::FieldLanding(fl) => {
-            o.push(f("Runway", format!("{} {}", fl.airfield, fl.runway), true));
-            o.push(f("Outcome", fl.outcome.label(), true));
-            o.push(f("Quality", format!("**{}**", fl.quality.label()), true));
-            o.push(f("Touchdown", from_threshold(fl.touchdown_from_threshold_m), true));
-            o.push(f("Aim point", signed(fl.aim_error_m, "m", "long", "short"), true));
-            o.push(f("Centreline", signed(fl.centreline_m, "m", "right", "left"), true));
-            o.push(f("Sink rate", format!("{:.0} fpm", fl.touchdown_fpm), true));
-            o.push(f("Ground speed", format!("{:.0} kts", fl.touchdown_gs_kts), true));
-            o.push(f("Stable from 1 nm", if fl.stable { "yes" } else { "**NO**" }, true));
-            let deg = |v: Option<f64>| v.map(|v| format!("{v:+.1}°")).unwrap_or_else(|| "-".into());
-            if fl.gs_error_1nm_deg.is_some() || fl.gs_error_half_nm_deg.is_some() {
-                o.push(f(
-                    "Glideslope 1 / 0.5 nm",
-                    format!("{} / {}", deg(fl.gs_error_1nm_deg), deg(fl.gs_error_half_nm_deg)),
-                    true,
-                ));
-            }
-            if fl.lineup_1nm_deg.is_some() || fl.lineup_half_nm_deg.is_some() {
-                o.push(f(
-                    "Lineup 1 / 0.5 nm",
-                    format!("{} / {}", deg(fl.lineup_1nm_deg), deg(fl.lineup_half_nm_deg)),
-                    true,
-                ));
-            }
-            if !fl.calls.is_empty() {
-                o.push(f("Calls", fl.calls.join("\n"), false));
-            }
-        }
+        RangeResult::FieldLanding(fl) => field_landing(fl, &mut o),
         RangeResult::Csar(c) => {
             o.push(f("Area", c.area.clone(), true));
             o.push(f("Outcome", format!("**{}**", c.outcome.label()), true));
@@ -494,6 +484,141 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
                 o.push(f("Delivered to", d.clone(), true));
             }
         }
+    }
+    o
+}
+
+/// A field landing in four fields of short lines, then every call.
+fn field_landing(fl: &bfprotocols::range::FieldLandingResult, o: &mut Vec<(String, String, bool)>) {
+    const FT: f64 = 3.28084;
+    const NM: f64 = 1852.;
+    let deg = |v: Option<f64>| v.map(|v| format!("{v:+.1}°")).unwrap_or_else(|| "-".into());
+    o.push(f("Runway", format!("{} {}", fl.airfield, fl.runway), true));
+    o.push(f("Outcome", fl.outcome.label(), true));
+    o.push(f("Quality", format!("**{}**", fl.quality.label()), true));
+    let cl = fl.centreline_m.abs();
+    o.push(f(
+        "Touchdown",
+        format!(
+            "{}\n{:.0} m {} of the aim point\n{} m {} of centre\n{:.0} fpm · {:.0} kts",
+            from_threshold(fl.touchdown_from_threshold_m),
+            fl.aim_error_m.abs(),
+            if fl.aim_error_m >= 0. { "long" } else { "short" },
+            if cl < 10. { format!("{cl:.1}") } else { format!("{cl:.0}") },
+            if fl.centreline_m >= 0. { "right" } else { "left" },
+            fl.touchdown_fpm,
+            fl.touchdown_gs_kts
+        ),
+        true,
+    ));
+    let mut ap = vec![if fl.stable { "stable from 1 nm".to_string() } else { "**NOT stable** from 1 nm".to_string() }];
+    for (what, a, b) in [("glideslope", fl.gs_error_1nm_deg, fl.gs_error_half_nm_deg), ("lineup", fl.lineup_1nm_deg, fl.lineup_half_nm_deg)] {
+        if a.is_some() || b.is_some() {
+            ap.push(format!("{what} {} at 1 nm, {} at ½", deg(a), deg(b)));
+        }
+    }
+    o.push(f("Approach", ap.join("\n"), true));
+    if let Some(p) = &fl.pattern {
+        let mut l = vec![match (p.kind.as_str(), p.side.as_deref()) {
+            ("straight_in", _) => "**Straight-in**".to_string(),
+            ("other", _) => "No standard pattern".to_string(),
+            (k, Some(sd)) => format!("**{}**, {sd}-hand", cap(&k.replace('_', "-"))),
+            (k, None) => format!("**{}**", cap(&k.replace('_', "-"))),
+        }];
+        if let Some(a) = p.initial_alt_ft {
+            l.push(format!("initial {a:.0} ft"));
+        }
+        if let (Some(a), Some(m)) = (p.break_alt_ft, p.break_at_m) {
+            l.push(format!("break {a:.0} ft, {m:+.0} m"));
+        }
+        if let Some(a) = p.downwind_alt_ft {
+            l.push(match p.abeam_nm {
+                Some(ab) => format!("downwind {a:.0} ft, {ab:.1} nm abeam"),
+                None => format!("downwind {a:.0} ft"),
+            });
+        }
+        if let Some(b) = p.base_at_m {
+            l.push(format!("base {:.2} nm {}", b.abs() / NM, if b < 0. { "past" } else { "short" }));
+        }
+        if let Some(r) = p.rollout_nm {
+            l.push(format!("wings level {r:.2} nm, {:.0} ft", p.rollout_alt_ft.unwrap_or(0.)));
+        }
+        let mut last = vec![];
+        if let Some(g) = p.final_gs_kts {
+            last.push(format!("final {g:.0} kts"));
+        }
+        if let Some(t) = p.pattern_time_s {
+            last.push(mmss(t));
+        }
+        if !last.is_empty() {
+            l.push(last.join(" · "));
+        }
+        o.push(f("Pattern", l.join("\n"), true));
+    }
+    match &fl.taxi {
+        Some(t) => {
+            let end = match t.end.as_str() {
+                "parked" => "parked",
+                "stopped_on_runway" => "**stopped on the runway**",
+                "left" => "left the aircraft",
+                "took_off" => "took off again",
+                "timeout" => "lost after 10 min",
+                e => e,
+            };
+            let top = if t.max_taxi_kts > bfprotocols::range::pattern_legs::TAXI_LIMIT_KTS {
+                format!("**{:.0} kts**", t.max_taxi_kts)
+            } else {
+                format!("{:.0} kts", t.max_taxi_kts)
+            };
+            o.push(f(
+                "Rollout and taxi",
+                format!(
+                    "rollout {:.0} m, {:.0} s\n{}\ntaxi {:.0} m in {}\ntop {top} · {} stop{} · {end}",
+                    t.rollout_m,
+                    t.rollout_s,
+                    match (t.runway_clear_s, t.exit_at_m) {
+                        (Some(c), Some(e)) => format!("clear in {c:.0} s, {e:.0} m down"),
+                        (Some(c), None) => format!("clear in {c:.0} s"),
+                        _ => "**never cleared the runway**".into(),
+                    },
+                    t.taxi_distance_m,
+                    mmss(t.taxi_time_s),
+                    t.stops,
+                    if t.stops == 1 { "" } else { "s" },
+                ),
+                true,
+            ));
+        }
+        None if fl.outcome == bfprotocols::range::FieldLandingOutcome::TouchAndGo => {
+            o.push(f("Rollout and taxi", "touch-and-go", true));
+        }
+        None => (),
+    }
+    let calls: Vec<&String> = fl
+        .calls
+        .iter()
+        .chain(fl.pattern.iter().flat_map(|p| p.calls.iter()))
+        .chain(fl.taxi.iter().flat_map(|t| t.calls.iter()))
+        .collect();
+    if !calls.is_empty() {
+        o.push(f("Calls", calls.iter().map(|c| format!("• {}", cap(c))).collect::<Vec<_>>().join("\n"), false));
+    }
+    let _ = FT;
+}
+
+fn cap(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+}
+
+/// The ways into a result from Discord, as link buttons: (label, url).
+pub(crate) fn links(ctx: &RangeCtx, r: &RangeRecord) -> Vec<(&'static str, String)> {
+    let id = urlencoding::encode(&r.id);
+    let page = format!("{}/result/{}", ctx.site_url, id);
+    let mut o = vec![("Debrief", page.clone()), ("3D replay", format!("{page}?view=3d"))];
+    if r.track.is_some() || matches!(r.result, RangeResult::Trap(_) | RangeResult::FieldLanding(_) | RangeResult::Bomb(_)) {
+        o.push(("Web Tacview", format!("{page}?open=tacview")));
+        o.push(("Tacview clip", format!("{}/api/range/result/{}/clip.acmi", ctx.api_url, id)));
     }
     o
 }
@@ -513,6 +638,13 @@ pub(crate) fn embed(ctx: &RangeCtx, r: &RangeRecord) -> Value {
         RangeResult::Missile(m) if m.perspective == "target" => {
             format!("**{} | {} | defending**", r.pilot.name, air)
         }
+        RangeResult::FieldLanding(fl) => format!(
+            "**{} | {} | RWY {} | {}**",
+            r.pilot.name,
+            air,
+            fl.runway,
+            fl.pattern.as_ref().map(|p| p.kind.replace('_', "-").to_uppercase()).unwrap_or_else(|| fl.outcome.label().to_uppercase())
+        ),
         _ => format!("**{} | {}**", r.pilot.name, air),
     };
     let footer = if r.theatre.is_empty() {
@@ -529,6 +661,7 @@ pub(crate) fn embed(ctx: &RangeCtx, r: &RangeRecord) -> Value {
         })
         .collect();
     let id = urlencoding::encode(&r.id);
+    let links: Vec<Value> = links(ctx, r).into_iter().map(|(label, url)| json!({ "label": label, "url": url })).collect();
     json!({
         "title": title,
         "description": description,
@@ -538,6 +671,7 @@ pub(crate) fn embed(ctx: &RangeCtx, r: &RangeRecord) -> Value {
         "image": format!("{}{}", ctx.api_url, RangeCtx::card_url(&r.id, "png")),
         "url": format!("{}/result/{}", ctx.site_url, id),
         "timestamp": r.ts.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        "links": links,
     })
 }
 
@@ -566,5 +700,43 @@ mod tests {
         assert!(f[2].1.starts_with("angling approach at the start"));
         let (t, _) = title_and_color(&r);
         assert_eq!(t, "Trap Attempt Detected");
+        let ship = f.iter().find(|x| x.0 == "Ship").unwrap();
+        assert_eq!(ship.1, "CVN-73 · Nimitz class (CVN)");
+    }
+
+    /// `CARD_OUT=<dir>`: every fixture's embed fields as JSON next to the card samples.
+    #[test]
+    fn write_embed_samples() {
+        let Ok(dir) = std::env::var("CARD_OUT") else { return };
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut recs = vec![super::super::cards::tests::trap()];
+        recs.extend(super::super::cards::tests::all_cards());
+        for (i, r) in recs.iter().enumerate() {
+            let (title, color) = title_and_color(r);
+            let fields: Vec<Value> = fields(r).into_iter().map(|(n, v, inl)| json!({"name": n, "value": v, "inline": inl})).collect();
+            let v = json!({"title": title, "color": color, "fields": fields});
+            std::fs::write(format!("{dir}/embed-{i:02}-{}.json", r.kind()), serde_json::to_string_pretty(&v).unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn field_landing_groups_fit_discord() {
+        for r in super::super::cards::tests::all_cards() {
+            let RangeResult::FieldLanding(fl) = &r.result else { continue };
+            let o = fields(&r);
+            assert!(o.len() <= 25);
+            for (k, v, _) in &o {
+                assert!(k.len() <= 256 && v.chars().count() <= 1024, "{k}");
+            }
+            let names: Vec<&str> = o.iter().map(|x| x.0.as_str()).collect();
+            assert!(names.contains(&"Touchdown") && names.contains(&"Approach"), "{names:?}");
+            if fl.pattern.is_some() {
+                let p = &o.iter().find(|x| x.0 == "Pattern").unwrap().1;
+                assert!(p.starts_with("**Overhead**, left-hand") && p.contains("downwind 1000 ft, 1.2 nm abeam"), "{p}");
+                let t = &o.iter().find(|x| x.0 == "Rollout and taxi").unwrap().1;
+                assert!(t.contains("clear in 27 s, 1580 m down") && t.contains("**38 kts**") && t.contains("parked"), "{t}");
+                assert!(o.iter().any(|x| x.0 == "Calls" && x.1.contains("Fast taxi")));
+            }
+        }
     }
 }

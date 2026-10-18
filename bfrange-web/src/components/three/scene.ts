@@ -31,6 +31,8 @@ export interface SceneOpts {
   labels: boolean
   glide: boolean
   night: boolean
+  /** a waved-off pass: the lens's wave-off lights come on in close */
+  waveoff?: boolean
 }
 
 export interface Readout {
@@ -302,6 +304,8 @@ export class DebriefScene {
     }
 
     this.placeCamera(selfSt, boatSt, dt)
+    // the lens shows the ball for where it is seen from
+    this.boat?.node.userData.updateLens?.(this.camera.position, !!this.opts.waveoff && !!pass && pass.x_m < 0.12 * NM)
     this.renderer.render(this.scene, this.camera)
     this.placeLabels()
 

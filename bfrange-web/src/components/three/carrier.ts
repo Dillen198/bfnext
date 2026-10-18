@@ -13,6 +13,7 @@
 import * as THREE from 'three'
 import { landingPointFromStern, shipToModel, type DeckGeom } from '../../lib/carrierDeck'
 import { MATS } from './models'
+import { LENS_CELLS, ballPos, litCells } from '../../lib/lens'
 
 type P = [number, number]
 const D2R = Math.PI / 180
@@ -110,6 +111,15 @@ export function hullNumber(name: string | undefined): string | null {
 }
 
 /** Where the LSO stands and the lens is, in model coordinates (metres fwd / right of the reference point, height). */
+/** The lens's lights: lit, and dark (still visible as glass). */
+const LENS_MATS = {
+  amber: new THREE.MeshBasicMaterial({ color: '#ffb000' }),
+  amberDim: new THREE.MeshBasicMaterial({ color: '#3a3020' }),
+  red: new THREE.MeshBasicMaterial({ color: '#ff3b30' }),
+  redDim: new THREE.MeshBasicMaterial({ color: '#4a2422' }),
+  greenDim: new THREE.MeshBasicMaterial({ color: '#24452f' }),
+}
+
 export function deckSpots(g: DeckGeom) {
   const at = (p: P | null) => (p ? (([y, x]) => [x, y, g.deck_height_m] as [number, number, number])(shipToModel(g, p[0], p[1])) : null)
   return { lso: at(g.lso), lens: at(g.lens) }
@@ -190,20 +200,66 @@ export function carrier(g: DeckGeom, name: string | undefined): THREE.Group {
     grp.add(w)
   }
 
-  // the lens: a box on the port side with the ball and the datum lights
+  // the lens (IFLOLS) on the port side, facing aft along the landing area:
+  // twelve source cells, ten datum lights a side, the wave-off lights beside
+  // the source and the cut lights over it. Which cell shows the ball depends
+  // on where it is seen from, as on the real thing: `updateLens` lights the
+  // cell for the camera's angle above the glideslope, so from the cockpit or
+  // the LSO camera it reads what the pilot saw.
   const spots = deckSpots(g)
   if (spots.lens) {
     const [x, y, z] = spots.lens
-    const box = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 4.2), MATS.navyDark)
-    box.position.set(x, y, z + 2.4)
-    grp.add(box)
-    const ball = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.3, 0.5), MATS.lensAmber)
-    ball.position.set(x, y + 0.05, z + 2.4)
-    grp.add(ball)
-    for (const s of [-1, 1]) {
-      const datum = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.6, 0.3), MATS.lensGreen)
-      datum.position.set(x, y + s * 1.9, z + 2.4)
-      grp.add(datum)
+    const lens = new THREE.Group()
+    lens.position.set(x, y, z + 1.6)
+    lens.rotation.z = -g.angle_deg * D2R
+    const cell = 0.11, srcW = 0.5
+    const housing = new THREE.Mesh(new THREE.BoxGeometry(srcW + 0.5, 0.6, cell * LENS_CELLS + 0.5), MATS.navyDark)
+    housing.position.set(0, 0.32, 0)
+    lens.add(housing)
+    const top = (cell * LENS_CELLS) / 2
+    const cells: THREE.Mesh[] = []
+    for (let i = 0; i < LENS_CELLS; i++) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(srcW, 0.05, cell * 0.86), i >= LENS_CELLS - 2 ? LENS_MATS.redDim : LENS_MATS.amberDim)
+      m.position.set(0, 0, top - (i + 0.5) * cell)
+      lens.add(m)
+      cells.push(m)
+    }
+    const light = (lx: number, lz: number, mat: THREE.Material, r = 0.09) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(r * 2, 0.05, r * 2), mat)
+      m.position.set(lx, 0, lz)
+      lens.add(m)
+      return m
+    }
+    const waveoff: THREE.Mesh[] = []
+    for (const side of [-1, 1]) {
+      for (let j = 0; j < 10; j++) light(side * (srcW / 2 + 0.9 + j * 0.42), 0, MATS.lensGreen, 0.1)
+      for (let j = 0; j < 4; j++) waveoff.push(light(side * (srcW / 2 + 0.3), top - 0.08 - j * 0.16, LENS_MATS.redDim))
+    }
+    for (let j = 0; j < 4; j++) light((j - 1.5) * 0.18, top + 0.2, LENS_MATS.greenDim)
+    // datum arms
+    for (const side of [-1, 1]) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.3, 0.32), MATS.navyDark)
+      arm.position.set(side * (srcW / 2 + 0.75 + 2.1), 0.2, 0)
+      lens.add(arm)
+    }
+    grp.add(lens)
+    const tmp = new THREE.Vector3()
+    let lit = ''
+    grp.userData.updateLens = (cam: THREE.Vector3, waveoffOn = false) => {
+      lens.worldToLocal(tmp.copy(cam))
+      // the lens shows nothing from ahead of it
+      const aft = -tmp.y
+      const b = aft > 5 ? ballPos((Math.atan2(tmp.z, aft) * 180) / Math.PI - g.glideslope_deg) : null
+      const now = b && !b.off ? litCells(b.p) : []
+      const key = now.join(',')
+      if (key !== lit) {
+        cells.forEach((m, i) => {
+          const low = i >= LENS_CELLS - 2
+          m.material = now.includes(i) ? (low ? LENS_MATS.red : LENS_MATS.amber) : low ? LENS_MATS.redDim : LENS_MATS.amberDim
+        })
+        lit = key
+      }
+      for (const w of waveoff) w.material = waveoffOn ? LENS_MATS.red : LENS_MATS.redDim
     }
   }
   if (spots.lso) {

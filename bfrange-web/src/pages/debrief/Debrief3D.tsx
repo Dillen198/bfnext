@@ -17,6 +17,7 @@ import { DebriefScene, type CamMode, type Readout } from '../../components/three
 import { FT, NM } from '../../lib/geo'
 import { fmt, fmtSigned, pad3 } from '../../lib/format'
 import { usePref } from '../../lib/usePref'
+import { Iflols } from '../../components/plots/Iflols'
 import type { Clip, RangeRecord } from '../../types'
 
 const SPEEDS = [0.25, 0.5, 1, 2, 4] as const
@@ -38,22 +39,7 @@ const clock = (t: number) => {
   return `${s < 0 ? '−' : '+'}${Math.floor(a / 60)}:${String(a % 60).padStart(2, '0')}`
 }
 
-/** The lens as the pilot sees it: the ball against the green datum bars. */
-function Lens({ gse }: { gse: number }) {
-  // the ball runs about ±0.8° across the lens's cells
-  const off = Math.max(-1, Math.min(1, gse / 0.8))
-  const lo = gse < -0.8
-  return (
-    <div className="d3-lens" title={`${fmtSigned(gse, 2)}° from the glideslope`}>
-      <span className="datum l" />
-      <span className="datum r" />
-      <span className="cells" />
-      <span className="ball" style={{ transform: `translateY(${-off * 34}px)`, background: lo ? '#ff3b30' : undefined }} />
-    </div>
-  )
-}
-
-function Hud({ r, kind }: { r: Readout; kind: string }) {
+function Hud({ r, kind, waveoff }: { r: Readout; kind: string; waveoff: boolean }) {
   const s = r.self
   if (!s) return null
   const p = r.pass
@@ -69,7 +55,7 @@ function Hud({ r, kind }: { r: Readout; kind: string }) {
       </div>
       {inGroove && p && (
         <div className="d3-hud-col right">
-          <Lens gse={p.gse_deg} />
+          <div className="d3-lens"><Iflols gse={p.gse_deg} waveoff={waveoff && p.x_m < 0.12 * NM} width={150} title={`The lens: ${fmtSigned(p.gse_deg, 2)}° from the glideslope`} /></div>
           <span><i>DIST</i>{fmt(p.x_m / NM, 2)}<small>NM</small></span>
           <span><i>HGT</i>{fmt(p.hgt_ft)}<small>ft</small></span>
           <span><i>GSE</i>{fmtSigned(p.gse_deg, 2)}°</span>
@@ -85,6 +71,7 @@ function Player({ clip, rec }: { clip: Clip; rec: RangeRecord }) {
   const sceneRef = useRef<DebriefScene | null>(null)
   const kind = rec.result.kind
   const night = 'night' in rec.result ? !!rec.result.night : false
+  const waveoff = rec.result.kind === 'trap' && rec.result.outcome === 'waveoff'
   const [opts, setOpts] = usePref<Opts>('range.d3.opts', { trails: true, labels: true, glide: true }, isOpts)
   const [cam, setCam] = useState<CamMode>(kind === 'trap' ? 'lso' : 'chase')
   const [playing, setPlaying] = useState(false)
@@ -101,7 +88,7 @@ function Player({ clip, rec }: { clip: Clip; rec: RangeRecord }) {
 
   useEffect(() => {
     if (!host.current) return
-    const s = new DebriefScene(host.current, clip, { ...opts, night })
+    const s = new DebriefScene(host.current, clip, { ...opts, night, waveoff })
     sceneRef.current = s
     setHasBoat(s.hasBoat())
     setHasTarget(s.hasTarget())
@@ -127,7 +114,7 @@ function Player({ clip, rec }: { clip: Clip; rec: RangeRecord }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clip])
 
-  useEffect(() => { sceneRef.current?.setOpts({ ...opts, night }) }, [opts, night])
+  useEffect(() => { sceneRef.current?.setOpts({ ...opts, night, waveoff }) }, [opts, night, waveoff])
   // a camera the clip cannot have falls back to the chase view
   const usable = (m: CamMode) => (m === 'lso' || m === 'deck' ? hasBoat : m === 'target' ? hasTarget : true)
   const camNow: CamMode = usable(cam) ? cam : 'chase'
@@ -159,7 +146,7 @@ function Player({ clip, rec }: { clip: Clip; rec: RangeRecord }) {
     <div className="d3" tabIndex={0} onKeyDown={onKey} aria-label="3D debrief. Space plays, arrow keys step, 1 to 6 change camera.">
       <div className="d3-stage">
         <div ref={host} className="d3-host" />
-        {read && <Hud r={read} kind={kind} />}
+        {read && <Hud r={read} kind={kind} waveoff={waveoff} />}
         {!clip.complete && (
           <div className="d3-note">The server is still recording this session: the clip ends where the recording does for now.</div>
         )}

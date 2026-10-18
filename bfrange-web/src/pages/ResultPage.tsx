@@ -2,9 +2,15 @@
  * `/result/:id` — the debrief. What the engine measured (left), the same
  * event drawn interactively from its track (right), and the rendered card
  * that went to Discord, with downloads for the card and the Tacview file.
+ *
+ * The Discord post's buttons land here: `?view=3d` opens the 3D replay, and
+ * `?open=tacview` goes straight on to the dashboard's web Tacview (asked for
+ * on the click, since the replay can only place a result once the server has
+ * stopped writing that recording; until then it stays on the debrief and
+ * says why).
  */
-import { lazy, Suspense, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Download, ExternalLink, Link as LinkIcon } from '@icons'
 import { DASHBOARD_URL, api, apiUrl } from '../api'
@@ -28,9 +34,30 @@ export default function ResultPage() {
   const { id = '' } = useParams()
   const toast = useToast()
   const [busy, setBusy] = useState<'' | 'png' | 'acmi' | 'clip' | 'replay'>('')
-  const [view, setView] = usePref<'2d' | '3d'>('range.debrief.view', '2d', isView)
+  const [pref, setPref] = usePref<'2d' | '3d'>('range.debrief.view', '2d', isView)
+  const [sp, setSp] = useSearchParams()
+  const urlView = sp.get('view')
+  // a link's ?view= wins over the remembered choice until the pilot picks one
+  const view = isView(urlView) ? urlView : pref
+  const setView = (v: '2d' | '3d') => {
+    setPref(v)
+    if (urlView) setSp(p => { p.delete('view'); return p }, { replace: true })
+  }
   const [cardFailed, setCardFailed] = useState(false)
   const q = useQuery({ queryKey: ['result', id], queryFn: () => api.result(id), staleTime: 5 * 60_000 })
+  const wantReplay = sp.get('open') === 'tacview'
+  const tried = useRef('')
+  useEffect(() => {
+    if (!wantReplay || !q.data || tried.current === q.data.id) return
+    tried.current = q.data.id
+    api.replayLink(q.data.id).then(
+      l => window.location.replace(`${DASHBOARD_URL}${l.path}`),
+      e => {
+        toast(`Web Tacview: ${e instanceof Error ? e.message : String(e)}`, false)
+        setSp(p => { p.delete('open'); return p }, { replace: true })
+      },
+    )
+  }, [wantReplay, q.data, toast, setSp])
 
   if (q.isLoading) return <Loading label="Opening the debrief" />
   if (q.error || !q.data) {

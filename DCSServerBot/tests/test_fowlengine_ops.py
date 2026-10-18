@@ -1913,3 +1913,26 @@ def test_unquoted_discord_ids_still_launch(tmp_path):
     assert args[args.index("--discord-client-id") + 1] == "1561347344409034872"
     line = pm._redact(args)
     assert "--discord-client-secret ***" in line and "--admin-password ***" in line
+
+
+def test_range_embed_links_become_buttons():
+    from fe import rangefeed as rf
+    d = rf.normalize_embed({
+        "title": "Field landing",
+        "links": [
+            {"label": "Debrief", "url": "https://range.vectorstrike.org/result/a%201"},
+            {"label": "3D replay", "url": "https://range.vectorstrike.org/result/a%201?view=3d"},
+            {"label": "dup", "url": "https://range.vectorstrike.org/result/a%201"},
+            {"label": "bad scheme", "url": "javascript:alert(1)"},
+            {"label": "", "url": "https://x.example/"},
+            "not a link",
+            {"label": "x" * 200, "url": "https://x.example/long"},
+        ] + [{"label": f"n{i}", "url": f"https://x.example/{i}"} for i in range(9)],
+    })
+    links = d["links"]
+    assert [l["label"] for l in links][:2] == ["Debrief", "3D replay"]
+    assert len(links) == 5
+    assert all(l["url"].startswith("https://") for l in links)
+    assert len({l["url"] for l in links}) == len(links)
+    assert all(len(l["label"]) <= 80 for l in links)
+    assert rf.normalize_embed({"title": "t"})["links"] == []

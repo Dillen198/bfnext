@@ -21,6 +21,8 @@ import { FT, NM } from '../../lib/geo'
 import { fmt, fmtSigned } from '../../lib/format'
 import type { GrooveSample, TrapResult } from '../../types'
 import { linear, ticks, usePlotW, useSvgPointer } from './scale'
+import { Iflols } from './Iflols'
+import { ballSay } from '../../lib/lens'
 
 const D2R = Math.PI / 180
 
@@ -380,6 +382,32 @@ export function TrapSheet({ samples, trap }: { samples: GrooveSample[]; trap: Tr
         <span className="inline-flex items-center gap-1.5"><span className="dot" style={{ background: 'var(--sky)' }} /> pattern, and after the landing point</span>
         {caught && <span className="inline-flex items-center gap-1.5"><span style={{ width: 12, height: 2.5, background: 'var(--ball)' }} /> #{caught} wire</span>}
       </div>
+      <LensRow groove={groove} cur={cur} waveoff={trap.outcome === 'waveoff'} />
     </div>
+  )
+}
+
+/** The lens at X / IM / IC / AR, as the pilot saw it, and at the cursor. */
+function LensRow({ groove, cur, waveoff }: { groove: GrooveSample[]; cur: GrooveSample | null; waveoff: boolean }) {
+  const at = POSITIONS.map(p => {
+    const v = groove.filter(s => s.x_m <= p.from * NM && s.x_m > p.to * NM).map(s => s.gse_deg)
+    return { k: p.k, g: v.length ? v.reduce((a, b) => a + b, 0) / v.length : null }
+  })
+  const live = cur && cur.x_m > 0 && cur.x_m < 1.2 * NM ? cur : null
+  const cellOf = (k: string, g: number | null, wo: boolean, note?: string) => (
+    <div key={k} className="lens-cell">
+      <div className="caps">{k}</div>
+      <Iflols gse={g} waveoff={wo} title={`The lens at ${k}`} />
+      <div className="mono text-[11.5px]">{g === null ? 'no reading' : `${fmtSigned(g, 2)}° · ${ballSay(g)}`}{note ? <span className="dim"> · {note}</span> : null}</div>
+    </div>
+  )
+  return (
+    <figure className="m-0 mt-3">
+      <figcaption className="caps mb-1">The lens (IFLOLS) · the ball at each position · wave-off lights lit on a wave-off</figcaption>
+      <div className="lens-row">
+        {at.map((a, i) => cellOf(a.k, a.g, waveoff && i === at.length - 1))}
+        {cellOf(live ? 'Cursor' : 'Cursor (hover)', live ? live.gse_deg : null, false, live ? `${fmt(live.x_m / NM, 2)} nm` : undefined)}
+      </div>
+    </figure>
   )
 }

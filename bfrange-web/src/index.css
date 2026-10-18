@@ -750,12 +750,11 @@ kbd {
 .d3-hud-col span { display: flex; align-items: baseline; gap: 6px; }
 .d3-hud-col i { font-style: normal; font-size: 9.5px; letter-spacing: .12em; color: #93a3b5; width: 32px; }
 .d3-hud-col small { font-size: 10px; color: #93a3b5; }
-.d3-lens { position: relative; align-self: center; width: 64px; height: 90px; margin: 2px 0 6px; }
-.d3-lens .cells { position: absolute; left: 24px; top: 4px; width: 16px; height: 82px; background: #111a22; border: 1px solid #2c3e51; }
-.d3-lens .datum { position: absolute; top: 42px; width: 18px; height: 6px; background: #38d77c; }
-.d3-lens .datum.l { left: 0; }
-.d3-lens .datum.r { right: 0; }
-.d3-lens .ball { position: absolute; left: 25px; top: 39px; width: 14px; height: 12px; border-radius: 2px; background: #ffb23e; box-shadow: 0 0 10px #ffb23e; transition: transform .1s linear; }
+.lens-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+@media (max-width: 640px) { .lens-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lens-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 6px; background: var(--plot-bg); border-radius: 2px; text-align: center; }
+.lens-cell .caps { align-self: flex-start; }
+.d3-lens { align-self: center; margin: 2px 0 6px; }
 .d3-note {
   position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); max-width: calc(100% - 20px);
   padding: 5px 10px; border-radius: 3px; background: rgba(8, 12, 17, .7); color: #ffb23e; font-size: 12px;
