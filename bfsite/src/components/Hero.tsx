@@ -1,25 +1,31 @@
+import { Link } from 'react-router-dom'
 import { ArrowRight, Support } from '@icons'
 import { campaign, links, wiki } from '../config/campaign'
-import { roundDay, useTheatreLive, useTheatres, type Theatre } from '../live'
+import { roundDay, useServerStates, useTheatreLive, type ServerRow } from '../live'
 import { StatusTag, TerritoryBar } from './Bits'
 
-function LiveCell({ t, offline }: { t: Theatre; offline: boolean }) {
-  const { front, frontLoading, airborne } = useTheatreLive(t.instance)
-  const round = t.instance?.active_round
+function LiveCell({ row }: { row: ServerRow }) {
+  const t = row.theatre
+  const up = row.state === 'live' || row.state === 'standby'
+  const { front, frontLoading, airborne } = useTheatreLive(up ? t.instance : undefined)
+  const round = up ? t.instance?.active_round : undefined
   const day = round ? roundDay(round.start) : undefined
+  const why = row.notices[0]?.title
   return (
     <div className="live-cell">
       <div className="live-head">
         <span className="live-name">{t.label}</span>
-        <StatusTag live={!!round} known={!!t.instance && !offline} />
+        <StatusTag state={row.state} />
       </div>
       <div className="live-meta">
-        {round ? `Round ${round.id}${day ? ` · day ${day}` : ''}` : t.instance ? 'Between rounds' : 'Status unavailable'}
+        {round ? `Round ${round.id}${day ? ` · day ${day}` : ''}`
+          : up ? 'Between rounds'
+          : why ?? (row.state === 'unknown' ? 'Checking…' : 'No live data')}
       </div>
       <div className="live-row">
-        <span className="live-big">{round && airborne.known ? airborne.total : '—'}</span>
+        <span className="live-big">{airborne.known ? airborne.total : '—'}</span>
         <span className="live-unit">
-          {round && airborne.known ? `pilots on · ${airborne.blue} ${t.blueLabel} / ${airborne.red} ${t.redLabel}` : 'pilots on'}
+          {airborne.known ? `pilots on · ${airborne.blue} ${t.blueLabel} / ${airborne.red} ${t.redLabel}` : 'pilots on'}
         </span>
       </div>
       <div style={{ marginTop: 10 }}>
@@ -30,7 +36,7 @@ function LiveCell({ t, offline }: { t: Theatre; offline: boolean }) {
 }
 
 export default function Hero() {
-  const { theatres, offline } = useTheatres()
+  const { rows } = useServerStates()
   return (
     <section id="top" className="hero theme-locked-dark">
       <div className="hero-img" role="img" aria-label="Two jets dogfighting low over a burning battlefield at sunset" />
@@ -66,10 +72,11 @@ export default function Hero() {
       </div>
 
       <div className="wrap fade-up d5">
-        <div className="live-strip" style={{ ['--cols' as string]: theatres.length }}>
-          {theatres.map(t => <LiveCell key={t.key} t={t} offline={offline} />)}
+        <div className="live-strip" style={{ ['--cols' as string]: rows.length }}>
+          {rows.map(r => <LiveCell key={r.theatre.key} row={r} />)}
           <div className="live-cta">
-            <a href="#situation" className="text-link">Theatres <ArrowRight size={12} /></a>
+            <Link to="/servers" className="text-link">Servers <ArrowRight size={12} /></Link>
+            <Link to="/status" className="text-link">Status <ArrowRight size={12} /></Link>
           </div>
         </div>
       </div>

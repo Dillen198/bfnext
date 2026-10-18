@@ -1,4 +1,4 @@
-import { ArrowRight, ExternalLink, Support } from '@icons'
+import { ArrowRight, ExternalLink } from '@icons'
 import { links, wiki } from '../config/campaign'
 import { SERVERS } from '../config/servers'
 import { BrowserName, SectionHead } from './Bits'
@@ -94,16 +94,6 @@ export default function Execution() {
           </Reveal>
         </div>
 
-        <Reveal className="panel cta-band">
-          <div>
-            <h3>Ready to fly?</h3>
-            <p>The squadron is on Discord. Say hello and we’ll get you on the flight line.</p>
-          </div>
-          <a href={links.discord} target="_blank" rel="noopener noreferrer" className="vs-btn">
-            <Support size={15} />
-            Join the Discord
-          </a>
-        </Reveal>
       </div>
     </section>
   )

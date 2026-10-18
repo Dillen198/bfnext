@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { CheckCircle2 as CheckCircle, Link as LinkIcon } from '@icons'
 import type { FrontLine } from '../live'
+import { STATE_LABEL, fmtUtc, stateTone, type Notice, type ServerState } from '../status'
 
 /** A section heading in the shape of an operations-order paragraph. */
 export function SectionHead({
@@ -26,12 +27,40 @@ export function SectionHead({
   )
 }
 
-export function StatusTag({ live, known }: { live: boolean; known: boolean }) {
+export function StatusTag({ state }: { state: ServerState }) {
   return (
-    <span className={`status${live ? ' is-live' : ''}`}>
+    <span className={`status tone-${stateTone(state)}`}>
       <span className="dot" />
-      {!known ? 'No signal' : live ? 'Round live' : 'Standby'}
+      {STATE_LABEL[state]}
     </span>
+  )
+}
+
+const LEVEL_LABEL: Record<Notice['level'], string> = {
+  outage: 'Outage',
+  degraded: 'Degraded',
+  maintenance: 'Maintenance',
+  info: 'Notice',
+}
+
+/** A hand-written status notice, as status.json carries it. */
+export function NoticeBox({ notice, compact = false }: { notice: Notice; compact?: boolean }) {
+  const eta = fmtUtc(notice.eta)
+  const since = fmtUtc(notice.since)
+  return (
+    <div className={`notice lvl-${notice.level}`} role={notice.level === 'outage' ? 'alert' : undefined}>
+      <div className="notice-head">
+        <span className="notice-level">{LEVEL_LABEL[notice.level]}</span>
+        <strong>{notice.title}</strong>
+      </div>
+      {!compact && notice.message && <p>{notice.message}</p>}
+      {(eta || (since && !compact)) && (
+        <div className="notice-meta">
+          {since && !compact && <span>Since {since}</span>}
+          {eta && <span>{notice.level === 'maintenance' ? 'Until' : 'Expected back'} {eta}</span>}
+        </div>
+      )}
+    </div>
   )
 }
 

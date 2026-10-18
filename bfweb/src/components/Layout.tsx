@@ -9,6 +9,7 @@ import ThemeToggle from './ThemeToggle'
 import { useInstance } from '../context/InstanceContext'
 import LogoMark from './LogoMark'
 import Backdrop from './Backdrop'
+import StatusBanner from './StatusBanner'
 import { getDevUser } from '../lib/devAuth'
 import {
   Sitrep,
@@ -656,6 +657,7 @@ export default function Layout() {
 
         {/* MAIN */}
         <main className="vs-main" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          <StatusBanner />
           <Outlet />
         </main>
 

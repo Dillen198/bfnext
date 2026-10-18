@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { ExternalLink } from '@icons'
 import { campaign, dashboard, links, wiki } from '../config/campaign'
 import LogoMark from './LogoMark'
@@ -21,7 +22,10 @@ export default function Footer() {
           <div>
             <h4>Fly</h4>
             <div className="footer-links">
-              <a href="#join">How to join</a>
+              <Link to="/join">How to join</Link>
+              <Link to="/servers">Servers</Link>
+              <Link to="/status">Server status</Link>
+              <Link to="/community">Community</Link>
               <a href={links.discord} target="_blank" rel="noopener noreferrer">Discord <ExternalLink size={10} /></a>
               <a href={links.dcs} target="_blank" rel="noopener noreferrer">DCS World <ExternalLink size={10} /></a>
             </div>

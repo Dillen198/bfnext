@@ -1,20 +1,22 @@
 import { useEffect, useState } from 'react'
+import { Link, NavLink, useLocation } from 'react-router-dom'
 import { Menu, X, Wiki, Sitrep } from '@icons'
 import { links } from '../config/campaign'
 import ThemeToggle from './ThemeToggle'
 import LogoMark from './LogoMark'
+import StatusBanner from './StatusBanner'
 
-const SECTIONS = [
-  { href: '#situation', label: 'Situation' },
-  { href: '#mission', label: 'Mission' },
-  { href: '#join', label: 'Join' },
-  { href: '#intel', label: 'Intel' },
-  { href: '#community', label: 'Community' },
+const PAGES = [
+  { to: '/servers', label: 'Servers' },
+  { to: '/join', label: 'Join' },
+  { to: '/status', label: 'Status' },
+  { to: '/community', label: 'Community' },
 ]
 
 export default function Nav() {
   const [open, setOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
+  const { pathname } = useLocation()
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 40)
@@ -23,26 +25,24 @@ export default function Nav() {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
-  const solid = scrolled || open
+  // Only the home page has a dark picture under the bar. There it stays
+  // transparent, in the dark palette, until scrolled; elsewhere it is solid.
+  const solid = scrolled || open || pathname !== '/'
+  const close = () => setOpen(false)
   return (
-    // Over the hero the bar is transparent on a dark picture, so it keeps the
-    // dark palette in either theme until it turns solid.
     <header className={`nav${solid ? ' is-solid' : ' theme-locked-dark'}`}>
       <div className="wrap nav-bar">
-        <a href="#top" className="nav-brand" onClick={() => setOpen(false)}>
+        <Link to="/" className="nav-brand" onClick={close}>
           <LogoMark size={40} alt="" />
           <div>
             <div className="nav-brand-name">Vector Strike</div>
             <div className="nav-brand-sub">Persistent DCS campaign</div>
           </div>
-        </a>
+        </Link>
 
-        <nav className="nav-links" aria-label="Sections">
-          {SECTIONS.map((s, i) => (
-            <a key={s.href} href={s.href} className="nav-link">
-              <span className="n">{i + 1}</span>
-              {s.label}
-            </a>
+        <nav className="nav-links" aria-label="Pages">
+          {PAGES.map(p => (
+            <NavLink key={p.to} to={p.to} className="nav-link">{p.label}</NavLink>
           ))}
         </nav>
 
@@ -70,11 +70,9 @@ export default function Nav() {
       {open && (
         <div className="nav-drawer">
           <div className="wrap">
-            {SECTIONS.map((s, i) => (
-              <a key={s.href} href={s.href} className="nav-link" onClick={() => setOpen(false)}>
-                <span className="n">{i + 1}</span>
-                {s.label}
-              </a>
+            <NavLink to="/" end className="nav-link" onClick={close}>Home</NavLink>
+            {PAGES.map(p => (
+              <NavLink key={p.to} to={p.to} className="nav-link" onClick={close}>{p.label}</NavLink>
             ))}
             <div className="nav-drawer-actions">
               <a href={links.discord} target="_blank" rel="noopener noreferrer" className="vs-btn vs-btn-sm">Join Discord</a>
@@ -84,6 +82,8 @@ export default function Nav() {
           </div>
         </div>
       )}
+
+      <StatusBanner />
     </header>
   )
 }

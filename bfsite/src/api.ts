@@ -48,8 +48,19 @@ export interface NewsDay {
   image?: string | null
 }
 
+/** One bfdb instance's own view of its game server. */
+export interface Health {
+  ok: boolean
+  engine: { reachable: boolean; latency_ms: number | null; error: string | null }
+  active_round: { id: number; start: string } | null
+}
+
+// bfdb's host can vanish outright (Cloudflare then holds the request open
+// before answering 52x), so every call gets a deadline rather than hanging.
+const TIMEOUT_MS = 12_000
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_ROOT}${path}`)
+  const res = await fetch(`${API_ROOT}${path}`, { signal: AbortSignal.timeout(TIMEOUT_MS) })
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
 }
@@ -65,5 +76,6 @@ export const api = {
   instances: () => get<{ default: string; instances: ServerInstance[] }>('/api/instances'),
   objectives: (instance?: string) => get<Objective[]>(scoped('/api/objectives', instance)),
   online: (instance?: string) => get<OnlinePilot[]>(scoped('/api/online', instance)),
+  health: (instance?: string) => get<Health>(scoped('/api/health', instance)),
   latestNews: (instance?: string) => get<{ days: NewsDay[] }>(scoped('/api/news?limit=1', instance)),
 }

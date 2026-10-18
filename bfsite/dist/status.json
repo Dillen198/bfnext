@@ -1,0 +1,13 @@
+{
+  "_help": "Server status notices for www.vectorstrike.org and the ops dashboard. Edit and push (or edit on GitHub); Vercel redeploys in about a minute. Nothing here depends on bfdb, so it still works when the game host is down. 'notices' show until you remove them. 'level' is outage, degraded, maintenance or info. 'servers' lists instance ids (vs1 = Modern · Syria, vs2 = 2008 · Caucasus); leave it out to mean every server. 'eta' and the maintenance 'start'/'end' are ISO 8601 UTC times. A maintenance window shows from 7 days before it starts and disappears once 'end' has passed.",
+  "notices": [
+    {
+      "id": "host-ram-2026-10",
+      "level": "outage",
+      "title": "Servers offline: host hardware issue",
+      "message": "The machine that runs both servers has a RAM problem and is down while it's fixed. The campaign state is safe and picks up where it left off. Updates are posted on Discord.",
+      "since": "2026-10-18T00:00:00Z"
+    }
+  ],
+  "maintenance": []
+}

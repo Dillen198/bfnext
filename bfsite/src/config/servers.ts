@@ -5,6 +5,9 @@
 // the engine config of whichever server the reader picks.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Flags blended into a theatre's backdrop: the blue side's, then the red side's. */
+export type FlagId = 'blufor' | 'redfor' | 'georgia' | 'russia'
+
 export interface ServerProfile {
   /**
    * The bfdb instance this profile describes (`?instance=`). The live data
@@ -24,6 +27,7 @@ export interface ServerProfile {
   /** Coalition names for this campaign — they are not BLUFOR/REDFOR everywhere. */
   blueLabel: string
   redLabel: string
+  flags: [FlagId, FlagId]
 }
 
 export const SERVERS: ServerProfile[] = [
@@ -38,6 +42,8 @@ export const SERVERS: ServerProfile[] = [
     livesEnforced: false,
     blueLabel: 'BLUFOR',
     redLabel: 'REDFOR',
+    // Generic coalitions on this server, so coalition colours, not a country.
+    flags: ['blufor', 'redfor'],
   },
   {
     instanceId: 'vs2',
@@ -51,5 +57,6 @@ export const SERVERS: ServerProfile[] = [
     livesEnforced: true,
     blueLabel: 'Georgia',
     redLabel: 'Russia',
+    flags: ['georgia', 'russia'],
   },
 ]
