@@ -1735,6 +1735,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// The latest engine release on GitHub installs through the wizard's own
+    /// path with the built-in key (about 190 MB):
+    ///   cargo test --lib newbox::tests::engine_github -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn engine_github() {
+        let home = std::env::temp_dir().join(format!("fowl-newbox-gh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let o = NewBoxOptions::default();
+        let tag = engine_files(&o, "github", &home).unwrap();
+        println!("installed {tag} from {}", o.engine_repo);
+        for name in RANGE_ENGINE_FILES {
+            assert!(engine_target(&home, name).is_file(), "{name} missing");
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     /// The real downloads: DCSServerBot's pinned source zip unpacks into a
     /// bot folder, SRS's latest release has its zip, ED's updater URL answers.
     ///   cargo test --lib newbox::tests::downloads -- --ignored --nocapture
