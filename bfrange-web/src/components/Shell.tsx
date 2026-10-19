@@ -8,6 +8,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
+import { Backdrop } from './Backdrop'
 import { ChevronsLeft, ChevronsRight, LogOut, Menu, Moon, Search, Sun, X } from '@icons'
 import { MOCK } from '../api'
 import { useAuth } from '../context/AuthContext'
@@ -191,7 +192,10 @@ export function Shell({ children, bleed }: { children: ReactNode; bleed: boolean
           </div>
         </header>
 
-        <main className={`shell-content${bleed ? ' bleed' : ''}`}>{children}</main>
+        <main className={`shell-content${bleed ? ' bleed' : ''}`}>
+          {!bleed && <Backdrop path={loc.pathname} />}
+          {children}
+        </main>
 
         <nav className="tabbar lg:hidden" aria-label="Quick">
           {NAV.filter(n => n.tab).map(n => (

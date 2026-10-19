@@ -42,6 +42,9 @@
   --map-bg: #0a0e12;
   --rail: #0d141b;
   --grid-dot: rgba(147, 163, 181, 0.07);
+  --bd-ink: rgba(160, 178, 198, 0.27);
+  --bd-glow: rgba(255, 178, 62, 0.07);
+  --bd-sky: rgba(90, 169, 255, 0.06);
 
   /* greenie board = the site's score scale */
   --g-ok-under: #2f74f0;
@@ -103,6 +106,9 @@
   --map-bg: #dfe3e7;
   --rail: #f5f7f9;
   --grid-dot: rgba(15, 24, 34, 0.06);
+  --bd-ink: rgba(15, 24, 34, 0.2);
+  --bd-glow: rgba(214, 128, 0, 0.08);
+  --bd-sky: rgba(40, 110, 200, 0.07);
 
   --tone-top: #1f63d8;
   --tone-great: #178a45;
@@ -321,6 +327,45 @@ button { font: inherit; }
 @media (max-width: 1023px) {
   .shell-content { padding-bottom: calc(var(--tabbar) + env(safe-area-inset-bottom)); }
 }
+
+/* ─── the wall behind the pages (components/Backdrop.tsx) ──────────────────
+   Line drawings traced from the 3D models, in the theme's own ink, behind
+   everything in the page (the main is its own stacking context), fixed to
+   the frame so they stay put as the page scrolls. */
+.shell-content { position: relative; isolation: isolate; }
+.backdrop {
+  position: fixed; top: var(--topbar); right: 0; bottom: 0; left: 0; z-index: -1; overflow: hidden; pointer-events: none;
+  /* the drawings fade out to the left, where the text starts */
+  -webkit-mask-image: linear-gradient(100deg, rgba(0, 0, 0, 0.12) 5%, rgba(0, 0, 0, 0.7) 35%, #000 60%);
+  mask-image: linear-gradient(100deg, rgba(0, 0, 0, 0.12) 5%, rgba(0, 0, 0, 0.7) 35%, #000 60%);
+}
+@media (min-width: 1024px) {
+  .backdrop { left: 236px; }
+  .shell.collapsed .backdrop { left: 64px; }
+}
+/* the meatball's glow, and a little sky */
+.backdrop::before, .backdrop::after { content: ''; position: absolute; border-radius: 50%; filter: blur(10px); }
+.backdrop::before { width: 70vmax; height: 70vmax; right: -24vmax; top: -30vmax; background: radial-gradient(closest-side, var(--bd-glow), transparent); }
+.backdrop::after { width: 60vmax; height: 60vmax; right: 10vmax; bottom: -38vmax; background: radial-gradient(closest-side, var(--bd-sky), transparent); }
+.bd-art {
+  position: absolute; background: var(--bd-ink);
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-position: center; mask-position: center;
+}
+.bd-carrier { width: min(1650px, 118vw); aspect-ratio: 1800 / 1302; right: -26%; bottom: -44%; }
+.bd-hornet { width: min(560px, 42vw); aspect-ratio: 1400 / 866; left: 42%; top: 2%; transform: rotate(-8deg); }
+.bd-hornet-big { width: min(1250px, 100vw); aspect-ratio: 1400 / 866; right: -14%; top: 6%; transform: rotate(-4deg); }
+.bd-carrier-far { width: min(620px, 50vw); aspect-ratio: 1800 / 1302; right: 4%; bottom: -3%; opacity: 0.55; }
+.bd-tomcat { width: min(900px, 80vw); aspect-ratio: 1200 / 1177; right: -9%; top: -4%; transform: rotate(32deg); }
+.bd-cap .bd-carrier-far { right: auto; left: 36%; bottom: -8%; opacity: 0.4; }
+@media (max-width: 767px) {
+  .bd-carrier { width: 190vw; right: -70%; bottom: -12%; }
+  .bd-hornet { width: 90vw; right: -12%; top: 1%; }
+  .bd-hornet-big { width: 170vw; right: -60%; }
+  .bd-tomcat { width: 140vw; right: -50%; }
+  .bd-carrier-far { display: none; }
+}
+@media (prefers-reduced-transparency: reduce) { .backdrop { display: none; } }
 
 .status-pill {
   display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 11px; min-width: 0;
@@ -674,7 +719,7 @@ kbd {
     --chalk: #000; --haze: #333; --dim: #555; --ball: #000; --datum: #000; --wave: #000;
   }
   body { background: #fff; font-size: 11px; }
-  .rail, .topbar, .tabbar, .toast-stack, .no-print { display: none !important; }
+  .rail, .topbar, .tabbar, .toast-stack, .no-print, .backdrop { display: none !important; }
   .shell { display: block; }
   .shell-content { background: none; padding: 0; }
   .print-only { display: block; }
