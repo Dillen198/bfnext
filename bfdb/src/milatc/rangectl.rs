@@ -143,6 +143,14 @@ pub(crate) struct RangeControl {
     ai: HashMap<u64, AiStage>,
     /// Flights already told about working a range without a slot.
     nagged: HashMap<u64, f64>,
+    /// Requests answered "standby, checking the schedule": due, flight,
+    /// what it meant, what was heard.
+    deferred: Vec<(f64, u64, Parsed, String)>,
+    /// When the last range request came in.
+    last_req: f64,
+    /// The chance a request gets "standby" first (doubled right after
+    /// another one).
+    pub standby_odds: f64,
 }
 
 /// The way a controller says a station: "R-7201 FDM bomb circle".
@@ -177,6 +185,9 @@ impl RangeControl {
             now: 0.,
             ai: HashMap::new(),
             nagged: HashMap::new(),
+            deferred: vec![],
+            last_req: f64::NEG_INFINITY,
+            standby_odds: 0.35,
         }
     }
 
@@ -380,6 +391,15 @@ impl Facility for RangeControl {
         let me = self.me();
         let mut out = vec![];
 
+        // Answers after a "standby".
+        let (due, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut self.deferred).into_iter().partition(|d| d.0 <= now);
+        self.deferred = keep;
+        for (_, id, p, heard) in due {
+            if let Some(a) = self.air.iter().find(|a| a.id == id).cloned() {
+                self.handle(&a, p.intent, &p, &heard, &mut out);
+            }
+        }
+
         // Bookings: warn, expire, and drop flights that have gone.
         let alive: Vec<u64> = self.air.iter().map(|a| a.id).collect();
         let mut expired = vec![];
@@ -507,6 +527,18 @@ impl Facility for RangeControl {
                 }
             }
             Some(p) => match p.intent {
+                // Range Control checks the schedule before it answers, now and then.
+                Intent::RequestRange if !a.ai && {
+                    let odds = if now - self.last_req < 30. { 2. * self.standby_odds } else { self.standby_odds };
+                    self.last_req = now;
+                    self.mouth.rand() < odds
+                } =>
+                {
+                    let t = format!("{call}, {me}, {}", self.mouth.pick(&["standby, checking the schedule.", "standby.", "copy, standby one."]));
+                    self.mouth.say(pos, None, &a, &call, &me, t, now, &mut out);
+                    let due = now + self.mouth.between(5., 9.);
+                    self.deferred.push((due, a.id, p, heard.to_string()));
+                }
                 Intent::RadioCheck => {
                     let t = format!("{call}, {me}, loud and clear.");
                     self.mouth.say(pos, None, &a, &call, &me, t, now, &mut out);
@@ -613,6 +645,7 @@ mod tests {
     #[test]
     fn slots_one_flight_at_a_time() {
         let mut rc = RangeControl::new(RangeControlCfg::default());
+        rc.standby_odds = 0.;
         let stations = vec![
             station("r7201-bomb", "R-7201 FDM - Bomb Circle", StationKind::BombCircle, 16.0, &[]),
             station("tn2-easy", "TN-2 Tinian MLA - Easy", StationKind::BombCircle, 15.0, &[]),
@@ -648,6 +681,7 @@ mod tests {
     #[test]
     fn leaving_early_calls_the_next_flight_in() {
         let mut rc = RangeControl::new(RangeControlCfg::default());
+        rc.standby_odds = 0.;
         let stations = vec![station("r7201-bomb", "R-7201 FDM - Bomb Circle", StationKind::BombCircle, 16.0, &[])];
         let mut atc = AtcPicture::default();
         atc.traffic = vec![plane(1, "alice", 15.5), plane(2, "bob", 15.5)];
@@ -664,8 +698,26 @@ mod tests {
     }
 
     #[test]
+    fn standby_then_the_booking() {
+        let mut rc = RangeControl::new(RangeControlCfg::default());
+        rc.standby_odds = 1.;
+        let stations = vec![station("r7201-bomb", "R-7201 FDM - Bomb Circle", StationKind::BombCircle, 16.0, &[])];
+        let mut atc = AtcPicture::default();
+        atc.traffic = vec![plane(1, "alice", 15.5)];
+        let range = RangeLive { stations, mission_time: "10:00:00".into(), ..Default::default() };
+        rc.update(&Picture { atc: &atc, range: Some(&range), now: 0., mission_s: Some(36000.) });
+        let caller = Caller { unit_id: Some(1), srs_name: String::new() };
+        let heard = "Range Control, Viper 11, request R-7201 bomb circle";
+        let r = rc.respond(Pos::Range, &caller, heard, super::super::intent::parse(heard, "Range"), 0.);
+        assert!(texts(&r).contains("stand"), "{}", texts(&r));
+        let r = rc.update(&Picture { atc: &atc, range: Some(&range), now: 10., mission_s: Some(36010.) });
+        assert!(texts(&r).contains("cleared into R-7201 FDM Bomb Circle"), "{}", texts(&r));
+    }
+
+    #[test]
     fn unscheduled_flight_is_booked_if_free() {
         let mut rc = RangeControl::new(RangeControlCfg::default());
+        rc.standby_odds = 0.;
         let stations = vec![station("tn1-array", "TN-1 North Field - Tactical Array", StationKind::TacticalArray, 15.0, &["alice"])];
         let mut atc = AtcPicture::default();
         atc.traffic = vec![plane(1, "alice", 15.0)];

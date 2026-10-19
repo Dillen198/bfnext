@@ -163,6 +163,17 @@ _RANGE_ATC_VOICE_KEY_MAP = {
     "tts_voice": "ttsVoice",
     "speaker": "speaker",  # a speaker of a multi-speaker Piper model
     "speed": "speed",      # 1 = normal
+    "voice": "voice",      # a voice of the speech service (tts:)
+}
+# tts: a speech service for voices that sound like people. The key is never
+# written here: it reaches bfdb as BFDB_ATC_TTS_KEY (bfdb.atc_tts_key).
+_RANGE_ATC_TTS_KEY_MAP = {
+    "engine": "engine",  # openai | elevenlabs | kokoro
+    "url": "url",
+    "model": "model",
+    "voices": "voices",
+    "when": "when",      # always | audience
+    "pilots": "pilots",
 }
 
 
@@ -176,6 +187,10 @@ def _map_range_atc(src: dict) -> dict:
     if isinstance(llm, dict):
         out["llm"] = {camel: llm[snake] for snake, camel in _RANGE_ATC_LLM_KEY_MAP.items()
                       if snake in llm and llm[snake] != ""}
+    tts = src.get("tts")
+    if isinstance(tts, dict):
+        out["tts"] = {camel: tts[snake] for snake, camel in _RANGE_ATC_TTS_KEY_MAP.items()
+                      if snake in tts and tts[snake] != ""}
     rc = src.get("range_control")
     if isinstance(rc, dict):
         out["rangeControl"] = {camel: rc[snake] for snake, camel in _RANGE_CONTROL_KEY_MAP.items()
@@ -1275,6 +1290,10 @@ class Procman:
         atc_key = self.cfg.get("atc_llm_key")
         if atc_key:
             env["BFDB_ATC_LLM_KEY"] = str(atc_key)
+        # The range ATC's speech service (OpenAI / ElevenLabs voices).
+        tts_key = self.cfg.get("atc_tts_key")
+        if tts_key:
+            env["BFDB_ATC_TTS_KEY"] = str(tts_key)
         image_key = self.cfg.get("news_image_key")
         if image_key:
             env["BFDB_NEWS_IMAGE_KEY"] = str(image_key)

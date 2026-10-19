@@ -945,7 +945,8 @@ async fn h_atc(ctx: Arc<RangeCtx>, q: Q) -> Response {
 }
 
 /// The live ATC feed (LiveATC style): every transmission on `?station=`
-/// (a station id, or `all`) as it is said, over a WebSocket.
+/// (a station id, several comma-separated, or `all`) as it is said, over a
+/// WebSocket.
 async fn h_atc_live(ws: warp::ws::Ws, ctx: Arc<RangeCtx>, q: Q) -> Response {
     let sc = scope_or_400!(ctx, q);
     let inst = sc.primary().id.clone();
@@ -962,6 +963,8 @@ async fn h_atc_live(ws: warp::ws::Ws, ctx: Arc<RangeCtx>, q: Q) -> Response {
 
 async fn atc_live(ws: warp::ws::WebSocket, inst: String, station: String) {
     use crate::milatc::live::{self, Wire};
+    let tuned: Option<std::collections::HashSet<String>> =
+        (station != "all").then(|| station.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect());
     use futures::{SinkExt, StreamExt};
     use warp::ws::Message;
     let (mut sink, mut stream) = ws.split();
@@ -972,7 +975,7 @@ async fn atc_live(ws: warp::ws::WebSocket, inst: String, station: String) {
         tokio::select! {
             f = rx.recv() => match f {
                 Ok(f) => {
-                    if station != "all" && f.station() != station {
+                    if tuned.as_ref().map_or(false, |t| !t.contains(f.station())) {
                         continue;
                     }
                     let m = match live::wire(&f) {

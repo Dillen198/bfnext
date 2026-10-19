@@ -33,6 +33,10 @@ them in the config below.
 
 ```
 You:   Andersen Clearance, Viper 1-1, request clearance to the range.
+CLR:   Viper 1-1, Andersen Clearance, clearance on request, standby.
+  (10 to 20 seconds later)
+CLR:   Viper 1-1, Andersen Clearance, I have your clearance, advise ready to copy.
+You:   Viper 1-1, ready to copy.
 CLR:   Viper 1-1, Andersen Clearance, cleared to the range complex via radar vectors,
        fly runway heading, climb and maintain 4,000, expect FL220 10 minutes after
        departure, departure frequency 363.8, squawk 4201.
@@ -91,6 +95,11 @@ weather or a radio check.
   seconds after you unkey before answering, as a person reaching for the
   mic would. Calls to the same frequency queue one after another, and never
   start while someone is transmitting.
+- **They say "standby".** When a frequency is busy, a taxi request or a
+  check-in gets "Viper 1-1, standby", and the answer comes when there is a
+  gap. Now and then a quiet controller does the same, finishing something
+  else first. Range Control sometimes checks the schedule before booking you.
+- **Voices that sound like people.** See [Voices](#voices).
 - **Every frequency has its own voice.**
   - With Piper and a multi-speaker model (`en_US-libritts_r-medium`), each
     position gets a different speaker.
@@ -105,6 +114,71 @@ weather or a radio check.
   you loud and clear"). Clearances always use the standard words.
 - **Traffic calls name the aircraft type:** "hold short runway 06R, traffic,
   a C-17 on a 3 mile final".
+
+## When things go wrong
+
+- **Stopped on a runway.** After 25 seconds (two minutes if you were told
+  to line up and wait), Tower asks "say status, you are stopped on runway
+  06R". A minute later it tells you to vacate at the next taxiway. If you
+  are still there two and a half minutes on, the runway is **closed**:
+  "All aircraft, Andersen Tower, runway 06R is closed, disabled aircraft on
+  the runway. Runway 06L in use." It reopens when you move off it.
+- **A crash on the runway.** An aircraft lost at speed on a runway, or low
+  over it, closes the runway for 10 minutes for the emergency vehicles.
+- **While a runway is closed**, ATIS reads it out (with a new letter),
+  arrivals and departures move to the parallel runway, and anyone on final
+  for the closed one is sent around.
+- **Traffic stopped on a taxiway.** A player stopped on a taxiway for 90
+  seconds is asked their status. A player taxiing up behind gets new taxi
+  instructions around it ("amend taxi instructions, traffic stopped on
+  Echo, taxi via Charlie, Delta, hold short runway 06R"), or, when there is
+  no way round, "hold position, traffic stopped on Echo ahead", and "traffic
+  has moved, continue taxi" once it goes.
+- **Taxiing without a clearance** gets "hold position and say request".
+- **Landing without a clearance** gets "possible pilot deviation".
+
+These two only go to pilots who have been working the controllers: a
+player who never tunes in is not told off on a frequency they are not on.
+
+## Voices
+
+Out of the box the controllers speak with Piper (or Windows SAPI), which is
+free and runs on the box but sounds synthetic. For voices that sound like
+people, give them a speech service under `range_atc` → `tts`:
+
+| `engine` | Sounds | Cost | Needs |
+|---|---|---|---|
+| `openai` | Very natural. `gpt-4o-mini-tts` is also told how each position talks (a brisk tower, a laid-back range officer, an urgent LSO). | About $0.015 a minute of speech | An OpenAI API key |
+| `elevenlabs` | The most human. Uses the voices in your ElevenLabs account. | From $5 a month, by characters | An ElevenLabs API key |
+| `kokoro` | Natural, much better than Piper. | Free | [Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) running on the box (port 8880) |
+
+```yaml
+bfdb:
+  atc_tts_key: "<the service's API key>"   # not needed for kokoro
+  instances:
+    - kind: range
+      gci:
+        range_atc:
+          tts:
+            engine: openai
+            # when: audience           # the default for openai/elevenlabs
+            # voices: [ash, onyx, echo] # cast from these, busiest positions first
+            # pilots: true             # AI pilots get the service's voices too
+```
+
+- **Paying only when someone listens.** With `when: audience` (the default
+  for the paid services), the service speaks only while a player is on the
+  server or someone is listening live on the site. The rest of the time the
+  AI traffic keeps talking in the local voices for the transcript, at no
+  cost. `when: always` uses it all the time.
+- **ATIS** repeats itself every minute: the last couple of dozen things said
+  are cached, so it costs one synthesis per letter.
+- **If the service fails** (no credit, no network), the local voice speaks
+  instead and bfdb's log says why, at most every five minutes.
+- Pick a voice per position under `voices:` with `voice:` ("onyx",
+  "am_michael", or an ElevenLabs voice id).
+- Numbers are said the way US military controllers say them: "three",
+  "five" and "niner".
 
 ## Range Control, the tankers and the carriers
 
@@ -215,11 +289,13 @@ in `types` (F-16 and Hornet if there are none).
 
 ## Listening, and transcripts
 
-- **Live, like LiveATC.** On the range site's **ATC radio** page, press
-  **Listen live**. You hear the frequency you have selected as it happens:
-  controllers, AI pilots and (with `publish_pilot_audio`) players, through a
-  radio filter with squelch. **All** plays every frequency at once. Each
-  transmission can also be replayed with ▶.
+- **Live, like LiveATC.** On the range site's **ATC radio** page, pick what
+  to listen to under **Listen to**: **All**, one frequency, or several (tap
+  each one you want), then press **Listen live**. You hear them as it
+  happens: controllers, AI pilots and players, through a radio filter with
+  squelch. A player's call plays as soon as they unkey, and the reply follows
+  it, never over it. The page remembers your pick. Each transmission can
+  also be replayed with ▶.
 - **In the cockpit.** Every controller transmission addressed to you also
   appears as text in DCS for 12 seconds ("ANDERSEN TOWER: Viper 1-1, runway
   06R, cleared for takeoff..."). A missed word is never lost.
@@ -321,7 +397,8 @@ By hand:
 | `gca_interval_secs` | 5 | PAR talkdown cadence. |
 | `atis_interval_secs` | 60 | ATIS repeat. |
 | `poll_ms` | 1000 | How often the radar picture is read from the engine. |
-| `publish_pilot_audio` | false | Put players' own transmissions on the site's live feed and replays. Off: text only. |
+| `publish_pilot_audio` | true | Put players' own transmissions on the site's live feed and replays. Off: text only. |
+| `tts` | none (Piper/SAPI) | A speech service for the voices: `engine` (openai, elevenlabs, kokoro), `url`, `model`, `voices`, `when` (always, audience), `pilots`. See [Voices](#voices). |
 | `range_control` | on, 348.6 | `enabled`, `name` ("Range Control"), `freqs` (`[{mhz: 348.6}]`), `slot_minutes` (20). |
 | `tanker_atc` | true | A crew voice on every tanker's frequency. |
 | `carrier_atc` | true | Marshal, Approach and Paddles on every carrier. |

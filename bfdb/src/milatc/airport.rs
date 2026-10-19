@@ -566,7 +566,9 @@ impl Airport {
     /// Crossing a runway costs as much as a long detour, and unnamed connectors
     /// a little more than taxiways, so routes read the way a controller would
     /// give them.
-    fn shortest(&self, from: P2, goals: &[usize]) -> Option<(Vec<usize>, f64)> {
+    /// Edges passing within `avoid`'s radius of its points are left out (a
+    /// stopped aircraft on the taxiway), except where the route starts.
+    fn shortest(&self, from: P2, goals: &[usize], avoid: &[(P2, f64)]) -> Option<(Vec<usize>, f64)> {
         let (start, d0) = self.nearest_node(from)?;
         if d0 > 600. {
             return None; // not on this airfield's taxi network
@@ -606,6 +608,9 @@ impl Airport {
             for &ei in &self.adj[u] {
                 let e = &self.edges[ei];
                 let v = if e.a == u { e.b } else { e.a };
+                if u != start && avoid.iter().any(|(p, r)| seg_dist(*p, self.nodes[e.a], self.nodes[e.b]) < *r) {
+                    continue;
+                }
                 let mut w = e.len;
                 if e.runway.is_some() {
                     w += 3000.;
@@ -653,6 +658,11 @@ impl Airport {
     /// `runway`, preferring a full-length departure (a hold within 700 m of
     /// the threshold) and the holds on the aircraft's side of the runway.
     pub(crate) fn route_to_runway(&self, from: P2, runway: &str) -> Option<TaxiRoute> {
+        self.route_to_runway_avoiding(from, runway, &[])
+    }
+
+    /// [`Self::route_to_runway`], around stopped traffic.
+    pub(crate) fn route_to_runway_avoiding(&self, from: P2, runway: &str, avoid: &[(P2, f64)]) -> Option<TaxiRoute> {
         let rwy = self.runway(runway)?;
         let mut cands: Vec<usize> = self
             .holds
@@ -671,7 +681,7 @@ impl Airport {
                 .collect();
         }
         let goals: Vec<usize> = cands.iter().map(|&i| self.holds[i].node).collect();
-        let (path, _) = self.shortest(from, &goals)?;
+        let (path, _) = self.shortest(from, &goals, avoid)?;
         let last = *path.last()?;
         let hold = cands.into_iter().find(|&i| self.holds[i].node == last);
         let mut r = self.describe(path, hold);
@@ -684,9 +694,53 @@ impl Airport {
 
     /// An arrival's route from where it sits to a ramp.
     pub(crate) fn route_to_ramp(&self, from: P2, ramp: &Ramp) -> Option<TaxiRoute> {
-        let (goal, _) = self.nearest_node(ramp.p)?;
-        let (path, _) = self.shortest(from, &[goal])?;
+        self.route_to_point_avoiding(from, ramp.p, &[])
+    }
+
+    /// A route to wherever `to` is on the network, around stopped traffic.
+    pub(crate) fn route_to_point_avoiding(&self, from: P2, to: P2, avoid: &[(P2, f64)]) -> Option<TaxiRoute> {
+        let (goal, _) = self.nearest_node(to)?;
+        let (path, _) = self.shortest(from, &[goal], avoid)?;
         Some(self.describe(path, None))
+    }
+
+    /// The named taxiway `p` is on, within `within` metres of its centreline.
+    pub(crate) fn taxiway_at(&self, p: P2, within: f64) -> Option<&str> {
+        self.edges
+            .iter()
+            .filter(|e| !e.name.is_empty() && e.runway.is_none())
+            .map(|e| (e, seg_dist(p, self.nodes[e.a], self.nodes[e.b])))
+            .filter(|(_, d)| *d < within)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(e, _)| e.name.as_str())
+    }
+
+    /// How far along `route` the point nearest `q` is, and how far `q` is
+    /// from it. Where the route passes close by twice, the earlier pass.
+    fn along(&self, route: &TaxiRoute, q: P2) -> Option<(f64, f64)> {
+        let n = &route.nodes;
+        let mut segs = vec![];
+        let mut run = 0.;
+        for w in n.windows(2) {
+            let (a, b) = (self.nodes[w[0]], self.nodes[w[1]]);
+            let len = a.dist(b);
+            let (dn, de) = (b.n - a.n, b.e - a.e);
+            let t = if len < 1e-6 { 0. } else { (((q.n - a.n) * dn + (q.e - a.e) * de) / (len * len)).clamp(0., 1.) };
+            segs.push((run + t * len, seg_dist(q, a, b)));
+            run += len;
+        }
+        let best = segs.iter().map(|s| s.1).fold(f64::INFINITY, f64::min);
+        segs.into_iter().find(|s| s.1 <= best + 30.)
+    }
+
+    /// Does the part of `route` still ahead of an aircraft at `at` pass
+    /// within `within` metres of `p`?
+    pub(crate) fn route_ahead_passes(&self, route: &TaxiRoute, at: P2, p: P2, within: f64) -> bool {
+        match (self.along(route, at), self.along(route, p)) {
+            // not on the network yet (still on its stand): all of it is ahead
+            (Some((me, off)), Some((it, d))) => d < within && (off > 40. || it > me - 5.),
+            _ => false,
+        }
     }
 
     /// The ramp an arriving aircraft is sent to: the one named, else the one

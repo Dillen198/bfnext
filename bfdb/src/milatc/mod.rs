@@ -191,6 +191,37 @@ pub(crate) struct VoiceCfg {
     /// Speaking speed, 1 = normal, 1.2 = a fifth faster.
     #[serde(default)]
     pub speed: Option<f32>,
+    /// A voice of the speech service (`tts`): "onyx", "am_michael", or an
+    /// ElevenLabs voice id.
+    #[serde(default)]
+    pub voice: Option<String>,
+}
+
+/// The `tts` block: a speech service for voices that sound like people.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NeuralCfg {
+    /// "openai", "elevenlabs", or "kokoro" (Kokoro-FastAPI on the box).
+    pub engine: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Prefer `BFDB_ATC_TTS_KEY` in the environment.
+    #[serde(default)]
+    pub key: Option<String>,
+    /// The voices to cast from, busiest positions first. Default: the
+    /// service's own.
+    #[serde(default)]
+    pub voices: Vec<String>,
+    /// "always", or "audience": only while a player is on or someone is
+    /// listening on the site, the local voices otherwise. Default: always for
+    /// Kokoro, audience for the paid services.
+    #[serde(default)]
+    pub when: Option<String>,
+    /// AI pilots get the service's voices too.
+    #[serde(default = "d_true")]
+    pub pilots: bool,
 }
 
 /// Who Departure hands released traffic to.
@@ -228,11 +259,14 @@ pub(crate) struct RangeAtcConfig {
     pub atis_interval_secs: f64,
     #[serde(default)]
     pub voices: HashMap<Pos, VoiceCfg>,
-    /// Put players' own transmissions on the range site's ATC radio page
-    /// (`/api/range/atc/audio`). Off: their calls show as text only, and only
-    /// the controllers and AI pilots can be listened to.
-    #[serde(default)]
+    /// Put players' own transmissions on the range site's ATC radio page:
+    /// the live feed and the replays (on by default). Off: their calls show
+    /// as text only, and only the controllers and AI pilots can be heard.
+    #[serde(default = "d_true")]
     pub publish_pilot_audio: bool,
+    /// A speech service for the voices (default: Piper or SAPI, on the box).
+    #[serde(default)]
+    pub tts: Option<NeuralCfg>,
     /// Range Control (on by default, 348.6).
     #[serde(default)]
     pub range_control: Option<rangectl::RangeControlCfg>,
@@ -452,6 +486,8 @@ struct Ctx {
     stations: std::sync::RwLock<Vec<Arc<Station>>>,
     next_index: std::sync::atomic::AtomicUsize,
     start: Instant,
+    /// A player is in the air picture (someone may be listening on SRS).
+    players_on: std::sync::atomic::AtomicBool,
 }
 
 impl Ctx {
@@ -610,8 +646,8 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
     let (rx_tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<srs::Transmission>();
     // Who sounds like whom (reads model folders / asks Windows for voices).
     let cast = {
-        let (g, v) = (gci.clone(), cfg.voices.clone());
-        match tokio::task::spawn_blocking(move || Cast::build(&g, &v)).await {
+        let (g, v, n) = (gci.clone(), cfg.voices.clone(), cfg.tts.clone());
+        match tokio::task::spawn_blocking(move || Cast::build(&g, &v, n.as_ref())).await {
             Ok(c) => Arc::new(c),
             Err(e) => {
                 log::error!("[{}] range ATC: voice casting failed: {e}", inst.id);
@@ -645,6 +681,7 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
         stations: std::sync::RwLock::new(vec![]),
         next_index: std::sync::atomic::AtomicUsize::new(0),
         start: Instant::now(),
+        players_on: std::sync::atomic::AtomicBool::new(false),
     });
 
     // The airfields, and Range Control, are on the air from the start.
@@ -722,6 +759,7 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
             }
         };
         let now = ctx.clock();
+        ctx.players_on.store(atc.traffic.iter().any(|t| !t.ai), std::sync::atomic::Ordering::Relaxed);
         // carriers, tankers and range stations change slowly: every 2 s
         if now - last_range >= 2. {
             last_range = now;
@@ -920,6 +958,9 @@ async fn transmitter(
             (None, None) if me.pos == Pos::Tanker => cast.pilot(me.salt.wrapping_mul(0x5bd1_e995) ^ 0xa5a5),
             (None, None) => cast.controller(me.pos),
         };
+        // A paid speech service only speaks for an audience.
+        let heard = cast.always_neural || live::listening(&me.inst) || ctx.players_on.load(std::sync::atomic::Ordering::Relaxed);
+        let voice = if heard { voice } else { voice.local().clone() };
         let who = match (&tx.pilot, tx.voice) {
             (Some(p), _) => p.clone(),
             (None, Some(Pos::Paddles)) => "Paddles".to_string(),
