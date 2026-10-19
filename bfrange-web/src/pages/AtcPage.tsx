@@ -5,11 +5,19 @@ import { Empty, ErrorState, Loading } from '../components/States'
 
 interface Station {
   id: string
+  /** The facility: "Andersen", "Lincoln CATCC", "Texaco 1-1", "Range Control". */
   field: string
   position: string
+  /** What the controller calls itself: "Lincoln Marshal". */
   name: string
+  /** The tab's name: "Tower", "Lincoln Marshal", "Texaco 1-1". */
+  label?: string
   freq: string
 }
+
+/** A station's short name for tabs and the transcript. */
+const tabName = (s: Station) =>
+  s.label || (s.position === 'atis' ? 'ATIS' : s.position[0].toUpperCase() + s.position.slice(1))
 
 interface Line {
   t: number
@@ -357,7 +365,7 @@ function Lines({
             <span className="mono dim shrink-0 text-[12px] pt-0.5" style={{ width: 64 }}>{clock(l.t)}</span>
             {showStation && (
               <span className="mono shrink-0 text-[12px] pt-0.5" style={{ width: 150, color: 'var(--dim)' }} title={st ? `${st.name} ${st.freq}` : l.station}>
-                {st ? `${st.position.toUpperCase()} ${st.freq}` : l.station}
+                {st ? `${tabName(st).toUpperCase()} ${st.freq}` : l.station}
               </span>
             )}
             <div className="min-w-0 flex-1">
@@ -479,8 +487,9 @@ export default function AtcPage() {
         <div>
           <h1 className="display">ATC radio</h1>
           <p className="sub m-0 mt-1">
-            Every transmission on Andersen's frequencies: controllers, players and AI traffic, as it is said.
-            Tune these in SRS to talk to them, or listen in live here.
+            Every transmission on the range's frequencies, as it is said: Andersen's controllers, the carriers'
+            Marshal and Paddles, the tankers and Range Control, with players and AI traffic. Tune these in SRS to
+            talk to them, or listen in live here.
           </p>
         </div>
         {!!stations?.length && (
@@ -526,7 +535,7 @@ export default function AtcPage() {
                     style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 9, background: onAir[s.id] ? 'var(--wave)' : 'var(--datum)' }}
                   />
                 )}
-                {s.position === 'atis' ? 'ATIS' : s.position[0].toUpperCase() + s.position.slice(1)}
+                {tabName(s)}
                 <span className="mono dim ml-1.5 text-[11px]">{s.freq}</span>
               </button>
             ))}
@@ -540,7 +549,7 @@ export default function AtcPage() {
                 {talking.length ? (
                   talking.map(([id, a]) => (
                     <span key={id}>
-                      <span className="mono dim text-[11px] mr-1">{byId.get(id)?.position.toUpperCase()} {byId.get(id)?.freq}</span>
+                      <span className="mono dim text-[11px] mr-1">{byId.get(id) ? `${tabName(byId.get(id)!).toUpperCase()} ${byId.get(id)!.freq}` : ''}</span>
                       <b>{a.who}</b>
                     </span>
                   ))

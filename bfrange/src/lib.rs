@@ -322,7 +322,7 @@ fn delayed_init(lua: MizLua) -> Result<()> {
     ctx.ll.init(lua, &cfg);
     ctx.pattern.init(lua, &cfg);
     ctx.atc.init(lua);
-    ctx.traffic.init(lua, &cfg.atc_traffic, now);
+    ctx.traffic.init(lua, &cfg, now);
     ctx.csar.init(lua, &cfg);
     ctx.decks.init(lua, &cfg, &mut ctx.spawns, now);
     for a in &cfg.air_to_air.arenas {

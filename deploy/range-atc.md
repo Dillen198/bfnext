@@ -14,6 +14,16 @@ the pilot on to the next one on its own frequency.
 | Approach | Andersen Approach | 319.2 | Radar contact and descent, then vectors for the overhead, a straight-in, a visual, ILS/TACAN or a PAR. |
 | Final | Andersen Final | 385.4 | PAR talkdown: course and glidepath corrections, range from touchdown, landing clearance, decision height. |
 
+Beyond the airfield, the range has its own controllers (see
+[Range Control, the tankers and the carriers](#range-control-the-tankers-and-the-carriers)):
+
+| Station | UHF | What it does |
+|---|---|---|
+| Range Control | 348.6 | Books the ranges in 20-minute slots, one flight per range at a time. Clears you hot and calls you off. |
+| Each tanker ("Texaco 1-1") | the tanker's own frequency | Its crew runs the line: rejoin, pre-contact, contact, cleared to depart. |
+| Each carrier's Marshal | the carrier's frequency | Case I/III check-in, a slot in the stack, push time. |
+| Each carrier's Approach / Paddles | Marshal + 0.5 | Range calls on the way in, then the LSO in the groove. |
+
 The runway in use follows the wind: 06R/24L for departures and arrivals.
 Frequencies, runway use and procedures are in
 [bfdb/data/atc/andersen.json](../bfdb/data/atc/andersen.json). Override any of
@@ -96,6 +106,52 @@ weather or a radio check.
 - **Traffic calls name the aircraft type:** "hold short runway 06R, traffic,
   a C-17 on a 3 mile final".
 
+## Range Control, the tankers and the carriers
+
+**Range Control (348.6)** gives everyone a slot, so two flights never work the
+same range at once.
+
+```
+You:   Range Control, Viper 1-1, request R-7201 bomb circle.
+RC:    Viper 1-1, Range Control, cleared into R-7201 FDM Bomb Circle, your slot
+       until 2-0, range is cold, report IP inbound.
+You:   Viper 1-1, IP inbound.
+RC:    Viper 1-1, cleared hot, report off.
+  (two minutes before the end)
+RC:    Viper 1-1, Range Control, two minutes remaining in your slot.
+You:   Viper 1-1, departing the range.
+RC:    Viper 1-1, Range Control, cleared off the range, good hits today.
+```
+
+A flight asking for a range that is in use hears when its slot starts ("is in
+use, expect it at 4-0, hold clear") and which similar range is free now. When
+the flight before leaves, or its time runs out, the next one is called in
+("R-7201 FDM Bomb Circle is yours, cleared in"). A flight dropping on a range
+without a slot is booked into it if it is free, or told to cease if it is not.
+
+**Tankers.** Every tanker on station answers on its own frequency, with its own
+callsign ("Texaco 1-1"). Call it for fuel ("Texaco 1-1, Viper 1-1, request
+fuel"). The first receiver hears "cleared to join, FL250, heading 090, 280
+knots, cleared pre-contact"; the next is "number 2, cleared to the left
+observation". Once you are stable astern it calls "cleared contact" (boom) or
+"cleared to plug" (basket). When you back off it clears you to depart and calls
+the next receiver astern.
+
+**Carriers.** Each Supercarrier or Forrestal gets three controllers:
+
+- **Marshal**, on the carrier's frequency: check in ("Marshal, Ragin 1-1,
+  checking in, angels 20, 40 miles") and get a slot. Case I: "hold overhead at
+  angels 2, expected Charlie time 0-2". Case III, at night or under cloud:
+  "marshal on the 171 radial, 21 DME, angels 6, expected approach time 1-2".
+  Slots are 90 seconds apart.
+- **Approach**, 0.5 MHz above Marshal: range calls on the way in, then "three
+  quarters of a mile, call the ball".
+- **Paddles**, on the Approach frequency in a voice of its own: "Roger ball,
+  27 knots", then the groove calls (power, right for lineup, wave off) and
+  bolter calls.
+
+Override the carrier frequencies under `carriers:` (below).
+
 ## AI traffic
 
 The range flies a steady trickle of single-ship AI traffic in and out of
@@ -122,6 +178,18 @@ parked, departures once they are 45 nm out. A departure Ground never
 releases (ATC not running, say) starts by itself after 8 minutes, so parked
 traffic never blocks the stands.
 
+The AI also does the range's own work, through the same controllers:
+
+- **Range sorties.** Fighters take off from Andersen (released by Ground like
+  any departure), call Range Control, hold at the IP until their slot, make
+  dry passes over the range, and come home through Approach and Tower.
+- **Tanker sorties.** Fighters take off and join a tanker that suits them:
+  F-16s go to a boom tanker, Hornets to a basket. They take fuel when the
+  crew clears them, then come home.
+- **Carrier recoveries.** Hornets arrive 40 nm out, check in with Marshal,
+  hold for their slot, call the ball and trap. Only Supercarriers and
+  Forrestals get recoveries.
+
 Tune it in the range config (`<sortie>_RANGE`):
 
 ```json
@@ -134,14 +202,24 @@ Tune it in the range config (`<sortie>_RANGE`):
   "country": "USA",
   "fly_when_empty": true,
   "self_release_s": 480,
+  "range_sorties_per_hour": 2,
+  "tanker_sorties_per_hour": 2,
+  "carrier_recoveries_per_hour": 2,
   "types": [{"typ": "C-17A", "callsign": "Reach", "weight": 3}]
 }
 ```
 
-`"enabled": false` turns it off. `types` replaces the built-in mix.
+`"enabled": false` turns it off. `types` replaces the built-in mix. A rate of
+0 switches that kind of sortie off. Range and tanker sorties use the fighters
+in `types` (F-16 and Hornet if there are none).
 
-## Transcripts
+## Listening, and transcripts
 
+- **Live, like LiveATC.** On the range site's **ATC radio** page, press
+  **Listen live**. You hear the frequency you have selected as it happens:
+  controllers, AI pilots and (with `publish_pilot_audio`) players, through a
+  radio filter with squelch. **All** plays every frequency at once. Each
+  transmission can also be replayed with ▶.
 - **In the cockpit.** Every controller transmission addressed to you also
   appears as text in DCS for 12 seconds ("ANDERSEN TOWER: Viper 1-1, runway
   06R, cleared for takeoff..."). A missed word is never lost.
@@ -243,6 +321,11 @@ By hand:
 | `gca_interval_secs` | 5 | PAR talkdown cadence. |
 | `atis_interval_secs` | 60 | ATIS repeat. |
 | `poll_ms` | 1000 | How often the radar picture is read from the engine. |
+| `publish_pilot_audio` | false | Put players' own transmissions on the site's live feed and replays. Off: text only. |
+| `range_control` | on, 348.6 | `enabled`, `name` ("Range Control"), `freqs` (`[{mhz: 348.6}]`), `slot_minutes` (20). |
+| `tanker_atc` | true | A crew voice on every tanker's frequency. |
+| `carrier_atc` | true | Marshal, Approach and Paddles on every carrier. |
+| `carriers` | from the carrier | By the engine's carrier id: `{cvn71: {marshal: [{mhz: 305.0}], approach: [{mhz: 305.5}]}}`. |
 
 ## Another airfield
 
@@ -268,12 +351,15 @@ without taxiway names.
 - `bfrange/src/atctraffic.rs` flies the AI traffic. The `range-atc` RPC
   starts, holds or resumes a flight, or shows a player a subtitle.
 - `bfdb/src/milatc/`:
+  - `facility.rs`: what every controller has in common (the trait behind
+    `airfield.rs`, `rangectl.rs`, `tanker.rs` and `carrier.rs`).
   - `controller.rs`: positions, flight strips and every decision.
   - `airport.rs`: the airfield and taxi routing.
   - `intent.rs`: the phraseology parser.
   - `llm.rs`: the language-model fallback.
   - `speech.rs`: written and spoken forms.
   - `voices.rs`: voice casting.
+  - `live.rs`: the live audio feed behind `/api/range/atc/live`.
   - `mod.rs`: SRS, whisper, Piper, the poll loop, and the transcript
     behind `/api/range/atc`.
 - `bfrange-web/src/pages/AtcPage.tsx` is the transcript page.

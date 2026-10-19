@@ -51,11 +51,14 @@ pub(crate) struct Tx {
     pub subtitle: Option<u64>,
     /// The type of the aircraft it is from or to, for the transcript.
     pub aircraft: Option<String>,
+    /// Speak in another position's voice on this position's frequency (the
+    /// LSO on a carrier's approach frequency).
+    pub voice: Option<Pos>,
 }
 
 impl Tx {
     pub(crate) fn new(pos: Pos, text: String, to: Option<u64>, expires: f64) -> Self {
-        Tx { pos, text, to, expires, pilot: None, delay: 0., action: None, subtitle: None, aircraft: None }
+        Tx { pos, text, to, expires, pilot: None, delay: 0., action: None, subtitle: None, aircraft: None, voice: None }
     }
 }
 
@@ -114,6 +117,18 @@ pub(crate) struct Ac {
 pub(crate) enum AiPlan {
     Departure,
     Arrival,
+}
+
+/// The engine's plan for an AI flight as the airfield sees it: a range or
+/// tanker sortie departs, and is an arrival once it is on its way home
+/// ("range:<id>:home").
+fn ai_plan(p: Option<&str>) -> AiPlan {
+    match p {
+        Some("departure") => AiPlan::Departure,
+        Some(p) if p.ends_with(":home") => AiPlan::Arrival,
+        Some(p) if p.starts_with("range:") || p.starts_with("tanker:") => AiPlan::Departure,
+        _ => AiPlan::Arrival,
+    }
 }
 
 /// A flight strip.
@@ -243,7 +258,7 @@ impl Flight {
 }
 
 /// "Viper 1-1" from a DCS group name like "Viper 1-1", "Viper11", "VIPER 1".
-fn guess_callsign(group: &str) -> Option<String> {
+pub(crate) fn guess_callsign(group: &str) -> Option<String> {
     let g = group.trim();
     let word: String = g.chars().take_while(|c| c.is_alphabetic()).collect();
     let rest: String = g[word.len()..].chars().filter(|c| c.is_ascii_digit()).collect();
@@ -434,6 +449,7 @@ impl Controller {
         self.have_picture = true;
         self.traffic = traffic
             .iter()
+            .filter(|t| !(t.ai && t.ai_plan.as_deref().map_or(false, |p| p.starts_with("carrier:"))))
             .filter_map(|t| {
                 Some(Ac {
                     unit_id: t.unit_id?,
@@ -447,10 +463,7 @@ impl Controller {
                     vs_fpm: t.vspd_fpm,
                     on_ground: t.on_ground,
                     rotary: t.rotary,
-                    ai: t.ai.then(|| match t.ai_plan.as_deref() {
-                        Some("departure") => AiPlan::Departure,
-                        _ => AiPlan::Arrival,
-                    }),
+                    ai: t.ai.then(|| ai_plan(t.ai_plan.as_deref())),
                     ai_state: t.ai_state.clone().unwrap_or_default(),
                     typ: t.unit_type.clone(),
                 })
@@ -2182,7 +2195,7 @@ pub(crate) fn type_label(dcs_type: &str) -> Option<String> {
 }
 
 /// ", C-17" after a callsign on first contact, or nothing.
-fn spoken_type(dcs_type: &str) -> String {
+pub(crate) fn spoken_type(dcs_type: &str) -> String {
     type_name(dcs_type).map(|n| format!(", {n}")).unwrap_or_default()
 }
 
@@ -2194,11 +2207,11 @@ fn type_phrase(dcs_type: &str) -> String {
     format!(", {article} {name} on a")
 }
 
-fn norm(s: &str) -> String {
+pub(crate) fn norm(s: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase()
 }
 
-fn capitalize(s: &str) -> String {
+pub(crate) fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),

@@ -140,6 +140,17 @@ _RANGE_ATC_KEY_MAP = {
     "atis_interval_secs": "atisIntervalSecs",
     # players' own voices on the range site's ATC radio page (off: text only)
     "publish_pilot_audio": "publishPilotAudio",
+    "carrier_atc": "carrierAtc",  # Marshal / Approach / Paddles on every carrier
+    "tanker_atc": "tankerAtc",    # a crew voice on every tanker's frequency
+    # {cvn71: {marshal: [{mhz: 305.0}], approach: [{mhz: 305.5}]}}
+    # -- inner keys are single words and pass through.
+    "carriers": "carriers",
+}
+_RANGE_CONTROL_KEY_MAP = {
+    "enabled": "enabled",
+    "name": "name",
+    "freqs": "freqs",  # [{mhz: 348.6}]
+    "slot_minutes": "slotMinutes",
 }
 _RANGE_ATC_LLM_KEY_MAP = {
     "enabled": "enabled",
@@ -165,6 +176,10 @@ def _map_range_atc(src: dict) -> dict:
     if isinstance(llm, dict):
         out["llm"] = {camel: llm[snake] for snake, camel in _RANGE_ATC_LLM_KEY_MAP.items()
                       if snake in llm and llm[snake] != ""}
+    rc = src.get("range_control")
+    if isinstance(rc, dict):
+        out["rangeControl"] = {camel: rc[snake] for snake, camel in _RANGE_CONTROL_KEY_MAP.items()
+                               if snake in rc and rc[snake] != ""}
     voices = src.get("voices")
     if isinstance(voices, dict):
         out["voices"] = {
