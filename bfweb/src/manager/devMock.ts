@@ -327,7 +327,7 @@ const newboxDefaults = {
   bot_dir: 'C:\\DCSServerBot', discord_token: '', guild_id: '', owner_id: '', admin_role: 'Staff', create_channels: true,
   channels: { server_status: '', chat: '', range_status: '', range_results: '', greenie: '', admin: '', audit: '' },
   install_dcs: true, dcs_dir: 'C:\\Program Files\\Eagle Dynamics\\DCS World Server', ed_user: '', ed_password: '',
-  install_srs: true, srs_dir: 'C:\\Program Files\\DCS-SimpleRadio-Standalone', tacview_setup: '',
+  install_srs: true, srs_dir: 'C:\\Program Files\\DCS-SimpleRadio-Standalone', tacview_setup: '', install_speech: true,
   instance: 'DCS.range', server_name: '[VS] Vector Strike | Training Range', server_password: '', max_players: 32,
   dcs_port: 10328, srs_port: 5005, engine_source: 'github', engine_repo: 'Dillen198/bfnext', engine_channel: 'stable',
   engine_folder: '', engine_public_key: '', public_api_url: 'https://range-api.vectorstrike.org',

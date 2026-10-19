@@ -427,6 +427,7 @@ export interface NewBoxOptions {
   install_srs: boolean
   srs_dir: string
   tacview_setup: string
+  install_speech: boolean
   instance: string
   server_name: string
   server_password: string

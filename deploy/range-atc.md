@@ -161,6 +161,25 @@ your callsign, and silence otherwise.
 
 ## Setting it up
 
+The Manager's **New box** wizard does all of this on a fresh range box (the
+"Install the range ATC's speech" tick, on by default):
+
+- It writes `SRS.cfg` with External AWACS Mode on.
+- It installs whisper.cpp v1.9.4 with `ggml-small.en` and runs
+  `whisper-server` on `127.0.0.1:8178`. A scheduled task, "FowlEngine
+  whisper-server", starts it at boot as LOCAL SERVICE.
+- It installs Piper 2023.11.14-2 with the multi-speaker voice
+  `en_US-libritts_r-medium`, so every frequency gets its own speaker.
+- It fills in the `gci:` keys below in `fowlengine.yaml`.
+
+whisper.cpp and Piper go under `C:\ProgramData\FowlEngine\speech`. Every
+download is a pinned release, checked by sha256. If one fails, the wizard
+leaves that key out (the ATC then falls back to SAPI, or to broadcast only)
+and lists it as a next step. Running New box again fetches only what is
+missing. If it keeps an existing `fowlengine.yaml`, it lists the lines to add.
+
+By hand:
+
 1. **SRS External AWACS Mode.** The controllers join SRS the way an AWACS
    client does. In the range's `Config\SRS.cfg` set:
    ```
@@ -168,14 +187,14 @@ your callsign, and silence otherwise.
    EXTERNAL_AWACS_MODE_BLUE_PASSWORD=<a password>
    EXTERNAL_AWACS_MODE_RED_PASSWORD=<another>
    ```
-   Restart SRS. Players are not affected. The Manager's **New box** does this
-   for a fresh box.
+   Restart SRS. Players are not affected.
 2. **whisper.cpp**, to listen. Run `whisper-server` with an English model;
    `ggml-base.en` is fine on a GPU, `ggml-small.en` is more accurate. Without
    whisper the controllers still broadcast ATIS but cannot hear anyone.
 3. **Piper**, for natural voices. Optional: without it, Windows SAPI speaks.
-   Give each position its own Piper voice so Ground and Tower sound like
-   different people.
+   With the multi-speaker `en_US-libritts_r-medium` every position gets its
+   own speaker. Separate single-voice models in the same folder work too.
+   Either way, Ground and Tower sound like different people.
 4. **The bot's YAML.** Use `fowlengine.yaml` → `bfdb.instances` → the
    `kind: range` instance:
    ```yaml
@@ -183,16 +202,17 @@ your callsign, and silence otherwise.
      enabled: false                 # no GCI on the range; the file is still written
      srs_port: 5005
      blue_eam_password: "<the SRS.cfg password>"
-     opus_dll_path: "C:\\Program Files\\DCS-SimpleRadio-Standalone\\opus.dll"
+     # what New box writes:
+     opus_dll_path: "C:\\Program Files\\DCS-SimpleRadio-Standalone\\ExternalAudio\\opus.dll"
      whisper_server_url: "http://127.0.0.1:8178"
-     piper_exe: "C:\\piper\\piper.exe"
-     piper_model: "C:\\piper\\en_US-ryan-medium.onnx"
+     piper_exe: "C:\\ProgramData\\FowlEngine\\speech\\piper\\piper.exe"
+     piper_model: "C:\\ProgramData\\FowlEngine\\speech\\voices\\en_US-libritts_r-medium.onnx"
      range_atc:
        enabled: true
        handoff_out: {name: Overlord, mhz: 251.5}
-       voices:
-         ground: {piper_model: "C:\\piper\\en_US-joe-medium.onnx"}
-         final: {piper_model: "C:\\piper\\en_US-kusal-medium.onnx"}
+       voices:                      # optional: pick a speaker yourself
+         ground: {speaker: 120}
+         final: {speaker: 431, speed: 0.95}
    ```
    For the language model, add `atc_llm_key: "<Anthropic API key>"` under
    `bfdb:`. It reaches bfdb as `BFDB_ATC_LLM_KEY` and is never written to a

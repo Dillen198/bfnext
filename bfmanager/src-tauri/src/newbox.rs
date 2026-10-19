@@ -14,6 +14,9 @@
 //!     config, the hooks loader, Export.lua;
 //!  6. the engine binaries (bfrange.dll, bfdb.exe, netidx.exe) from a signed
 //!     engine release on GitHub or a release folder;
+//! 6b. the range ATC's ears and voice: whisper.cpp's server with an English
+//!     model (a boot-time scheduled task on 127.0.0.1:8178) and Piper with
+//!     a multi-speaker voice, pinned releases checked by sha256;
 //!  7. the bot's config files, written fresh (an existing one is kept);
 //!  8. the Fowl Engine plugin, the netidx client config, firewall rules;
 //!  9. SRS (release zip), DCS World Server (ED's updater, no GUI installer),
@@ -51,6 +54,54 @@ const DCS_MODULES: &[&str] = &["WORLD", "MARIANAISLANDS_terrain", "SUPERCARRIER"
 
 const SRS_REPO: &str = "ciribob/DCS-SimpleRadioStandalone";
 const TACVIEW_PAGE: &str = "https://www.tacview.net/download/latest/en/";
+
+/// A download pinned to one exact file.
+struct Pinned {
+    name: &'static str,
+    url: &'static str,
+    sha256: &'static str,
+}
+
+// The range ATC's speech (bfdb/src/milatc). Moving one on is a new url and
+// sha256 here; a box that already has the file keeps the one it has.
+//
+// whisper.cpp v1.9.4: its versioned release carries no binaries, they are
+// on its build tag b5130. The plain CPU build (it picks AVX2 etc. itself).
+const WHISPER_VERSION: &str = "whisper.cpp v1.9.4";
+const WHISPER_BIN: Pinned = Pinned {
+    name: "whisper-bin-x64-b5130.zip",
+    url: "https://github.com/ggml-org/whisper.cpp/releases/download/b5130/whisper-bin-x64.zip",
+    sha256: "f9ec6c52a2e949b62ab51fa21d0d497958f9e41c3010c157c4e42932d5316f3c",
+};
+/// small.en over base.en: it gets far more callsigns and numbers right, and
+/// the server keeps it loaded, so a call is still about a second on a CPU.
+const WHISPER_MODEL: Pinned = Pinned {
+    name: "ggml-small.en.bin",
+    url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.en.bin",
+    sha256: "c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d",
+};
+/// whisper-server listens on loopback only: bfdb is its one client.
+const WHISPER_PORT: u16 = 8178;
+const WHISPER_TASK: &str = "FowlEngine whisper-server";
+/// Piper's last release with a Windows build (later ones are Python only).
+const PIPER_VERSION: &str = "Piper 2023.11.14-2";
+const PIPER_BIN: Pinned = Pinned {
+    name: "piper_windows_amd64-2023.11.14-2.zip",
+    url: "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip",
+    sha256: "f3c58906402b24f3a96d92145f58acba6d86c9b5db896d207f78dc80811efcea",
+};
+/// 904 speakers in one model: milatc's voice casting gives every frequency
+/// its own (it reads num_speakers from the .onnx.json beside the model).
+const PIPER_VOICE: Pinned = Pinned {
+    name: "en_US-libritts_r-medium.onnx",
+    url: "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/libritts_r/medium/en_US-libritts_r-medium.onnx",
+    sha256: "10bb85e071d616fcf4071f369f1799d0491492ab3c5d552ec19fb548fac13195",
+};
+const PIPER_VOICE_CFG: Pinned = Pinned {
+    name: "en_US-libritts_r-medium.onnx.json",
+    url: "https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/libritts_r/medium/en_US-libritts_r-medium.onnx.json",
+    sha256: "b471dc60d2d8335e819c393d196d6fbf792817f40051257b269878505bc9afb3",
+};
 
 /// The engine files a range box runs.
 const RANGE_ENGINE_FILES: &[&str] = &["bfrange.dll", "bfdb.exe", "netidx.exe"];
@@ -101,6 +152,9 @@ pub struct NewBoxOptions {
     pub srs_dir: String,
     /// TacviewSetup.exe the admin downloaded (the EULA is theirs to accept).
     pub tacview_setup: String,
+    /// whisper.cpp and Piper, so the range ATC hears pilots and speaks with
+    /// a voice of its own on every frequency (about 600 MB).
+    pub install_speech: bool,
 
     pub instance: String,
     pub server_name: String,
@@ -167,6 +221,7 @@ impl Default for NewBoxOptions {
             install_srs: true,
             srs_dir: r"C:\Program Files\DCS-SimpleRadio-Standalone".into(),
             tacview_setup: String::new(),
+            install_speech: true,
             instance: "DCS.range".into(),
             server_name: "[VS] Vector Strike | Training Range".into(),
             server_password: String::new(),
@@ -273,6 +328,13 @@ pub fn inspect() -> NewBoxState {
         what: "Tacview".into(),
         ok: tv.is_some(),
         detail: tv.map(|p| p.display().to_string()).unwrap_or_else(|| "not installed".into()),
+    });
+    let sp = SpeechFiles::new();
+    let speech_ok = sp.whisper_exe.is_file() && sp.piper_exe.is_file();
+    have.push(Have {
+        what: "Range ATC speech (whisper.cpp, Piper)".into(),
+        ok: speech_ok,
+        detail: if speech_ok { sp.dir.display().to_string() } else { "not installed".into() },
     });
     let home = d.home();
     have.push(Have {
@@ -678,10 +740,16 @@ fn run(mut o: NewBoxOptions) -> Result<String> {
     }
     cancelled()?;
 
+    // 6b. the range ATC's speech -- before the config, which names only what
+    // is really here: a missing piper.exe would silence the ATC, while no
+    // Piper at all falls back to Windows SAPI
+    let speech = if o.install_speech { install_speech(&mut done)? } else { Speech::default() };
+    cancelled()?;
+
     // 7. the bot's config
     phase("Writing the bot's config");
     let app_id = check.as_ref().map(|c| c.app_id.clone()).unwrap_or_default();
-    write_bot_config(&o, &cfg_dir, &home, db_pw.as_deref(), &app_id)?;
+    write_bot_config(&o, &cfg_dir, &home, db_pw.as_deref(), &app_id, &speech)?;
     done.push("bot config".into());
 
     // 8. plugin, netidx client config, firewall
@@ -1105,6 +1173,305 @@ fn engine_files(o: &NewBoxOptions, source: &str, home: &Path) -> Result<String> 
     Ok(tag)
 }
 
+// ---- 6b. the range ATC's speech -----------------------------------------------------------
+
+/// Where the speech tools go: the manager's data folder, which every account
+/// may read (bfdb runs Piper as the bot's account, whisper-server runs as
+/// LOCAL SERVICE).
+struct SpeechFiles {
+    dir: PathBuf,
+    whisper_dir: PathBuf,
+    whisper_exe: PathBuf,
+    whisper_model: PathBuf,
+    piper_dir: PathBuf,
+    piper_exe: PathBuf,
+    voice: PathBuf,
+    voice_cfg: PathBuf,
+}
+
+impl SpeechFiles {
+    fn new() -> Self {
+        let dir = config::data_dir().join("speech");
+        let whisper_dir = dir.join("whisper");
+        let piper_dir = dir.join("piper");
+        // a folder of their own: milatc deals out every .onnx beside the model
+        let voices = dir.join("voices");
+        Self {
+            whisper_exe: whisper_dir.join("whisper-server.exe"),
+            whisper_model: whisper_dir.join(WHISPER_MODEL.name),
+            piper_exe: piper_dir.join("piper.exe"),
+            voice: voices.join(PIPER_VOICE.name),
+            voice_cfg: voices.join(PIPER_VOICE_CFG.name),
+            whisper_dir,
+            piper_dir,
+            dir,
+        }
+    }
+}
+
+/// What 6b got in, for fowlengine.yaml.
+#[derive(Debug, Clone, Default)]
+struct Speech {
+    whisper_url: Option<String>,
+    piper_exe: Option<PathBuf>,
+    piper_model: Option<PathBuf>,
+}
+
+impl Speech {
+    /// The range instance's `gci:` lines: SRS's opus.dll, and whatever of
+    /// whisper and Piper is installed.
+    fn yaml(&self, o: &NewBoxOptions) -> String {
+        let pad = "          ";
+        let mut s = format!("{pad}opus_dll_path: {}\n", q(&srs_opus(o).display().to_string()));
+        if let Some(u) = &self.whisper_url {
+            s += &format!("{pad}whisper_server_url: {}\n", q(u));
+        }
+        if let (Some(e), Some(m)) = (&self.piper_exe, &self.piper_model) {
+            s += &format!(
+                "{pad}piper_exe: {}\n{pad}piper_model: {}\n",
+                q(&e.display().to_string()),
+                q(&m.display().to_string())
+            );
+        }
+        s
+    }
+}
+
+/// SRS's opus.dll, which bfdb codes SRS voice with. SRS 2.4 has it in
+/// Client\ and ExternalAudio\; the config is written before SRS goes in
+/// (step 9), so a fresh box gets the 2.4 path.
+fn srs_opus(o: &NewBoxOptions) -> PathBuf {
+    let dir = PathBuf::from(o.srs_dir.trim());
+    let spots = [dir.join("ExternalAudio").join("opus.dll"), dir.join("Client").join("opus.dll"), dir.join("opus.dll")];
+    spots.iter().find(|p| p.is_file()).cloned().unwrap_or_else(|| spots[0].clone())
+}
+
+/// `p` at `dest`, downloaded unless it is already there, checked by sha256.
+fn fetch_pinned(c: &reqwest::blocking::Client, p: &Pinned, dest: &Path) -> Result<()> {
+    if dest.is_file() && sha256_of(dest).ok().as_deref() == Some(p.sha256) {
+        note(format!("  {}: already here", p.name));
+        return Ok(());
+    }
+    let tmp = dest.with_extension("newbox");
+    let got = download(c, p.url, &tmp)?;
+    if got != p.sha256 {
+        let _ = std::fs::remove_file(&tmp);
+        bail!("{} does not match its pinned sha256 (got {got}, expected {})", p.name, p.sha256);
+    }
+    std::fs::rename(&tmp, dest)?;
+    note(format!("  {}", dest.display()));
+    Ok(())
+}
+
+/// A pinned release zip unpacked into `dir` (its one top folder dropped),
+/// unless `exe` is already there.
+fn unpack_pinned(c: &reqwest::blocking::Client, p: &Pinned, dir: &Path, exe: &Path) -> Result<()> {
+    if exe.is_file() {
+        note(format!("  {} is already there", exe.display()));
+        return Ok(());
+    }
+    let zip = downloads_dir().join(p.name);
+    fetch_pinned(c, p, &zip)?;
+    unzip(&zip, dir, true)?;
+    let _ = std::fs::remove_file(&zip);
+    if !exe.is_file() {
+        bail!("{} did not hold {}", p.name, exe.file_name().unwrap_or_default().to_string_lossy());
+    }
+    Ok(())
+}
+
+/// whisper-server and piper.exe are MSVC builds: they need the VC++ 2015+
+/// runtime, which SRS's zip brings only later (step 9), if at all.
+fn vc_runtime() -> Result<()> {
+    let sys = PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into())).join("System32");
+    if ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"].iter().all(|f| sys.join(f).is_file()) {
+        return Ok(());
+    }
+    phase("Installing the Visual C++ runtime (winget)");
+    winget(&["install", "-e", "--id", "Microsoft.VCRedist.2015+.x64", "--silent"])
+        .context("installing the Visual C++ runtime (winget)")
+}
+
+fn install_speech(done: &mut Vec<String>) -> Result<Speech> {
+    let f = SpeechFiles::new();
+    let mut s = Speech::default();
+    let c = http()?;
+    if let Err(e) = vc_runtime() {
+        warn(format!("{e:#}"));
+        next_step("Install the Visual C++ 2015-2022 x64 runtime (aka.ms/vs/17/release/vc_redist.x64.exe): whisper-server and Piper need it.".into());
+    }
+    match install_whisper(&c, &f) {
+        Ok(url) => {
+            done.push(format!("{WHISPER_VERSION} ({})", WHISPER_MODEL.name));
+            s.whisper_url = Some(url);
+        }
+        Err(e) if is_cancelled() => return Err(e),
+        Err(e) => {
+            warn(format!("whisper.cpp was not installed: {e:#}"));
+            next_step(format!(
+                "The range ATC cannot hear pilots yet: run New box again to fetch whisper.cpp, or run whisper-server on 127.0.0.1:{WHISPER_PORT} and set whisper_server_url in fowlengine.yaml (range instance, gci:)."
+            ));
+        }
+    }
+    cancelled()?;
+    match install_piper(&c, &f) {
+        Ok(()) => {
+            done.push(format!("{PIPER_VERSION} (en_US-libritts_r-medium)"));
+            s.piper_exe = Some(f.piper_exe.clone());
+            s.piper_model = Some(f.voice.clone());
+        }
+        Err(e) if is_cancelled() => return Err(e),
+        Err(e) => {
+            warn(format!("Piper was not installed: {e:#}"));
+            next_step("The range ATC speaks with Windows SAPI: run New box again to fetch Piper, or set piper_exe and piper_model in fowlengine.yaml (range instance, gci:).".into());
+        }
+    }
+    Ok(s)
+}
+
+/// whisper-server with the English model, kept running by a scheduled task.
+/// Returns the URL bfdb posts calls to.
+fn install_whisper(c: &reqwest::blocking::Client, f: &SpeechFiles) -> Result<String> {
+    phase(&format!("Downloading {WHISPER_VERSION} and its English model (about 500 MB)"));
+    unpack_pinned(c, &WHISPER_BIN, &f.whisper_dir, &f.whisper_exe)?;
+    cancelled()?;
+    fetch_pinned(c, &WHISPER_MODEL, &f.whisper_model)?;
+    cancelled()?;
+    phase("Starting whisper-server (a scheduled task, from boot)");
+    whisper_task(f)?;
+    let url = format!("http://127.0.0.1:{WHISPER_PORT}");
+    if listening(WHISPER_PORT, Duration::from_secs(60)) {
+        note(format!("  whisper-server is listening on {url}"));
+    } else {
+        warn(format!(
+            "whisper-server is not answering on {url} yet -- Task Scheduler > \"{WHISPER_TASK}\" shows why (its last run result)"
+        ));
+    }
+    Ok(url)
+}
+
+/// Piper and the libritts_r voice with its speaker list.
+fn install_piper(c: &reqwest::blocking::Client, f: &SpeechFiles) -> Result<()> {
+    phase(&format!("Downloading {PIPER_VERSION} and the libritts_r voice (about 100 MB)"));
+    unpack_pinned(c, &PIPER_BIN, &f.piper_dir, &f.piper_exe)?;
+    cancelled()?;
+    fetch_pinned(c, &PIPER_VOICE_CFG, &f.voice_cfg)?;
+    fetch_pinned(c, &PIPER_VOICE, &f.voice)?;
+    Ok(())
+}
+
+fn listening(port: u16, within: Duration) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let until = std::time::Instant::now() + within;
+    loop {
+        if std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_ok() {
+            return true;
+        }
+        if std::time::Instant::now() >= until || is_cancelled() {
+            return false;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+/// The task: from boot, as LOCAL SERVICE (it needs no more than to read its
+/// model and listen on loopback), whoever is signed in. A PowerShell loop
+/// starts whisper-server again if it ever exits: Task Scheduler's own
+/// restart-on-failure only covers a failed start, not a crash.
+fn whisper_task_xml(f: &SpeechFiles) -> String {
+    let ps = |p: &Path| format!("'{}'", p.display().to_string().replace('\'', "''"));
+    let args = format!(
+        "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"while ($true) {{ & {exe} -m {model} -l en --host 127.0.0.1 --port {WHISPER_PORT}; Start-Sleep -Seconds 5 }}\"",
+        exe = ps(&f.whisper_exe),
+        model = ps(&f.whisper_model),
+    );
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Author>Fowl Engine Manager</Author>
+    <Description>whisper.cpp's server on 127.0.0.1:{WHISPER_PORT}: speech to text for the training range's ATC (bfdb). Set up by the manager's New box wizard.</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <BootTrigger>
+      <Enabled>true</Enabled>
+    </BootTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>S-1-5-19</UserId>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>5</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>999</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>powershell.exe</Command>
+      <Arguments>{args}</Arguments>
+      <WorkingDirectory>{dir}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"#,
+        args = crate::autostart::xml_escape(&args),
+        dir = crate::autostart::xml_escape(&f.whisper_dir.display().to_string()),
+    )
+}
+
+/// Register (or replace) the whisper-server task and start it, unless a
+/// whisper-server is already listening (a second run of New box).
+fn whisper_task(f: &SpeechFiles) -> Result<()> {
+    let schtasks = |args: &[&str]| -> Result<()> {
+        let out = hidden("schtasks.exe").args(args).output().context("running schtasks.exe")?;
+        if !out.status.success() {
+            bail!(
+                "schtasks {}: {}{}",
+                args[0],
+                String::from_utf8_lossy(&out.stderr).trim(),
+                String::from_utf8_lossy(&out.stdout).trim()
+            );
+        }
+        Ok(())
+    };
+    // schtasks /XML reads UTF-16 LE with a BOM reliably (see autostart.rs)
+    let mut bytes = vec![0xFF, 0xFE];
+    for u in whisper_task_xml(f).encode_utf16() {
+        bytes.extend_from_slice(&u.to_le_bytes());
+    }
+    let xml = downloads_dir().join("whisper-task.xml");
+    std::fs::write(&xml, bytes).with_context(|| format!("writing {}", xml.display()))?;
+    let made = schtasks(&["/Create", "/TN", WHISPER_TASK, "/XML", &xml.display().to_string(), "/F"]);
+    let _ = std::fs::remove_file(&xml);
+    made?;
+    note(format!("  scheduled task \"{WHISPER_TASK}\""));
+    if listening(WHISPER_PORT, Duration::ZERO) {
+        note(format!("  something is already listening on 127.0.0.1:{WHISPER_PORT} -- left as it is"));
+        return Ok(());
+    }
+    schtasks(&["/Run", "/TN", WHISPER_TASK])
+}
+
 // ---- 7. the bot's config ------------------------------------------------------------------
 
 /// A YAML scalar for any string: JSON's double-quoted form is valid YAML.
@@ -1141,7 +1508,14 @@ fn put_config(cfg_dir: &Path, rel: &str, text: &str, overwrite: bool) -> Result<
     Ok(())
 }
 
-fn write_bot_config(o: &NewBoxOptions, cfg_dir: &Path, home: &Path, db_pw: Option<&str>, app_id: &str) -> Result<()> {
+fn write_bot_config(
+    o: &NewBoxOptions,
+    cfg_dir: &Path,
+    home: &Path,
+    db_pw: Option<&str>,
+    app_id: &str,
+    speech: &Speech,
+) -> Result<()> {
     let w = o.overwrite_config;
     let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M");
     let head = format!("# Written by Fowl Engine Manager's New box wizard ({stamp}) for a training range box.\n");
@@ -1360,12 +1734,13 @@ fn write_bot_config(o: &NewBoxOptions, cfg_dir: &Path, home: &Path, db_pw: Optio
           enabled: false
           srs_port: {srs_port}
           blue_eam_password: {eam}
-          # Military ATC at Andersen: Clearance, Ground, Tower, Departure,
+{speech_cfg}          # Military ATC at Andersen: Clearance, Ground, Tower, Departure,
           # Approach and PAR Final over SRS. Listening needs whisper
           # (whisper_server_url, or whisper_exe + whisper_model) and a natural
           # voice needs Piper (piper_exe + piper_model); without them it
-          # speaks with Windows SAPI and does not listen. Set bfdb.atc_llm_key
-          # to let a language model read non-standard calls.
+          # speaks with Windows SAPI and does not listen. New box installs
+          # both and fills these in. Set bfdb.atc_llm_key to let a language
+          # model read non-standard calls.
           range_atc:
             enabled: true
             handoff_out: {{name: Overlord, mhz: 251.5}}
@@ -1411,9 +1786,24 @@ fn write_bot_config(o: &NewBoxOptions, cfg_dir: &Path, home: &Path, db_pw: Optio
             gr = chan(&ch.greenie),
             srs_port = o.srs_port,
             eam = q(&eam),
+            speech_cfg = speech.yaml(o),
         ),
         w,
     )?;
+    // A kept fowlengine.yaml (a second run, or a box from before New box
+    // installed the speech tools) may lack what 6b just put in.
+    let fe = std::fs::read_to_string(cfg_dir.join("plugins").join("fowlengine.yaml")).unwrap_or_default();
+    let lines = speech.yaml(o);
+    let missing: Vec<&str> = lines
+        .lines()
+        .filter(|l| l.split(':').next().map_or(false, |k| !fe.contains(&format!("{}:", k.trim()))))
+        .collect();
+    if !missing.is_empty() {
+        next_step(format!(
+            "fowlengine.yaml was kept: add these under the range instance's gci: (Bot config tab) so the range ATC can hear and speak -- {}",
+            missing.iter().map(|l| l.trim()).collect::<Vec<_>>().join("; ")
+        ));
+    }
     if eam.is_empty() {
         next_step("SRS.cfg has External AWACS Mode off: turn it on with a password and put that password in fowlengine.yaml (range instance gci.blue_eam_password) so the range ATC can join SRS.".into());
     }
@@ -1711,11 +2101,23 @@ mod tests {
         o.discord_client_secret = "s".into();
         o.overwrite_config = true;
         let home = dir.join("DCS.range");
-        write_bot_config(&o, &dir.join("config"), &home, Some("dbpw"), "999").unwrap();
+        let f = SpeechFiles::new();
+        let speech = Speech {
+            whisper_url: Some(format!("http://127.0.0.1:{WHISPER_PORT}")),
+            piper_exe: Some(f.piper_exe.clone()),
+            piper_model: Some(f.voice.clone()),
+        };
+        write_bot_config(&o, &dir.join("config"), &home, Some("dbpw"), "999", &speech).unwrap();
         let fe: serde_yaml::Value =
             serde_yaml::from_str(&std::fs::read_to_string(dir.join("config/plugins/fowlengine.yaml")).unwrap()).unwrap();
         let inst = &fe["DEFAULT"]["bfdb"]["instances"][0];
         assert_eq!(inst["kind"].as_str(), Some("range"));
+        let gci = &inst["gci"];
+        assert_eq!(gci["whisper_server_url"].as_str(), Some("http://127.0.0.1:8178"));
+        assert_eq!(gci["piper_exe"].as_str(), Some(f.piper_exe.display().to_string().as_str()));
+        assert!(gci["piper_model"].as_str().unwrap().ends_with("en_US-libritts_r-medium.onnx"));
+        assert!(gci["opus_dll_path"].as_str().unwrap().ends_with("opus.dll"));
+        assert_eq!(gci["range_atc"]["enabled"].as_bool(), Some(true));
         assert_eq!(inst["dcs_server_name"].as_str(), Some("[VS] Vector Strike | Training Range"));
         assert_eq!(fe["[VS] Vector Strike | Training Range"]["range_status_channel"].as_u64(), Some(789));
         assert!(fe["[VS] Vector Strike | Training Range"]["greenie_channel"].is_null());
@@ -1732,10 +2134,46 @@ mod tests {
         // a second run keeps what is there
         o.overwrite_config = false;
         o.guild_id = "321".into();
-        write_bot_config(&o, &dir.join("config"), &home, None, "").unwrap();
+        write_bot_config(&o, &dir.join("config"), &home, None, "", &Speech::default()).unwrap();
         let main: serde_yaml::Value =
             serde_yaml::from_str(&std::fs::read_to_string(dir.join("config/main.yaml")).unwrap()).unwrap();
         assert_eq!(main["guild_id"].as_u64(), Some(123));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn whisper_task_runs_the_server() {
+        let x = whisper_task_xml(&SpeechFiles::new());
+        assert!(x.contains(r"speech\whisper\whisper-server.exe"));
+        assert!(x.contains("ggml-small.en.bin"));
+        assert!(x.contains("--host 127.0.0.1 --port 8178"));
+        assert!(x.contains("<UserId>S-1-5-19</UserId>"));
+        assert!(x.contains("<BootTrigger>"));
+        // the -Command string's quotes are escaped for the XML
+        assert!(x.contains("-Command &quot;while"));
+    }
+
+    /// The pinned speech downloads still match their sha256 (the two models,
+    /// about 570 MB, only with FOWL_SPEECH_MODELS=1):
+    ///   cargo test --lib newbox::tests::speech_downloads -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn speech_downloads() {
+        let dir = std::env::temp_dir().join(format!("fowl-newbox-speech-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let c = http().unwrap();
+        let mut all = vec![&WHISPER_BIN, &PIPER_BIN, &PIPER_VOICE_CFG];
+        if std::env::var("FOWL_SPEECH_MODELS").is_ok() {
+            all.extend([&WHISPER_MODEL, &PIPER_VOICE]);
+        }
+        for p in all {
+            fetch_pinned(&c, p, &dir.join(p.name)).unwrap();
+            println!("{} ok", p.name);
+        }
+        unzip(&dir.join(WHISPER_BIN.name), &dir.join("whisper"), true).unwrap();
+        assert!(dir.join("whisper").join("whisper-server.exe").is_file());
+        unzip(&dir.join(PIPER_BIN.name), &dir.join("piper"), true).unwrap();
+        assert!(dir.join("piper").join("piper.exe").is_file());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

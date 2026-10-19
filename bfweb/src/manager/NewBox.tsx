@@ -194,6 +194,9 @@ function NewBoxForm({ st }: { st: NewBoxState }) {
         </div>
         <Tick on={o.install_srs} set={v => set('install_srs', v)}>Install SRS (latest release from GitHub, about 300 MB)</Tick>
         <Field label="SRS folder"><Text mono value={o.srs_dir} onChange={v => set('srs_dir', v)} /></Field>
+        <Tick on={o.install_speech} set={v => set('install_speech', v)}>
+          Install the range ATC's speech: whisper.cpp to hear pilots, Piper for a voice per frequency (about 600 MB)
+        </Tick>
         <Field label="TacviewSetup.exe (optional)" hint={<>For the range site's Tacview downloads. Download it from tacview.net (its licence is yours to accept) and give its path; blank skips Tacview.</>}>
           <Text mono value={o.tacview_setup} placeholder="C:\Users\…\Downloads\TacviewSetup.exe" onChange={v => set('tacview_setup', v)} />
         </Field>
