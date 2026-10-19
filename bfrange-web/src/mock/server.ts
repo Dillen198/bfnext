@@ -155,9 +155,9 @@ function me(): Me {
   const casper = PILOTS[0]
   switch (u) {
     case 'none': return { logged_in: false, ucid: null, name: null, admin: false }
-    case 'unlinked': return { logged_in: true, ucid: null, name: 'casper#0001', admin: false }
-    case 'admin': return { logged_in: true, ucid: casper.ucid, name: casper.name, admin: true }
-    default: return { logged_in: true, ucid: casper.ucid, name: casper.name, admin: false }
+    case 'unlinked': return { logged_in: true, ucid: null, name: 'casper#0001', admin: false, avatar_url: 'https://cdn.discordapp.com/embed/avatars/2.png' }
+    case 'admin': return { logged_in: true, ucid: casper.ucid, name: casper.name, admin: true, avatar_url: 'https://cdn.discordapp.com/embed/avatars/1.png' }
+    default: return { logged_in: true, ucid: casper.ucid, name: casper.name, admin: false, avatar_url: 'https://cdn.discordapp.com/embed/avatars/1.png' }
   }
 }
 

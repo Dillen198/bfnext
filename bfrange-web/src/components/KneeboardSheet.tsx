@@ -5,6 +5,7 @@
  */
 import type { ReactNode } from 'react'
 import { airframe, fmt, pad3 } from '../lib/format'
+import { cloudText, visibilityText } from '../lib/weather'
 import type { RangeLive } from '../types'
 import { KB_INK, KB_MONO, KB_SANS, type KbTheme } from '../lib/kneeboardInk'
 import { ChartBody } from './KneeboardChart'
@@ -64,8 +65,9 @@ export function KneeboardSheet({ live, theme }: { live: RangeLive; theme: KbThem
         ['6,600 FT', `${pad3(w.alt_from_deg)}/${fmt(w.alt_kts)} KT`],
         ['QNH', `${fmt(w.qnh_hpa)} hPa · ${(w.qnh_hpa * 0.02953).toFixed(2)}`],
         ['TEMP', `${fmt(w.temperature_c)} °C`],
+        ['SKY', live.sky ? `${cloudText(live.sky)} · ${visibilityText(live.sky.visibility_m)}` : '—'],
       ].map(([k, val], i) => (
-        <g key={k} transform={`translate(${M + i * 182},84)`}>
+        <g key={k} transform={`translate(${M + [0, 128, 256, 430, 520][i]},84)`}>
           <text fontSize={7.5} fontWeight={600} letterSpacing={0.9} fill={ink.dim}>{k}</text>
           <text y={14} fontSize={11.5} fontFamily={KB_MONO} fill={ink.ink}>{val}</text>
         </g>

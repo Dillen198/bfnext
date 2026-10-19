@@ -302,6 +302,21 @@ async fn h_discord(ctx: Arc<RangeCtx>, id: String) -> Response {
     }
 }
 
+/// The pilot's Discord picture: their own, or the default one Discord gives
+/// an account without one (picked from the id, as Discord picks it).
+fn avatar_url(discord_id: &str, avatar: Option<&str>) -> String {
+    match avatar.filter(|a| !a.is_empty()) {
+        Some(a) => {
+            let ext = if a.starts_with("a_") { "gif" } else { "png" };
+            format!("https://cdn.discordapp.com/avatars/{discord_id}/{a}.{ext}?size=64")
+        }
+        None => {
+            let n = discord_id.parse::<u64>().map(|id| (id >> 22) % 6).unwrap_or(0);
+            format!("https://cdn.discordapp.com/embed/avatars/{n}.png")
+        }
+    }
+}
+
 async fn h_me(ctx: Arc<RangeCtx>, sid: Option<Uuid>, q: Q) -> Response {
     let anon = json!({ "logged_in": false, "ucid": null, "name": null, "admin": false });
     let Some(sid) = sid else { return ok(&anon) };
@@ -321,6 +336,7 @@ async fn h_me(ctx: Arc<RangeCtx>, sid: Option<Uuid>, q: Q) -> Response {
         "ucid": ucid,
         "name": name,
         "discord_name": s.username,
+        "avatar_url": avatar_url(&s.discord_id, s.avatar.as_deref()),
         "admin": s.is_admin,
     }))
 }

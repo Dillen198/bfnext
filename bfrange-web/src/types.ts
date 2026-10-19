@@ -693,6 +693,24 @@ export type Summary = Omit<RangeRecord, 'track'> & {
 // engine after the first release are optional here: an older engine simply
 // does not send them.
 
+/** `bfprotocols` `SkyInfo`: the sky over the range, from the mission's weather. */
+export interface SkyInfo {
+  /** the Mission Editor's cloud preset, e.g. "Scattered 3" */
+  preset?: string | null
+  /** METAR cover of the main layer; null = clear */
+  cover?: 'FEW' | 'SCT' | 'BKN' | 'OVC' | null
+  /** metres MSL */
+  base_m?: number | null
+  tops_m?: number | null
+  precip: 'none' | 'rain' | 'thunderstorm' | 'snow' | 'snowstorm' | string
+  visibility_m: number
+  fog_visibility_m?: number | null
+  fog_thickness_m?: number | null
+  dust_visibility_m?: number | null
+  /** ground height at the range reference point, metres MSL */
+  ground_m: number
+}
+
 export interface WindInfo {
   /** DCS's atmosphere over the range reference point, lowest first */
   layers?: AtmoLayer[]
@@ -999,6 +1017,8 @@ export interface RangeLive {
   jammers?: LiveJammer[]
   csar?: LiveCsar[]
   ship_decks?: LiveShipDeck[]
+  /** the mission's sky; missing from older engines */
+  sky?: SkyInfo | null
 }
 
 // ─── spawning ──────────────────────────────────────────────────────────────
@@ -1092,6 +1112,8 @@ export interface Me {
   name: string | null
   admin: boolean
   discord_name?: string
+  /** the pilot's Discord picture (Discord's default one when they have none); older servers do not send it */
+  avatar_url?: string
 }
 
 export interface KindStats {

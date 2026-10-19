@@ -36,6 +36,7 @@ mod pattern;
 mod players;
 mod records;
 mod sectors;
+mod sky;
 mod spawn;
 mod util;
 mod weapons;
@@ -1164,6 +1165,7 @@ fn live(lua: MizLua, ctx: &Ctx, now: f64) -> RangeLive {
         jammers: ctx.ew.live(lua),
         csar: ctx.csar.live(lua, &ctx.players),
         ship_decks: ctx.decks.live(lua),
+        sky: sky::read(lua, gh),
     }
 }
 

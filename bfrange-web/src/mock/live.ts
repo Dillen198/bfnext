@@ -132,6 +132,7 @@ export function buildLive(now: number, spawns: LiveSpawn[]): RangeLive {
       temperature_c: refAtmo[0].temp_c,
       qnh_hpa: MOCK_QNH_HPA,
     },
+    sky: { preset: 'Scattered 3', cover: 'SCT', base_m: 1370, tops_m: null, precip: 'none', visibility_m: 80_000, fog_visibility_m: null, fog_thickness_m: null, dust_visibility_m: null, ground_m: ref.alt_m },
     players,
     stations: STATIONS.map(s => ({
       id: s.id,

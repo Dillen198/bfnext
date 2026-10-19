@@ -7,12 +7,15 @@
  */
 import { useEffect, useRef, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Activity, Aircraft, ArrowRight, Bombing, Carrier, Csar, Helicopter, HotZone, Refuel, Sam, Ship, Wind } from '@icons'
+import { Activity, Aircraft, ArrowDown, ArrowRight, Baro, Bombing, Carrier, Clock, Cloud, Csar, Helicopter, HotZone, Refuel, Sam, Ship, Temp, Visibility, Wind } from '@icons'
 import { Empty } from '../../components/States'
 import { useAuth } from '../../context/AuthContext'
+import { useToast } from '../../context/ToastContext'
 import { GROUPABLE_STATIONS, STATION_KIND_LABEL, airframe, fmt, fmtClock, pad3 } from '../../lib/format'
 import type { DockTab } from '../../lib/select'
+import { useMissionClock } from '../../lib/missionClock'
 import { useNow } from '../../lib/useNow'
+import { CATEGORY_COLOR, cloudText, flightCategory, metar, presentWeather, visibilityText, windsAloft } from '../../lib/weather'
 import type { LiveCarrier, LiveTanker, RangeLive } from '../../types'
 import { LiveFeed } from './LiveFeed'
 
@@ -34,31 +37,100 @@ function minsSince(iso: string, now: string): number {
 
 // ─── situation ────────────────────────────────────────────────────────────
 
+/** One reading in the weather grid: icon, label, value. */
+function Wx({ icon, label, children, title }: { icon: ReactNode; label: string; children: ReactNode; title?: string }) {
+  return (
+    <div title={title}>
+      <span className="caps">{icon}{label}</span>
+      <span className="mono">{children}</span>
+    </div>
+  )
+}
+
+/** The arrow the wind blows along (it comes FROM `from`). */
+function WindArrow({ from }: { from: number }) {
+  return <ArrowDown size={11} style={{ transform: `rotate(${from}deg)`, color: 'var(--sky)' }} aria-hidden />
+}
+
 function Situation({ live }: { live: RangeLive }) {
   const w = live.wind
+  const sky = live.sky
   const up = live.players.filter(p => p.in_air).length
+  const clock = useMissionClock()
+  const cat = sky ? flightCategory(sky) : null
+  const wx = sky ? presentWeather(sky) : null
+  const aloft = windsAloft(live)
+  const line = metar(live, clock)
+  const toast = useToast()
   return (
     <div className="rdock-sit">
-      <div className="flex items-end gap-3">
+      <div className="flex items-start gap-3">
         <div className="min-w-0">
-          <div className="caps" style={{ fontSize: 9.5 }}>{live.theatre} · {live.mission_date}</div>
-          <div className="mono rdock-clock">{live.mission_time}</div>
+          <div className="caps" style={{ fontSize: 9.5 }}>{live.theatre.replace(/([a-z])([A-Z])/g, '$1 $2')} · {live.mission_date}</div>
+          <div className="rdock-clocks">
+            <div>
+              <span className="mono rdock-clock">{clock?.local ?? live.mission_time}</span>
+              <span className="rdock-tz">L</span>
+            </div>
+            {clock?.zulu && (
+              <div className="rdock-zulu" title="Zulu: the mission's local time less the theatre's UTC offset">
+                <Clock size={12} />
+                <span className="mono">{clock.zulu}</span>
+                <span className="rdock-tz">Z</span>
+              </div>
+            )}
+          </div>
         </div>
-        {live.night && <span className="chip outline mb-1.5">NIGHT</span>}
-        <div className="ml-auto text-right mb-1">
+        <div className="ml-auto text-right mt-0.5">
           <div className="mono text-[15px]"><b>{up}</b><span className="muted">/{live.players.length}</span></div>
           <div className="caps" style={{ fontSize: 9.5 }}>pilots up</div>
+          {live.night && <span className="chip outline mt-1.5">NIGHT</span>}
         </div>
       </div>
+
+      <button
+        className="rdock-metar"
+        title="Copy the weather as a METAR-style line"
+        onClick={async () => {
+          try { await navigator.clipboard.writeText(line); toast('Weather copied', true) } catch { toast('The browser would not let the page copy.', false) }
+        }}
+      >
+        {cat && <span className="rdock-cat" style={{ color: CATEGORY_COLOR[cat], borderColor: CATEGORY_COLOR[cat] }}>{cat}</span>}
+        <span className="mono truncate">{line}</span>
+      </button>
+
       <div className="rdock-wx">
-        <div><span className="caps"><Wind size={10} /> Surface</span><span className="mono">{pad3(w.surface_from_deg)}/{fmt(w.surface_kts)}<small>kt</small></span></div>
-        <div><span className="caps">6,600 ft</span><span className="mono">{pad3(w.alt_from_deg)}/{fmt(w.alt_kts)}<small>kt</small></span></div>
-        <div><span className="caps">Temp</span><span className="mono">{fmt(w.temperature_c)}<small>°C</small></span></div>
-        <div title={`QNH ${fmt(w.qnh_hpa)} hPa = ${(w.qnh_hpa * 0.02953).toFixed(2)} inHg`}>
-          <span className="caps">QNH</span>
-          <span className="mono">{Math.round(w.qnh_hpa)}<small> {(w.qnh_hpa * 0.02953).toFixed(2)}</small></span>
-        </div>
+        <Wx icon={<Wind size={11} />} label="Surface">
+          <WindArrow from={w.surface_from_deg} /> {pad3(w.surface_from_deg)}/{fmt(w.surface_kts)}<small>kt</small>
+        </Wx>
+        <Wx icon={<Wind size={11} />} label="6,600 ft">
+          <WindArrow from={w.alt_from_deg} /> {pad3(w.alt_from_deg)}/{fmt(w.alt_kts)}<small>kt</small>
+        </Wx>
+        <Wx icon={<Visibility size={11} />} label="Visibility" title={sky?.fog_visibility_m != null ? `Fog ${fmt(sky.fog_thickness_m ?? 0)} m deep` : undefined}>
+          {sky ? visibilityText(sky.visibility_m) : '—'}
+        </Wx>
+        <Wx icon={<Cloud size={11} />} label="Clouds" title={sky?.preset ? `Mission preset: ${sky.preset}` : undefined}>
+          {sky ? cloudText(sky, true) : '—'}
+        </Wx>
+        <Wx icon={<Temp size={11} />} label="Temp">{fmt(w.temperature_c)}<small>°C</small></Wx>
+        <Wx icon={<Baro size={11} />} label="QNH" title={`QNH ${fmt(w.qnh_hpa)} hPa = ${(w.qnh_hpa * 0.02953).toFixed(2)} inHg`}>
+          {Math.round(w.qnh_hpa)}<small> {(w.qnh_hpa * 0.02953).toFixed(2)}</small>
+        </Wx>
       </div>
+
+      {wx && <div className="rdock-wxline"><Cloud size={12} /> {wx.text[0].toUpperCase() + wx.text.slice(1)} over the range</div>}
+
+      {aloft.length > 0 && (
+        <div className="rdock-aloft" aria-label="Winds aloft">
+          <span className="caps">Aloft</span>
+          {aloft.map(a => (
+            <span key={a.ft} className="mono" title={`${fmt(a.temp)} °C`}>
+              <i>{a.ft >= 10_000 ? `FL${a.ft / 100}` : `${a.ft / 1000}k`}</i>
+              {pad3(a.from)}/{fmt(a.kts)}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="dim text-[11px] mono">server up {fmtClock(live.uptime_s)}</div>
     </div>
   )

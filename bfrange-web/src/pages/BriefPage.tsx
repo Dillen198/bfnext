@@ -18,6 +18,8 @@ import { COORD_FORMATS, fmtCoord, type CoordFormat } from '../lib/coords'
 import { saveBlob } from '../lib/download'
 import { STATION_KIND_LABEL, airframe, fmt, mToFt, pad3 } from '../lib/format'
 import { kneeboardPng } from '../lib/kneeboard'
+import { useMissionClock } from '../lib/missionClock'
+import { CATEGORY_COLOR, cloudText, flightCategory, metar, presentWeather, visibilityText } from '../lib/weather'
 import { kindInfo } from '../lib/sectors'
 import { useLive } from '../lib/useLive'
 import { usePref } from '../lib/usePref'
@@ -131,6 +133,11 @@ function Comms({ live }: { live: RangeLive }) {
 
 function Weather({ live }: { live: RangeLive }) {
   const w = live.wind
+  const sky = live.sky
+  const clock = useMissionClock()
+  const cat = sky ? flightCategory(sky) : null
+  const wx = sky ? presentWeather(sky) : null
+  const line = metar(live, clock)
   const layers = (w.layers ?? []).filter((l, i, a) => i === 0 || l.alt_m - a[i - 1].alt_m >= 400).slice(0, 9)
   return (
     <>
@@ -139,7 +146,16 @@ function Weather({ live }: { live: RangeLive }) {
         <div><span className="caps">6,600 ft</span><b className="mono">{pad3(w.alt_from_deg)}/{fmt(w.alt_kts)} kt</b></div>
         <div><span className="caps">Temp</span><b className="mono">{fmt(w.temperature_c)} °C</b></div>
         <div><span className="caps">QNH</span><b className="mono">{fmt(w.qnh_hpa)} hPa · {(w.qnh_hpa * 0.02953).toFixed(2)} inHg</b></div>
+        {sky && (
+          <>
+            <div title={sky.preset ? `Mission preset: ${sky.preset}` : undefined}><span className="caps">Clouds</span><b className="mono">{cloudText(sky)}</b></div>
+            <div><span className="caps">Visibility</span><b className="mono">{visibilityText(sky.visibility_m)}</b></div>
+            <div><span className="caps">Weather</span><b className="mono">{wx ? wx.text : 'none'}</b></div>
+            <div><span className="caps">Category</span><b className="mono" style={{ color: cat ? CATEGORY_COLOR[cat] : undefined }}>{cat}</b></div>
+          </>
+        )}
       </div>
+      <div className="brief-metar mono">{line} <CopyBtn text={line} label="the METAR-style line" /></div>
       {layers.length > 1 && (
         <table className="table-range brief-table">
           <thead><tr><th className="n">Alt ft</th><th className="n">Wind</th><th className="n">Temp °C</th><th className="n">hPa</th></tr></thead>
@@ -251,6 +267,7 @@ export default function BriefPage() {
   const live = q.data?.live
   const [f, setF] = usePref<CoordFormat>('range.brief.coords', 'ddm', isFormat)
   const [kb, setKb] = usePref<KbTheme>('range.brief.kneeboard', 'light', isKb)
+  const clock = useMissionClock()
 
   // the print styles read the kneeboard's ink off the root (index.css)
   useEffect(() => {
@@ -267,7 +284,7 @@ export default function BriefPage() {
           <h1 className="display">Range brief</h1>
           <p className="sub m-0 mt-1">
             {live
-              ? <>{live.theatre} · {live.mission_date} · <span className="mono">{live.mission_time}</span>{live.night ? ' · night' : ''}. Everything on this card is from the mission running now.</>
+              ? <>{live.theatre} · {live.mission_date} · <span className="mono">{clock?.local ?? live.mission_time}</span>{clock?.zulu ? <> · <span className="mono">{clock.zulu}Z</span></> : null}{live.night ? ' · night' : ''}. Everything on this card is from the mission running now.</>
               : 'The range on one card: frequencies, TACANs, coordinates, laser codes and the weather.'}
           </p>
         </div>

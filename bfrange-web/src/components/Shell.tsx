@@ -9,11 +9,12 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { Backdrop } from './Backdrop'
-import { ChevronsLeft, ChevronsRight, LogOut, Menu, Moon, Search, Sun, X } from '@icons'
+import { Carrier, ChevronsLeft, ChevronsRight, LogOut, Menu, Moon, Search, Sun, X } from '@icons'
 import { MOCK } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
 import { fmt, pad3 } from '../lib/format'
+import { useMissionClock } from '../lib/missionClock'
 import { useLive } from '../lib/useLive'
 import { useMyResultAlerts } from '../lib/useMyResultAlerts'
 import { usePref } from '../lib/usePref'
@@ -37,6 +38,7 @@ const isMac = () => {
 /** LIVE / OFFLINE, the mission clock and who is up. Always in view. */
 function RangeStatus() {
   const q = useLive()
+  const clock = useMissionClock()
   const live = q.data?.live
   if (q.isLoading) return <span className="status-pill"><span className="dot" style={{ background: 'var(--dim)' }} /> Connecting…</span>
   if (!live) {
@@ -47,19 +49,100 @@ function RangeStatus() {
     )
   }
   const up = live.players.filter(p => p.in_air).length
-  const open = live.carriers.some(c => c.recovery_open)
   return (
-    <Link to="/" className="status-pill" title={`${live.theatre} · ${live.mission_date} ${live.mission_time}${live.night ? ' · night' : ''}`}>
+    <Link to="/" className="status-pill" title={`${live.theatre} · ${live.mission_date} ${clock?.local ?? live.mission_time}${clock?.zulu ? ` · ${clock.zulu}Z` : ''}${live.night ? ' · night' : ''}`}>
       <span className="dot live" />
       <b>LIVE</b>
       <span className="sep hidden sm:inline" />
-      <span className="mono hidden sm:inline">{live.mission_time}{live.night ? ' N' : ''}</span>
+      <span className="mono hidden sm:inline">{clock?.local ?? live.mission_time}{live.night ? ' N' : ''}</span>
       <span className="sep hidden md:inline" />
       <span className="mono hidden md:inline">{up}/{live.players.length} up</span>
       <span className="sep hidden xl:inline" />
       <span className="mono hidden xl:inline">{pad3(live.wind.surface_from_deg)}/{fmt(live.wind.surface_kts)}</span>
-      {open && <><span className="sep hidden xl:inline" /><span className="hidden xl:inline" style={{ color: 'var(--datum)' }}>DECK OPEN</span></>}
+      <span className="sep hidden xl:inline" />
+      <span className="hidden xl:inline" style={{ color: 'var(--datum)' }}>RANGE OPEN</span>
     </Link>
+  )
+}
+
+/** "MarianaIslands" -> "Mariana Islands" */
+const theatreName = (t: string) => t.replace(/([a-z])([A-Z])/g, '$1 $2')
+const CASE = ['I', 'II', 'III']
+
+/**
+ * The range at a glance, at the top of the rail: open or not, the mission
+ * clock, who is up, the wind and the altimeter, and each carrier's deck.
+ * Collapsed, just the light.
+ */
+function RailStatus({ collapsed }: { collapsed: boolean }) {
+  const q = useLive()
+  const clock = useMissionClock()
+  const live = q.data?.live
+  if (!live) {
+    const label = q.isLoading ? 'Connecting…' : 'Range offline'
+    const dot = <span className="dot" style={{ background: q.isLoading ? 'var(--dim)' : 'var(--wave)' }} />
+    if (collapsed) return <div className="rail-status mini" title={label}>{dot}</div>
+    return (
+      <div className="rail-status off" title={q.data?.reason ?? undefined}>
+        <div className="rs-top">{dot}<b>{q.isLoading ? 'CONNECTING' : 'RANGE CLOSED'}</b></div>
+        {!q.isLoading && <div className="rs-sub">The range server is not publishing a live picture.</div>}
+      </div>
+    )
+  }
+  const up = live.players.filter(p => p.in_air).length
+  if (collapsed) {
+    return (
+      <Link to="/" className="rail-status mini" title={`Range open · ${live.mission_time} · ${up}/${live.players.length} up`}>
+        <span className="dot live" />
+      </Link>
+    )
+  }
+  return (
+    <Link to="/" className="rail-status" title="Range control">
+      <div className="rs-top">
+        <span className="dot live" />
+        <b>RANGE OPEN</b>
+        <span className="ml-auto mono">{up}/{live.players.length} up</span>
+      </div>
+      <div className="rs-clock mono">
+        {clock?.local ?? live.mission_time}
+        {clock?.zulu && <span className="rs-zulu">{clock.zulu.slice(0, 5)}Z</span>}
+        {live.night && <span className="rs-night">NIGHT</span>}
+      </div>
+      <div className="rs-sub">{theatreName(live.theatre)} · {live.mission_date}</div>
+      <div className="rs-wx mono">
+        <span><i>WIND</i>{pad3(live.wind.surface_from_deg)}/{fmt(live.wind.surface_kts)}</span>
+        <span><i>QNH</i>{fmt(live.wind.qnh_hpa)}</span>
+        <span><i>TEMP</i>{fmt(live.wind.temperature_c)}°</span>
+      </div>
+      {live.carriers.length > 0 && (
+        <div className="rs-decks">
+          {live.carriers.map(c => (
+            <div key={c.id} className="rs-cv">
+              <Carrier size={13} />
+              <span className="truncate">{c.name.split(' ')[0]}</span>
+              <span className={`ml-auto mono ${c.recovery_open ? 'open' : ''}`}>
+                {c.recovery_open ? `CASE ${CASE[c.case - 1] ?? c.case}` : 'DECK CLOSED'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Link>
+  )
+}
+
+/**
+ * The pilot's Discord picture, or their initial while it loads or if it
+ * will not; the corner light says whether their DCS account is linked.
+ */
+function Avatar({ url, name, linked }: { url?: string; name: string; linked: boolean }) {
+  const [failed, setFailed] = useState(false)
+  return (
+    <span className={`avatar${linked ? ' linked' : ''}`} aria-hidden>
+      {url && !failed ? <img src={url} alt="" width={22} height={22} referrerPolicy="no-referrer" onError={() => setFailed(true)} /> : <b>{name.trim()[0]?.toUpperCase() ?? '?'}</b>}
+      <i />
+    </span>
   )
 }
 
@@ -76,10 +159,10 @@ function UserButton({ compact = false }: { compact?: boolean }) {
     <div className="flex items-center gap-1">
       <Link
         to="/me"
-        className="hidden sm:flex items-center gap-2 h-8 pl-2 pr-3 rounded-[3px] border border-[var(--line-2)] hover:border-[var(--haze)]"
+        className="hidden sm:flex items-center gap-2 h-8 pl-1 pr-3 rounded-[3px] border border-[var(--line-2)] hover:border-[var(--haze)]"
         title={me.ucid ? 'Your range record' : 'Your Discord is not linked to a DCS account yet'}
       >
-        <span className={`dot ${me.ucid ? 'live' : ''}`} style={me.ucid ? undefined : { background: 'var(--ball)' }} />
+        <Avatar url={me.avatar_url} name={me.name ?? me.discord_name ?? 'Pilot'} linked={!!me.ucid} />
         <span className="text-[13px] font-medium max-w-[140px] truncate">{me.name ?? 'Pilot'}</span>
         {me.admin && <span className="chip warn" style={{ height: 16, fontSize: 9.5 }}>IP</span>}
       </Link>
@@ -91,16 +174,21 @@ function UserButton({ compact = false }: { compact?: boolean }) {
 }
 
 function RailLinks({ collapsed, onPick }: { collapsed: boolean; onPick?: () => void }) {
+  const live = useLive().data?.live
+  const up = live ? live.players.filter(p => p.in_air).length : 0
   return (
     <nav className="flex flex-col gap-4" aria-label="Main">
       {NAV_GROUPS.map(g => (
         <div key={g.label}>
-          {!collapsed && <div className="rail-group">{g.label}</div>}
+          {collapsed ? <div className="rail-rule" aria-hidden /> : <div className="rail-group">{g.label}</div>}
           <div className="flex flex-col gap-0.5">
             {g.items.map(n => (
-              <NavLink key={n.to} to={n.to} end={n.end} onClick={onPick} className="rail-link" title={collapsed ? n.label : undefined}>
+              <NavLink key={n.to} to={n.to} end={n.end} onClick={onPick} className="rail-link" data-tip={collapsed ? n.label : undefined} aria-label={collapsed ? n.label : undefined}>
                 <n.icon size={17} />
                 {!collapsed && <span>{n.label}</span>}
+                {n.to === '/' && up > 0 && (
+                  <span className="rail-badge mono" title={`${up} pilot${up === 1 ? '' : 's'} airborne`}>{up}</span>
+                )}
               </NavLink>
             ))}
           </div>
@@ -146,14 +234,16 @@ export function Shell({ children, bleed }: { children: ReactNode; bleed: boolean
         <Link to="/" className="rail-brand" aria-label="Vector Strike Range, range control">
           {collapsed ? <RangeMark size={34} /> : <RangeLockup size={36} />}
         </Link>
-        <div className="flex-1 overflow-y-auto px-2 py-3">
+        <RailStatus collapsed={collapsed} />
+        <div className="rail-scroll flex-1 px-2 py-3">
           <RailLinks collapsed={collapsed} />
         </div>
         <div className="rail-foot">
           {!collapsed && (
-            <p className="m-0 text-[11.5px] dim leading-snug">
-              Scores are graded by the range engine; the site explains them.
-            </p>
+            <button className="rail-search" onClick={() => setPalette(true)}>
+              <Search size={14} /> Search the range
+              <kbd>{isMac() ? '⌘' : 'Ctrl'} K</kbd>
+            </button>
           )}
           <button className="btn-range ghost sm self-start" onClick={() => setCollapsed(c => !c)} title={collapsed ? 'Expand the menu' : 'Collapse the menu'} aria-label={collapsed ? 'Expand the menu' : 'Collapse the menu'}>
             {collapsed ? <ChevronsRight size={15} /> : <><ChevronsLeft size={15} /> Collapse</>}
@@ -214,6 +304,7 @@ export function Shell({ children, bleed }: { children: ReactNode; bleed: boolean
               <RangeLockup size={32} />
               <button className="btn-range ghost sm" onClick={() => setDrawer(false)} aria-label="Close menu"><X size={16} /></button>
             </div>
+            <RailStatus collapsed={false} />
             <div className="p-2 flex-1 overflow-y-auto"><RailLinks collapsed={false} onPick={() => setDrawer(false)} /></div>
           </aside>
         </div>

@@ -1364,6 +1364,10 @@ pub struct RangeLive {
     pub csar: Vec<LiveCsar>,
     #[serde(default)]
     pub ship_decks: Vec<LiveShipDeck>,
+    /// the mission's sky: clouds, visibility, fog, precipitation. Missing
+    /// from older engines.
+    #[serde(default)]
+    pub sky: Option<SkyInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1444,6 +1448,42 @@ pub struct LiveShipDeck {
     pub speed_kts: f64,
     #[serde(default)]
     pub tacan: Option<String>,
+}
+
+/// The sky over the range, from the mission's weather (`env.mission.weather`)
+/// and, for fog, the live `world.weather`, for the site's weather briefing.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SkyInfo {
+    /// the Mission Editor's cloud preset ("Scattered 3"), when one is used
+    #[serde(default)]
+    pub preset: Option<String>,
+    /// METAR cover of the main layer: "FEW", "SCT", "BKN" or "OVC"; None = clear
+    #[serde(default)]
+    pub cover: Option<String>,
+    /// cloud base, metres MSL
+    #[serde(default)]
+    pub base_m: Option<f64>,
+    /// cloud tops, metres MSL (legacy clouds only: a preset does not say)
+    #[serde(default)]
+    pub tops_m: Option<f64>,
+    /// "none", "rain", "thunderstorm", "snow" or "snowstorm"
+    #[serde(default)]
+    pub precip: String,
+    /// horizontal visibility, metres (the lower of the mission's and the fog's)
+    #[serde(default)]
+    pub visibility_m: f64,
+    /// fog, when there is any: its visibility and how deep it lies, metres
+    #[serde(default)]
+    pub fog_visibility_m: Option<f64>,
+    #[serde(default)]
+    pub fog_thickness_m: Option<f64>,
+    /// dust, when enabled: the visibility in it, metres
+    #[serde(default)]
+    pub dust_visibility_m: Option<f64>,
+    /// ground height at the range reference point, metres MSL, so a base can
+    /// be given above the ground
+    #[serde(default)]
+    pub ground_m: f64,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
