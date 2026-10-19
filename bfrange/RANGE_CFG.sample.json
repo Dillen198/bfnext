@@ -1430,7 +1430,7 @@
         "id": "cvn72-tanker",
         "callsign": "Arco",
         "callsign_number": 3,
-        "typ": "A-6E",
+        "typ": "A6E",
         "loc": {
           "lat": 13.1,
           "lon": 145.35

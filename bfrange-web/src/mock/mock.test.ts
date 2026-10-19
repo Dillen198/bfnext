@@ -51,7 +51,7 @@ describe('mock range API', () => {
     const { live } = await mockApi.live()
     expect(live).not.toBeNull()
     expect(live!.players.length).toBeGreaterThan(5)
-    expect(live!.tankers.map(t => t.unit_type)).toEqual(expect.arrayContaining(['KC-135', 'KC135MPRS', 'KC130', 'S-3B Tanker', 'A-6E', 'IL-78M']))
+    expect(live!.tankers.map(t => t.unit_type)).toEqual(expect.arrayContaining(['KC-135', 'KC135MPRS', 'KC130', 'S-3B Tanker', 'A6E', 'IL-78M']))
     expect(live!.carriers[0].recovery_tanker).toMatch(/A-6E/)
     for (const p of live!.players) {
       expect(Number.isFinite(p.pos.lat) && Number.isFinite(p.pos.lon)).toBe(true)

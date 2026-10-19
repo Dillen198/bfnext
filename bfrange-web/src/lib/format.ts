@@ -98,7 +98,7 @@ const AIRFRAMES: Record<string, string> = {
   KC130: 'KC-130',
   'S-3B Tanker': 'S-3B',
   'IL-78M': 'IL-78M',
-  'A-6E': 'A-6E',
+  'A6E': 'A-6E',
   'CVN_73': 'CVN-73',
   'Stennis': 'CVN-74',
 }

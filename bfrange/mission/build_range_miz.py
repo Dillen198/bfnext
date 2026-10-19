@@ -452,7 +452,7 @@ def build_config():
              "tacan": {"channel": 72, "band": "X", "morse": "ABL"}, "icls_channel": 11, "acls": True,
              "link4_mhz": 336.0, "tower_mhz": 305.0, "wind_over_deck_kts": 27,
              "op_center": cfg_ll(CVN_POS), "op_radius_nm": 20,
-             "recovery_tanker": {"id": "cvn72-tanker", "callsign": "Arco", "callsign_number": 3, "typ": "A-6E",
+             "recovery_tanker": {"id": "cvn72-tanker", "callsign": "Arco", "callsign_number": 3, "typ": "A6E",
                                  "loc": cfg_ll(CVN_POS), "heading_deg": 0, "leg_nm": 10, "alt_ft": 6000, "speed_kias": 250,
                                  "freq_mhz": 261.0, "tacan": {"channel": 63, "band": "Y", "morse": "A6E"}},
              "plane_guard": "SH-60B"},

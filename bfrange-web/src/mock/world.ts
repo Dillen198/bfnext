@@ -137,7 +137,7 @@ export const TANKERS: MockTanker[] = [
     leg_deg: 60, leg_m: 50_000, alt_ft: 24_000, speed_kts: 280, tacan: '52Y ARC', freq_mhz: 252.0 },
   { id: 'shl11', callsign: 'Shell 1-1', unit_type: 'KC130', method: 'drogue', centre: pt(42.12, 42.3),
     leg_deg: 120, leg_m: 35_000, alt_ft: 15_000, speed_kts: 230, tacan: '53Y SHL', freq_mhz: 253.0 },
-  { id: 'arc2', callsign: 'Arco 2', unit_type: 'A-6E', method: 'drogue', centre: pt(41.5, 41.06),
+  { id: 'arc2', callsign: 'Arco 2', unit_type: 'A6E', method: 'drogue', centre: pt(41.5, 41.06),
     leg_deg: 44, leg_m: 12_000, alt_ft: 6_000, speed_kts: 250, tacan: '54Y AR2', freq_mhz: 254.0, recovery_for: 'cvn73' },
   { id: 'mauler', callsign: 'Mauler 1', unit_type: 'S-3B Tanker', method: 'drogue', centre: pt(41.7, 40.85),
     leg_deg: 20, leg_m: 18_000, alt_ft: 10_000, speed_kts: 240, tacan: '55Y MAU', freq_mhz: 255.5 },

@@ -166,7 +166,7 @@ export const CATALOG: SpawnCatalog = {
       instructor_only: false,
       params: [
         { key: 'type', label: 'Type', default: 'S-3B Tanker', kind: { type: 'choice', options: [
-          { value: 'S-3B Tanker', label: 'S-3B Viking' }, { value: 'A-6E', label: 'A-6E Intruder' },
+          { value: 'S-3B Tanker', label: 'S-3B Viking' }, { value: 'A6E', label: 'A-6E Intruder' },
         ] } },
         { key: 'carrier', label: 'Carrier', default: 'cvn73', kind: { type: 'choice', options: [{ value: 'cvn73', label: 'CVN-73 George Washington' }] } },
       ],

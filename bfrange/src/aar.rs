@@ -107,7 +107,7 @@ pub fn spawn_tanker(
     pos.y = alt;
     let p2 = util::offset(pos, t.heading_deg, t.leg_nm * util::NM, 0.);
     let mut pylons = t.pylons.clone();
-    if let Some((n, clsid)) = tt.required_store {
+    for &(n, clsid) in tt.stores {
         pylons.entry(n).or_insert_with(|| clsid.to_string());
     }
     let mut tasks = vec![spawn::task_entry(1, json!({ "id": "Tanker", "params": {} }))];

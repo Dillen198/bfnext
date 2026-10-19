@@ -98,6 +98,6 @@ export const TANKERS: TankerPreset[] = [
   { type: 'KC135MPRS', label: 'KC-135MPRS (drogue)', method: 'drogue', transfer_lb_min: 1_000 },
   { type: 'KC130', label: 'KC-130 (drogue)', method: 'drogue', transfer_lb_min: 1_000 },
   { type: 'S-3B Tanker', label: 'S-3B (buddy)', method: 'drogue', transfer_lb_min: 700 },
-  { type: 'A-6E', label: 'A-6E (buddy)', method: 'drogue', transfer_lb_min: 700 },
+  { type: 'A6E', label: 'A-6E (buddy)', method: 'drogue', transfer_lb_min: 700 },
   { type: 'IL-78M', label: 'IL-78M (drogue)', method: 'drogue', transfer_lb_min: 1_100 },
 ]

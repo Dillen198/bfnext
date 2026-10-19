@@ -411,7 +411,7 @@ pub struct TankerCfg {
     pub callsign: String,
     #[serde(default = "one")]
     pub callsign_number: u8,
-    /// DCS type: "KC-135", "KC135MPRS", "KC130", "S-3B Tanker", "A-6E",
+    /// DCS type: "KC-135", "KC135MPRS", "KC130", "S-3B Tanker", "A6E",
     /// "IL-78M".
     pub typ: String,
     #[serde(default = "default_side_blue")]
@@ -443,7 +443,7 @@ pub struct TankerCfg {
     #[serde(default)]
     pub livery: Option<String>,
     /// Pylon loadout override: pylon number -> CLSID. The engine already knows
-    /// that an A-6E needs its D-704 buddy store on the centreline.
+    /// that an A6E needs its D-704 buddy store and drop tanks.
     #[serde(default)]
     pub pylons: BTreeMap<u8, String>,
 }
@@ -472,21 +472,32 @@ pub struct TankerType {
     /// The usual refuelling speed, knots indicated.
     pub refuel_kias: f64,
     pub carrier_capable: bool,
-    /// (pylon, CLSID) the type must carry to refuel anyone.
-    pub required_store: Option<(u8, &'static str)>,
+    /// (pylon, CLSID) the type must carry to refuel anyone: added to a
+    /// tanker's pylons unless the config sets that pylon itself.
+    pub stores: &'static [(u8, &'static str)],
 }
 
-/// The tanker types DCS ships with. The A-6E refuels from its D-704 buddy
-/// store on the centreline pylon (Heatblur's AI A-6E; the separate KA-6D is
+/// The tanker types DCS ships with. The A-6E (DCS type "A6E", Heatblur's AI
+/// Intruder) refuels from its D-704 buddy store on the centreline with four
+/// Aero 1D drop tanks under the wings, as the Mission Editor loads it for the
+/// Refueling task (the separate KA-6D is
 /// commented out in DCS's own files).
+const A6E_TANKER_STORES: &[(u8, &str)] = &[
+    (1, "{HB_A6E_AERO1D}"),
+    (2, "{HB_A6E_AERO1D}"),
+    (3, "{HB_A6E_D704}"),
+    (4, "{HB_A6E_AERO1D}"),
+    (5, "{HB_A6E_AERO1D}"),
+];
+
 pub const TANKER_TYPES: &[TankerType] = &[
-    TankerType { typ: "KC-135", method: RefuelMethod::Boom, refuel_kias: 300., carrier_capable: false, required_store: None },
-    TankerType { typ: "KC135MPRS", method: RefuelMethod::Drogue, refuel_kias: 270., carrier_capable: false, required_store: None },
-    TankerType { typ: "KC130", method: RefuelMethod::Drogue, refuel_kias: 220., carrier_capable: false, required_store: None },
-    TankerType { typ: "KC130J", method: RefuelMethod::Drogue, refuel_kias: 220., carrier_capable: false, required_store: None },
-    TankerType { typ: "S-3B Tanker", method: RefuelMethod::Drogue, refuel_kias: 250., carrier_capable: true, required_store: None },
-    TankerType { typ: "A-6E", method: RefuelMethod::Drogue, refuel_kias: 250., carrier_capable: true, required_store: Some((3, "{HB_A6E_D704}")) },
-    TankerType { typ: "IL-78M", method: RefuelMethod::Drogue, refuel_kias: 290., carrier_capable: false, required_store: None },
+    TankerType { typ: "KC-135", method: RefuelMethod::Boom, refuel_kias: 300., carrier_capable: false, stores: &[] },
+    TankerType { typ: "KC135MPRS", method: RefuelMethod::Drogue, refuel_kias: 270., carrier_capable: false, stores: &[] },
+    TankerType { typ: "KC130", method: RefuelMethod::Drogue, refuel_kias: 220., carrier_capable: false, stores: &[] },
+    TankerType { typ: "KC130J", method: RefuelMethod::Drogue, refuel_kias: 220., carrier_capable: false, stores: &[] },
+    TankerType { typ: "S-3B Tanker", method: RefuelMethod::Drogue, refuel_kias: 250., carrier_capable: true, stores: &[] },
+    TankerType { typ: "A6E", method: RefuelMethod::Drogue, refuel_kias: 250., carrier_capable: true, stores: A6E_TANKER_STORES },
+    TankerType { typ: "IL-78M", method: RefuelMethod::Drogue, refuel_kias: 290., carrier_capable: false, stores: &[] },
 ];
 
 pub fn tanker_type(typ: &str) -> Option<&'static TankerType> {
@@ -634,7 +645,7 @@ pub struct CarrierCfg {
     /// Empty = recovery always open.
     #[serde(default)]
     pub recovery_windows: Vec<RecoveryWindowCfg>,
-    /// "S-3B Tanker" or "A-6E"; spawned from the deck as a recovery tanker.
+    /// "S-3B Tanker" or "A6E"; spawned from the deck as a recovery tanker.
     #[serde(default)]
     pub recovery_tanker: Option<TankerCfg>,
     /// Keep a plane-guard helicopter on station (DCS type, e.g. "SH-60B").
@@ -1696,7 +1707,7 @@ impl RangeCfg {
                     Some(tt) if tt.carrier_capable => (),
                     _ => bail!(
                         "carrier {:?}: recovery tanker must be a carrier-capable tanker \
-                         (\"S-3B Tanker\" or \"A-6E\"), not {:?}",
+                         (\"S-3B Tanker\" or \"A6E\"), not {:?}",
                         c.id,
                         t.typ
                     ),
@@ -1870,7 +1881,7 @@ mod tests {
         let c: RangeCfg =
             serde_json::from_str(include_str!("../../../bfrange/RANGE_CFG.sample.json")).unwrap();
         c.validate().unwrap();
-        assert_eq!(c.carriers[0].recovery_tanker.as_ref().unwrap().typ, "A-6E");
+        assert_eq!(c.carriers[0].recovery_tanker.as_ref().unwrap().typ, "A6E");
         assert!(c.stations.iter().any(|s| s.kind == StationKind::StrafePit));
         // the training sectors: blue only on the Marianas, one of each
         assert_eq!(c.iads.len(), 1);
@@ -1901,9 +1912,11 @@ mod tests {
 
     #[test]
     fn a6e_is_a_carrier_tanker() {
-        let t = tanker_type("A-6E").unwrap();
+        let t = tanker_type("A6E").unwrap();
         assert!(t.carrier_capable);
         assert_eq!(t.method, RefuelMethod::Drogue);
-        assert_eq!(t.required_store, Some((3, "{HB_A6E_D704}")));
+        assert!(t.stores.contains(&(3, "{HB_A6E_D704}")));
+        assert_eq!(t.stores.len(), 5);
+        assert!(tanker_type("A-6E").is_none(), "DCS has no A-6E type");
     }
 }
