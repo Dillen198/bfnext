@@ -27,9 +27,15 @@ interface Transcript {
 
 const KEEP = 600
 const POLL_MS = 2000
+/** How often to look again when the server has no ATC (or no route for it). */
+const OFF_POLL_MS = 60_000
+
+/** The server answered, but has no ATC: an older bfdb without the route. */
+class NoAtc extends Error {}
 
 async function fetchTranscript(since: number): Promise<Transcript> {
   const r = await fetch(withInstance(`${API_ROOT}/api/range/atc?since=${since}`), { credentials: 'include' })
+  if (r.status === 404) throw new NoAtc('no ATC on this server')
   if (!r.ok) throw new Error(`ATC transcript: ${r.status} ${r.statusText}`)
   return r.json()
 }
@@ -47,6 +53,7 @@ function useTranscript() {
     let dead = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const tick = async () => {
+      let wait = POLL_MS
       try {
         const d = await fetchTranscript(since.current)
         if (dead) return
@@ -56,10 +63,20 @@ function useTranscript() {
           since.current = d.lines[d.lines.length - 1].t
           setLines(prev => [...prev, ...d.lines].slice(-KEEP))
         }
+        // Nothing configured: no point asking every two seconds.
+        if (!d.stations.length) wait = OFF_POLL_MS
       } catch (e) {
-        if (!dead) setError(e)
+        if (dead) return
+        if (e instanceof NoAtc) {
+          setStations([])
+          setError(null)
+        } else {
+          setError(e)
+        }
+        // Back off while the server has no ATC or is unreachable.
+        wait = e instanceof NoAtc ? OFF_POLL_MS : POLL_MS * 5
       }
-      if (!dead) timer = setTimeout(tick, document.hidden ? POLL_MS * 5 : POLL_MS)
+      if (!dead) timer = setTimeout(tick, document.hidden ? Math.max(wait, POLL_MS * 5) : wait)
     }
     tick()
     return () => {
@@ -140,7 +157,9 @@ export default function AtcPage() {
       ) : error && !stations ? (
         <ErrorState error={error} retry={() => location.reload()} />
       ) : !stations?.length ? (
-        <Empty title="ATC is off">The range's spoken ATC is not running on this server.</Empty>
+        <Empty title="ATC is off">
+          The range's spoken ATC is not running on this server yet. This page checks again every minute.
+        </Empty>
       ) : (
         <>
           <div className="tabs-range mb-3" role="tablist">
