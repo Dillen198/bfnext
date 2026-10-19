@@ -1303,7 +1303,7 @@ fn default_ll_tot() -> f64 {
 /// AI departures and arrivals at the home field, for the spoken ATC
 /// (bfdb milatc) to control: departures wait on their stands, engines
 /// running, until Ground releases them; arrivals can be put in a hold by
-/// Approach. Nothing flies while nobody is on the server.
+/// Approach.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AtcTrafficCfg {
     #[serde(default = "yes")]
@@ -1320,6 +1320,14 @@ pub struct AtcTrafficCfg {
     pub max_active: u32,
     #[serde(default = "default_atc_country")]
     pub country: String,
+    /// Keep the traffic flying while nobody is on the server, so the field
+    /// is already busy when someone joins. Off saves DCS the CPU.
+    #[serde(default = "yes")]
+    pub fly_when_empty: bool,
+    /// A departure Ground has not released after this long starts by
+    /// itself, seconds; 0 = wait for Ground forever.
+    #[serde(default = "default_atc_self_release")]
+    pub self_release_s: f64,
     /// What flies; empty = a USAF/USN mix (C-17, KC-135, C-130, B-52, F-16,
     /// F/A-18).
     #[serde(default)]
@@ -1349,6 +1357,9 @@ fn default_atc_max() -> u32 {
 }
 fn default_atc_country() -> String {
     "USA".into()
+}
+fn default_atc_self_release() -> f64 {
+    480.
 }
 fn default_atc_weight() -> u32 {
     1

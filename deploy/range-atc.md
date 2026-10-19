@@ -116,8 +116,11 @@ The controllers really control them:
   present position while a player flies a PAR or the overhead in front of it,
   then clears it direct once the player is down.
 
-Nothing spawns while nobody is flying. Arrivals are removed after they have
-parked, departures once they are 45 nm out.
+The traffic flies even when nobody is on the server, so the field is
+already busy when someone joins. Arrivals are removed after they have
+parked, departures once they are 45 nm out. A departure Ground never
+releases (ATC not running, say) starts by itself after 8 minutes, so parked
+traffic never blocks the stands.
 
 Tune it in the range config (`<sortie>_RANGE`):
 
@@ -129,6 +132,8 @@ Tune it in the range config (`<sortie>_RANGE`):
   "arrivals_per_hour": 4,
   "max_active": 4,
   "country": "USA",
+  "fly_when_empty": true,
+  "self_release_s": 480,
   "types": [{"typ": "C-17A", "callsign": "Reach", "weight": 3}]
 }
 ```
