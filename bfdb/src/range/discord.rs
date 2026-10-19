@@ -64,6 +64,9 @@ pub(crate) fn short_airframe(t: &str) -> String {
         ("M-2000", "M2000"),
         ("MIRAGE-F1", "F1"),
         ("JF-17", "JF17"),
+        ("C-130J", "C130J"),
+        ("KC-130", "KC130"),
+        ("C-130", "C130"),
         ("AH-64", "AH64"),
         ("UH-1H", "UH1"),
         ("UH-60", "UH60"),
@@ -195,6 +198,10 @@ pub(crate) fn title_and_color(r: &RangeRecord) -> (String, u32) {
         RangeResult::FieldLanding(fl) => (
             "Field landing".into(),
             if fl.outcome == FieldLandingOutcome::Undershoot { RED } else { precision_color(fl.quality) },
+        ),
+        RangeResult::Airdrop(a) => (
+            if a.method == "airland" { "Air-land delivery".into() } else { "Airdrop result".into() },
+            precision_color(a.quality),
         ),
         RangeResult::Csar(c) => (
             "Combat search and rescue".into(),
@@ -546,6 +553,49 @@ pub(crate) fn fields(r: &RangeRecord) -> Vec<(String, String, bool)> {
             }
         }
         RangeResult::FieldLanding(fl) => field_landing(fl, &mut o),
+        RangeResult::Airdrop(a) => {
+            if a.method == "airland" {
+                o.push(f("Delivered to", a.zone.clone(), true));
+                o.push(f("Cargo", format!("{} ({:.0} kg)", a.cargo, a.mass_kg), true));
+                o.push(f("Flight", mmss(a.flight_s), true));
+                if a.damage > 0.05 {
+                    o.push(f("Damage", format!("{:.0}%", a.damage * 100.), true));
+                }
+            } else {
+                o.push(f("Drop zone", a.zone.clone(), true));
+                o.push(f("Quality", format!("**{}**", a.quality.label()), true));
+                o.push(f("Off the PI", format!("**{:.0} m** @ {:03.0}°", a.distance_m, a.bearing_deg.rem_euclid(360.)), true));
+                let mut imp = vec![];
+                if let (Some(l), Some(x)) = (a.long_m, a.cross_m) {
+                    imp.push(format!("{:.0} m {} · {:.0} m {}", l.abs(), if l >= 0. { "long" } else { "short" }, x.abs(), if x >= 0. { "right" } else { "left" }));
+                }
+                if let Some(t) = a.fall_s {
+                    imp.push(format!("{t:.0} s under canopy"));
+                }
+                if let Some(d) = a.drift_m {
+                    imp.push(format!("{d:.0} m from the release point"));
+                }
+                if a.damage > 0.05 {
+                    imp.push(format!("**{:.0}% damaged**", a.damage * 100.));
+                }
+                o.push(f("Impact", imp.join("\n"), true));
+                if let Some(r) = &a.release {
+                    o.push(f(
+                        "Release",
+                        format!(
+                            "{:.0} ft AGL ({:.0} MSL)\n{:.0} kts GS on {:03.0}°{}",
+                            r.alt_agl_ft,
+                            r.alt_msl_ft,
+                            r.gs_kts,
+                            r.heading_deg.rem_euclid(360.),
+                            r.to_dz_m.map(|d| format!("\n{d:.0} m from the PI")).unwrap_or_default()
+                        ),
+                        true,
+                    ));
+                }
+                o.push(f("Cargo", format!("{} ({:.0} kg)\nflight {}", a.cargo, a.mass_kg, mmss(a.flight_s)), true));
+            }
+        }
         RangeResult::Csar(c) => {
             o.push(f("Area", c.area.clone(), true));
             o.push(f("Outcome", format!("**{}**", c.outcome.label()), true));
@@ -766,6 +816,7 @@ mod tests {
         assert_eq!(short_airframe("AV8BNA"), "AV8B");
         assert_eq!(short_airframe("Su-33"), "SU33");
         assert_eq!(short_airframe("VSN_F4B"), "VSNF4B");
+        assert_eq!(short_airframe("C-130J-30"), "C130J");
     }
 
     #[test]

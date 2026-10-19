@@ -24,7 +24,7 @@ use bfprotocols::range::RangeResult;
 const SOURCE: &str = include_str!("../../../shared/icons/index.tsx");
 
 /// Shared-set glyph -> the bot's icon key (emoji `vs_<key>`).
-pub(crate) const RANGE_ICONS: [(&str, &str); 14] = [
+pub(crate) const RANGE_ICONS: [(&str, &str); 15] = [
     ("Trap", "r_trap"),
     ("Bombing", "r_bomb"),
     ("Strafe", "r_strafe"),
@@ -39,6 +39,7 @@ pub(crate) const RANGE_ICONS: [(&str, &str); 14] = [
     ("HotZone", "r_hotzone"),
     ("LowLevel", "r_lowlevel"),
     ("FieldLanding", "r_field"),
+    ("Airdrop", "r_airdrop"),
 ];
 
 /// The bot icon key for a result's discipline. CAS, SEAD and CSAR use the
@@ -62,6 +63,7 @@ pub(crate) fn kind_icon(r: &RangeResult) -> &'static str {
         RangeResult::LowLevel(_) => "r_lowlevel",
         RangeResult::FieldLanding(_) => "r_field",
         RangeResult::Csar(_) => "csar",
+        RangeResult::Airdrop(_) => "r_airdrop",
     }
 }
 

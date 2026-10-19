@@ -571,6 +571,41 @@ export interface CsarResult {
   quality: PrecisionQuality
 }
 
+/** The aircraft at the moment the load left the cargo bay. */
+export interface AirdropRelease {
+  pos: GeoPt
+  alt_agl_ft: number
+  alt_msl_ft: number
+  gs_kts: number
+  heading_deg: number
+  /** ground distance from the release point to the point of impact, m */
+  to_dz_m?: number | null
+}
+
+/** Fixed-wing cargo (C-130J): airdropped onto a drop zone, or air-landed at another field. */
+export interface AirdropResult {
+  method: 'airdrop' | 'airland'
+  /** the drop zone, or (air-land) the field */
+  zone: string
+  cargo: string
+  mass_kg: number
+  /** from the point of impact, m (air-land: 0) */
+  distance_m: number
+  bearing_deg: number
+  /** + long / − short of the PI along the run-in */
+  long_m?: number | null
+  /** + right / − left of the run-in */
+  cross_m?: number | null
+  quality: PrecisionQuality
+  damage: number
+  release?: AirdropRelease | null
+  fall_s?: number | null
+  drift_m?: number | null
+  flight_s: number
+  dz_pos: GeoPt
+  impact_pos: GeoPt
+}
+
 // ─── the record ────────────────────────────────────────────────────────────
 
 /** `RangeResult`, internally tagged by `kind` (snake_case). */
@@ -592,6 +627,7 @@ export type RangeResult =
   | ({ kind: 'low_level' } & LowLevelResult)
   | ({ kind: 'field_landing' } & FieldLandingResult)
   | ({ kind: 'csar' } & CsarResult)
+  | ({ kind: 'airdrop' } & AirdropResult)
 
 export type ResultKind = RangeResult['kind']
 
@@ -601,7 +637,7 @@ export type ResultOf<K extends ResultKind> = Extract<RangeResult, { kind: K }>
 export const RESULT_KINDS: ResultKind[] = [
   'bomb', 'strafe', 'trap', 'aar', 'missile', 'engagement',
   'anti_ship', 'sling', 'landing', 'troops', 'gunnery', 'cas',
-  'sead', 'hot_zone', 'low_level', 'field_landing', 'csar',
+  'sead', 'hot_zone', 'low_level', 'field_landing', 'csar', 'airdrop',
 ]
 
 export interface TrackPt {

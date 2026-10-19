@@ -112,6 +112,7 @@ pub enum RangeResult {
     LowLevel(LowLevelResult),
     FieldLanding(FieldLandingResult),
     Csar(CsarResult),
+    Airdrop(AirdropResult),
 }
 
 impl RangeResult {
@@ -134,6 +135,7 @@ impl RangeResult {
             Self::LowLevel(_) => "low_level",
             Self::FieldLanding(_) => "field_landing",
             Self::Csar(_) => "csar",
+            Self::Airdrop(_) => "airdrop",
         }
     }
 
@@ -187,6 +189,10 @@ impl RangeResult {
                 a.ship,
                 if a.hit { "HIT" } else { "MISS" }
             ),
+            Self::Airdrop(a) => match a.method.as_str() {
+                "airland" => format!("{pilot} ({typ}) air-landed {} at {}", a.cargo, a.zone),
+                _ => format!("{pilot} ({typ}) airdrop {} on {}: {:.0} m off, {}", a.cargo, a.zone, a.distance_m, a.quality.label()),
+            },
             Self::Sling(s) => format!(
                 "{pilot} ({typ}) {} {} to {}: {:.1} m off, {}",
                 if s.method == "internal" { "cargo" } else { "sling" },
@@ -840,6 +846,59 @@ impl PrecisionQuality {
             Self::Poor => 1.,
         }
     }
+}
+
+/// Fixed-wing cargo: a load airdropped onto a drop zone, or air-landed at
+/// another field (the ground crew's own cargo, F8, in a C-130J or the like).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirdropResult {
+    /// "airdrop" or "airland"
+    pub method: String,
+    /// the drop zone, or (air-land) the field it was unloaded at
+    pub zone: String,
+    pub cargo: String,
+    pub mass_kg: f64,
+    /// where it came down from the drop zone's point of impact, metres (air-land: 0)
+    pub distance_m: f64,
+    /// bearing from the point of impact to where it came down, degrees true
+    pub bearing_deg: f64,
+    /// relative to the run-in: + long, - short (with a run-in heading)
+    #[serde(default)]
+    pub long_m: Option<f64>,
+    /// + right of the run-in, - left
+    #[serde(default)]
+    pub cross_m: Option<f64>,
+    pub quality: PrecisionQuality,
+    /// 0..1, from the load's life
+    pub damage: f64,
+    /// airdrop only
+    #[serde(default)]
+    pub release: Option<AirdropRelease>,
+    /// release to touchdown, s
+    #[serde(default)]
+    pub fall_s: Option<f64>,
+    /// ground distance from the release point to where it came down, m
+    #[serde(default)]
+    pub drift_m: Option<f64>,
+    /// from the load leaving its spot at the home field to the delivery, s
+    pub flight_s: f64,
+    #[serde(default)]
+    pub dz_pos: GeoPt,
+    #[serde(default)]
+    pub impact_pos: GeoPt,
+}
+
+/// The aircraft at the moment the load left the cargo bay.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AirdropRelease {
+    pub pos: GeoPt,
+    pub alt_agl_ft: f64,
+    pub alt_msl_ft: f64,
+    pub gs_kts: f64,
+    pub heading_deg: f64,
+    /// metres the release point was from the drop zone, along the ground
+    #[serde(default)]
+    pub to_dz_m: Option<f64>,
 }
 
 /// A helicopter cargo delivery: a sling load, or DCS dynamic cargo carried

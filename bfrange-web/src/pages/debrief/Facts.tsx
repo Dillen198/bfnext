@@ -504,6 +504,44 @@ export function Facts({ rec }: { rec: RangeRecord }) {
           <Calls calls={[...r.calls, ...(r.pattern?.calls ?? []), ...(r.taxi?.calls ?? [])]} />
         </>
       )
+    case 'airdrop':
+      if (r.method === 'airland') {
+        return (
+          <>
+            <div className="flex items-baseline gap-3"><span className="num text-[34px]">{fmtClock(r.flight_s)}</span><QualityChip q={r.quality} /></div>
+            <Section title="Air-land delivery">
+              <KV rows={[['Delivered to', r.zone], ['Cargo', `${r.cargo} · ${fmt(r.mass_kg)} kg`], ['Load to delivery', fmtClock(r.flight_s)], ['Damage', `${fmt(r.damage * 100)}%`]]} />
+            </Section>
+          </>
+        )
+      }
+      return (
+        <>
+          <div className="flex items-baseline gap-3"><span className="num text-[34px]">{fmt(r.distance_m)}<span className="text-[15px] muted"> m</span></span><QualityChip q={r.quality} /></div>
+          <Section title="Impact">
+            <KV rows={[
+              ['Drop zone', r.zone],
+              ['From the point of impact', `${fmt(r.distance_m)} m at ${String(Math.round(((r.bearing_deg % 360) + 360) % 360)).padStart(3, '0')}°`],
+              ...(r.long_m != null && r.cross_m != null ? [['Long / short · left / right', `${fmt(Math.abs(r.long_m))} m ${r.long_m >= 0 ? 'long' : 'short'} · ${fmt(Math.abs(r.cross_m))} m ${r.cross_m >= 0 ? 'right' : 'left'}`] as Row] : []),
+              ['Under canopy', r.fall_s != null ? `${fmt(r.fall_s)} s` : '—'],
+              ['Drift from the release', r.drift_m != null ? `${fmt(r.drift_m)} m` : '—'],
+              ['Damage', `${fmt(r.damage * 100)}%`],
+            ]} />
+          </Section>
+          {r.release && (
+            <Section title="Release">
+              <KV rows={[
+                ['Height', `${fmt(r.release.alt_agl_ft)} ft AGL (${fmt(r.release.alt_msl_ft)} MSL)`],
+                ['Ground speed · heading', `${fmt(r.release.gs_kts)} kt · ${String(Math.round(((r.release.heading_deg % 360) + 360) % 360)).padStart(3, '0')}°`],
+                ['Release point to PI', r.release.to_dz_m != null ? `${fmt(r.release.to_dz_m)} m` : '—'],
+              ]} />
+            </Section>
+          )}
+          <Section title="Load">
+            <KV rows={[['Cargo', `${r.cargo} · ${fmt(r.mass_kg)} kg`], ['Load to impact', fmtClock(r.flight_s)]]} />
+          </Section>
+        </>
+      )
     case 'csar':
       return (
         <>

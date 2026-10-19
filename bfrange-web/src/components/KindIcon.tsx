@@ -5,6 +5,7 @@
  * CAS as the reticle, which is what its Discord emoji shows too.
  */
 import {
+  Airdrop,
   AntiShip,
   Bfm,
   Bombing,
@@ -44,6 +45,7 @@ export const KIND_ICON: Record<ResultKind, IconComponent> = {
   low_level: LowLevel,
   field_landing: FieldLanding,
   csar: Csar,
+  airdrop: Airdrop,
 }
 
 export function KindIcon({ kind, size = 16, className }: { kind: ResultKind; size?: number; className?: string }) {

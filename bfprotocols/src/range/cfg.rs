@@ -862,6 +862,42 @@ fn default_lz_radius() -> f64 {
     60.
 }
 
+/// Fixed-wing cargo delivery. Cargo is the ground crew's own (F8 at a home
+/// field, loaded with the aircraft's cargo loader): a load that leaves the
+/// cargo bay in flight is an airdrop, scored where it comes down against the
+/// nearest drop zone; one unloaded on the ground at another field is an
+/// air-land delivery.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AirdropCfg {
+    #[serde(default)]
+    pub zones: Vec<DropZoneCfg>,
+    /// How far from a drop zone a load may land and still be scored against it.
+    #[serde(default = "default_dz_reach")]
+    pub reach_m: f64,
+}
+
+fn default_dz_reach() -> f64 {
+    1500.
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DropZoneCfg {
+    pub id: String,
+    pub name: String,
+    /// The point of impact.
+    pub loc: Loc,
+    /// Radius that scores PERFECT (bands: 2x EXCELLENT, 4x GOOD, 8x FAIR).
+    #[serde(default = "default_dz_perfect")]
+    pub perfect_m: f64,
+    /// The DZ's run-in heading, degrees true, when it has one.
+    #[serde(default)]
+    pub run_in_deg: Option<f64>,
+}
+
+fn default_dz_perfect() -> f64 {
+    50.
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HeloCfg {
     #[serde(default)]
@@ -1498,6 +1534,9 @@ pub struct RangeCfg {
     pub air_to_air: AirToAirCfg,
     #[serde(default)]
     pub helo: HeloCfg,
+    /// Fixed-wing cargo: airdrop drop zones (C-130J and the like).
+    #[serde(default)]
+    pub airdrop: AirdropCfg,
     #[serde(default)]
     pub jtacs: Vec<JtacCfg>,
     #[serde(default)]

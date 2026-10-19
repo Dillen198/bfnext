@@ -610,9 +610,10 @@ impl Aar {
             .iter()
             .filter_map(|t| {
                 let u = Unit::get_by_name(lua, &t.unit_name()).ok();
-                let (p, v) = u
-                    .and_then(|u| Some((u.get_point().ok()?.0, u.get_velocity().ok()?.0)))
-                    .unwrap_or((V3::zeros(), V3::zeros()));
+                let pv = u.and_then(|u| Some((u.get_point().ok()?.0, u.get_velocity().ok()?.0)));
+                // no unit: it never spawned or it is gone, so not on station at the map origin
+                let alive = pv.is_some();
+                let (p, v) = pv.unwrap_or((V3::zeros(), V3::zeros()));
                 let receivers = self
                     .sessions
                     .values()
@@ -630,7 +631,7 @@ impl Aar {
                     alt_ft: p.y * util::M_TO_FT,
                     tacan: t.cfg.tacan.as_ref().map(|t| t.describe()),
                     freq_mhz: t.cfg.freq_mhz,
-                    state: t.state,
+                    state: if alive || t.state == TankerState::Spawning { t.state } else { TankerState::Dead },
                     receivers,
                     owner: t.owner.as_ref().map(|o| o.1.clone()),
                     recovery_for: t.recovery_for.clone(),

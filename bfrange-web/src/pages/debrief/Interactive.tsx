@@ -17,7 +17,7 @@ import { toLocal } from '../../lib/geo'
 import type { GeoPt, PrecisionQuality, RangeRecord } from '../../types'
 
 /** Default "perfect" radii from bfprotocols cfg.rs (a server may override them). */
-const PERFECT = { landing: 3, deck: 1.5, sling: 5 }
+const PERFECT = { landing: 3, deck: 1.5, sling: 5, airdrop: 50 }
 
 /** Where a helicopter set down against its pad / drop zone. */
 function PrecisionPlot({ centre, at, perfect, quality, label }: { centre: GeoPt; at: GeoPt; perfect: number; quality: PrecisionQuality; label: string }) {
@@ -199,6 +199,26 @@ export function Interactive({ rec }: { rec: RangeRecord }) {
             )}
           </figure>
           {t?.kind === 'path' && <PathReplay paths={t.paths} height={380} />}
+        </div>
+      )
+    case 'airdrop':
+      return r.method === 'airland' ? (
+        <Empty title="An air-land delivery">{`${r.cargo} unloaded at ${r.zone}: nothing to plot.`}</Empty>
+      ) : (
+        <div className="flex flex-col gap-4">
+          <PrecisionPlot centre={r.dz_pos} at={r.impact_pos} perfect={PERFECT.airdrop} quality={r.quality} label={`Where the load came down against ${r.zone} DZ`} />
+          {r.release && (
+            <TrackMap
+              height={340}
+              imagery
+              lines={[{ id: 'drift', pts: [r.release.pos, r.impact_pos], color: 'var(--ball)' }]}
+              points={[
+                { id: 'rel', lat: r.release.pos.lat, lon: r.release.pos.lon, label: `release · ${Math.round(r.release.alt_agl_ft)} ft`, color: 'var(--sky)', shape: 'ring' },
+                { id: 'pi', lat: r.dz_pos.lat, lon: r.dz_pos.lon, label: `${r.zone} PI`, color: 'var(--chalk)', shape: 'diamond' },
+                { id: 'imp', lat: r.impact_pos.lat, lon: r.impact_pos.lon, label: `came down · ${Math.round(r.distance_m)} m`, color: 'var(--ball)' },
+              ]}
+            />
+          )}
         </div>
       )
     case 'csar': {

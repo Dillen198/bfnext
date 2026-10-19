@@ -453,6 +453,12 @@ def build_config():
             "gun_kill_hits": 10,
         },
         "helo": helo,
+        # C-130J airdrops: the ground crew's cargo (F8 at Andersen or Won Pat),
+        # out of the ramp over Orote's disused airfield, run in along its old
+        # runway; anything air-landed at another field counts too
+        "airdrop": {"reach_m": 1500, "zones": [
+            {"id": "dz1-orote", "name": "Orote", "loc": cfg_ll((13.4380, 144.6350)), "perfect_m": 50, "run_in_deg": 70},
+        ]},
         "jtacs": [
             {"id": "axeman", "callsign": "Axeman", "station": "tn1-array", "loc": cfg_loc("TN1-ARRAY"),
              "laser_code": 1688, "freq_mhz": 133.0, "typ": "MQ-9 Reaper", "friendlies_m": 600},

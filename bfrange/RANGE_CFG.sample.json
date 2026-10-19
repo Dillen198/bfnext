@@ -1350,6 +1350,21 @@
       }
     ]
   },
+  "airdrop": {
+    "reach_m": 1500,
+    "zones": [
+      {
+        "id": "dz1-orote",
+        "name": "Orote",
+        "loc": {
+          "lat": 13.438,
+          "lon": 144.635
+        },
+        "perfect_m": 50,
+        "run_in_deg": 70
+      }
+    ]
+  },
   "jtacs": [
     {
       "id": "axeman",

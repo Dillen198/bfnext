@@ -1224,6 +1224,33 @@ export function csarRecord(p: MockPilot, rng: Rng, ts: number): RangeRecord {
   return { ...base(p, unit_type, ts), score: PQ_SCORE[quality], result, track: { kind: 'path', paths: { [p.name]: [...out, ...back] } } }
 }
 
+/** A C-130J airdrop onto a drop zone, or (sometimes) an air-land delivery. */
+export function airdropRecord(p: MockPilot, rng: Rng, ts: number): RangeRecord {
+  const dz = pt(42.1608, 42.4776, 40) // the Kutaisi DZ
+  if (rng.chance(0.2)) {
+    const result: RangeResult = {
+      kind: 'airdrop', method: 'airland', zone: 'Senaki-Kolkhi', cargo: 'Pallet', mass_kg: Math.round(rng.range(2000, 9000)),
+      distance_m: 0, bearing_deg: 0, quality: 'PERFECT', damage: 0, flight_s: Math.round(rng.range(1200, 2600)), dz_pos: dz, impact_pos: dz,
+    }
+    return { ...base(p, 'C-130J-30', ts), score: 5, result }
+  }
+  const run = rng.range(0, 360)
+  const off = Math.abs(rng.gauss(0, 140 * (1.4 - p.skill)))
+  const brg = run + rng.range(-70, 70)
+  const impact = geo(destination(dz, brg, off), dz.alt_m)
+  const rel = destination(dz, run + 180, rng.range(700, 1300))
+  const rad = ((brg - run) * Math.PI) / 180
+  const quality = off <= 50 ? 'PERFECT' : off <= 100 ? 'EXCELLENT' : off <= 200 ? 'GOOD' : off <= 400 ? 'FAIR' : 'POOR'
+  const result: RangeResult = {
+    kind: 'airdrop', method: 'airdrop', zone: 'Kutaisi', cargo: rng.pick(['CDS bundle', 'Pallet', 'Ammo container']),
+    mass_kg: Math.round(rng.range(500, 2500)), distance_m: off, bearing_deg: ((brg % 360) + 360) % 360,
+    long_m: off * Math.cos(rad), cross_m: off * Math.sin(rad), quality, damage: 0,
+    release: { pos: geo(rel, 0), alt_agl_ft: Math.round(rng.range(500, 1200)), alt_msl_ft: Math.round(rng.range(600, 1300)), gs_kts: Math.round(rng.range(120, 150)), heading_deg: ((run % 360) + 360) % 360, to_dz_m: distanceM(rel, dz) },
+    fall_s: Math.round(rng.range(22, 40)), drift_m: distanceM(rel, impact), flight_s: Math.round(rng.range(900, 2400)), dz_pos: dz, impact_pos: impact,
+  }
+  return { ...base(p, 'C-130J-30', ts), score: PQ_SCORE[quality], result }
+}
+
 // ─── dispatcher ────────────────────────────────────────────────────────────
 
 const BUILDERS: Record<ResultKind, (p: MockPilot, rng: Rng, ts: number) => RangeRecord> = {
@@ -1244,6 +1271,7 @@ const BUILDERS: Record<ResultKind, (p: MockPilot, rng: Rng, ts: number) => Range
   low_level: lowLevelRecord,
   field_landing: fieldLandingRecord,
   csar: csarRecord,
+  airdrop: airdropRecord,
 }
 
 export function randomRecord(rng: Rng, ts: number, pilot?: MockPilot): RangeRecord {

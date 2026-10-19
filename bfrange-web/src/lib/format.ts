@@ -20,6 +20,7 @@ export const KIND_LABEL: Record<ResultKind, string> = {
   low_level: 'Low-level route',
   field_landing: 'Field landing',
   csar: 'CSAR',
+  airdrop: 'Airdrop',
 }
 
 /** Four-letter plate used on compact cards. */
@@ -41,6 +42,7 @@ export const KIND_CODE: Record<ResultKind, string> = {
   low_level: 'LOLO',
   field_landing: 'PATT',
   csar: 'CSAR',
+  airdrop: 'DROP',
 }
 
 export const CATEGORY_LABEL: Record<SpawnCategory, string> = {

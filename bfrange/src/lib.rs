@@ -349,6 +349,21 @@ fn delayed_init(lua: MizLua) -> Result<()> {
 
 fn init_miz(lua: MizLua) -> Result<()> {
     info!("bfrange {BUILD_GIT}: initializing mission");
+    // The context lives as long as DCS does, and a server that restarts the
+    // mission (or loads the next one) without restarting DCS runs this again.
+    // Every module's state belongs to the mission that made it: kept, each
+    // tanker, carrier and deck was listed twice, the old copy frozen in the
+    // last mission's state and resolving by name to the new mission's unit.
+    // Only the write folder and who is connected carry over.
+    let ctx = unsafe { Ctx::get() };
+    if ctx.started {
+        info!("a new mission in the same DCS process: the last mission's range state is dropped");
+    }
+    let write_dir = std::mem::take(&mut ctx.write_dir);
+    let mut players = std::mem::take(&mut ctx.players);
+    players.flying.clear();
+    let disconnects = std::mem::take(&mut ctx.disconnects);
+    *ctx = Ctx { write_dir, players, disconnects, ..Default::default() };
     let timer = Timer::singleton(lua)?;
     let when = dcso3::Time(timer.get_time()?.0 + 1.);
     timer.schedule_function(when, mlua::Value::Nil, move |lua, _, _now| {

@@ -84,7 +84,7 @@ FALLBACK = {
     # write_range_icons); CAS, SEAD and CSAR use the campaign's own above
     "r_trap": "⚓", "r_bomb": "💣", "r_strafe": "🎯", "r_aar": "⛽", "r_missile": "🚀",
     "r_bfm": "⚔️", "r_antiship": "🚢", "r_sling": "🪝", "r_landing": "🚁", "r_troops": "🪖",
-    "r_gunnery": "🎯", "r_hotzone": "🔥", "r_lowlevel": "⛰️", "r_field": "🛬",
+    "r_gunnery": "🎯", "r_hotzone": "🔥", "r_lowlevel": "⛰️", "r_field": "🛬", "r_airdrop": "🪂",
     # the community plugins (about, faq, rules, tickets, smartmod, radio) --
     # they resolve through this table via their own _icons.py
     "play": "▶️", "skip": "⏭️", "stop": "⏹️", "prev": "◀️", "next": "▶️",

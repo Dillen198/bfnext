@@ -135,6 +135,14 @@ export function describeResult(r: RangeResult, score: number | null): Headline {
         detail: `${r.airfield} ${r.runway} · ${FIELD_LANDING_OUTCOME_LABEL[r.outcome] ?? r.outcome} · ${fmt(Math.abs(r.centreline_m), 1)} m ${r.centreline_m >= 0 ? 'R' : 'L'} · ${fmt(r.touchdown_fpm)} fpm · ${r.quality}`,
         tone: qualityTone(r.quality),
       }
+    case 'airdrop':
+      return r.method === 'airland'
+        ? { big: fmtClock(r.flight_s), detail: `air-land at ${r.zone} · ${r.cargo} · ${Math.round(r.mass_kg)} kg`, tone: qualityTone(r.quality) }
+        : {
+          big: `${Math.round(r.distance_m)} m`,
+          detail: `${r.zone} DZ · ${r.cargo}${r.release ? ` · ${Math.round(r.release.alt_agl_ft)} ft AGL, ${Math.round(r.release.gs_kts)} kt` : ''} · ${r.quality}`,
+          tone: qualityTone(r.quality),
+        }
     case 'csar':
       return {
         big: r.outcome === 'rescued' && r.time_total_s !== null ? fmtClock(r.time_total_s) : r.outcome === 'failed' ? 'LOST' : 'NOT HOME',

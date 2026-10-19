@@ -750,7 +750,31 @@ pub(crate) mod tests {
             }),
             None,
         );
-        vec![bfm, antiship, troops, gunnery, cas]
+        let airdrop = RangeRecord {
+            unit_type: "C-130J-30".into(),
+            ..base(
+                RangeResult::Airdrop(AirdropResult {
+                    method: "airdrop".into(),
+                    zone: "Northwest Field".into(),
+                    cargo: "CDS bundle".into(),
+                    mass_kg: 1000.,
+                    distance_m: 86.,
+                    bearing_deg: 62.,
+                    long_m: Some(70.),
+                    cross_m: Some(50.),
+                    quality: PrecisionQuality::Excellent,
+                    damage: 0.,
+                    release: Some(AirdropRelease { pos: geo(-900., -480.), alt_agl_ft: 650., alt_msl_ft: 1180., gs_kts: 132., heading_deg: 62., to_dz_m: Some(1020.) }),
+                    fall_s: Some(31.),
+                    drift_m: Some(1105.),
+                    flight_s: 1840.,
+                    dz_pos: geo(0., 0.),
+                    impact_pos: geo(76., 40.),
+                }),
+                None,
+            )
+        };
+        vec![bfm, antiship, troops, gunnery, cas, airdrop]
     }
 
     /// One record of every discipline added with the SEAD / hot zone /

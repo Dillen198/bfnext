@@ -201,6 +201,13 @@ function Traffic({ live, selected, onSelect }: TabProps) {
 
 function CarrierBlock({ c }: { c: LiveCarrier }) {
   const wodOk = c.wind_over_deck_kts >= 25 && c.wind_over_deck_kts <= 30
+  // the relative wind split along the landing area and across it; with
+  // under a knot over the deck its direction means nothing
+  const calm = c.wind_over_deck_kts < 1
+  const a = (c.wind_over_deck_angle_deg * Math.PI) / 180
+  const down = c.wind_over_deck_kts * Math.cos(a)
+  const across = c.wind_over_deck_kts * Math.sin(a)
+  const side = (deg: number) => (deg > 0 ? 'R' : 'L')
   return (
     <>
       <div className="flex items-center gap-2 flex-wrap">
@@ -221,8 +228,20 @@ function CarrierBlock({ c }: { c: LiveCarrier }) {
         </div>
       </div>
       <dl className="kv mt-2">
-        <dt>Wind off the angled deck</dt><dd>{c.wind_over_deck_angle_deg > 0 ? 'R' : 'L'} {fmt(Math.abs(c.wind_over_deck_angle_deg), 1)}°</dd>
-        <dt>Ship speed · Case</dt><dd>{fmt(c.speed_kts)} kt · {['I', 'II', 'III'][c.case - 1] ?? c.case}</dd>
+        {calm ? (
+          <><dt>Wind over the deck</dt><dd className="dim">calm</dd></>
+        ) : (
+          <>
+            <dt>Wind off the angled deck</dt><dd>{side(c.wind_over_deck_angle_deg)} {fmt(Math.abs(c.wind_over_deck_angle_deg), 1)}°</dd>
+            <dt>Down the angle · across</dt>
+            <dd>
+              {down >= 0 ? fmt(down, 1) : <span style={{ color: 'var(--wave)' }}>{fmt(down, 1)}</span>} kt · {side(c.wind_over_deck_angle_deg)} {fmt(Math.abs(across), 1)} kt
+            </dd>
+          </>
+        )}
+        <dt>True wind</dt>
+        <dd>{c.true_wind_kts == null ? '—' : c.true_wind_kts < 1 ? 'calm' : `${pad3(c.true_wind_from_deg ?? 0)}° / ${fmt(c.true_wind_kts)} kt`}</dd>
+        <dt>Ship speed · Case</dt><dd>{fmt(c.speed_kts)} kt{c.wind_over_deck_kts >= 1 ? ` (${fmt(Math.min(100, (c.speed_kts / c.wind_over_deck_kts) * 100))}% of WOD)` : ''} · {['I', 'II', 'III'][c.case - 1] ?? c.case}</dd>
         <dt>TACAN · ICLS</dt><dd>{c.tacan ?? '—'} · {c.icls !== null ? `ch ${c.icls}` : '—'}</dd>
         <dt>Link-4 · tower</dt><dd>{c.link4_mhz !== null ? c.link4_mhz.toFixed(1) : '—'} · {c.tower_mhz !== null ? c.tower_mhz.toFixed(3) : '—'}</dd>
         <dt>Recovery tanker</dt><dd>{c.recovery_tanker ?? '—'}</dd>

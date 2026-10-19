@@ -44,6 +44,8 @@ export const PILOTS: MockPilot[] = [
     kinds: [['trap', 5], ['bomb', 3], ['anti_ship', 2]] },
   { ucid: 'm0ng0m0ng0m0ng0m0ng0m0ng0m0ng000', name: 'Mongo', callsign: 'Dude 1-1', airframes: ['F-15ESE'], skill: 0.5,
     kinds: [['bomb', 5], ['aar', 3], ['missile', 2], ['low_level', 3], ['sead', 1], ['field_landing', 2]] },
+  { ucid: 'h3rcu135h3rcu135h3rcu135h3rcu135', name: 'Herc', callsign: 'Reach 41', airframes: ['C-130J-30'], skill: 0.6,
+    kinds: [['airdrop', 6], ['field_landing', 2]] },
 ]
 
 export const pilotByName = (n: string) => PILOTS.find(p => p.name === n)!

@@ -927,6 +927,13 @@ export const FieldLanding = createIcon('FieldLanding', <>
   <path d="M6.2 7.3 9 7l-.6-2.8" data-a="green" />
 </>)
 
+/** AIRDROP -- a load under its canopy, rigging lines down to the pallet. */
+export const Airdrop = createIcon('Airdrop', <>
+  <path d="M3 10.5a9 7.5 0 0 1 18 0c-1.5-1-3-1-4.5 0-1.5-1-3-1-4.5 0-1.5-1-3-1-4.5 0-1.5-1-3-1-4.5 0z" />
+  <path d="M3 10.5 10 17M21 10.5 14 17M12 10.5V17" />
+  <path d="M9 17h6v4.5H9z" data-a="amber" />
+</>)
+
 /** CALCULATOR -- display window over a key grid; the tall key is enter. */
 export const Calculator = createIcon('Calculator', <>
   <path d="M4.5 2.5h15v19h-15z" />

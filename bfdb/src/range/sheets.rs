@@ -19,6 +19,7 @@
 //! * CAS -- target, impact and the nearest friendlies on one distance line
 //! * SEAD -- the site, the launch and the range rings
 //! * low level -- the route with its gates; height at every gate
+//! * airdrop -- the drop zone with where the load came down; the release
 
 use super::{
     cards::{en, nice_step, precision_color, strafe_color, trunc, Anchor, Svg, BLUE, GREEN, GRID, MUTED, ORANGE, PANEL, RED, SAND, TEXT, YELLOW},
@@ -26,7 +27,7 @@ use super::{
     forms::{field, foot, head, text_f, FOOT_H, HAND, MONO},
 };
 use bfprotocols::range::{
-    AarResult, AntiShipResult, CasResult, CsarOutcome, CsarResult, EngagementOutcome, EngagementResult, GeoPt, GunneryResult, HotZoneOutcome,
+    AarResult, AirdropResult, AntiShipResult, CasResult, CsarOutcome, CsarResult, EngagementOutcome, EngagementResult, GeoPt, GunneryResult, HotZoneOutcome,
     HotZoneResult, LandingResult, LowLevelResult, MissileOutcome, MissileResult, RangeRecord, RangeResult, SeadResult, SlingResult, StrafeResult,
     Track, TrackPt, TroopResult,
 };
@@ -345,6 +346,7 @@ pub(crate) fn sheet(rec: &RangeRecord) -> Option<String> {
         RangeResult::HotZone(r) => hot_zone(rec, r),
         RangeResult::LowLevel(r) => low_level(rec, r),
         RangeResult::Csar(r) => csar(rec, r),
+        RangeResult::Airdrop(r) => airdrop(rec, r),
         _ => return None,
     })
 }
@@ -1335,6 +1337,93 @@ fn csar(rec: &RangeRecord, r: &CsarResult) -> String {
                 ("Pickup", if r.pickup_method.is_empty() { "-".into() } else { r.pickup_method.clone() }),
                 ("Delivered to", r.delivered_to.clone().unwrap_or_else(|| "-".into())),
                 ("Outcome", r.outcome.label().into()),
+            ]);
+        })),
+        remarks,
+    })
+}
+
+// airdrop
+
+fn airdrop(rec: &RangeRecord, r: &AirdropResult) -> String {
+    let col = precision_color(r.quality);
+    let [p, a] = pilot_row(rec);
+    if r.method == "airland" {
+        let remarks = vec![
+            sentence(&format!("{} ({:.0} kg) air-landed at {}", r.cargo, r.mass_kg, r.zone)),
+            sentence(&format!("{} from loading to delivery", mmss(r.flight_s))),
+            sentence(&format!("delivered with {:.0}% damage", r.damage * 100.)),
+        ];
+        return render(rec, Sheet {
+            title: "AIR-LAND DELIVERY RECORD",
+            sub: "AIRLIFT · AIR-LAND · VECTOR STRIKE TRAINING RANGE",
+            form_no: "VSR FORM 3710/30 (REV 10-26)",
+            row_a: vec![("FIELD", r.zone.clone(), TEXT, false), p, a, ("CARGO", r.cargo.clone(), TEXT, false)],
+            row_b: vec![("MASS", format!("{:.0} KG", r.mass_kg), TEXT, true), ("FLIGHT", mmss(r.flight_s), TEXT, true), ("DAMAGE", format!("{:.0} %", r.damage * 100.), if r.damage > 0.25 { RED } else { TEXT }, true)],
+            score: (mmss(r.flight_s), "LOAD TO DELIVERY".into(), col, format!("{:.0}% damage", r.damage * 100.)),
+            detail: vec![("Delivered to", r.zone.clone()), ("Cargo", r.cargo.clone()), ("Mass", format!("{:.0} kg", r.mass_kg)), ("Damage", format!("{:.0} %", r.damage * 100.))],
+            main: ("THE DELIVERY · against the clock", Box::new(move |s, x, y, w, _h| {
+                timeline(s, x + 30., y + 90., w - 60., r.flight_s.max(60.), &[(0., r.flight_s, BLUE, "LOADED TO DELIVERED")], &[(0., "LOADED"), (r.flight_s, "UNLOADED")]);
+            })),
+            side: ("THE LOAD", 200., Box::new(move |s, x, y, w, _h| {
+                bar(s, x + 14., y + 40., w - 28., r.mass_kg, (r.mass_kg * 1.25).max(5000.), BLUE, "MASS", &format!("{:.0} KG", r.mass_kg));
+                bar(s, x + 14., y + 96., w - 28., r.damage, 1., if r.damage > 0.25 { RED } else { GREEN }, "DAMAGE ON DELIVERY", &format!("{:.0} %", r.damage * 100.));
+            })),
+            remarks,
+        });
+    }
+    let rel = r.release.clone().unwrap_or_default();
+    let mut remarks = vec![sentence(&format!(
+        "{} ({:.0} kg) released {:.0} ft AGL at {:.0} kt on {:03.0}°",
+        r.cargo,
+        r.mass_kg,
+        rel.alt_agl_ft,
+        rel.gs_kts,
+        rel.heading_deg.rem_euclid(360.)
+    ))];
+    if let (Some(l), Some(x)) = (r.long_m, r.cross_m) {
+        remarks.push(sentence(&format!("{:.0} m {} and {:.0} m {} of the PI", l.abs(), if l >= 0. { "long" } else { "short" }, x.abs(), if x >= 0. { "right" } else { "left" })));
+    } else {
+        remarks.push(sentence(&format!("{:.0} m from the PI at {:03.0}°", r.distance_m, r.bearing_deg.rem_euclid(360.))));
+    }
+    if let (Some(t), Some(d)) = (r.fall_s, r.drift_m) {
+        remarks.push(sentence(&format!("{t:.0} s under canopy, {d:.0} m from the release point")));
+    }
+    if r.damage > 0.05 {
+        remarks.push(sentence(&format!("{:.0}% damaged on landing", r.damage * 100.)));
+    }
+    render(rec, Sheet {
+        title: "AIRDROP SCORE SHEET",
+        sub: "AIRLIFT · AIRDROP · VECTOR STRIKE TRAINING RANGE",
+        form_no: "VSR FORM 3710/31 (REV 10-26)",
+        row_a: vec![("DROP ZONE", r.zone.clone(), TEXT, false), p, a, ("CARGO", r.cargo.clone(), TEXT, false), ("MASS", format!("{:.0} KG", r.mass_kg), TEXT, true)],
+        row_b: vec![
+            ("REL ALT AGL", format!("{:.0} FT", rel.alt_agl_ft), TEXT, true),
+            ("REL ALT MSL", format!("{:.0} FT", rel.alt_msl_ft), TEXT, true),
+            ("GROUND SPEED", format!("{:.0} KT", rel.gs_kts), TEXT, true),
+            ("HEADING", format!("{:03.0}°", rel.heading_deg.rem_euclid(360.)), TEXT, true),
+            ("UNDER CANOPY", r.fall_s.map(|t| format!("{t:.0} S")).unwrap_or_else(|| "-".into()), TEXT, true),
+        ],
+        score: (format!("{:.0} M", r.distance_m), "FROM THE POINT OF IMPACT".into(), col, r.quality.label().into()),
+        detail: vec![
+            ("Bearing from the PI", format!("{:03.0}°", r.bearing_deg.rem_euclid(360.))),
+            ("Long / short", r.long_m.map(|l| format!("{l:+.0} m")).unwrap_or_else(|| "-".into())),
+            ("Left / right", r.cross_m.map(|x| format!("{x:+.0} m")).unwrap_or_else(|| "-".into())),
+            ("Release to PI", rel.to_dz_m.map(|d| format!("{d:.0} m")).unwrap_or_else(|| "-".into())),
+            ("Drift", r.drift_m.map(|d| format!("{d:.0} m")).unwrap_or_else(|| "-".into())),
+            ("Damage", format!("{:.0} %", r.damage * 100.)),
+        ],
+        main: ("THE DROP ZONE · north up, rings in metres", Box::new(move |s, x, y, w, h| {
+            target_diagram(s, x, y, w, h, &r.dz_pos, &r.impact_pos, r.distance_m, &[50., 100., 200., 400.], col, "box");
+        })),
+        side: ("THE RELEASE", 200., Box::new(move |s, x, y, w, _h| {
+            kv(s, x + 14., y + 34., w - 28., &[
+                ("Height", format!("{:.0} ft AGL", rel.alt_agl_ft)),
+                ("Ground speed", format!("{:.0} kt", rel.gs_kts)),
+                ("Heading", format!("{:03.0}°", rel.heading_deg.rem_euclid(360.))),
+                ("Release to PI", rel.to_dz_m.map(|d| format!("{d:.0} m")).unwrap_or_else(|| "-".into())),
+                ("Under canopy", r.fall_s.map(|t| format!("{t:.0} s")).unwrap_or_else(|| "-".into())),
+                ("Drift", r.drift_m.map(|d| format!("{d:.0} m")).unwrap_or_else(|| "-".into())),
             ]);
         })),
         remarks,

@@ -11,7 +11,8 @@ describe('mock range API', () => {
     for (const k of RESULT_KINDS) {
       const of = items.filter(s => s.result.kind === k)
       expect(of.length, `kind ${k}`).toBeGreaterThan(0)
-      if (k !== 'gunnery') expect(of.some(s => s.has_track), `track for ${k}`).toBe(true)
+      // the engine records gunnery and airdrops without a track
+      if (k !== 'gunnery' && k !== 'airdrop') expect(of.some(s => s.has_track), `track for ${k}`).toBe(true)
     }
     // list entries never carry the track, but do carry render hints
     for (const s of items.slice(0, 20)) {

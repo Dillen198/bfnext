@@ -1375,7 +1375,7 @@ ICONS = {
 # (bfdb/src/range/icons.rs). Not drawn here; listed so the preview shows them.
 RANGE = [
     "vs_r_trap", "vs_r_bomb", "vs_r_strafe", "vs_r_aar", "vs_r_missile", "vs_r_bfm", "vs_r_antiship",
-    "vs_r_sling", "vs_r_landing", "vs_r_troops", "vs_r_gunnery", "vs_r_hotzone", "vs_r_lowlevel", "vs_r_field",
+    "vs_r_sling", "vs_r_landing", "vs_r_troops", "vs_r_gunnery", "vs_r_hotzone", "vs_r_lowlevel", "vs_r_field", "vs_r_airdrop",
 ]
 
 

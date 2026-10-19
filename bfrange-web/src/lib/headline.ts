@@ -101,6 +101,10 @@ export function headline(rec: Pick<RangeRecord, 'pilot' | 'unit_type' | 'result'
       return `${pilot} (${typ}) ${r.route}: ${r.gates_hit}/${r.gates_total} gates, ${f0(r.pct_below_ceiling)}% under the ceiling, TOT ${sgn0(r.tot_error_s)} s, ${r.quality}`
     case 'field_landing':
       return `${pilot} (${typ}) landing ${r.airfield} rwy ${r.runway}: ${sgn0(r.aim_error_m)} m from the aim point, ${f1(Math.abs(r.centreline_m))} m off centreline, ${f0(r.touchdown_fpm)} fpm, ${r.quality}`
+    case 'airdrop':
+      return r.method === 'airland'
+        ? `${pilot} (${typ}) air-landed ${r.cargo} at ${r.zone}`
+        : `${pilot} (${typ}) airdrop ${r.cargo} on ${r.zone}: ${f0(r.distance_m)} m off, ${r.quality}`
     case 'csar':
       return `${pilot} (${typ}) CSAR ${r.area}: ${CSAR_OUTCOME_LABEL[r.outcome] ?? r.outcome}${r.time_total_s !== null ? ` in ${f0(r.time_total_s / 60)} min` : ''}`
   }
