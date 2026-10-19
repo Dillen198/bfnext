@@ -94,6 +94,9 @@ struct FileHold {
     runway: String,
     near_end: String,
     from_thr_m: f64,
+    /// The taxiway the hold is on ("K"), when it has a name.
+    #[serde(default)]
+    taxiway: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -300,6 +303,8 @@ pub(crate) struct Hold {
     pub pair: String,
     pub near_end: String,
     pub from_thr: f64,
+    /// The taxiway it is on: the holding point's name ("at Kilo").
+    pub taxiway: String,
 }
 
 #[derive(Debug, Clone)]
@@ -402,6 +407,7 @@ impl Airport {
                     pair: h.runway.clone(),
                     near_end: h.near_end.clone(),
                     from_thr: h.from_thr_m,
+                    taxiway: h.taxiway.clone(),
                 })
                 .collect(),
             ramps: f.ramps.iter().map(|r| Ramp { name: r.name.clone(), p: loc(r.lat, r.lon) }).collect(),
@@ -434,29 +440,20 @@ impl Airport {
     }
 
     /// Shift the file's geometry onto DCS's. `dcs` is each runway end DCS
-    /// reports, by designator, with its threshold. Returns the shift applied,
-    /// metres, or `None` when no runway could be matched or the two disagree
-    /// by more than a few hundred metres (the wrong airfield, or a terrain
-    /// that is not built from real data) — the taxi network is then left out
-    /// of clearances rather than trusted.
+    /// reports, by designator, with its threshold. Each is paired with the
+    /// file's runway end of the same direction nearest to it (so parallels
+    /// that DCS names the other way round, "06L" for "06R", still match),
+    /// and the median shift is applied. Returns the shift, metres, or `None`
+    /// when no runway could be paired or the two disagree by more than a few
+    /// hundred metres (the wrong airfield, or a terrain that is not built
+    /// from real data).
     pub(crate) fn align(&mut self, dcs: &[(String, P2)]) -> Option<f64> {
-        let mut sum = P2::default();
-        let mut n = 0.;
-        for (name, p) in dcs {
-            if let Some(r) = self.runways.iter().find(|r| r.name.eq_ignore_ascii_case(name)) {
-                sum.n += p.n - r.thr.n;
-                sum.e += p.e - r.thr.e;
-                n += 1.;
-            }
-        }
-        if n == 0. {
-            return None;
-        }
-        let d = P2::new(sum.n / n, sum.e / n);
+        let d = self.alignment(dcs)?;
         let mag = d.dist(P2::default());
         if mag > 400. {
             return None;
         }
+        let pairs = self.pairs(dcs);
         for p in self.nodes.iter_mut() {
             p.n += d.n;
             p.e += d.e;
@@ -466,13 +463,42 @@ impl Airport {
             r.p.e += d.e;
         }
         // The runways themselves take DCS's positions exactly.
-        for (name, p) in dcs {
-            if let Some(r) = self.runways.iter_mut().find(|r| r.name.eq_ignore_ascii_case(name)) {
-                r.thr = *p;
-            }
+        for (i, p) in pairs {
+            self.runways[i].thr = p;
         }
         self.aligned = Some(d);
         Some(mag)
+    }
+
+    /// Each DCS runway end with the file's end it matches (index, DCS threshold).
+    fn pairs(&self, dcs: &[(String, P2)]) -> Vec<(usize, P2)> {
+        dcs.iter()
+            .filter_map(|(name, p)| {
+                let dir = direction_of(name);
+                self.runways
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| r.direction() == dir || r.name.eq_ignore_ascii_case(name))
+                    .min_by(|a, b| a.1.thr.dist(*p).total_cmp(&b.1.thr.dist(*p)))
+                    .map(|(i, _)| (i, *p))
+            })
+            .collect()
+    }
+
+    /// The shift that puts the file on DCS (median over the runway ends).
+    pub(crate) fn alignment(&self, dcs: &[(String, P2)]) -> Option<P2> {
+        let pairs = self.pairs(dcs);
+        if pairs.is_empty() {
+            return None;
+        }
+        let median = |mut v: Vec<f64>| {
+            v.sort_by(|a, b| a.total_cmp(b));
+            let m = v.len() / 2;
+            if v.len() % 2 == 0 { (v[m - 1] + v[m]) / 2. } else { v[m] }
+        };
+        let dn = median(pairs.iter().map(|(i, p)| p.n - self.runways[*i].thr.n).collect());
+        let de = median(pairs.iter().map(|(i, p)| p.e - self.runways[*i].thr.e).collect());
+        Some(P2::new(dn, de))
     }
 
     pub(crate) fn runway(&self, name: &str) -> Option<&RwyEnd> {
@@ -570,7 +596,7 @@ impl Airport {
     /// stopped aircraft on the taxiway), except where the route starts.
     fn shortest(&self, from: P2, goals: &[usize], avoid: &[(P2, f64)]) -> Option<(Vec<usize>, f64)> {
         let (start, d0) = self.nearest_node(from)?;
-        if d0 > 600. {
+        if d0 > 1000. {
             return None; // not on this airfield's taxi network
         }
         #[derive(PartialEq)]
@@ -733,6 +759,35 @@ impl Airport {
         segs.into_iter().find(|s| s.1 <= best + 30.)
     }
 
+    /// The next `metres` of `route` ahead of an aircraft at `at`, as a
+    /// polyline starting where it is.
+    pub(crate) fn path_ahead(&self, route: &TaxiRoute, at: P2, metres: f64) -> Vec<P2> {
+        let n = &route.nodes;
+        let Some((me, off)) = self.along(route, at) else { return vec![] };
+        let me = if off > 40. { 0. } else { me };
+        let mut out = vec![at];
+        let mut run = 0.;
+        for w in n.windows(2) {
+            let (a, b) = (self.nodes[w[0]], self.nodes[w[1]]);
+            let len = a.dist(b);
+            if run + len > me {
+                if run >= me {
+                    out.push(a);
+                }
+                if run + len - me > metres {
+                    let t = ((me + metres - run) / len.max(1e-6)).clamp(0., 1.);
+                    out.push(P2::new(a.n + t * (b.n - a.n), a.e + t * (b.e - a.e)));
+                    return out;
+                }
+            }
+            run += len;
+        }
+        if let Some(&last) = n.last() {
+            out.push(self.nodes[last]);
+        }
+        out
+    }
+
     /// Does the part of `route` still ahead of an aircraft at `at` pass
     /// within `within` metres of `p`?
     pub(crate) fn route_ahead_passes(&self, route: &TaxiRoute, at: P2, p: P2, within: f64) -> bool {
@@ -778,7 +833,7 @@ impl Airport {
     }
 }
 
-fn seg_dist(p: P2, a: P2, b: P2) -> f64 {
+pub(crate) fn seg_dist(p: P2, a: P2, b: P2) -> f64 {
     let (dn, de) = (b.n - a.n, b.e - a.e);
     let l2 = dn * dn + de * de;
     if l2 < 1e-6 {
@@ -833,6 +888,42 @@ mod tests {
         // the hold is on the ramp's (south, i.e. right of 06R) side
         let (_, cross) = a.runway("06R").unwrap().frame(a.node(h.node));
         assert!(cross > 0., "hold on the south side, cross {cross}");
+    }
+
+    #[test]
+    fn every_ramp_has_a_route_and_a_holding_point_for_both_directions() {
+        let a = andersen();
+        for ramp in &a.ramps {
+            for rwy in ["06R", "24L"] {
+                let r = a.route_to_runway(ramp.p, rwy).unwrap_or_else(|| panic!("no route from {} to {rwy}", ramp.name));
+                let h = r.hold.unwrap_or_else(|| panic!("{} to {rwy}: no holding point", ramp.name));
+                // named taxiways, or a named holding point right by the ramp
+                assert!(!r.via.is_empty() || !a.holds[h].taxiway.is_empty(), "{} to {rwy}: nothing named", ramp.name);
+            }
+        }
+    }
+
+    #[test]
+    fn parallels_named_the_other_way_round_still_align() {
+        let mut a = andersen();
+        let shift = P2::new(30., -20.);
+        // DCS calls 06L "06R" and the other way round
+        let dcs: Vec<(String, P2)> = a
+            .runways
+            .iter()
+            .map(|r| {
+                let swapped = match r.name.as_str() {
+                    "06L" => "06R",
+                    "06R" => "06L",
+                    "24L" => "24R",
+                    "24R" => "24L",
+                    n => n,
+                };
+                (swapped.to_string(), P2::new(r.thr.n + shift.n, r.thr.e + shift.e))
+            })
+            .collect();
+        let m = a.align(&dcs).expect("aligned");
+        assert!((m - 36.).abs() < 1., "{m}");
     }
 
     #[test]

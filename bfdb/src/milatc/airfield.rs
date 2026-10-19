@@ -70,12 +70,15 @@ impl Facility for Airfield {
                 .collect();
             if !dcs.is_empty() {
                 self.align_tried = true;
+                let shift = self.ctl.ap.alignment(&dcs);
                 match self.ctl.ap.align(&dcs) {
                     Some(m) => log::info!("[{}] range ATC: {} taxi network aligned to DCS ({m:.0} m shift)", self.inst, self.ctl.ap.callsign),
                     None => log::warn!(
-                        "[{}] range ATC: {} taxi network does not match the DCS runways; taxi clearances will not name taxiways",
+                        "[{}] range ATC: {} taxi network is {} off the DCS runways ({}); taxi routes are given from the unshifted network",
                         self.inst,
-                        self.ctl.ap.callsign
+                        self.ctl.ap.callsign,
+                        shift.map(|d| format!("{:.0} m", d.dist(P2::default()))).unwrap_or_else(|| "nowhere near".into()),
+                        dcs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")
                     ),
                 }
             }

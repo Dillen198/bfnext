@@ -26,7 +26,7 @@
 //! or held; taxiing or landing without a clearance is called out.
 
 use super::{
-    airport::{angdiff, Airport, P2, TaxiRoute, FT, NM},
+    airport::{angdiff, seg_dist, Airport, P2, TaxiRoute, FT, NM},
     intent::{Approach, Intent, LandingOption, Parsed},
     llm,
     speech::{self, alt, freq, hdg, wind},
@@ -199,6 +199,12 @@ pub(crate) struct Flight {
     stop_since: Option<f64>,
     /// Held by Ground for traffic stopped ahead (that flight).
     held_for: Option<u64>,
+    /// Held by Ground to give way to moving traffic (that flight, since).
+    give_way: Option<(u64, f64)>,
+    /// Flights it has been told to follow.
+    followed: HashSet<u64>,
+    /// When it called ready for departure.
+    ready_at: Option<f64>,
     /// Missed from the picture, and already looked at.
     vanished: bool,
 }
@@ -267,6 +273,9 @@ impl Flight {
             rwy_stop: None,
             stop_since: None,
             held_for: None,
+            give_way: None,
+            followed: HashSet::new(),
+            ready_at: None,
             vanished: false,
         }
     }
@@ -382,6 +391,10 @@ pub(crate) struct Controller {
     pub standby_odds: f64,
     /// Runways out of use, by pair ("06R/24L").
     closed: HashMap<String, Closure>,
+    /// The last heavy to take off: runway, when, its type.
+    heavy_off: std::cell::RefCell<Option<(String, f64, String)>>,
+    /// Radar traffic calls made: (to, about) → when.
+    advised: HashMap<(u64, u64), f64>,
 }
 
 /// Which flight a transmission came from.
@@ -411,6 +424,8 @@ impl Controller {
             replaying: false,
             standby_odds: 0.12,
             closed: HashMap::new(),
+            heavy_off: Default::default(),
+            advised: HashMap::new(),
         }
     }
 
@@ -582,6 +597,8 @@ impl Controller {
         }
         self.runway_closures(now, &mut out);
         self.taxiway_blocks(now, &mut out);
+        self.ground_traffic(now, &mut out);
+        self.traffic_advisories(now, &mut out);
         self.release_deferred(now, &mut out);
         if let Some(a) = self.atis_due(now) {
             out.push(a);
@@ -650,6 +667,19 @@ impl Controller {
             let climbing = !a.on_ground && along > 0. && along < r.len + 2. * NM && a.agl_ft < 2000 && cross.abs() < NM;
             rolling || climbing
         })
+    }
+
+    /// The arrival just ahead of `f` to the runway: its type and miles out.
+    fn landing_ahead(&self, f: &Flight) -> Option<(&'static str, i32)> {
+        let r = self.ap.runway(&self.arr_runway())?;
+        let mine = f.ac.p.dist(r.thr);
+        self.flights
+            .values()
+            .filter(|o| o.key != f.key && !o.ac.on_ground && matches!(o.phase, Phase::Pattern | Phase::RadarFinal))
+            .map(|o| (o, o.ac.p.dist(r.thr)))
+            .filter(|(_, d)| *d < mine)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(o, d)| (type_name(&o.ac.typ).unwrap_or("traffic"), ((d / NM).round() as i32).max(1)))
     }
 
     /// The landing sequence number of a flight: 1 + arrivals nearer the
@@ -907,6 +937,10 @@ impl Controller {
     }
 
     fn liftoff(&self, f: &mut Flight, now: f64, out: &mut Vec<Tx>) {
+        if heavy(&f.ac.typ) {
+            let rwy = f.runway.clone().unwrap_or_else(|| self.dep_runway());
+            *self.heavy_off.borrow_mut() = Some((rwy, now, f.ac.typ.clone()));
+        }
         match f.phase {
             Phase::TakeoffCleared | Phase::Pattern => {}
             Phase::Landing => {
@@ -1044,7 +1078,7 @@ impl Controller {
             }
         }
         // Wandering off the route.
-        if f.ac.gs > 3. && self.ap.aligned.is_some() && self.ap.off_route(&route, f.ac.p) > 120. && f.once("off-route") {
+        if f.ac.gs > 3. && self.ap.off_route(&route, f.ac.p) > 120. && f.once("off-route") {
             let via = route.via.iter().map(|v| speech::taxiway(v)).collect::<Vec<_>>().join(", ");
             let t = format!("{}, verify taxiing via {via}.", f.call);
             let sp = self.speaker(f, Pos::Ground);
@@ -1111,14 +1145,35 @@ impl Controller {
         if self.departure_ahead(runway, f.key).is_some() {
             return Some("departing traffic".into());
         }
+        // cleared ahead of us, not rolling yet
+        if self.flights.values().any(|o| {
+            o.key != f.key
+                && o.ac.on_ground
+                && matches!(o.phase, Phase::TakeoffCleared | Phase::LinedUp)
+                && o.runway.as_deref().and_then(|x| self.ap.runway(x)).map_or(false, |x| x.pair == r.pair)
+        }) {
+            return Some("departing traffic".into());
+        }
         None
     }
 
-    fn takeoff_clearance(&self, f: &Flight, runway: &str) -> String {
-        let mut t = format!("{}, {}, runway {runway}, cleared for takeoff.", f.call, self.wind());
+    /// "caution wake turbulence, departing KC-135, " after a heavy has just
+    /// gone off the same runway.
+    fn wake_departing(&self, f: &Flight, runway: &str, now: f64) -> String {
+        match &*self.heavy_off.borrow() {
+            Some((r, t, typ)) if r == runway && now - t < 150. && !heavy(&f.ac.typ) => {
+                format!("caution wake turbulence, departing {}, ", type_name(typ).unwrap_or("heavy"))
+            }
+            _ => String::new(),
+        }
+    }
+
+    fn takeoff_clearance(&self, f: &Flight, runway: &str, now: f64) -> String {
+        let wake = self.wake_departing(f, runway, now);
+        let mut t = format!("{}, {wake}{}, runway {runway}, cleared for takeoff.", f.call, self.wind());
         if f.squawk.is_none() && self.has(Pos::Departure) {
             t = format!(
-                "{}, {}, runway {runway}, cleared for takeoff, fly runway heading, climb and maintain {}.",
+                "{}, {wake}{}, runway {runway}, cleared for takeoff, fly runway heading, climb and maintain {}.",
                 f.call,
                 self.wind(),
                 alt(self.ap.departure.initial_alt_ft)
@@ -1127,15 +1182,33 @@ impl Controller {
         t
     }
 
+    /// Flights waiting to go off `runway` ahead of `f` (in the order they
+    /// called ready).
+    fn departures_ahead(&self, f: &Flight, runway: &str) -> Vec<&Flight> {
+        let mine = f.ready_at.unwrap_or(f64::INFINITY);
+        let mut v: Vec<&Flight> = self
+            .flights
+            .values()
+            .filter(|o| o.key != f.key && o.takeoff_waiting && o.runway.as_deref() == Some(runway))
+            .filter(|o| o.ready_at.map_or(false, |t| t < mine))
+            .collect();
+        v.sort_by(|a, b| a.ready_at.unwrap_or(0.).total_cmp(&b.ready_at.unwrap_or(0.)));
+        v
+    }
+
     fn waiting_takeoff(&self, f: &mut Flight, now: f64, out: &mut Vec<Tx>) {
         if !f.takeoff_waiting || f.freq != Some(Pos::Tower) {
             return;
         }
         let runway = f.runway.clone().unwrap_or_else(|| self.dep_runway());
+        if !self.departures_ahead(f, &runway).is_empty() {
+            return;
+        }
         if self.takeoff_blocked(f, &runway).is_none() {
-            let t = self.takeoff_clearance(f, &runway);
+            let t = self.takeoff_clearance(f, &runway, now);
             self.say(f, Pos::Tower, t, now, out);
             f.takeoff_waiting = false;
+            f.ready_at = None;
             f.set_phase(Phase::TakeoffCleared, now);
         }
     }
@@ -1444,10 +1517,24 @@ impl Controller {
             LandingOption::TheOption => "cleared for the option",
             _ => "cleared to land",
         };
+        // a heavy landing ahead on the same final
+        let wake = self
+            .flights
+            .values()
+            .filter(|o| o.key != f.key && heavy(&o.ac.typ) && !heavy(&f.ac.typ))
+            .filter(|o| matches!(o.phase, Phase::Pattern | Phase::RadarFinal | Phase::Landing))
+            .filter_map(|o| {
+                let r = self.ap.runway(runway)?;
+                let (mine, theirs) = (f.ac.p.dist(r.thr), o.ac.p.dist(r.thr));
+                (theirs < mine && mine - theirs < 6. * NM).then(|| type_name(&o.ac.typ).unwrap_or("heavy"))
+            })
+            .next()
+            .map(|t| format!(", caution wake turbulence, landing {t}"))
+            .unwrap_or_default();
         if f.emergency {
             format!("{}, runway {runway}, {what}, {}, emergency equipment is standing by.", f.call, self.wind())
         } else {
-            format!("{}, check wheels down, runway {runway}, {what}, {}.", f.call, self.wind())
+            format!("{}, check wheels down, runway {runway}, {what}, {}{wake}.", f.call, self.wind())
         }
     }
 
@@ -1732,7 +1819,8 @@ impl Controller {
                 let n = self.sequence(f);
                 let rwy = self.arr_runway();
                 let t = if n > 1 {
-                    format!("{}, {fac}, runway {rwy}, number {n}, break at the numbers, report base.", f.call)
+                    let follow = self.landing_ahead(f).map(|(typ, d)| format!(", follow the {typ} on a {d} mile final")).unwrap_or_default();
+                    format!("{}, {fac}, runway {rwy}, number {n}{follow}, break at the numbers, report base.", f.call)
                 } else {
                     format!("{}, {fac}, runway {rwy}, break approved, {}, report base.", f.call, self.altimeter())
                 };
@@ -1959,19 +2047,38 @@ impl Controller {
             }
             f.ai_taxi_hold = false;
         }
-        let route = if self.ap.aligned.is_some() { self.ap.route_to_runway(f.ac.p, &rwy) } else { Option::None };
+        let route = self.ap.route_to_runway(f.ac.p, &rwy);
+        if route.is_none() {
+            log::warn!(
+                "milatc {}: no taxi route for {} to runway {rwy} from {:.0} m N {:.0} m E of the field",
+                self.ap.callsign,
+                f.call,
+                f.ac.p.n,
+                f.ac.p.e
+            );
+        }
         let tail = format!("{}, {}", self.wind(), self.altimeter());
         let t = match &route {
             Some(r) => {
                 let via = r.via.iter().map(|v| speech::taxiway(v)).collect::<Vec<_>>();
                 let via = if via.is_empty() { String::new() } else { format!(" via {}", via.join(", ")) };
+                // the holding point, by its taxiway
+                let at = r
+                    .hold
+                    .and_then(|h| self.ap.holds.get(h))
+                    .filter(|h| !h.taxiway.is_empty())
+                    .map(|h| format!(" at {}", speech::taxiway(&h.taxiway)))
+                    .unwrap_or_default();
                 match &r.crossing {
                     Some(pair) => {
                         let cross = self.ap.strip_name(pair, &self.direction);
                         // The route up to the crossing only.
                         format!("{}, {fac}, runway {rwy}, taxi{via}, hold short runway {cross}, {tail}.", f.call)
                     }
-                    Option::None => format!("{}, {fac}, runway {rwy}, taxi{via}, hold short runway {rwy}, {tail}.", f.call),
+                    Option::None if via.is_empty() && !at.is_empty() => {
+                        format!("{}, {fac}, runway {rwy}, taxi to holding point{}, hold short runway {rwy}, {tail}.", f.call, at.trim_start_matches(" at"))
+                    }
+                    Option::None => format!("{}, {fac}, runway {rwy}, taxi{via}, hold short runway {rwy}{at}, {tail}.", f.call),
                 }
             }
             Option::None => format!("{}, {fac}, runway {rwy}, taxi to and hold short of runway {rwy}, {tail}.", f.call),
@@ -1991,10 +2098,7 @@ impl Controller {
             return;
         }
         let ramp = self.ap.ramp_for(f.ac.p, Some(&p.destination)).cloned();
-        let route = match (&ramp, self.ap.aligned.is_some()) {
-            (Some(rm), true) => self.ap.route_to_ramp(f.ac.p, rm),
-            _ => Option::None,
-        };
+        let route = ramp.as_ref().and_then(|rm| self.ap.route_to_ramp(f.ac.p, rm));
         let dest = ramp.as_ref().map(|r| format!("the {}", r.name)).unwrap_or_else(|| "parking".into());
         let t = match &route {
             Some(r) if !r.via.is_empty() => {
@@ -2029,11 +2133,26 @@ impl Controller {
             f.option = p.option;
         }
         f.runway = Some(rwy.clone());
+        f.ready_at.get_or_insert(now);
+        // someone else called ready first
+        let ahead = self.departures_ahead(f, &rwy).len();
+        if ahead > 0 {
+            let t = format!(
+                "{}, {fac}, hold short runway {rwy}, number {} for departure.",
+                f.call,
+                ahead + 1
+            );
+            self.say(f, pos, t, now, out);
+            f.takeoff_waiting = true;
+            f.set_phase(Phase::HoldingShort, now);
+            return;
+        }
         match self.takeoff_blocked(f, &rwy) {
             Option::None => {
-                let t = self.takeoff_clearance(f, &rwy).replacen(&f.call, &format!("{}, {fac}", f.call), 1);
+                let t = self.takeoff_clearance(f, &rwy, now).replacen(&f.call, &format!("{}, {fac}", f.call), 1);
                 self.say(f, pos, t, now, out);
                 f.takeoff_waiting = false;
+                f.ready_at = None;
                 f.set_phase(Phase::TakeoffCleared, now);
             }
             Some(why) if why == "departing traffic" => {
@@ -2266,7 +2385,7 @@ impl Controller {
     /// Traffic stopped on a taxiway: ask it what is up, and route the flights
     /// behind it around it, or hold them until it moves.
     fn taxiway_blocks(&mut self, now: f64, out: &mut Vec<Tx>) {
-        if !self.has(Pos::Ground) || self.ap.aligned.is_none() {
+        if !self.has(Pos::Ground) {
             return;
         }
         let blockers: Vec<(u64, P2, String)> = self
@@ -2337,6 +2456,195 @@ impl Controller {
     }
 }
 
+// ─── ground traffic and radar traffic calls ───────────────────────────────
+
+/// Knots to metres a second.
+const KT: f64 = 0.5144;
+
+/// Where a moving aircraft will be in `t` seconds, on its heading.
+fn ahead_of(a: &Ac, t: f64) -> P2 {
+    a.p.offset(a.hdg, a.gs * KT * t)
+}
+
+/// "left to right" / "right to left", as `me` sees `other` crossing ahead.
+fn crossing_way(me: &Ac, other: &Ac) -> &'static str {
+    // which side it is on now, relative to my heading
+    let rel = angdiff(me.p.bearing_to(other.p), me.hdg);
+    if rel < 0. { "left to right" } else { "right to left" }
+}
+
+/// The o'clock of `other` from `me`.
+fn oclock(me: &Ac, other: &Ac) -> i32 {
+    let rel = (me.p.bearing_to(other.p) - me.hdg).rem_euclid(360.);
+    let h = ((rel / 30.).round() as i32) % 12;
+    if h == 0 { 12 } else { h }
+}
+
+impl Controller {
+    /// Players taxiing: hold them for traffic crossing ahead or coming the
+    /// other way, let them go once it has passed, and tell them who to
+    /// follow.
+    fn ground_traffic(&mut self, now: f64, out: &mut Vec<Tx>) {
+        if !self.has(Pos::Ground) {
+            return;
+        }
+        let movers: Vec<Ac> = self.traffic.iter().filter(|a| a.on_ground && a.gs > 3. && !a.rotary).cloned().collect();
+        let keys: Vec<u64> = self.flights.keys().copied().collect();
+        for k in keys {
+            let Some(mut f) = self.flights.remove(&k) else { continue };
+            if !f.is_ai() && f.ac.on_ground && matches!(f.phase, Phase::TaxiOut | Phase::TaxiIn) && f.freq != Some(Pos::Tower) {
+                self.give_way(&mut f, &movers, now, out);
+            }
+            self.flights.insert(k, f);
+        }
+    }
+
+    /// The traffic `f` must give way to, if any: (who, "crossing left to
+    /// right" / "opposite direction", where).
+    fn conflict_for(&self, f: &Flight, movers: &[Ac]) -> Option<(Ac, String)> {
+        let route = f.route.as_ref()?;
+        let path = self.ap.path_ahead(route, f.ac.p, 300.);
+        if path.len() < 2 {
+            return None;
+        }
+        let near = |q: P2| path.windows(2).map(|w| seg_dist(q, w[0], w[1])).fold(f64::INFINITY, f64::min);
+        // how far along my path a point is
+        let along = |q: P2| {
+            let mut run = 0.;
+            let mut best = (f64::INFINITY, 0.);
+            for w in path.windows(2) {
+                let d = seg_dist(q, w[0], w[1]);
+                if d < best.0 {
+                    best = (d, run + w[0].dist(q).min(w[0].dist(w[1])));
+                }
+                run += w[0].dist(w[1]);
+            }
+            best.1
+        };
+        let my_speed = (f.ac.gs * KT).max(4.);
+        movers
+            .iter()
+            .filter(|o| o.unit_id != f.key && o.p.dist(f.ac.p) < 600.)
+            .filter_map(|o| {
+                let diff = angdiff(o.hdg, f.ac.hdg).abs();
+                // where it will be over the next 20 s, and the first time it is on my path
+                let hit = (0..=10).map(|i| i as f64 * 2.).find(|t| near(ahead_of(o, *t)) < 35.)?;
+                let at = ahead_of(o, hit);
+                let d_me = along(at);
+                if diff < 45. {
+                    return None; // going my way: following, not a conflict
+                }
+                // it gets there first, or near enough together
+                if hit > d_me / my_speed + 8. {
+                    return None;
+                }
+                let tw = self.ap.taxiway_at(at, 40.).map(|t| format!(" on {}", speech::taxiway(t))).unwrap_or_default();
+                let what = if diff > 135. { "opposite direction traffic".to_string() } else { format!("traffic crossing {}", crossing_way(&f.ac, o)) };
+                let typ = type_phrase(&o.typ);
+                let typ = typ.trim_end_matches(" on a");
+                Some((o.clone(), format!("{what}{typ}{tw}")))
+            })
+            .next()
+    }
+
+    fn give_way(&self, f: &mut Flight, movers: &[Ac], now: f64, out: &mut Vec<Tx>) {
+        let conflict = self.conflict_for(f, movers);
+        match (f.give_way, conflict) {
+            (None, Some((o, why))) => {
+                // both players: only the one further from it holds
+                if let Some(other) = self.flights.get(&o.unit_id) {
+                    if !other.is_ai() && other.give_way.map_or(false, |g| g.0 == f.key) {
+                        return;
+                    }
+                }
+                let t = format!("{}, hold position, {why}.", f.call);
+                let sp = self.speaker(f, Pos::Ground);
+                self.say(f, sp, t, now, out);
+                f.give_way = Some((o.unit_id, now));
+            }
+            (Some((who, since)), c) => {
+                let still = c.as_ref().map_or(false, |(o, _)| o.unit_id == who);
+                if (!still && now - since > 4.) || now - since > 120. {
+                    f.give_way = None;
+                    let t = format!("{}, {}", f.call, self.pick(&["traffic has passed, continue taxi.", "continue taxi.", "traffic is clear, continue taxi."]));
+                    let sp = self.speaker(f, Pos::Ground);
+                    self.say(f, sp, t, now, out);
+                }
+            }
+            (None, None) => {
+                // following someone along the same taxiway
+                let Some(route) = f.route.as_ref() else { return };
+                let lead = movers
+                    .iter()
+                    .filter(|o| o.unit_id != f.key && !f.followed.contains(&o.unit_id))
+                    .filter(|o| angdiff(o.hdg, f.ac.hdg).abs() < 40. && o.p.dist(f.ac.p) < 350. && o.p.dist(f.ac.p) > 40.)
+                    .find(|o| self.ap.route_ahead_passes(route, f.ac.p, o.p, 30.))
+                    .cloned();
+                if let Some(o) = lead {
+                    f.followed.insert(o.unit_id);
+                    if f.ac.gs > 3. {
+                        let typ = type_name(&o.typ).unwrap_or("traffic");
+                        let t = format!("{}, follow the {typ} ahead.", f.call);
+                        let sp = self.speaker(f, Pos::Ground);
+                        self.say(f, sp, t, now, out);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Radar traffic calls to players working Approach or Departure: other
+    /// aircraft within 4 miles and 1,500 feet that are closing.
+    fn traffic_advisories(&mut self, now: f64, out: &mut Vec<Tx>) {
+        self.advised.retain(|_, t| now - *t < 300.);
+        let air: Vec<Ac> = self.traffic.iter().filter(|a| !a.on_ground && a.agl_ft > 300).cloned().collect();
+        let keys: Vec<u64> = self.flights.keys().copied().collect();
+        for k in keys {
+            let Some(mut f) = self.flights.remove(&k) else { continue };
+            let radar = matches!(f.freq, Some(Pos::Approach) | Some(Pos::Departure))
+                && matches!(f.phase, Phase::Arrival | Phase::Climbout)
+                && !f.is_ai()
+                && !f.ac.on_ground;
+            if radar {
+                let pos = f.freq.unwrap_or(Pos::Approach);
+                let call = air
+                    .iter()
+                    .filter(|o| o.unit_id != f.key && !self.advised.contains_key(&(f.key, o.unit_id)))
+                    .filter(|o| (o.alt_ft - f.ac.alt_ft).abs() < 1500 && o.p.dist(f.ac.p) < 4. * NM)
+                    // closing: nearer in 20 s than now
+                    .filter(|o| ahead_of(o, 20.).dist(ahead_of(&f.ac, 20.)) < o.p.dist(f.ac.p))
+                    .min_by(|a, b| a.p.dist(f.ac.p).total_cmp(&b.p.dist(f.ac.p)))
+                    .cloned();
+                if let Some(o) = call {
+                    if self.quiet(pos, now, 4.) {
+                        self.advised.insert((f.key, o.unit_id), now);
+                        let d = ((o.p.dist(f.ac.p) / NM).round() as i32).max(1);
+                        let diff = angdiff(o.hdg, f.ac.hdg).abs();
+                        let dir = if diff > 135. {
+                            "opposite direction".to_string()
+                        } else if diff < 45. {
+                            "same direction".to_string()
+                        } else {
+                            let way = if angdiff(o.hdg, f.ac.hdg) > 0. { "left to right" } else { "right to left" };
+                            format!("crossing {way}")
+                        };
+                        let typ = type_name(&o.typ).map(|t| format!(", a {t}")).unwrap_or_default();
+                        let t = format!(
+                            "{}, traffic, {} o'clock, {d} mile{}, {dir}{typ}, {}.",
+                            f.call,
+                            oclock(&f.ac, &o),
+                            if d == 1 { "" } else { "s" },
+                            alt(((o.alt_ft + 50) / 100) * 100)
+                        );
+                        self.say(&mut f, pos, t, now, out);
+                    }
+                }
+            }
+            self.flights.insert(k, f);
+        }
+    }
+}
+
 impl Controller {
     /// Why an AI departure must stay on its stand: the runway or the final is
     /// busy, or a player is working the pattern.
@@ -2354,7 +2662,26 @@ impl Controller {
         let busy = self.flights.values().any(|o| {
             !o.is_ai() && matches!(o.phase, Phase::RadarFinal | Phase::Pattern | Phase::TakeoffCleared | Phase::LinedUp)
         });
-        busy.then(|| "traffic in the pattern".into())
+        if busy {
+            return Some("traffic in the pattern".into());
+        }
+        // a player taxiing where it would go
+        let path = self.ap.route_to_runway(f.ac.p, runway)?;
+        let ahead = self.ap.path_ahead(&path, f.ac.p, 1500.);
+        self.flights
+            .values()
+            .filter(|o| o.key != f.key && !o.is_ai() && o.ac.on_ground && matches!(o.phase, Phase::TaxiOut | Phase::TaxiIn))
+            .find(|o| {
+                ahead.windows(2).any(|w| seg_dist(o.ac.p, w[0], w[1]) < 60.)
+                    || o.route.as_ref().map_or(false, |r| {
+                        let theirs = self.ap.path_ahead(r, o.ac.p, 600.);
+                        theirs.iter().any(|q| ahead.windows(2).any(|w| seg_dist(*q, w[0], w[1]) < 40.))
+                    })
+            })
+            .map(|o| match self.ap.taxiway_at(o.ac.p, 40.) {
+                Some(tw) => format!("traffic taxiing on {}", speech::taxiway(tw)),
+                None => "traffic taxiing".into(),
+            })
     }
 
     /// Hold an AI arrival while a player is on the approach or in the
@@ -2576,6 +2903,12 @@ pub(crate) fn readback(text: &str, call: &str, field: &str, r: f64) -> Option<St
     }
     let tail = if lower.contains("radar service terminated") && r > 0.4 { ", good day" } else { "" };
     Some(format!("{s}, {call}{tail}."))
+}
+
+/// Heavies, for wake turbulence.
+fn heavy(dcs_type: &str) -> bool {
+    let t = dcs_type.to_uppercase();
+    ["C-17", "KC-135", "KC135", "KC-10", "B-52", "B-1", "E-3", "C-5", "IL-76", "IL-78", "A-50", "TU-"].iter().any(|h| t.starts_with(h))
 }
 
 /// What pilots and controllers call a DCS type: "C-17", "Hornet". `None`
@@ -2920,6 +3253,99 @@ mod tests {
     }
 
     #[test]
+    fn taxi_to_24l_names_the_route_and_the_holding_point() {
+        let mut w = World::new();
+        w.f.wind_from_deg = 245;
+        for (i, ramp) in w.c.ap.ramps.clone().iter().enumerate() {
+            let id = 10 + i as u64;
+            w.put(id, ramp.p, 612, 0., 0., true);
+            w.tick();
+            assert_eq!(w.c.direction, "24");
+            let r = w.say(id, Pos::Ground, "Andersen Ground, Viper 11, request taxi");
+            let t = &texts(&r)[0];
+            assert!(t.contains("runway 24L, taxi via "), "{}: {t}", ramp.name);
+            assert!(!t.contains("taxi to and hold short"), "{}: {t}", ramp.name);
+            assert!(t.contains("hold short runway"), "{}: {t}", ramp.name);
+            w.traffic.clear();
+            w.tick();
+            w.now += 60.;
+        }
+    }
+
+    #[test]
+    fn taxiing_traffic_crossing_ahead_is_given_way_to() {
+        let mut w = World::new();
+        let ramp = w.c.ap.ramps.iter().find(|r| r.name == "south ramp").unwrap().p;
+        w.put(1, ramp, 612, 0., 0., true);
+        w.tick();
+        w.say(1, Pos::Ground, "Andersen Ground, Viper 11, request taxi");
+        let route = w.c.flights[&1].route.clone().unwrap();
+        let path = w.c.ap.path_ahead(&route, ramp, 300.);
+        // a point about 150 m along, and someone coming across it
+        let (mut run, mut q, mut seg) = (0., path[0], 0.);
+        for win in path.windows(2) {
+            let l = win[0].dist(win[1]);
+            if run + l >= 150. {
+                let t = (150. - run) / l;
+                q = P2::new(win[0].n + t * (win[1].n - win[0].n), win[0].e + t * (win[1].e - win[0].e));
+                seg = win[0].bearing_to(win[1]);
+                break;
+            }
+            run += l;
+        }
+        w.put(2, q.offset(seg + 90., 70.), 612, (seg + 270.) % 360., 15., true);
+        w.put(1, ramp, 612, path[0].bearing_to(path[1]), 10., true);
+        let said: Vec<String> = (0..3).flat_map(|_| texts(&w.tick())).collect();
+        assert!(said.iter().any(|t| t.contains("hold position, traffic crossing")), "{said:?}");
+        // it has gone by
+        w.put(2, q.offset(seg + 270., 300.), 612, (seg + 270.) % 360., 15., true);
+        let said: Vec<String> = (0..8).flat_map(|_| texts(&w.tick())).collect();
+        assert!(said.iter().any(|t| t.contains("continue taxi")), "{said:?}");
+    }
+
+    #[test]
+    fn departures_go_in_the_order_they_called_ready() {
+        let mut w = World::new();
+        let hold = w.c.ap.route_to_runway(w.c.ap.ramps[1].p, "06R").unwrap().hold.unwrap();
+        let hp = w.c.ap.node(w.c.ap.holds[hold].node);
+        w.put(1, hp, 612, 66., 0., true);
+        w.put(2, hp.offset(246., 60.), 612, 66., 0., true);
+        let thr = w.c.ap.runway("06R").unwrap().thr;
+        w.put(3, thr.offset(246., 2. * NM), 1300, 66., 150., false);
+        w.tick();
+        let r = w.say(1, Pos::Tower, "Andersen Tower, Viper 11, holding short 06R, ready for departure");
+        assert!(texts(&r)[0].contains("hold short runway 06R, traffic"), "{r:?}");
+        w.now += 1.;
+        let r = w.say(2, Pos::Tower, "Andersen Tower, Viper 12, holding short 06R, ready for departure");
+        assert!(texts(&r)[0].contains("number 2 for departure"), "{r:?}");
+        // the arrival lands: the first goes, the second lines up behind it
+        w.traffic.retain(|t| t.unit_id != Some(3));
+        let r = w.tick();
+        let t = texts(&r);
+        assert!(t.iter().any(|t| t.starts_with("Viper 1-1") && t.contains("cleared for takeoff")), "{t:?}");
+        assert!(!t.iter().any(|t| t.contains("Viper 1-2") && t.contains("cleared for takeoff")), "{t:?}");
+    }
+
+    #[test]
+    fn wake_turbulence_behind_a_departing_heavy() {
+        let mut w = World::new();
+        let r = w.c.ap.runway("06R").unwrap().clone();
+        w.put(1, r.thr.offset(r.hdg, 300.), 612, r.hdg, 120., true);
+        w.traffic.last_mut().unwrap().unit_type = "KC-135".into();
+        w.tick();
+        w.c.flights.get_mut(&1).unwrap().phase = Phase::TakeoffCleared;
+        w.put(1, r.thr.offset(r.hdg, 2500.), 1100, r.hdg, 160., false);
+        w.traffic.last_mut().unwrap().unit_type = "KC-135".into();
+        w.tick();
+        let hold = w.c.ap.route_to_runway(w.c.ap.ramps[1].p, "06R").unwrap().hold.unwrap();
+        w.put(2, w.c.ap.node(w.c.ap.holds[hold].node), 612, 66., 0., true);
+        w.traffic.retain(|t| t.unit_id != Some(1));
+        w.tick();
+        let r = w.say(2, Pos::Tower, "Andersen Tower, Viper 12, holding short 06R, ready for departure");
+        assert!(texts(&r)[0].contains("caution wake turbulence, departing KC-135"), "{r:?}");
+    }
+
+    #[test]
     fn wrong_frequency_is_redirected() {
         let mut w = World::new();
         let ramp = w.c.ap.ramps.iter().find(|r| r.name == "south ramp").unwrap().p;
@@ -3076,7 +3502,7 @@ mod tests {
         assert_eq!(rel.action.as_ref().unwrap().1, "start");
         assert!(rel.text.contains("taxi via"), "{}", rel.text);
         // and the pilot reads it back in his own voice
-        assert!(said.iter().any(|t| t.pilot.is_some() && t.text.contains("hold short 06R, Reach 3-1")), "{:?}", texts(&said));
+        assert!(said.iter().any(|t| t.pilot.is_some() && t.text.contains("hold short 06R") && t.text.contains("Reach 3-1")), "{:?}", texts(&said));
     }
 
     #[test]
