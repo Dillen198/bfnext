@@ -3,22 +3,54 @@
  * frequency and TACAN, the weather and altimeter, every target with its
  * coordinates in the format your jet takes, laser codes, air defences and
  * the sectors. Built from the live picture, so it is right for the mission
- * that is running now. Prints to a clean black-on-white sheet.
+ * that is running now, with the range chart on top. Two kneeboards: light
+ * (black on white, for the day) and dark (pale on black, for night). Each
+ * prints, and saves as a 768 x 1024 page for the DCS kneeboard folder.
  */
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Check, Copy, Printer } from '@icons'
+import { Check, Copy, Download, Moon, Printer, Sun } from '@icons'
+import { KneeboardChart, type KbTheme } from '../components/KneeboardChart'
 import { RangeLockup } from '../components/RangeMark'
 import { ErrorState, Loading } from '../components/States'
 import { useToast } from '../context/ToastContext'
 import { COORD_FORMATS, fmtCoord, type CoordFormat } from '../lib/coords'
+import { saveBlob } from '../lib/download'
 import { STATION_KIND_LABEL, airframe, fmt, mToFt, pad3 } from '../lib/format'
+import { kneeboardPng } from '../lib/kneeboard'
 import { kindInfo } from '../lib/sectors'
 import { useLive } from '../lib/useLive'
 import { usePref } from '../lib/usePref'
 import type { RangeLive } from '../types'
 
 const isFormat = (v: unknown): v is CoordFormat => COORD_FORMATS.some(f => f.v === v)
+const isKb = (v: unknown): v is KbTheme => v === 'light' || v === 'dark'
+
+/** Saves the kneeboard page as a PNG. */
+function PngBtn({ live, kb }: { live: RangeLive; kb: KbTheme }) {
+  const [busy, setBusy] = useState(false)
+  const toast = useToast()
+  return (
+    <button
+      className="btn-range"
+      disabled={busy}
+      title="A 1536 x 2048 page for Saved Games\DCS\Kneeboard"
+      onClick={async () => {
+        setBusy(true)
+        try {
+          const stamp = live.mission_date.replace(/[^0-9]/g, '')
+          saveBlob(await kneeboardPng(live, kb), `range-kneeboard-${kb}${stamp ? `-${stamp}` : ''}.png`)
+        } catch (e) {
+          toast(`The kneeboard page did not save: ${e instanceof Error ? e.message : String(e)}`, false)
+        } finally {
+          setBusy(false)
+        }
+      }}
+    >
+      <Download size={15} /> {busy ? 'Drawing…' : 'Kneeboard PNG'}
+    </button>
+  )
+}
 
 function CopyBtn({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -218,6 +250,14 @@ export default function BriefPage() {
   const q = useLive(15_000)
   const live = q.data?.live
   const [f, setF] = usePref<CoordFormat>('range.brief.coords', 'ddm', isFormat)
+  const [kb, setKb] = usePref<KbTheme>('range.brief.kneeboard', 'light', isKb)
+
+  // the print styles read the kneeboard's ink off the root (index.css)
+  useEffect(() => {
+    const root = document.documentElement
+    root.dataset.kb = kb
+    return () => { delete root.dataset.kb }
+  }, [kb])
 
   return (
     <div className="wrap page brief">
@@ -237,6 +277,11 @@ export default function BriefPage() {
               <button key={o.v} aria-pressed={f === o.v} onClick={() => setF(o.v)}>{o.label}</button>
             ))}
           </div>
+          <div className="seg" role="group" aria-label="Kneeboard">
+            <button aria-pressed={kb === 'light'} onClick={() => setKb('light')} title="Black on white, for the day"><Sun size={14} /> Light</button>
+            <button aria-pressed={kb === 'dark'} onClick={() => setKb('dark')} title="Pale on black, for night"><Moon size={14} /> Dark</button>
+          </div>
+          {live && <PngBtn live={live} kb={kb} />}
           <button className="btn-range primary" onClick={() => window.print()} disabled={!live}>
             <Printer size={15} /> Print kneeboard
           </button>
@@ -253,6 +298,17 @@ export default function BriefPage() {
           <span>{q.data?.reason ?? 'The brief is built from the live mission, and the range is not publishing one right now.'}</span>
         </div>
       ) : (
+        <div className={`brief-kb kb-${kb}`}>
+          <section className="brief-card brief-chart">
+            <header>
+              <span className="brief-n mono">00</span>
+              <h2 className="caps m-0">Range chart</h2>
+              <span className="ml-auto mono dim text-[11px]">{kb === 'dark' ? 'NIGHT' : 'DAY'} · north up · NM</span>
+            </header>
+            <div className="table-scroll">
+              <div className="brief-chart-svg"><KneeboardChart live={live} theme={kb} width={1000} height={640} /></div>
+            </div>
+          </section>
         <div className="brief-grid">
           <Card n="01" title="Comms & nav"><Comms live={live} /></Card>
           <Card n="02" title="Weather & altimeter"><Weather live={live} /></Card>
@@ -263,6 +319,7 @@ export default function BriefPage() {
             <Card n="04" title="Air defences & EW"><AirDefence live={live} f={f} /></Card>
           )}
           {(live.sectors ?? []).length > 0 && <Card n="05" title="Sectors"><Sectors live={live} /></Card>}
+        </div>
         </div>
       )}
     </div>

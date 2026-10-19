@@ -664,6 +664,9 @@ kbd {
 }
 .copy-btn:hover { color: var(--chalk); border-color: var(--line-2); }
 .print-only { display: none; }
+.brief-chart { margin-bottom: 14px; }
+.brief-chart-svg { min-width: 640px; }
+.brief-chart-svg svg { border-radius: 0 0 var(--radius) var(--radius); }
 
 @media print {
   :root, :root[data-theme] {
@@ -681,6 +684,19 @@ kbd {
   .brief-card { break-inside: avoid; margin-bottom: 10px; border-color: #999; }
   .table-range td, .table-range th { padding: 3px 6px; }
   a { text-decoration: none; }
+  .brief-chart-svg { min-width: 0; }
+  .brief-chart { margin-bottom: 10px; }
+  .brief-chart > header .ml-auto { display: none; }
+
+  /* the night kneeboard: pale on black, the colours kept */
+  :root[data-kb="dark"], :root[data-kb="dark"][data-theme] {
+    --ink: #0b0f14; --panel: #0b0f14; --panel-2: #0b0f14; --panel-3: #151c24; --line: #3a4552; --line-2: #4c5866;
+    --chalk: #dbe2ea; --haze: #b4bec9; --dim: #98a4b1; --ball: #ffb23e; --datum: #38d77c; --wave: #ff5a4f;
+  }
+  :root[data-kb="dark"], :root[data-kb="dark"] body {
+    background: #0b0f14; -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  :root[data-kb="dark"] .brief-card { border-color: #3a4552; }
 }
 
 /* ─── spawner ────────────────────────────────────────────────────────────── */

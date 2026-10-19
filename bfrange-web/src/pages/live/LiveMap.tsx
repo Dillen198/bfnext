@@ -21,6 +21,7 @@ import { boundsOf, circleRing, destination, NM, type LatLon } from '../../lib/ge
 import { drawSectors, showsFor, type SideFilter } from '../../lib/sectors'
 import { locate } from '../../lib/select'
 import { usePref } from '../../lib/usePref'
+import { BASEMAPS, useBasemap } from '../../lib/basemap'
 import type { RangeLive, Sector, StationKind } from '../../types'
 import { SECTOR_HIT_LAYER, SectorCard, SectorLabels, SectorLegend, SectorShapes, SectorTip } from './LiveSectors'
 
@@ -121,6 +122,7 @@ export function LiveMap({ live, height, selected = null, onSelect, focus = null 
   const light = theme === 'light'
   const [show, setShow] = usePref<Layers>('range.live.layers', { stations: true, threats: true, air: true, labels: true }, isLayers)
   const [menu, setMenu] = useState(false)
+  const [base, setBase] = useBasemap()
   const iads = live.iads ?? []
   const hotZones = live.hot_zones ?? []
   const jammers = live.jammers ?? []
@@ -249,7 +251,7 @@ export function LiveMap({ live, height, selected = null, onSelect, focus = null 
     <div className="relative h-full">
       <RangeMap
         mapRef={mapRef}
-        height={height} bounds={bounds}
+        height={height} bounds={bounds} base={base}
         onZoom={e => setZoom(e.viewState.zoom)} onLoad={e => setZoom(e.target.getZoom())}
         interactiveLayerIds={[SECTOR_HIT_LAYER]}
         onMouseMove={onMouseMove} onMouseOut={() => setHoverId(null)} onClick={onClick}
@@ -477,6 +479,12 @@ export function LiveMap({ live, height, selected = null, onSelect, focus = null 
         </div>
         {menu && (
           <div className="map-pop" role="group" aria-label="Map layers">
+            <div className="caps mb-1" style={{ fontSize: 9.5 }}>Map</div>
+            <div className="seg map-seg mb-2.5" role="group" aria-label="Base map">
+              {BASEMAPS.map(o => (
+                <button key={o.v} aria-pressed={base === o.v} title={o.title} onClick={() => setBase(o.v)}>{o.label}</button>
+              ))}
+            </div>
             <div className="caps mb-1" style={{ fontSize: 9.5 }}>Show on the map</div>
             {drawn.length > 0 && <Toggle on={sec.on} onChange={() => setSec(s => ({ ...s, on: !s.on }))} hint="The range's areas, as the F10 map draws them">Sectors</Toggle>}
             <Toggle on={show.stations} onChange={() => setShow(s => ({ ...s, stations: !s.stations }))} hint="Targets, scoring rings, ship decks, CSAR areas">Stations</Toggle>
