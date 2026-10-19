@@ -26,12 +26,9 @@
 //! * anything else (SEAD, hot zone, CSAR, helo drills ...) -- a generic card
 //!   with the record's key fields
 
-use super::{discord, forms};
+use super::{discord, forms, sheets};
 use anyhow::{anyhow, Result};
-use bfprotocols::range::{
-    AarResult, BombQuality, LowLevelResult, MissileOutcome, MissileResult, PrecisionQuality, RangeRecord,
-    RangeResult, RefuelMethod, RelSample, StrafeQuality, StrafeResult, Track, TrackPt,
-};
+use bfprotocols::range::{BombQuality, PrecisionQuality, RangeRecord, RangeResult, StrafeQuality};
 use resvg::{tiny_skia, usvg, usvg::fontdb};
 use std::{
     fmt::Write,
@@ -56,7 +53,6 @@ pub(crate) const INK: &str = "#1b3a5c";
 const FONT: &str = "Arial, 'Segoe UI', Helvetica, sans-serif";
 
 const FT: f64 = 3.28084;
-const NM: f64 = 1852.;
 
 // ── fonts / rasterising ────────────────────────────────────────────────
 
@@ -286,7 +282,7 @@ pub(crate) fn bomb_color(q: BombQuality) -> &'static str {
     }
 }
 
-fn strafe_color(q: StrafeQuality) -> &'static str {
+pub(crate) fn strafe_color(q: StrafeQuality) -> &'static str {
     match q {
         StrafeQuality::Deadeye | StrafeQuality::Excellent => GREEN,
         StrafeQuality::Good => YELLOW,
@@ -315,15 +311,6 @@ pub(crate) fn tier_color(tier: &str) -> &'static str {
 
 /// Label / value rows in two columns from `y`, 24 px apart; returns the y
 /// below the last row.
-fn rows2(s: &mut Svg, x0: f64, y: f64, col_w: f64, key_w: f64, rows: &[(String, String)]) -> f64 {
-    for (i, (k, v)) in rows.iter().enumerate() {
-        let (x, yy) = (x0 + (i % 2) as f64 * col_w, y + (i / 2) as f64 * 24.);
-        s.text(x, yy, k, 14., MUTED, Anchor::Start, false);
-        s.text(x + key_w, yy, &trunc(v, 34), 14., TEXT, Anchor::Start, true);
-    }
-    y + rows.len().div_ceil(2) as f64 * 24.
-}
-
 pub(crate) fn grade_color(grade: &str) -> &'static str {
     match grade {
         "_OK_" | "OK" => GREEN,
@@ -349,7 +336,7 @@ fn nice_ceil(x: f64) -> f64 {
 }
 
 /// A grid step giving about `ticks` divisions of `span`.
-fn nice_step(span: f64, ticks: f64) -> f64 {
+pub(crate) fn nice_step(span: f64, ticks: f64) -> f64 {
     let raw = span / ticks;
     let p = 10f64.powf(raw.log10().floor());
     for m in [1., 2., 5., 10.] {
@@ -374,12 +361,9 @@ pub(crate) fn render_svg(rec: &RangeRecord) -> String {
     match &rec.result {
         RangeResult::Trap(t) => forms::trap_form(rec, t),
         RangeResult::Bomb(b) => forms::bomb_form(rec, b),
-        RangeResult::Strafe(s) => forms::frame(strafe_card(rec, s), rec, "GUNNERY SCORE SHEET", "VSR FORM 13-214 (REV 10-26)"),
-        RangeResult::Aar(a) => forms::frame(aar_card(rec, a), rec, "AIR REFUELING RECORD", "VSR FORM 3710/9 (REV 10-26)"),
-        RangeResult::Missile(m) => forms::frame(missile_card(rec, m), rec, "MISSILE DEFENSE ENGAGEMENT RECORD", "VSR FORM 11-2 (REV 10-26)"),
         RangeResult::FieldLanding(f) => forms::field_form(rec, f),
-        RangeResult::LowLevel(l) => forms::frame(low_level_card(rec, l), rec, "LOW-LEVEL ROUTE RECORD", "VSR FORM 11-202 (REV 10-26)"),
-        _ => forms::frame(generic_card(rec), rec, "TRAINING EVENT RECORD", "VSR FORM 11-1 (REV 10-26)"),
+        // every other discipline: its own form on the shared layout
+        _ => sheets::sheet(rec).unwrap_or_else(|| forms::frame(generic_card(rec), rec, "TRAINING EVENT RECORD", "VSR FORM 11-1 (REV 10-26)")),
     }
 }
 
@@ -391,428 +375,6 @@ pub(crate) fn unknown_svg(pilot: &str, unit_type: &str, kind: &str, ts: &str) ->
     s.text(24., 130., "This result was recorded by a newer range engine.", 15., MUTED, Anchor::Start, false);
     s.text(776., 204., ts, 13., MUTED, Anchor::End, false);
     s.finish()
-}
-
-// ── strafe ─────────────────────────────────────────────────────────────
-
-fn strafe_card(rec: &RangeRecord, st: &StrafeResult) -> Svg {
-    const W: f64 = 800.;
-    const H: f64 = 600.;
-    let mut s = Svg::new(W, H);
-    s.text(24., 40., &format!("Strafe result of {}", rec.pilot.name), 26., TEXT, Anchor::Start, true);
-    s.text(24., 70., &format!("{}: {}  ·  {}  ·  {}", st.range, st.pit, st.gun, rec.unit_type), 16., MUTED, Anchor::Start, false);
-    // pit diagram
-    let (px, py, pw, ph) = (40., 100., 300., 440.);
-    s.rect(px, py, pw, ph, PANEL, None, 4.);
-    let far = (st.foul_line_m * 1.6).max(st.min_range_m * 1.3).max(600.);
-    let sc = (ph - 70.) / far;
-    let (tx, ty) = (px + pw / 2., py + 40.);
-    s.rect(tx - 14., ty - 14., 28., 28., SAND, Some(("#8f7a52", 1.5)), 2.);
-    s.text(tx, ty - 20., "TARGET", 11., MUTED, Anchor::Middle, true);
-    if st.foul_line_m > 0. {
-        let fy = ty + st.foul_line_m * sc;
-        s.line(px + 10., fy, px + pw - 10., fy, RED, 2., Some("8 5"));
-        s.text(px + pw - 12., fy - 6., &format!("FOUL LINE {:.0} m", st.foul_line_m), 11., RED, Anchor::End, true);
-    }
-    if st.min_range_m > 0. {
-        let my = ty + st.min_range_m * sc;
-        let col = if st.foul_line_crossed { RED } else { YELLOW };
-        s.line(tx - 40., my, tx + 40., my, col, 2., None);
-        s.text(tx + 46., my + 4., &format!("closest {:.0} m", st.min_range_m), 11., col, Anchor::Start, false);
-    }
-    s.arrow(tx, py + ph - 14., tx, ty + st.min_range_m.max(st.foul_line_m) * sc + 26., TEXT, 3.);
-    s.text(tx + 10., py + ph - 20., &format!("run-in {:03.0}°", st.run_in_heading_deg.rem_euclid(360.)), 12., TEXT, Anchor::Start, false);
-    // numbers
-    let (rx, qc) = (380., strafe_color(st.quality));
-    s.text(rx, 150., &format!("{} / {}", st.hits, st.rounds_fired), 44., TEXT, Anchor::Start, true);
-    s.text(rx, 176., "hits / rounds fired", 13., MUTED, Anchor::Start, false);
-    let (bx, by, bw, bh) = (rx, 210., 380., 26.);
-    s.rect(bx, by, bw, bh, PANEL, Some((GRID, 1.)), 4.);
-    s.rect(bx, by, bw * (st.accuracy_pct / 100.).clamp(0., 1.), bh, qc, None, 4.);
-    for band in [25., 50., 75., 90.] {
-        let x = bx + bw * band / 100.;
-        s.line(x, by - 4., x, by + bh + 4., MUTED, 1., None);
-        s.text(x, by + bh + 18., &format!("{band:.0}%"), 11., MUTED, Anchor::Middle, false);
-    }
-    s.text(rx, 290., &format!("{:.1}%", st.accuracy_pct), 30., qc, Anchor::Start, true);
-    s.text(rx + 130., 290., st.quality.label(), 26., qc, Anchor::Start, true);
-    let mut y = 340.;
-    let mut row = |s: &mut Svg, k: &str, v: String, col: &str| {
-        s.text(rx, y, k, 14., MUTED, Anchor::Start, false);
-        s.text(rx + 170., y, &v, 14., col, Anchor::Start, true);
-        y += 26.;
-    };
-    row(&mut s, "Entry altitude", format!("{:.0} ft AGL", st.entry_alt_agl_m * FT), TEXT);
-    row(&mut s, "Closest firing range", format!("{:.0} m", st.min_range_m), TEXT);
-    row(
-        &mut s,
-        "Foul line",
-        if st.foul_line_crossed { "CROSSED".into() } else { "respected".into() },
-        if st.foul_line_crossed { RED } else { GREEN },
-    );
-    if let Some(r) = &st.invalid_reason {
-        row(&mut s, "Invalid", trunc(r, 28), RED);
-    }
-    s
-}
-
-// ── AAR ────────────────────────────────────────────────────────────────
-
-fn aar_card(rec: &RangeRecord, a: &AarResult) -> Svg {
-    const W: f64 = 900.;
-    const H: f64 = 720.;
-    let mut s = Svg::new(W, H);
-    s.text(24., 40., &format!("AAR result of {}", rec.pilot.name), 26., TEXT, Anchor::Start, true);
-    s.text(
-        24.,
-        70.,
-        &format!(
-            "{} ({})  ·  {}  ·  {}",
-            a.tanker,
-            a.tanker_type,
-            match a.method {
-                RefuelMethod::Boom => "boom",
-                RefuelMethod::Drogue => "drogue",
-            },
-            rec.unit_type
-        ),
-        16.,
-        MUTED,
-        Anchor::Start,
-        false,
-    );
-    let gcol = match a.grade.as_str() {
-        "A" => GREEN,
-        "B" => GREEN,
-        "C" => YELLOW,
-        "D" => ORANGE,
-        _ => RED,
-    };
-    s.text(W - 24., 44., &format!("GRADE {}", a.grade), 28., gcol, Anchor::End, true);
-    let samples: Vec<RelSample> = match &rec.track {
-        Some(Track::Aar { samples }) => samples.clone(),
-        _ => vec![],
-    };
-    let panel = |s: &mut Svg, id: &str, x0: f64, y0: f64, w: f64, h: f64, title: &str, xl: &str, yl: &str, pts: &[(f64, f64, bool)], mean: (f64, f64)| {
-        s.text(x0, y0 - 8., title, 13., MUTED, Anchor::Start, true);
-        s.clip(id, x0, y0, w, h);
-        s.rect(x0, y0, w, h, PANEL, None, 4.);
-        if pts.is_empty() {
-            s.text(x0 + w / 2., y0 + h / 2., "no track", 14., MUTED, Anchor::Middle, false);
-            return;
-        }
-        let (mut xmin, mut xmax, mut ymin, mut ymax) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
-        for (x, y, _) in pts {
-            xmin = xmin.min(*x);
-            xmax = xmax.max(*x);
-            ymin = ymin.min(*y);
-            ymax = ymax.max(*y);
-        }
-        let pad = |lo: f64, hi: f64| {
-            let span = (hi - lo).max(6.);
-            let mid = (hi + lo) / 2.;
-            (mid - span * 0.6, mid + span * 0.6)
-        };
-        let (xmin, xmax) = pad(xmin, xmax);
-        let (ymin, ymax) = pad(ymin, ymax);
-        let fx = |x: f64| x0 + (x - xmin) / (xmax - xmin) * w;
-        let fy = |y: f64| y0 + h - (y - ymin) / (ymax - ymin) * h;
-        let gs = nice_step(xmax - xmin, 6.);
-        let mut g = (xmin / gs).ceil() * gs;
-        while g < xmax {
-            s.line(fx(g), y0, fx(g), y0 + h, GRID, 1., None);
-            s.text(fx(g), y0 + h + 14., &format!("{g:.0}"), 10., MUTED, Anchor::Middle, false);
-            g += gs;
-        }
-        let gs = nice_step(ymax - ymin, 5.);
-        let mut g = (ymin / gs).ceil() * gs;
-        while g < ymax {
-            s.line(x0, fy(g), x0 + w, fy(g), GRID, 1., None);
-            s.text(x0 - 4., fy(g) + 4., &format!("{g:.0}"), 10., MUTED, Anchor::End, false);
-            g += gs;
-        }
-        s.text(x0 + w, y0 + h + 28., xl, 11., MUTED, Anchor::End, false);
-        s.text(x0 + 4., y0 + 14., yl, 11., MUTED, Anchor::Start, false);
-        let _ = write!(s.b, r#"<g clip-path="url(#{id})">"#);
-        for (x, y, _) in pts.iter().filter(|p| !p.2) {
-            s.circle(fx(*x), fy(*y), 1.6, MUTED, None, None);
-        }
-        for (x, y, _) in pts.iter().filter(|p| p.2) {
-            s.circle(fx(*x), fy(*y), 2.4, GREEN, None, None);
-        }
-        let (mx, my) = (fx(mean.0), fy(mean.1));
-        s.line(mx - 10., my, mx + 10., my, YELLOW, 2., None);
-        s.line(mx, my - 10., mx, my + 10., YELLOW, 2., None);
-        s.raw("</g>");
-    };
-    let side: Vec<(f64, f64, bool)> = samples.iter().map(|p| (p.fwd_m, p.up_m, p.connected)).collect();
-    let top: Vec<(f64, f64, bool)> = samples.iter().map(|p| (p.right_m, p.fwd_m, p.connected)).collect();
-    let st = &a.stability;
-    panel(&mut s, "aar_side", 60., 110., 380., 280., "SIDE VIEW (tanker frame)", "fwd, m", "up, m", &side, (st.mean_fwd_m, st.mean_up_m));
-    panel(&mut s, "aar_top", 490., 110., 380., 280., "TOP VIEW (tanker frame)", "right, m", "fwd, m", &top, (st.mean_right_m, st.mean_fwd_m));
-    // contact timeline
-    let (lx, ly, lw, lh) = (60., 440., 810., 22.);
-    s.text(lx, ly - 8., &format!("CONTACT TIMELINE  ·  {} contact(s), {} disconnect(s)", a.contacts, a.disconnects), 13., MUTED, Anchor::Start, true);
-    s.rect(lx, ly, lw, lh, PANEL, Some((GRID, 1.)), 3.);
-    let t_end = samples.last().map(|p| p.t).unwrap_or(a.session_s).max(1.);
-    let t0 = samples.first().map(|p| p.t).unwrap_or(0.);
-    let span = (t_end - t0).max(1.);
-    let mut on: Option<f64> = None;
-    for p in &samples {
-        match (p.connected, on) {
-            (true, None) => on = Some(p.t),
-            (false, Some(st0)) => {
-                s.rect(lx + (st0 - t0) / span * lw, ly, (p.t - st0) / span * lw, lh, GREEN, None, 0.);
-                on = None;
-            }
-            _ => (),
-        }
-    }
-    if let Some(st0) = on {
-        s.rect(lx + (st0 - t0) / span * lw, ly, (t_end - st0) / span * lw, lh, GREEN, None, 0.);
-    }
-    s.text(lx, ly + lh + 16., "0 s", 11., MUTED, Anchor::Start, false);
-    s.text(lx + lw, ly + lh + 16., &format!("{span:.0} s"), 11., MUTED, Anchor::End, false);
-    // stats
-    let rows: Vec<(String, String)> = vec![
-        ("Time connected".into(), format!("{:.0} s", a.time_connected_s)),
-        ("Fuel on-loaded".into(), format!("{:.0} lb ({:.0} kg)", a.fuel_lbs, a.fuel_kg)),
-        ("On-load rate".into(), format!("{:.0} lb/min", a.onload_rate_lbs_min)),
-        ("Join time".into(), a.join_time_s.map(|j| format!("{j:.0} s")).unwrap_or_else(|| "-".into())),
-        ("Stability fore/aft".into(), format!("±{:.1} m", st.fore_aft_sd_m)),
-        ("Stability lateral".into(), format!("±{:.1} m", st.lateral_sd_m)),
-        ("Stability vertical".into(), format!("±{:.1} m", st.vertical_sd_m)),
-        ("Pre-contact closure".into(), a.precontact_closure_kts.map(|c| format!("{c:.1} kt")).unwrap_or_else(|| "-".into())),
-        ("Tanker".into(), format!("{:.0} ft, {:.0} kts", a.alt_ft, a.speed_kts)),
-        ("Overshoot".into(), if a.overshoot { "yes".into() } else { "no".into() }),
-    ];
-    for (i, (k, v)) in rows.iter().enumerate() {
-        let (x, y) = (60. + (i % 2) as f64 * 420., 510. + (i / 2) as f64 * 24.);
-        s.text(x, y, k, 14., MUTED, Anchor::Start, false);
-        s.text(x + 190., y, v, 14., TEXT, Anchor::Start, true);
-    }
-    let mut y = 510. + 5. * 24. + 10.;
-    for c in a.calls.iter().take(3) {
-        s.text(60., y, &format!("• {}", trunc(c, 100)), 14., YELLOW, Anchor::Start, false);
-        y += 22.;
-    }
-    s
-}
-
-// ── missile ────────────────────────────────────────────────────────────
-
-fn missile_card(rec: &RangeRecord, m: &MissileResult) -> Svg {
-    const W: f64 = 800.;
-    const H: f64 = 860.;
-    let mut s = Svg::new(W, H);
-    let oc = match m.outcome {
-        MissileOutcome::Kill | MissileOutcome::Hit => RED,
-        MissileOutcome::Defeated => GREEN,
-        MissileOutcome::Timeout => YELLOW,
-    };
-    s.text(24., 40., &format!("{}  —  {}", m.weapon, m.outcome.label()), 26., oc, Anchor::Start, true);
-    s.text(
-        24.,
-        70.,
-        &format!("{} ({})  →  {} ({})", m.shooter.name, m.shooter_type, m.target.name, m.target_type),
-        16.,
-        MUTED,
-        Anchor::Start,
-        false,
-    );
-    let (px, py, pw, ph) = (50., 96., 700., 520.);
-    s.clip("plan", px, py, pw, ph);
-    s.rect(px, py, pw, ph, PANEL, None, 4.);
-    let (mis, tgt): (Vec<TrackPt>, Vec<TrackPt>) = match &rec.track {
-        Some(Track::Intercept { missile, target }) => (missile.clone(), target.clone()),
-        _ => (vec![], vec![]),
-    };
-    let origin = mis
-        .first()
-        .map(|p| (p.lat, p.lon))
-        .unwrap_or((m.launch.shooter_pos.lat, m.launch.shooter_pos.lon));
-    let me: Vec<(f64, f64)> = mis.iter().map(|p| en(origin, (p.lat, p.lon))).collect();
-    let te: Vec<(f64, f64)> = tgt.iter().map(|p| en(origin, (p.lat, p.lon))).collect();
-    if me.is_empty() && te.is_empty() {
-        s.text(px + pw / 2., py + ph / 2., "no intercept track recorded", 16., MUTED, Anchor::Middle, false);
-    } else {
-        let all = me.iter().chain(te.iter());
-        let (mut x0, mut x1, mut y0, mut y1) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
-        for (e, nn) in all {
-            x0 = x0.min(*e);
-            x1 = x1.max(*e);
-            y0 = y0.min(*nn);
-            y1 = y1.max(*nn);
-        }
-        let span = ((x1 - x0) / pw).max((y1 - y0) / ph).max(1.) * 1.15;
-        let (mx, my) = ((x0 + x1) / 2., (y0 + y1) / 2.);
-        let f = |p: &(f64, f64)| (px + pw / 2. + (p.0 - mx) / span, py + ph / 2. - (p.1 - my) / span);
-        // grid + scale bar
-        let step = nice_step(span * pw, 6.);
-        let bar = step / span;
-        s.line(px + 20., py + ph - 20., px + 20. + bar, py + ph - 20., TEXT, 2., None);
-        let lbl = if step >= NM { format!("{:.0} nm", step / NM) } else { format!("{step:.0} m") };
-        s.text(px + 20. + bar / 2., py + ph - 28., &lbl, 11., TEXT, Anchor::Middle, false);
-        let tp: Vec<(f64, f64)> = te.iter().map(f).collect();
-        let mp: Vec<(f64, f64)> = me.iter().map(f).collect();
-        s.polyline(&tp, BLUE, 2.4, None, Some("plan"));
-        s.polyline(&mp, RED, 2.4, None, Some("plan"));
-        if let Some(p) = mp.first() {
-            s.circle(p.0, p.1, 6., RED, Some(("#ffffff", 1.5)), None);
-            s.text(p.0 + 9., p.1 - 8., "LAUNCH", 12., RED, Anchor::Start, true);
-        }
-        if let Some(p) = tp.first() {
-            s.circle(p.0, p.1, 5., BLUE, Some(("#ffffff", 1.5)), None);
-            s.text(p.0 + 9., p.1 + 16., "TARGET", 12., BLUE, Anchor::Start, true);
-        }
-        // closest approach: nearest target sample in time to each missile sample
-        let mut best: Option<(f64, usize)> = None;
-        for (i, p) in mis.iter().enumerate() {
-            let j = tgt
-                .iter()
-                .enumerate()
-                .min_by(|a, b| (a.1.t - p.t).abs().partial_cmp(&(b.1.t - p.t).abs()).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(j, _)| j);
-            if let Some(j) = j {
-                let (a, b) = (me[i], te[j]);
-                let d = (a.0 - b.0).hypot(a.1 - b.1);
-                if best.map_or(true, |(bd, _)| d < bd) {
-                    best = Some((d, i));
-                }
-            }
-        }
-        if let Some((_, i)) = best {
-            let p = mp[i];
-            s.circle(p.0, p.1, 10., "none", Some((YELLOW, 2.)), None);
-            s.text(p.0 + 14., p.1 + 4., &format!("CPA {:.0} m", m.min_distance_m), 13., YELLOW, Anchor::Start, true);
-        }
-        if let Some(p) = mp.last() {
-            s.text(p.0, p.1 - 14., m.outcome.label(), 13., oc, Anchor::Middle, true);
-        }
-    }
-    let l = &m.launch;
-    let d = &m.defense;
-    let rows: Vec<(String, String)> = vec![
-        ("Launch range".into(), format!("{:.1} nm", l.range_m / NM)),
-        ("Aspect at launch".into(), format!("{:.0}°", l.aspect_deg)),
-        ("Shooter / target alt".into(), format!("{:.0} / {:.0} ft", l.shooter_alt_m * FT, l.target_alt_m * FT)),
-        ("Closure".into(), format!("{:.0} kts", l.closure_kts)),
-        ("Time of flight".into(), format!("{:.1} s", m.time_of_flight_s)),
-        ("Miss distance".into(), format!("{:.0} m (kill radius {:.0} m)", m.min_distance_m, m.kill_radius_m)),
-        ("Reaction".into(), d.reaction_s.map(|r| format!("{r:.1} s")).unwrap_or_else(|| "none".into())),
-        ("Beam / drag / hot".into(), format!("{:.0} / {:.0} / {:.0} s", d.beam_s, d.drag_s, d.hot_s)),
-        ("Altitude change".into(), format!("{:+.0} ft{}", d.alt_change_m * FT, if d.went_low { ", went low" } else { "" })),
-        ("Category".into(), m.weapon_category.to_uppercase()),
-    ];
-    for (i, (k, v)) in rows.iter().enumerate() {
-        let (x, y) = (50. + (i % 2) as f64 * 370., 650. + (i / 2) as f64 * 26.);
-        s.text(x, y, k, 14., MUTED, Anchor::Start, false);
-        s.text(x + 170., y, v, 14., TEXT, Anchor::Start, true);
-    }
-    s
-}
-
-// ── low level ──────────────────────────────────────────────────────────
-
-fn low_level_card(rec: &RangeRecord, l: &LowLevelResult) -> Svg {
-    const W: f64 = 900.;
-    const H: f64 = 730.;
-    let mut s = Svg::new(W, H);
-    let qc = precision_color(l.quality);
-    s.text(24., 40., &format!("Low-level route of {}", rec.pilot.name), 26., TEXT, Anchor::Start, true);
-    s.text(
-        24.,
-        70.,
-        &format!("{}  ·  {}  ·  {}/{} gates", l.route, rec.unit_type, l.gates_hit, l.gates_total),
-        16.,
-        MUTED,
-        Anchor::Start,
-        false,
-    );
-    s.text(W - 24., 44., l.quality.label(), 28., qc, Anchor::End, true);
-    let tc = if l.tot_error_s.abs() <= 15. { GREEN } else if l.tot_error_s.abs() <= 45. { YELLOW } else { RED };
-    s.text(W - 24., 70., &format!("TOT {:+.0} s", l.tot_error_s), 16., tc, Anchor::End, true);
-
-    let n = l.gates.len();
-    let (px, pw) = (70., 790.);
-    let slot = pw / n.max(1) as f64;
-    let gx = |i: usize| px + slot * (i as f64 + 0.5);
-    // AGL at each gate against the ceiling
-    let (ay, ah) = (110., 200.);
-    s.text(px, ay - 10., "HEIGHT AT EACH GATE (ft AGL)", 13., MUTED, Anchor::Start, true);
-    s.rect(px, ay, pw, ah, PANEL, None, 4.);
-    let top = nice_ceil(
-        l.gates
-            .iter()
-            .filter_map(|g| g.agl_ft)
-            .fold(l.max_allowed_agl_ft * 1.5, f64::max)
-            .max(100.),
-    );
-    let fy = |ft: f64| ay + ah - (ft / top).clamp(0., 1.) * ah;
-    let step = nice_step(top, 4.);
-    let mut g = step;
-    while g < top {
-        s.line(px, fy(g), px + pw, fy(g), GRID, 1., None);
-        s.text(px - 6., fy(g) + 4., &format!("{g:.0}"), 11., MUTED, Anchor::End, false);
-        g += step;
-    }
-    s.line(px, fy(l.max_allowed_agl_ft), px + pw, fy(l.max_allowed_agl_ft), RED, 1.5, Some("6 4"));
-    s.text(px + 4., fy(l.max_allowed_agl_ft) - 5., &format!("ceiling {:.0} ft", l.max_allowed_agl_ft), 11., RED, Anchor::Start, true);
-    // timing error at each gate
-    let (ty, th) = (360., 160.);
-    s.text(px, ty - 10., "TIMING AT EACH GATE (s against the plan, + = late)", 13., MUTED, Anchor::Start, true);
-    s.rect(px, ty, pw, th, PANEL, None, 4.);
-    let span = l
-        .gates
-        .iter()
-        .filter_map(|g| g.t.map(|t| (t - g.planned_t).abs()))
-        .fold(10., f64::max)
-        * 1.15;
-    let tmid = ty + th / 2.;
-    let fe = |e: f64| tmid - (e / span).clamp(-1., 1.) * (th / 2. - 8.);
-    s.line(px, tmid, px + pw, tmid, MUTED, 1., None);
-    let bw = (slot * 0.5).min(40.);
-    for (i, gate) in l.gates.iter().enumerate() {
-        let x = gx(i);
-        s.text(x, ty + th + 16., &trunc(&gate.gate, 12), 11., MUTED, Anchor::Middle, false);
-        match (gate.t, gate.agl_ft) {
-            (None, _) => {
-                s.text(x, ay + ah / 2., "MISSED", 12., RED, Anchor::Middle, true);
-                s.text(x, tmid - 6., "MISSED", 12., RED, Anchor::Middle, true);
-            }
-            (Some(t), agl) => {
-                if let Some(a) = agl {
-                    let c = if a <= l.max_allowed_agl_ft { GREEN } else { RED };
-                    s.rect(x - bw / 2., fy(a), bw, ay + ah - fy(a), c, None, 2.);
-                    s.text(x, fy(a) - 5., &format!("{a:.0}"), 11., c, Anchor::Middle, false);
-                }
-                let e = t - gate.planned_t;
-                let c = if e.abs() <= 15. { GREEN } else if e.abs() <= 45. { YELLOW } else { RED };
-                let (y0, y1) = (fe(e.max(0.)), fe(e.min(0.)));
-                s.rect(x - bw / 2., y0, bw, (y1 - y0).max(2.), c, None, 2.);
-                let lbl_y = if e >= 0. { y0 - 5. } else { y1 + 14. };
-                s.text(x, lbl_y, &format!("{e:+.0}"), 11., c, Anchor::Middle, false);
-            }
-        }
-    }
-    if n == 0 {
-        s.text(px + pw / 2., ay + ah / 2., "no gate times recorded", 15., MUTED, Anchor::Middle, false);
-        s.text(px + pw / 2., tmid, "no gate times recorded", 15., MUTED, Anchor::Middle, false);
-    }
-    let rows: Vec<(String, String)> = vec![
-        ("Time vs plan".into(), format!("{} / {}", discord::mmss(l.time_s), discord::mmss(l.planned_s))),
-        ("Under the ceiling".into(), format!("{:.0}% of the route", l.pct_below_ceiling)),
-        ("AGL avg / min / max".into(), format!("{:.0} / {:.0} / {:.0} ft", l.avg_agl_ft, l.min_agl_ft, l.max_agl_ft)),
-        ("Below the floor".into(), format!("{:.0} s", l.below_floor_s)),
-        ("Average speed".into(), format!("{:.0} kts", l.avg_speed_kts)),
-        ("Gates".into(), format!("{} of {}", l.gates_hit, l.gates_total)),
-    ];
-    let mut yy = rows2(&mut s, 40., 570., 430., 180., &rows) + 6.;
-    for c in l.calls.iter().take(2) {
-        s.text(40., yy, &format!("• {}", trunc(c, 100)), 14., YELLOW, Anchor::Start, false);
-        yy += 20.;
-    }
-    s
 }
 
 // ── generic ────────────────────────────────────────────────────────────
@@ -1113,7 +675,82 @@ pub(crate) mod tests {
         let no_track_trap = RangeRecord { track: None, ..trap() };
         let mut v = vec![trap(), no_track_trap, bomb(), strafe, aar, missile, sling];
         v.extend(new_kinds());
+        v.extend(more_kinds());
         v
+    }
+
+    /// The disciplines the forms cover that the lists above do not: BFM,
+    /// anti-ship, troops, gunnery and CAS, with tracks and positions.
+    pub(crate) fn more_kinds() -> Vec<RangeRecord> {
+        let (lat0, lon0) = (42.1f64, 44.9f64);
+        let at = |e: f64, n: f64, alt: f64, t: f64| TrackPt {
+            t,
+            lat: lat0 + n / 111_320.,
+            lon: lon0 + e / (111_320. * lat0.to_radians().cos()),
+            alt_m: alt,
+            speed_kts: 400.,
+        };
+        let geo = |e: f64, n: f64| GeoPt { lat: lat0 + n / 111_320., lon: lon0 + e / (111_320. * lat0.to_radians().cos()), alt_m: 0. };
+        // two fighters turning round each other
+        let me: Vec<TrackPt> = (0..90).map(|i| { let a = i as f64 * 0.09; at(a.cos() * 2500., a.sin() * 2500. - 4000. + i as f64 * 20., 6000. - i as f64 * 25., i as f64) }).collect();
+        let bandit: Vec<TrackPt> = (0..90).map(|i| { let a = i as f64 * 0.09 + 2.4; at(a.cos() * 2300., a.sin() * 2300. - 3800. + i as f64 * 20., 5800. - i as f64 * 22., i as f64) }).collect();
+        let bfm = base(
+            RangeResult::Engagement(EngagementResult {
+                setup: "Neutral merge".into(),
+                adversary: "MiG-29S".into(),
+                adversary_skill: "excellent".into(),
+                opponent: None,
+                outcome: EngagementOutcome::Win,
+                duration_s: 151.,
+                shots_fired: 3,
+                trainer_kills: 1,
+                gun_hits: 12,
+                notes: vec!["Rate fight won in the second circle".into(), "Gun kill at 600 m".into()],
+            }),
+            Some(Track::Path { paths: [("Casper <&> 1".to_string(), me), ("MiG-29S".to_string(), bandit)].into_iter().collect() }),
+        );
+        // a sea-skimmer from 40 nm
+        let wpn: Vec<TrackPt> = (0..60).map(|i| { let f = i as f64 / 59.; at(-70_000. * (1. - f), 15_000. * (1. - f), if f < 0.1 { 3000. * (1. - f * 10.) + 30. } else { 15. }, i as f64 * 4.) }).collect();
+        let antiship = base(
+            RangeResult::AntiShip(AntiShipResult {
+                ship: "Molniya 3".into(),
+                ship_type: "MOLNIYA".into(),
+                weapon: "AGM-84D Harpoon".into(),
+                launch_range_m: 71_600.,
+                weapon_max_range_m: Some(124_000.),
+                hit: true,
+                damage: 0.85,
+                ship_sunk: true,
+                time_of_flight_s: 236.,
+                intercepted: false,
+                launch_pos: geo(-70_000., 15_000.),
+                ship_pos: geo(0., 0.),
+            }),
+            Some(Track::Weapon { points: wpn }),
+        );
+        let troops = base(
+            RangeResult::Troops(TroopResult { lz: "LZ Tango".into(), troops: 10, load_time_s: 95., total_time_s: 540., landing_distance_m: 15., quality: PrecisionQuality::Excellent }),
+            None,
+        );
+        let gunnery = base(
+            RangeResult::Gunnery(GunneryResult { lane: "Lane 3".into(), targets_total: 12, targets_killed: 9, shots: 21, hits: 11, time_s: 248., first_round_hits: 6 }),
+            None,
+        );
+        let cas = base(
+            RangeResult::Cas(CasResult {
+                jtac: "Axeman".into(),
+                target: "T-72B in the treeline".into(),
+                weapon: "GBU-12".into(),
+                time_to_impact_s: 74.,
+                miss_m: 6.,
+                correct_target: true,
+                danger_close: true,
+                nearest_friendly_m: Some(420.),
+                laser_code: Some(1688),
+            }),
+            None,
+        );
+        vec![bfm, antiship, troops, gunnery, cas]
     }
 
     /// One record of every discipline added with the SEAD / hot zone /
@@ -1323,8 +960,9 @@ pub(crate) mod tests {
         }
         let b = bomb();
         let f = discord::fields(&b);
-        assert!(f.iter().any(|(k, v, _)| k == "Tier" && v == "HARD"));
-        assert!(f.iter().any(|(k, _, _)| k == "GPS denied"));
+        // the weapon block carries the tier and the GPS-denied note
+        let w = &f.iter().find(|(k, _, _)| k == "Weapon").unwrap().1;
+        assert!(w.contains("tier HARD") && w.contains("**GPS denied**"), "{w}");
     }
 
     #[test]

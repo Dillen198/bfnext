@@ -7,7 +7,7 @@
  */
 import { useEffect, useRef, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { Activity, Aircraft, ArrowRight, Carrier, Csar, Explosion, Helicopter, Refuel, Sam, Ship, Strike, Wind } from '@icons'
+import { Activity, Aircraft, ArrowRight, Bombing, Carrier, Csar, Helicopter, HotZone, Refuel, Sam, Ship, Wind } from '@icons'
 import { Empty } from '../../components/States'
 import { useAuth } from '../../context/AuthContext'
 import { GROUPABLE_STATIONS, STATION_KIND_LABEL, airframe, fmt, fmtClock, pad3 } from '../../lib/format'
@@ -293,7 +293,7 @@ function Threats({ live, selected, onSelect }: TabProps) {
   return (
     <>
       {zones.length > 0 && (
-        <Section title="Hot zones" icon={<Explosion size={13} />} count={zones.length}>
+        <Section title="Hot zones" icon={<HotZone size={13} />} count={zones.length}>
           <ul className="rdock-list">
             {zones.map(h => (
               <Row key={h.id} k={`hz:${h.id}`} selected={selected} onSelect={onSelect}>
@@ -362,7 +362,7 @@ function Stations({ live, selected, onSelect }: TabProps) {
   const hot = live.stations.filter(s => s.hot_by.length > 0)
   const sorted = [...live.stations].sort((a, b) => Number(b.hot_by.length > 0) - Number(a.hot_by.length > 0))
   return (
-    <Section title="Stations" icon={<Strike size={13} />} count={`${hot.length} hot · ${live.stations.length}`} right={<Link to="/brief" className="text-[11.5px] muted hover:text-[var(--chalk)]">Coordinates →</Link>}>
+    <Section title="Stations" icon={<Bombing size={13} />} count={`${hot.length} hot · ${live.stations.length}`} right={<Link to="/brief" className="text-[11.5px] muted hover:text-[var(--chalk)]">Coordinates →</Link>}>
       {sorted.length === 0 ? <Empty title="No stations" /> : (
         <ul className="rdock-list">
           {sorted.map(s => {

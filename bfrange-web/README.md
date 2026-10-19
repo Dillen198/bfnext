@@ -177,7 +177,21 @@ wireframe in side elevation, plan and deck detail with the pass drawn on
 it, from `bfdb/src/range/deckplan.rs`); a drop is a range score sheet; a
 field landing is a pattern record (the pattern in plan with every leg
 coloured, height against time, the final against a 3° glidepath, the
-rollout and the taxi); every other kind sits in the same form frame. In mock mode the trap, bomb and field
+rollout and the taxi). Every other discipline has its own form on one shared
+layout (`bfdb/src/range/sheets.rs`): the event and its parameters in boxed
+fields, the score block, a drawing made from what that result records (the
+strafe pit, the receiver in the tanker's frame, the missile engagement and
+its range against time, the fight in plan, the anti-ship attack and the
+weapon's height, the drop zone or the pad, the troop timeline, the gunnery
+lane, CAS distances, the SEAD shot, the hot zone tally, the low-level route
+and its gates, the CSAR timeline) and the instructor's remarks.
+
+Every discipline has its own icon: the range pack in the shared icon set
+(`shared/icons/index.tsx`, "Training range"), used for the kinds and the
+stations here. The bot's Discord emoji are rendered from the same drawings
+by bfdb (`WRITE_RANGE_ICONS=1 cargo test -p bfdb write_range_icons`,
+`bfdb/src/range/icons.rs`), and every result post leads with its
+discipline's emoji. In mock mode the trap, bomb and field
 landing cards are bfdb's own rendering of its test fixtures (`src/mock/cards/`,
 regenerate with `CARD_OUT=<dir> cargo test -p bfdb write_card_samples`).
 

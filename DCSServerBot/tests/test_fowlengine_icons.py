@@ -116,10 +116,13 @@ def test_every_png_is_a_glyph_key_and_every_glyph_key_has_a_png():
 
 def test_render_script_draws_exactly_the_glyph_keys():
     src = (ICON_DIR / "render_icons.py").read_text(encoding="utf-8")
-    table = src[src.index("ICONS = {"):]
+    table = src[src.index("ICONS = {"):src.index("RANGE = [")]
     drawn = re.findall(r'"vs_([a-z0-9_]+)": icon_', table)
-    assert len(drawn) == len(set(drawn))
-    assert set(drawn) == set(ic.glyph_keys())
+    # the range disciplines: drawn in shared/icons, rendered by bfdb
+    rng = src[src.index("RANGE = ["):]
+    rendered = re.findall(r'"vs_(r_[a-z0-9_]+)"', rng[:rng.index("]")])
+    assert len(drawn) == len(set(drawn)) and not set(drawn) & set(rendered)
+    assert set(drawn) | set(rendered) == set(ic.glyph_keys())
 
 
 def test_aliases_point_at_glyphs_and_keep_their_own_fallback():
@@ -619,3 +622,31 @@ def test_about_yaml_loads_and_documents_the_placeholder(no_fowlengine):
     src = (_community_dir("about") / "commands.py").read_text(encoding="utf-8")
     for key in ("globe", "book", "dashboard"):
         assert f'"emoji": "{{icon:{key}}}"' in src
+
+
+def test_range_embeds_expand_the_discipline_icon():
+    """bfdb's range embed carries {icon:r_bomb} on its pilot line; rangefeed
+    turns it into the icon (here the unicode stand-in, nothing installed)."""
+    import shutil
+    import sys
+    import tempfile
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        pkg = tmp / "fe_rf"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        for n in ("rangefeed.py", "icons.py"):
+            shutil.copy(PLUGIN / n, pkg / n)
+        sys.path.insert(0, str(tmp))
+        rf = importlib.import_module("fe_rf.rangefeed")
+        d = rf.normalize_embed({
+            "title": "Bombing result",
+            "description": "{icon:r_bomb} **Casper | F18**",
+            "fields": [{"name": "Score", "value": "{icon:good} 4 m", "inline": True}],
+        })
+        assert d["description"] == f"{ic.FALLBACK['r_bomb']} **Casper | F18**"
+        assert d["fields"][0]["value"].startswith(ic.FALLBACK["good"])
+        assert "{icon:" not in str(d)
+    finally:
+        sys.path.remove(str(tmp))
+        shutil.rmtree(tmp, ignore_errors=True)

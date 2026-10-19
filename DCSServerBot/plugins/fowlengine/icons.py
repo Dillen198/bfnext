@@ -79,6 +79,12 @@ FALLBACK = {
     "gold": "🥇", "silver": "🥈", "bronze": "🥉", "players": "👥",
     # range feed
     "day": "☀️", "night": "🌙", "wind": "💨", "fuel": "⛽", "carrier": "⚓",
+    # range disciplines: drawn once in shared/icons/index.tsx, these PNGs
+    # rendered from it by bfdb (WRITE_RANGE_ICONS=1 cargo test -p bfdb
+    # write_range_icons); CAS, SEAD and CSAR use the campaign's own above
+    "r_trap": "⚓", "r_bomb": "💣", "r_strafe": "🎯", "r_aar": "⛽", "r_missile": "🚀",
+    "r_bfm": "⚔️", "r_antiship": "🚢", "r_sling": "🪝", "r_landing": "🚁", "r_troops": "🪖",
+    "r_gunnery": "🎯", "r_hotzone": "🔥", "r_lowlevel": "⛰️", "r_field": "🛬",
     # the community plugins (about, faq, rules, tickets, smartmod, radio) --
     # they resolve through this table via their own _icons.py
     "play": "▶️", "skip": "⏭️", "stop": "⏹️", "prev": "◀️", "next": "▶️",

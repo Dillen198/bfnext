@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from typing import Iterable, Optional
 from urllib.parse import quote, urlparse
 
-from .icons import icon
+from .icons import icon, render
 
 __all__ = [
     "RANGE_SITE_URL", "FEED_LIMIT", "MAX_POSTS_PER_POLL", "RECENT_IDS_KEEP",
@@ -311,9 +311,11 @@ def normalize_embed(data) -> dict:
     footer = d.get("footer")
     if isinstance(footer, dict):
         footer = footer.get("text")
+    # bfdb marks its icons as icon placeholders (the discipline's icon on the pilot
+    # line); they become the custom emoji here, before the length limits
     out = {
         "title": _clip(_s(d.get("title")).strip(), _TITLE_MAX),
-        "description": _clip(_s(d.get("description")).strip(), _DESC_MAX),
+        "description": _clip(render(_s(d.get("description"))).strip(), _DESC_MAX),
         "url": _url(d.get("url")),
         "color": _color(d.get("color", d.get("colour"))),
         "fields": [],
@@ -336,8 +338,8 @@ def normalize_embed(data) -> dict:
         if not isinstance(f, dict):
             continue
         out["fields"].append({
-            "name": _clip(_s(f.get("name")).strip(), _FIELD_NAME_MAX) or _ZWSP,
-            "value": _clip(_s(f.get("value")).strip(), _FIELD_VALUE_MAX) or _ZWSP,
+            "name": _clip(render(_s(f.get("name"))).strip(), _FIELD_NAME_MAX) or _ZWSP,
+            "value": _clip(render(_s(f.get("value"))).strip(), _FIELD_VALUE_MAX) or _ZWSP,
             "inline": bool(f.get("inline", False)),
         })
 

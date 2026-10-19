@@ -824,6 +824,109 @@ export const Refuel = createIcon('Refuel', <>
   <path d="M16.5 9.5v8" />
 </>)
 
+// The disciplines a range result can be. One glyph each, so a list of
+// results reads by shape before the words. Parts marked data-a="..." take that
+// accent colour as Discord emoji (bfdb renders the emoji from these very
+// paths: `write_range_icons`); on the web they are plain currentColor.
+
+/** TRAP -- the lens as the pilot sees it: the datum bars either side of the
+ *  meatball. Nothing else says "carrier pass" at 16px. */
+export const Trap = createIcon('Trap', <>
+  <path d="M2 12h5.5M16.5 12H22" data-a="green" />
+  <path d="M9.5 3.5h5v17h-5z" />
+  <path d="M12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 1 0 0-5" data-a="amber" />
+</>)
+
+/** BOMBING -- a slick bomb falling, tail fins up, onto the scoring rings. */
+export const Bombing = createIcon('Bombing', <>
+  <path d="M12 4c2.4 0 3.6 2.3 3.6 5S14 13.6 12 14.5c-2-.9-3.6-2.8-3.6-5.5S9.6 4 12 4z" />
+  <path d="M8.5 2.5h7M12 2.5V4" />
+  <path d="M2.5 19c0-1.7 4.3-3 9.5-3s9.5 1.3 9.5 3-4.3 2.5-9.5 2.5-9.5-.8-9.5-2.5z" />
+  <path d="M9.5 19h5" data-a="red" />
+</>)
+
+/** STRAFE -- a burst walking up to the target panel. */
+export const Strafe = createIcon('Strafe', <>
+  <path d="M2.5 21.5 5 19M7.5 16.5 10 14M12.5 11.5 15 9" data-a="amber" />
+  <path d="M15.5 2.5h6v6h-6z" />
+  <path d="M18.5 5.5h.01" data-a="red" />
+</>)
+
+/** MISSILE DEFENCE -- a missile on its smoke trail, coming in. */
+export const MissileDefence = createIcon('MissileDefence', <>
+  <path d="M21.5 2.5 19.5 9 15 4.5z" data-a="red" />
+  <path d="M17.25 6.75 8 16" />
+  <path d="M6 14l4 4" />
+  <path d="M2.5 21.5l2-2" />
+</>)
+
+/** BFM -- two fighters chasing round the circle, one blue, one red. */
+export const Bfm = createIcon('Bfm', <>
+  <path d="M4 13.5A8 8 0 0 1 14.5 4" data-a="blue" />
+  <path d="M12 2.5 14.5 4l-1.8 2.4" data-a="blue" />
+  <path d="M20 10.5A8 8 0 0 1 9.5 20" data-a="red" />
+  <path d="M12 21.5 9.5 20l1.8-2.4" data-a="red" />
+</>)
+
+/** ANTI-SHIP -- a sea-skimmer coming down on a warship. */
+export const AntiShip = createIcon('AntiShip', <>
+  <path d="M2.5 16.5h19l-2.5 5h-14z" />
+  <path d="M7.5 16.5v-3.5h6v3.5" />
+  <path d="M10.5 13V9.5" />
+  <path d="M21.5 2.5 17 11" data-a="red" />
+</>)
+
+/** SLING LOAD -- the hook and bridle under the helicopter, a load on it. */
+export const SlingLoad = createIcon('SlingLoad', <>
+  <path d="M12 2.5v6" />
+  <path d="M12 8.5a1.5 1.5 0 1 0 1.5 1.5" />
+  <path d="M6 15l6-4.5 6 4.5" />
+  <path d="M4.5 15h15v6.5h-15z" data-a="amber" />
+</>)
+
+/** HELIPAD -- the H in its circle: a precision or deck landing. */
+export const Helipad = createIcon('Helipad', <>
+  <path d="M12 2.5a9.5 9.5 0 1 0 0 19 9.5 9.5 0 1 0 0-19" />
+  <path d="M8.5 7.5v9M15.5 7.5v9M8.5 12h7" data-a="green" />
+</>)
+
+/** TROOP DROP -- two soldiers off the ramp. */
+export const TroopDrop = createIcon('TroopDrop', <>
+  <path d="M7 2.5a2 2 0 1 0 0 4 2 2 0 1 0 0-4M17 2.5a2 2 0 1 0 0 4 2 2 0 1 0 0-4" />
+  <path d="M7 9v5.5l-3 7M7 14.5l3 7" />
+  <path d="M17 9v5.5l-3 7M17 14.5l3 7" />
+  <path d="M3.5 11h7M13.5 11h7" data-a="green" />
+</>)
+
+/** GUNNERY -- a pop-up target on its post at the end of the lane. */
+export const Gunnery = createIcon('Gunnery', <>
+  <path d="M3 21.5 7 7.5M21 21.5 17 7.5" />
+  <path d="M9.5 17.5v-6a2.5 2.5 0 0 1 5 0v6z" />
+  <path d="M12 17.5v4M8.5 21.5h7" />
+  <path d="M12 12.5h.01" data-a="red" />
+</>)
+
+/** HOT ZONE -- a fire inside the zone's hexagon: live opposition. */
+export const HotZone = createIcon('HotZone', <>
+  <path d="M12 2.5 20.5 7.25v9.5L12 21.5 3.5 16.75v-9.5z" />
+  <path d="M12 7.5c2.6 2.4 3.6 4 3.6 6a3.6 3.6 0 0 1-7.2 0c0-1.5.8-2.6 1.8-3.4.2 1.2.7 2 1.7 2.4-.4-1.8-.4-3.4.1-5z" data-a="amber" />
+</>)
+
+/** LOW LEVEL -- the route hugging the ridgeline under the ceiling. */
+export const LowLevel = createIcon('LowLevel', <>
+  <path d="M2 21.5 7 14l3.5 4.5 4-7 7.5 10" />
+  <path d="M2.5 9.5c3.5 0 5.5-2 9.5-2s6 2 9 2" data-a="amber" />
+  <path d="M19 7l2.5 2.5L19 12" data-a="amber" />
+</>)
+
+/** FIELD LANDING -- the runway in perspective, the glidepath into it. */
+export const FieldLanding = createIcon('FieldLanding', <>
+  <path d="M5 21.5 9.5 7.5h5l4.5 14z" />
+  <path d="M12 10.5v1.5M12 14.5v2M12 19v2.5" />
+  <path d="M2.5 2.5 9 7" data-a="green" />
+  <path d="M6.2 7.3 9 7l-.6-2.8" data-a="green" />
+</>)
+
 /** CALCULATOR -- display window over a key grid; the tall key is enter. */
 export const Calculator = createIcon('Calculator', <>
   <path d="M4.5 2.5h15v19h-15z" />

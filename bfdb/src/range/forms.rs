@@ -35,15 +35,15 @@ use std::fmt::Write;
 
 const FT: f64 = 3.28084;
 const NM: f64 = 1852.;
-const MONO: &str = "Consolas, 'Cascadia Mono', 'Courier New', monospace";
-const HAND: &str = "'Segoe Print', 'Bradley Hand', 'Comic Sans MS', cursive";
+pub(crate) const MONO: &str = "Consolas, 'Cascadia Mono', 'Courier New', monospace";
+pub(crate) const HAND: &str = "'Segoe Print', 'Bradley Hand', 'Comic Sans MS', cursive";
 const HEAD_H: f64 = 104.;
-const FOOT_H: f64 = 44.;
+pub(crate) const FOOT_H: f64 = 44.;
 const DECK_FILL: &str = "#dde3e8";
 
 // ── form chrome ─────────────────────────────────────────────────────────
 
-fn text_f(s: &mut Svg, x: f64, y: f64, t: &str, size: f64, fill: &str, anchor: Anchor, bold: bool, family: &str) {
+pub(crate) fn text_f(s: &mut Svg, x: f64, y: f64, t: &str, size: f64, fill: &str, anchor: Anchor, bold: bool, family: &str) {
     let a = match anchor {
         Anchor::Start => "start",
         Anchor::Middle => "middle",
@@ -66,7 +66,7 @@ fn classification(s: &mut Svg, y: f64) {
 }
 
 /// The form header: classification, title, the form number box. Ends at `HEAD_H`.
-fn head(s: &mut Svg, rec: &RangeRecord, title: &str, sub: &str, form_no: &str) {
+pub(crate) fn head(s: &mut Svg, rec: &RangeRecord, title: &str, sub: &str, form_no: &str) {
     let w = s.w;
     classification(s, 0.);
     s.text(24., 54., title, 27., TEXT, Anchor::Start, true);
@@ -81,7 +81,7 @@ fn head(s: &mut Svg, rec: &RangeRecord, title: &str, sub: &str, form_no: &str) {
     s.line(24., 97., w - 24., 97., TEXT, 0.6, None);
 }
 
-fn foot(s: &mut Svg, rec: &RangeRecord) {
+pub(crate) fn foot(s: &mut Svg, rec: &RangeRecord) {
     let (w, h) = (s.w, s.h);
     let y = h - FOOT_H;
     s.line(24., y + 4., w - 24., y + 4., TEXT, 0.8, None);
@@ -91,7 +91,7 @@ fn foot(s: &mut Svg, rec: &RangeRecord) {
 }
 
 /// A boxed field: small caps label top-left, the value under it.
-fn field(s: &mut Svg, x: f64, y: f64, w: f64, h: f64, label: &str, value: &str, size: f64, color: &str, mono: bool) {
+pub(crate) fn field(s: &mut Svg, x: f64, y: f64, w: f64, h: f64, label: &str, value: &str, size: f64, color: &str, mono: bool) {
     s.rect(x, y, w, h, "none", Some((TEXT, 1.)), 0.);
     s.text(x + 6., y + 12., label, 9.5, MUTED, Anchor::Start, true);
     let max = ((w - 12.) / (size * 0.56)).max(4.) as usize;
@@ -102,7 +102,7 @@ fn field(s: &mut Svg, x: f64, y: f64, w: f64, h: f64, label: &str, value: &str, 
     }
 }
 
-fn panel_title(s: &mut Svg, x: f64, y: f64, title: &str, note: &str) {
+pub(crate) fn panel_title(s: &mut Svg, x: f64, y: f64, title: &str, note: &str) {
     s.text(x, y, title, 12., TEXT, Anchor::Start, true);
     let w = s.w;
     if !note.is_empty() {

@@ -1369,6 +1369,16 @@ ICONS = {
 }
 
 
+# The range disciplines are drawn once, in the shared web icon set
+# (shared/icons/index.tsx), and rendered to PNG from those paths by bfdb:
+#   WRITE_RANGE_ICONS=1 cargo test -p bfdb write_range_icons
+# (bfdb/src/range/icons.rs). Not drawn here; listed so the preview shows them.
+RANGE = [
+    "vs_r_trap", "vs_r_bomb", "vs_r_strafe", "vs_r_aar", "vs_r_missile", "vs_r_bfm", "vs_r_antiship",
+    "vs_r_sling", "vs_r_landing", "vs_r_troops", "vs_r_gunnery", "vs_r_hotzone", "vs_r_lowlevel", "vs_r_field",
+]
+
+
 def _preview() -> None:
     """Contact sheet of the whole set on a dark ground.
 
@@ -1377,7 +1387,7 @@ def _preview() -> None:
     catch that is to look at them together.
     """
     cols, cell, lab = 8, 96, 18
-    names = list(ICONS)
+    names = list(ICONS) + [n for n in RANGE if os.path.exists(os.path.join(OUT_DIR, f"{n}.png"))]
     rows = (len(names) + cols - 1) // cols
     sheet = Image.new("RGBA", (cols * cell, rows * (cell + lab)), (30, 34, 40, 255))
     d = ImageDraw.Draw(sheet)

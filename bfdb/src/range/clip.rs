@@ -661,7 +661,10 @@ mod tests {
     }
 
     fn cut_text(text: &str) -> Clip {
-        let dir = std::env::temp_dir().join(format!("bfdb-clip-{}-{}", std::process::id(), text.len()));
+        // one folder a call: tests run in parallel, and two texts can be the same length
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let k = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("bfdb-clip-{}-{k}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("t.txt.acmi");
         std::fs::write(&p, text).unwrap();

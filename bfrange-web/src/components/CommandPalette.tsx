@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Aircraft, Carrier, Explosion, LogOut, Moon, Pilot, Refuel, Search, Strike, Sun, type IconComponent } from '@icons'
+import { Aircraft, Bombing, Carrier, HotZone, LogOut, Moon, Pilot, Refuel, Search, Sun, type IconComponent } from '@icons'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
@@ -68,7 +68,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         out.push({
           id: `station:${s.id}`, group: 'Stations', label: s.name,
           hint: `${STATION_KIND_LABEL[s.kind]}${s.laser_code !== null ? ` · laser ${s.laser_code}` : ''} · ${grouped ? 'impact group' : 'show on map'}`,
-          icon: Strike, run: grouped ? go(`/stations/${encodeURIComponent(s.id)}`) : focus(`station:${s.id}`),
+          icon: Bombing, run: grouped ? go(`/stations/${encodeURIComponent(s.id)}`) : focus(`station:${s.id}`),
         })
       }
       for (const c of live.carriers) {
@@ -78,7 +78,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
         out.push({ id: `tanker:${t.id}`, group: 'Range assets', label: t.callsign, hint: `${airframe(t.unit_type)} · ${t.tacan ?? ''} ${t.freq_mhz.toFixed(3)} · show on map`, icon: Refuel, run: focus(`tanker:${t.id}`) })
       }
       for (const h of live.hot_zones ?? []) {
-        out.push({ id: `hz:${h.id}`, group: 'Range assets', label: h.name, hint: `hot zone · ${h.bandits} bandits · show on map`, icon: Explosion, run: focus(`hz:${h.id}`) })
+        out.push({ id: `hz:${h.id}`, group: 'Range assets', label: h.name, hint: `hot zone · ${h.bandits} bandits · show on map`, icon: HotZone, run: focus(`hz:${h.id}`) })
       }
     }
     for (const p of pilots.data ?? []) {

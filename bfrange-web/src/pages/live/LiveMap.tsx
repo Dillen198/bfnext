@@ -13,7 +13,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Layer, Marker, Source, type MapLayerMouseEvent, type MapRef, type MarkerEvent } from 'react-map-gl/maplibre'
 import type { Feature, FeatureCollection } from 'geojson'
-import { Aircraft, Antenna, Armor, Carrier, Crosshair, Csar, Explosion, Helicopter, Layers as LayersIcon, Maximize2, Radar, Refuel, Sam, Ship, Strike, type IconComponent } from '@icons'
+import { Aircraft, AntiShip, Antenna, Armor, Bombing, Carrier, Csar, Gunnery, Helicopter, HotZone, Layers as LayersIcon, Maximize2, Radar, Refuel, Sam, Ship, Strafe, type IconComponent } from '@icons'
 import { RangeMap } from '../../components/RangeMap'
 import { useTheme } from '../../context/ThemeContext'
 import { airframe, fmt, pad3 } from '../../lib/format'
@@ -27,14 +27,14 @@ import { SECTOR_HIT_LAYER, SectorCard, SectorLabels, SectorLegend, SectorShapes,
 const ROTARY = /^(UH|CH|AH|Mi|Ka|SA342|OH)/
 
 const STATION_ICON: Record<StationKind, IconComponent> = {
-  bomb_circle: Strike,
-  strafe_pit: Crosshair,
-  tactical_array: Strike,
+  bomb_circle: Bombing,
+  strafe_pit: Strafe,
+  tactical_array: Bombing,
   convoy: Armor,
-  coord_target: Strike,
-  laser_target: Strike,
-  ship_target: Ship,
-  gunnery_lane: Armor,
+  coord_target: Bombing,
+  laser_target: Bombing,
+  ship_target: AntiShip,
+  gunnery_lane: Gunnery,
   sam_site: Sam,
 }
 
@@ -312,7 +312,7 @@ export function LiveMap({ live, height, selected = null, onSelect, focus = null 
             <Marker key={h.id} latitude={h.pos.lat} longitude={h.pos.lon} anchor="left" offset={[-11, 0]} {...pick(key)}>
               <div className={`flex items-center gap-1.5${selCls(key)}`} title={`${h.name}: ${h.bandits} bandit(s) up, ${h.ground_alive}/${h.ground_total} ground targets${h.awacs ? ` · AWACS ${h.awacs}` : ''}`}>
                 <span className="mk-box" style={{ width: 22, height: 22, borderColor: HOT, color: HOT }}>
-                  <Explosion size={14} />
+                  <HotZone size={14} />
                 </span>
                 {detail >= 0 && (
                   <span className="map-label" style={{ color: HOT }}>

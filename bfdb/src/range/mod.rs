@@ -33,9 +33,11 @@ pub(crate) mod clip;
 pub(crate) mod deckplan;
 pub(crate) mod discord;
 pub(crate) mod forms;
+pub(crate) mod icons;
 pub(crate) mod ingest;
 pub(crate) mod insights;
 pub(crate) mod quals;
+pub(crate) mod sheets;
 pub(crate) mod store;
 
 use crate::{
