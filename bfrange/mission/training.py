@@ -252,7 +252,7 @@ def extra_drawings(ll2xz):
                 layers[layer].append({"visible": True, "layerName": layer, "primitiveType": "Polygon",
                                       "polygonMode": "circle", "radius": r, "mapX": x, "mapY": y,
                                       "name": f"{z} ring", "colorString": _rgba(0xFF3B3B, 0xc0),
-                                      "fillColorString": _rgba(0xFF3B3B, 0x00), "thickness": 2,
+                                      "fillColorString": _rgba(0xFF3B3B, 0x00), "thickness": 1,
                                       "style": "dash", "angle": 0})
     for j in layout.JAMMERS:
         layer = attacker_layer[j["side"]]
@@ -260,7 +260,7 @@ def extra_drawings(ll2xz):
         layers[layer].append({"visible": True, "layerName": layer, "primitiveType": "Polygon",
                               "polygonMode": "circle", "radius": j["radius_nm"] * NM, "mapX": x, "mapY": y,
                               "name": f"{j['id']} radius", "colorString": _rgba(layout.COLOURS["ew"], 0xff),
-                              "fillColorString": _rgba(layout.COLOURS["ew"], 0x14), "thickness": 3,
+                              "fillColorString": _rgba(layout.COLOURS["ew"], 0x0c), "thickness": 2,
                               "style": "dash", "angle": 0})
     for r in layout.ROUTES:
         layer = {"blue": "Blue", "red": "Red", "all": "Common"}[r["side"]]
@@ -268,14 +268,14 @@ def extra_drawings(ll2xz):
         x0, y0 = pts[0]
         layers[layer].append({"visible": True, "layerName": layer, "primitiveType": "Line", "lineMode": "segments",
                               "name": f"{r['id']} route", "mapX": x0, "mapY": y0, "closed": False,
-                              "colorString": _rgba(layout.COLOURS["low_level"], 0xff), "thickness": 4,
+                              "colorString": _rgba(layout.COLOURS["low_level"], 0xc0), "thickness": 2,
                               "style": "dash", "points": [{"x": px - x0, "y": py - y0} for px, py in pts]})
         # the sector's own label sits at gate 1 and says where it starts
         for (z, _), (px, py) in zip(r["gates"], pts):
             layers[layer].append({"visible": True, "layerName": layer, "primitiveType": "Polygon",
                                   "polygonMode": "circle", "radius": r.get("gate_m", 1000), "mapX": px, "mapY": py,
                                   "name": f"{z} gate", "colorString": _rgba(layout.COLOURS["low_level"], 0xff),
-                                  "fillColorString": _rgba(layout.COLOURS["low_level"], 0x30), "thickness": 3,
+                                  "fillColorString": _rgba(layout.COLOURS["low_level"], 0x18), "thickness": 1,
                                   "style": "solid", "angle": 0})
     return layers
 

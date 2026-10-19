@@ -2,14 +2,14 @@
   "_copyright": "Copyright (c) 2026 Dillen Weerasinghe. All rights reserved. Proprietary; see the repository NOTICE file.",
   "netidx_base": "/local/fowl/range",
   "name": "Vector Strike Range",
-  "welcome": "Welcome to the Vector Strike Range, Mariana Islands. The grey outlines on the F10 map are the real range complex airspace; the coloured sectors inside each have one job and F10 > Range > Sectors lists them. The missile trainer is ON. Debriefs and spawning: range.vectorstrike.org",
+  "welcome": "Welcome to the Vector Strike Range, Mariana Islands. The thin outlines on the F10 map are the real range complex airspace and the filled areas inside are the ranges; every one has a job and F10 > Range > Sectors lists them. The missile trainer is ON. Debriefs and spawning: range.vectorstrike.org",
   "sectors": [
     {
       "id": "w-517",
       "name": "W-517",
       "kind": "air_to_air",
       "side": "all",
-      "purpose": "Warning area SW of Guam: BFM / ACM set-ups, duels, live missile shots. Floor 5,000 ft",
+      "purpose": "Warning area SW of Guam: BFM / ACM set-ups, live missile shots. Floor 5,000 ft",
       "shape": {
         "polygon": [
           {
@@ -40,11 +40,42 @@
       }
     },
     {
+      "id": "atcaa-2",
+      "name": "ATCAA 2 (W-12)",
+      "kind": "duel",
+      "side": "all",
+      "purpose": "Duels round W-517: 1v1 / 2v2 by agreement, missile trainer on, guns are real",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 12.3333,
+            "lon": 143.0
+          },
+          {
+            "lat": 12.8333,
+            "lon": 144.1667
+          },
+          {
+            "lat": 12.8333,
+            "lon": 144.6833
+          },
+          {
+            "lat": 10.6974,
+            "lon": 144.8281
+          },
+          {
+            "lat": 10.7667,
+            "lon": 143.0128
+          }
+        ]
+      }
+    },
+    {
       "id": "atcaa-1",
       "name": "ATCAA 1 (W-11)",
       "kind": "bvr",
       "side": "all",
-      "purpose": "BVR presentations, Fox 1 / Fox 3 missile defence, large-force set-ups",
+      "purpose": "BVR presentations, Fox 1 / Fox 3 missile defence",
       "shape": {
         "polygon": [
           {
@@ -66,6 +97,185 @@
           {
             "lat": 10.7866,
             "lon": 145.1692
+          }
+        ]
+      }
+    },
+    {
+      "id": "atcaa-5",
+      "name": "ATCAA 5",
+      "kind": "air_to_air",
+      "side": "all",
+      "purpose": "BFM west of Guam: set-ups and dogfights away from the W-517 traffic. Floor 5,000 ft",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 13.5833,
+            "lon": 144.0
+          },
+          {
+            "lat": 13.25,
+            "lon": 144.0
+          },
+          {
+            "lat": 12.0,
+            "lon": 141.5
+          },
+          {
+            "lat": 13.7,
+            "lon": 141.5
+          },
+          {
+            "lat": 14.0,
+            "lon": 142.8333
+          }
+        ]
+      }
+    },
+    {
+      "id": "atcaa-6",
+      "name": "ATCAA 6",
+      "kind": "air_to_air",
+      "side": "all",
+      "purpose": "Over the islands: intercepts and DCA CAP above FL150; the ground ranges work below it",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 15.4167,
+            "lon": 144.25
+          },
+          {
+            "lat": 15.4167,
+            "lon": 146.4167
+          },
+          {
+            "lat": 13.0,
+            "lon": 146.4167
+          },
+          {
+            "lat": 13.0,
+            "lon": 144.25
+          }
+        ]
+      }
+    },
+    {
+      "id": "atcaa-3a",
+      "name": "ATCAA 3A (W-13A)",
+      "kind": "bvr",
+      "side": "all",
+      "purpose": "Large-force exercises: strike packages into R-7201 against red air presentations",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 17.0,
+            "lon": 145.0833
+          },
+          {
+            "lat": 17.0,
+            "lon": 146.3333
+          },
+          {
+            "lat": 16.0,
+            "lon": 146.4167
+          },
+          {
+            "lat": 15.5,
+            "lon": 146.1667
+          },
+          {
+            "lat": 15.6667,
+            "lon": 146.0
+          },
+          {
+            "lat": 15.7,
+            "lon": 145.5833
+          }
+        ]
+      }
+    },
+    {
+      "id": "atcaa-3b",
+      "name": "ATCAA 3B (W-13B)",
+      "kind": "anti_ship",
+      "side": "all",
+      "purpose": "Maritime strike: the escorted convoy (AS-2) steams here; SINKEX and harpoon shots",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 17.0,
+            "lon": 146.3334
+          },
+          {
+            "lat": 17.0,
+            "lon": 147.0
+          },
+          {
+            "lat": 14.4167,
+            "lon": 147.0
+          },
+          {
+            "lat": 14.1167,
+            "lon": 146.3167
+          },
+          {
+            "lat": 13.5833,
+            "lon": 146.0
+          },
+          {
+            "lat": 13.85,
+            "lon": 145.5667
+          },
+          {
+            "lat": 14.0834,
+            "lon": 145.5666
+          },
+          {
+            "lat": 14.8333,
+            "lon": 146.2667
+          },
+          {
+            "lat": 15.2333,
+            "lon": 146.3333
+          },
+          {
+            "lat": 15.5,
+            "lon": 146.1667
+          },
+          {
+            "lat": 16.0,
+            "lon": 146.4167
+          }
+        ]
+      }
+    },
+    {
+      "id": "atcaa-3c",
+      "name": "ATCAA 3C (W-13C)",
+      "kind": "bvr",
+      "side": "all",
+      "purpose": "Intercepts east of the chain: Fox 3 presentations at range",
+      "shape": {
+        "polygon": [
+          {
+            "lat": 17.0,
+            "lon": 147.0
+          },
+          {
+            "lat": 17.0,
+            "lon": 147.1667
+          },
+          {
+            "lat": 16.25,
+            "lon": 148.0
+          },
+          {
+            "lat": 14.75,
+            "lon": 148.0
+          },
+          {
+            "lat": 14.4167,
+            "lon": 147.0
           }
         ]
       }
@@ -120,7 +330,7 @@
     },
     {
       "id": "ar-shell",
-      "name": "AR SHELL (LOCAL)",
+      "name": "AR SHELL",
       "kind": "aar",
       "side": "all",
       "purpose": "KC-130 basket (helicopters too), 14,000 ft, TACAN 53Y, 253.0. West of Guam",
@@ -135,11 +345,25 @@
       }
     },
     {
+      "id": "r-7201a",
+      "name": "R-7201A",
+      "kind": "air_to_ground",
+      "side": "all",
+      "purpose": "FDM approach: hold on the 12 nm ring, check the range clear, run in to R-7201",
+      "shape": {
+        "circle": {
+          "lat": 16.017,
+          "lon": 146.06,
+          "radius_m": 22224.0
+        }
+      }
+    },
+    {
       "id": "r-7201",
       "name": "R-7201 FDM",
       "kind": "air_to_ground",
       "side": "all",
-      "purpose": "Farallon de Medinilla: bomb circle, strafe pit (run in from the SSW), coordinate targets",
+      "purpose": "Farallon de Medinilla: bomb circle, strafe pit (run in from the NNE along the island), coordinate targets",
       "shape": {
         "circle": {
           "lat": 16.017,
@@ -556,7 +780,7 @@
       "loc": {
         "zone": "R7201-STRAFE"
       },
-      "heading_deg": 29,
+      "heading_deg": 209,
       "side": "red",
       "country": "CJTF Red",
       "strafe": {
@@ -577,7 +801,7 @@
           "y": 15
         }
       ],
-      "note": "Foul line 2000 ft. Run in from the SSW over the water, heading 029."
+      "note": "Foul line 2000 ft. Run in from the NNE along the island, heading 209."
     },
     {
       "id": "r7201-jdam",
@@ -1263,6 +1487,17 @@
         "floor_ft": 5000
       },
       {
+        "id": "atcaa-2",
+        "name": "ATCAA 2 (W-12)",
+        "loc": {
+          "lat": 11.59902,
+          "lon": 143.86553
+        },
+        "radius_nm": 50.7,
+        "duels": true,
+        "floor_ft": 5000
+      },
+      {
         "id": "atcaa-1",
         "name": "ATCAA 1 (W-11)",
         "loc": {
@@ -1270,6 +1505,50 @@
           "lon": 145.85739
         },
         "radius_nm": 39.7,
+        "duels": true,
+        "floor_ft": 5000
+      },
+      {
+        "id": "atcaa-5",
+        "name": "ATCAA 5",
+        "loc": {
+          "lat": 13.14939,
+          "lon": 142.23358
+        },
+        "radius_nm": 41.6,
+        "duels": true,
+        "floor_ft": 5000
+      },
+      {
+        "id": "atcaa-6",
+        "name": "ATCAA 6",
+        "loc": {
+          "lat": 14.08981,
+          "lon": 145.32856
+        },
+        "radius_nm": 62.9,
+        "duels": true,
+        "floor_ft": 15000
+      },
+      {
+        "id": "atcaa-3a",
+        "name": "ATCAA 3A (W-13A)",
+        "loc": {
+          "lat": 16.47829,
+          "lon": 145.85134
+        },
+        "radius_nm": 30.2,
+        "duels": true,
+        "floor_ft": 5000
+      },
+      {
+        "id": "atcaa-3c",
+        "name": "ATCAA 3C (W-13C)",
+        "loc": {
+          "lat": 15.12663,
+          "lon": 147.50089
+        },
+        "radius_nm": 29.0,
         "duels": true,
         "floor_ft": 5000
       }

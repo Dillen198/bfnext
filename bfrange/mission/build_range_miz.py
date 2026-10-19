@@ -62,6 +62,7 @@ MIZ_NAME = "VS_Range_Marianas.miz"
 # the range config and the F10 drawings are all generated from that table.
 
 import layout  # noqa: E402
+import markers  # noqa: E402
 import training  # noqa: E402
 from layout import SECTORS, NM  # noqa: E402,F401
 
@@ -107,12 +108,15 @@ everything you fly is graded. Results, debriefs, the greenie board and the
 spawner are at https://range.vectorstrike.org
 
 THE MARIANA ISLANDS RANGE COMPLEX
-The grey outlines on the F10 map are the real special use airspace around
+The thin outlines on the F10 map are the real special use airspace around
 Guam and the Northern Marianas (the briefing picture is the NAVFAC chart):
 the ATCAAs over the warning areas, W-517, and R-7201 round Farallon de
-Medinilla. The range uses it for what it is used for in life. Every coloured
-area is a SECTOR with one job; F10 > Range > Sectors lists them nearest first
-with bearing and range, and you are told what a sector is for when you fly in.
+Medinilla. Every block has a job, the one it has in life; the filled areas
+inside are the ranges. F10 > Range > Sectors lists them nearest first with
+bearing and range, and you are told what a sector is for when you fly in.
+The ranges are marked on the ground like real ones: tyre rings round the
+bomb circle and the arrays, a tyre foul line on the strafe pit, flags on the
+coordinate targets and the gunnery lane, tyre pads and cones for helicopters.
   amber  air-to-ground     yellow  tactical / CAS    red    threat / SEAD
   tan    CA gunnery        lime    helicopter        cyan   air-to-air
   blue   BVR               green   tanker tracks     white  carrier ops
@@ -126,10 +130,16 @@ FLY IT LIKE THE REAL THING
   the entry line from the ARIP, join at the ARCP, leave on the exit line.
 
 AIR-TO-AIR
-  W-517              BFM / ACM, duels, live missile shots (SW of Guam)
+  W-517              BFM / ACM, live missile shots (SW of Guam)
+  ATCAA 2 (W-12)     duels, round W-517
+  ATCAA 5            BFM west of Guam
   ATCAA 1 (W-11)     BVR presentations, Fox 1 / Fox 3 defence
+  ATCAA 3C (W-13C)   intercepts east of the chain
+  ATCAA 3A (W-13A)   large-force strikes into R-7201 against red air
+  ATCAA 6            over the islands: intercepts and DCA above FL150
 AIR-TO-GROUND
-  R-7201 FDM         bomb circle, strafe pit (run in 029 from the SSW), JDAM
+  R-7201A            the 12 nm ring round FDM: hold, then run in
+  R-7201 FDM         bomb circle, strafe pit (run in 209 from the NNE), JDAM
   TN-1 NORTH FIELD   Tinian: tactical array laser 1688, convoy, JDAM,
                      JTAC Axeman 133.0
   TN-2 TINIAN MLA    tiered targets: easy / medium (AAA) / hard (SHORAD)
@@ -149,7 +159,7 @@ AT SEA
                      recovery tanker A-6E 63Y 261.0. Every pass graded.
   FD-1 APRA          frigate decks: FFG-7 41X, DDG 42X
   AS-1 SINKEX        undefended hulks in W-517
-  AS-2 CONVOY        escorted convoy in W-13B, warships weapons free
+  ATCAA 3B (W-13B)   maritime strike; AS-2 escorted convoy, weapons free
 TANKERS
   AR RIO     KC-135 boom        51Y 251.0  FL250
   AR MIRAGE  KC-135MPRS basket  52Y 252.0  FL210, next to FDM
@@ -372,7 +382,7 @@ TANKERS = {
     "ar-luxor": ("texaco2", "Texaco", 2, "KC-135", 24000, 254.0, 54, "TX2", "blue", "CJTF Blue"),
 }
 
-ARENA_FLOOR_FT = {}
+ARENA_FLOOR_FT = {"atcaa-6": 15000}
 
 
 def sector_cfg(s):
@@ -396,7 +406,7 @@ def build_config():
     red = ("red", "CJTF Red")
     stations = (
         # blue only: every target is red kit
-        conventional("R7201", "r7201", "R-7201 FDM", *red, strafe_hdg=29, run_in="the SSW over the water")
+        conventional("R7201", "r7201", "R-7201 FDM", *red, strafe_hdg=layout.FDM_STRAFE_HDG, run_in="the NNE along the island")
         + [coord_targets("R7201", "r7201", "R-7201 FDM", *red)]
         + tactical("TN1", "tn1", "TN-1 North Field", *red, 1688)
         + threat("R3", "r3", "R-3 Aguijan", *red)
@@ -428,7 +438,7 @@ def build_config():
     return {
         "netidx_base": "/local/fowl/range",
         "name": "Vector Strike Range",
-        "welcome": "Welcome to the Vector Strike Range, Mariana Islands. The grey outlines on the F10 map are the real range complex airspace; the coloured sectors inside each have one job and F10 > Range > Sectors lists them. The missile trainer is ON. Debriefs and spawning: range.vectorstrike.org",
+        "welcome": "Welcome to the Vector Strike Range, Mariana Islands. The thin outlines on the F10 map are the real range complex airspace and the filled areas inside are the ranges; every one has a job and F10 > Range > Sectors lists them. The missile trainer is ON. Debriefs and spawning: range.vectorstrike.org",
         "sectors": [sector_cfg(s) for s in SECTORS],
         "stations": stations,
         "tankers": tankers,
@@ -478,51 +488,22 @@ def _rgba(rgb, alpha):
     return "0x%06x%02x" % (rgb, alpha)
 
 
-def _wrap(text, width=46):
-    out, line = [], ""
-    for word in text.split():
-        if line and len(line) + 1 + len(word) > width:
-            out.append(line)
-            line = word
-        else:
-            line = f"{line} {word}".strip()
-    if line:
-        out.append(line)
-    return out
-
-
 LAYER = {"blue": "Blue", "red": "Red", "all": "Common"}
 
 
-def _textbox(name, layer, at, text, rgb, size=12, alpha=0xd0):
+def _textbox(name, layer, at, text, rgb, size=9, alpha=0x00):
+    """A label: small coloured text with no border, and by default no
+    background, so it never hides the sectors under it."""
     return {"visible": True, "layerName": layer, "primitiveType": "TextBox",
             "mapX": at[0], "mapY": at[1], "name": name, "text": text,
-            "font": "DejaVuLGCSansCondensed.ttf", "fontSize": size, "borderThickness": 2,
+            "font": "DejaVuLGCSansCondensed.ttf", "fontSize": size, "borderThickness": 0,
             "colorString": _rgba(rgb, 0xff), "fillColorString": "0x101418%02x" % alpha, "angle": 0}
 
 
-def airspace_drawings():
-    """The real airspace under the sectors: each outline dotted grey with its
-    real name, and every refuelling track's entry and exit lines with the
+def ar_line_drawings():
+    """Every published refuelling track's entry and exit lines, with the
     ARIP and ARCP marked."""
-    rgb = layout.AIRSPACE_COLOUR
     out = []
-    for a in layout.AIRSPACE:
-        shape = a["shape"]
-        common = {"visible": True, "layerName": "Common", "primitiveType": "Polygon",
-                  "colorString": _rgba(rgb, 0xc0), "fillColorString": _rgba(rgb, 0x00),
-                  "thickness": 3, "style": "dot", "angle": 0, "name": a["name"]}
-        if shape[0] == "circle":
-            x, z = ll2xz(*shape[1])
-            out.append({**common, "polygonMode": "circle", "radius": shape[2], "mapX": x, "mapY": z})
-        else:
-            ring = sector_ring(shape)
-            cx = sum(p[0] for p in ring) / len(ring)
-            cz = sum(p[1] for p in ring) / len(ring)
-            out.append({**common, "polygonMode": "free", "mapX": cx, "mapY": cz,
-                        "points": [{"x": px - cx, "y": pz - cz} for px, pz in ring]})
-        text = a["name"] + (f"\n{a['note']}" if a["note"] else "")
-        out.append(_textbox(f"{a['name']} label", "Common", sector_label_at(shape), text, rgb, 10, 0x90))
     green = layout.COLOURS["aar"]
     for name, t in layout.AR_TRACKS.items():
         for leg in ("entry", "exit"):
@@ -530,12 +511,12 @@ def airspace_drawings():
             x0, z0 = pts[0]
             out.append({"visible": True, "layerName": "Common", "primitiveType": "Line", "lineMode": "segments",
                         "name": f"{name.upper()} {leg}", "mapX": x0, "mapY": z0, "closed": False,
-                        "colorString": _rgba(green, 0xb0), "thickness": 3, "style": "dash" if leg == "exit" else "solid",
+                        "colorString": _rgba(green, 0xb0), "thickness": 2, "style": "dash" if leg == "exit" else "solid",
                         "points": [{"x": px - x0, "y": pz - z0} for px, pz in pts]})
         out.append(_textbox(f"{name.upper()} ARIP", "Common", ll2xz(*t["entry"][0]),
-                            f"{name.upper()} ARIP", green, 10, 0x90))
+                            f"{name.upper()} ARIP", green, 8))
         out.append(_textbox(f"{name.upper()} ARCP", "Common", ll2xz(*t["entry"][-1]),
-                            f"{name.upper()} ARCP", green, 10, 0x90))
+                            f"{name.upper()} ARCP", green, 8))
     return out
 
 
@@ -547,43 +528,48 @@ def sector_drawings():
 
     Returns {layer name: [objects]}."""
     layers = {"Blue": [], "Red": [], "Common": []}
-    layers["Common"] += airspace_drawings()
+    layers["Common"] += ar_line_drawings()
     for s in SECTORS:
         rgb = layout.COLOURS[s["kind"]]
         shape = s["shape"]
         layer = LAYER[s["side"]]
         style = "dash" if s["kind"] in layout.DASHED_KINDS else "solid"
         common = {"visible": True, "layerName": layer, "primitiveType": "Polygon",
-                  "colorString": _rgba(rgb, 0xff), "fillColorString": _rgba(rgb, 0x1a if s["side"] == "all" else 0x2c),
-                  "thickness": 6 if s["kind"] == "aar" else 8, "style": style, "angle": 0}
+                  "colorString": _rgba(rgb, 0xe0), "fillColorString": _rgba(rgb, 0x12),
+                  "thickness": 2 if s["kind"] == "aar" else 3, "style": style, "angle": 0}
         if shape[0] == "circle":
             _, c, r = shape
             x, z = ll2xz(*c)
+            if s.get("airspace"):
+                common = {**common, "fillColorString": _rgba(rgb, 0x00), "colorString": _rgba(rgb, 0xb0), "thickness": 2}
             layers[layer].append({**common, "polygonMode": "circle", "radius": r, "mapX": x, "mapY": z, "name": s["name"]})
         elif shape[0] == "route":
             pass  # drawn as a line with its gates by training.extra_drawings
+        elif s.get("airspace"):
+            # real airspace: a closed line in the sector's colour, no fill (the
+            # big blocks overlap everything else)
+            ring = sector_ring(shape)
+            x0, z0 = ring[0]
+            layers[layer].append({"visible": True, "layerName": layer, "primitiveType": "Line", "lineMode": "segments",
+                                  "closed": True, "name": s["name"], "mapX": x0, "mapY": z0,
+                                  "colorString": _rgba(rgb, 0xb0), "thickness": 2, "style": "solid",
+                                  "points": [{"x": px - x0, "y": pz - z0} for px, pz in ring]})
         else:
             ring = sector_ring(shape)
-            cx = sum(p[0] for p in ring) / len(ring)
-            cz = sum(p[1] for p in ring) / len(ring)
-            layers[layer].append({**common, "polygonMode": "free", "mapX": cx, "mapY": cz, "name": s["name"],
-                                  # distinct vertices only: DCS closes the ring
-                                  # itself, and a repeated first point kills the fill
-                                  "points": [{"x": px - cx, "y": pz - cz} for px, pz in ring]})
-        if s["kind"] in layout.SMALL_KINDS:
-            text = f"{s['name']}\n{layout.KIND_LABEL[s['kind']]}"
-            size = 11
-        else:
-            side = {"blue": "BLUE", "red": "RED", "all": "ALL"}[s["side"]]
-            text = "\n".join([s["name"], f"{layout.KIND_LABEL[s['kind']]} - {side}"] + _wrap(s["purpose"]))
-            size = 12
-        layers[layer].append(_textbox(f"{s['name']} label", layer, sector_label_at(shape), text, rgb, size))
+            x0, z0 = ring[0]
+            # DCS draws a free polygon from its anchor, so the anchor is the
+            # first vertex and the first point is (0, 0), as the Mission Editor
+            # writes it; distinct vertices only, DCS closes the ring itself
+            layers[layer].append({**common, "polygonMode": "free", "mapX": x0, "mapY": z0, "name": s["name"],
+                                  "points": [{"x": px - x0, "y": pz - z0} for px, pz in ring]})
+        text = f"{s['name']}\n{s.get('tag') or layout.KIND_LABEL[s['kind']]}"
+        layers[layer].append(_textbox(f"{s['name']} label", layer, sector_label_at(shape), text, rgb))
     for layer, objs in training.extra_drawings(ll2xz).items():
         layers[layer] += objs
     legend = ["VECTOR STRIKE RANGE - MARIANA ISLANDS",
-              "Grey dotted: the real range complex airspace",
-              "(ATCAAs, W- warning areas, R-7201 FDM).",
-              "Every coloured area inside it has one job:",
+              "Thin lines: the real range complex airspace",
+              "(ATCAAs, W- warning areas, R-7201 FDM), each",
+              "with a job; filled areas inside are the ranges.",
               "amber  air-to-ground     yellow  tactical / CAS",
               "red    threat / SEAD     tan     CA gunnery",
               "lime   helicopter        cyan    air-to-air",
@@ -599,7 +585,7 @@ def sector_drawings():
               "PT- pattern  FD- frigate decks",
               "Red dashed rings: SAM threat rings",
               "F10 > Range > Sectors: bearing and range to each"]
-    layers["Common"].append(_textbox("Range legend", "Common", ll2xz(*layout.LEGEND_AT), "\n".join(legend), 0xF2F2F2, 12, 0xe0))
+    layers["Common"].append(_textbox("Range legend", "Common", ll2xz(*layout.LEGEND_AT), "\n".join(legend), 0xF2F2F2, 9, 0x60))
     return layers
 
 
@@ -713,6 +699,26 @@ def build_mission(m, dictionary, next_ids):
             blue[cat] = T({"group": T()})
         grps = blue[cat]["group"]
         grps[len(grps) + 1] = grp
+
+    # --- the range markings on the ground: neutral, hidden on F10
+    neutrals = m["coalition"]["neutrals"]["country"]
+    un = next((c for c in neutrals.values() if c["name"] == markers.COUNTRY), None)
+    if un is None:
+        un = lt({"id": markers.COUNTRY_ID, "name": markers.COUNTRY})
+        neutrals[len(neutrals) + 1] = un
+    un["static"] = T({"group": T()})
+    statics = un["static"]["group"]
+    for name, typ, ll in markers.all_markers():
+        x, z = ll2xz(*ll)
+        statics[len(statics) + 1] = lt({
+            "heading": 0, "groupId": gid, "hidden": True, "dead": False, "x": x, "y": z, "name": name,
+            "route": {"points": [{"alt": 0, "type": "", "name": "", "y": z, "speed": 0, "x": x,
+                                  "formation_template": "", "action": ""}]},
+            "units": [{"category": "Fortifications", "type": typ, "unitId": uid, "x": x, "y": z,
+                       "name": name, "heading": 0}],
+        })
+        gid += 1
+        uid += 1
 
     # --- Combined Arms slots
     gc = m["groundControl"]

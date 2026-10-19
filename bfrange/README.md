@@ -55,9 +55,10 @@ Islands Range Complex" chart, so it is good to about a minute. Positions use
 the terrain's own transverse Mercator (`bfrange/mission/tmproj.py`, with the
 same parameters pydcs uses).
 
-**Sectors.** The range's 22 sectors sit inside that airspace, one job each,
-and are defined once in `bfrange/mission/layout.py`. W-517, ATCAA 1, R-7201
-and the AR tracks are the real airspace itself. Where two sectors overlap,
+**Sectors.** All 29 sectors are defined once in
+`bfrange/mission/layout.py`, each with one job. Every block of the real
+airspace is a sector, with the job it has in life, and is drawn as a thin
+closed line. The ranges inside the airspace are drawn as filled outlines. Where two sectors overlap,
 the engine reports the smaller one, so R-7201 inside W-13A reads the way it
 does on a chart. From that table the builder makes:
 
@@ -74,11 +75,18 @@ fly into it, once per 15 minutes per sector.
 
 | Sector | Where | For |
 |---|---|---|
-| W-517 | warning area SW of Guam | BFM / ACM set-ups, duels, live missile shots |
+| W-517 | warning area SW of Guam | BFM / ACM set-ups, live missile shots |
+| ATCAA 2 (W-12) | round W-517 | duels, 1v1 / 2v2 by agreement |
+| ATCAA 5 | west of Guam | BFM away from the W-517 traffic |
 | ATCAA 1 (W-11) | south-east of Guam | BVR presentations, Fox 1 / Fox 3 defence |
+| ATCAA 3A (W-13A) | round FDM | large-force strikes into R-7201 against red air |
+| ATCAA 3B (W-13B) | east of Tinian and Saipan | maritime strike, with the AS-2 convoy in it |
+| ATCAA 3C (W-13C) | east of the chain | intercepts, Fox 3 at range |
+| ATCAA 6 | over the islands | intercepts and DCA above FL150 (arena floor 15,000 ft) |
+| R-7201A | 12 nm round FDM | holding and run-ins for R-7201 |
 | AR RIO, AR MIRAGE, AR LUXOR | the published tracks | KC-135 51Y 251.0, KC-135MPRS 52Y 252.0, KC-135 54Y 254.0 |
 | AR SHELL (LOCAL) | west of Guam | KC-130 53Y 253.0, helicopters too |
-| R-7201 FDM | Farallon de Medinilla | bomb circle, strafe pit (run in 029 from the SSW), coordinate targets |
+| R-7201 FDM | Farallon de Medinilla | bomb circle, strafe pit (run in 209 from the NNE, rounds into the sea), coordinate targets |
 | TN-1 NORTH FIELD | Tinian | tactical array (laser 1688), convoy on the old runways, JDAM targets, JTAC Axeman 133.0 |
 | TN-2 TINIAN MLA | Tinian | **tiered** targets: easy, medium (AAA), hard (SHORAD) |
 | EW-1 TINIAN SOUTH | Tinian | **GPS jammer** over coordinate targets |
@@ -94,6 +102,19 @@ fly into it, once per 15 minutes per sector.
 | FD-1 APRA | off Apra Harbor | **frigate decks**: Perry 41X and Arleigh Burke 42X |
 | AS-1 SINKEX | in W-517 | undefended hulks for anti-ship weapons |
 | AS-2 ESCORTED CONVOY | in W-13B | red warships (Krivak, Neustrashimy, Tor-armed Project 22160), weapons free |
+
+**Markings on the ground** (`bfrange/mission/markers.py`) make the ranges look
+like real ones:
+
+* tyre rings round the bomb circle and each target array
+* a tyre foul line across the strafe pit's run-in
+* red flags round the coordinate targets
+* a firing line and distance flags on the gunnery lane
+* a tyre pad, a windsock, the confined LZ's corners and cones round each
+  pickup and drop zone for the helicopters
+
+They are neutral (UN Peacekeepers), so hitting one isn't a team kill. They
+are hidden on F10 and don't respawn.
 
 The target zones were placed on satellite imagery (Esri World Imagery) and
 not probed in the sim. Open the mission in the Mission Editor once and check

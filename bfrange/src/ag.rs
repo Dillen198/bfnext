@@ -776,10 +776,11 @@ fn draw_station(lua: MizLua, st: &Station) {
             TextSpec {
                 pos: LuaVec3(label),
                 color: c,
-                fill_color: Color::new(0., 0., 0., 0.55),
-                font_size: 12,
+                // small, no background: the station's name says what it is
+                fill_color: Color::new(0., 0., 0., 0.),
+                font_size: 9,
                 read_only: true,
-                text: format!("{} ({}){laser}", st.cfg.name, kind_name(st.cfg.kind)).as_str().into(),
+                text: format!("{}{laser}", st.cfg.name).as_str().into(),
             },
         )?;
         Ok(())

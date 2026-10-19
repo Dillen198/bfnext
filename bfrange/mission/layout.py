@@ -16,14 +16,16 @@ Blue only. Everyone flies from Guam (Andersen AFB, Won Pat) or the decks,
 the way a real exercise launches from Andersen and works up the chain. The
 opposition is AI: target arrays, threat emitters, an IADS, a hot zone CAP.
 
-AIRSPACE is the real airspace, drawn as reference outlines with its real
-names; the boundaries are the published ones (they come out on whole arc
-minutes from the Marianas SUA mission's drawings), W-517 is traced from the
-NAVFAC "Airspace in the Mariana Islands Range Complex" chart. SECTORS are
-the range's jobs, each placed inside the airspace it belongs to; some are
-the airspace itself (W-517, ATCAA 1, the AR tracks, R-7201). Where two
-sectors overlap the engine reports the smaller one, so a restricted area
-inside a warning area reads the way it does on a chart.
+Every block of the real airspace is a sector with a job: the warning areas
+and ATCAAs for air-to-air, BVR, duels, large-force and maritime strike,
+R-7201 and R-7201A for bombing, the published AR tracks for refuelling. The
+boundaries are the published ones (they come out on whole arc minutes from
+the Marianas SUA mission's drawings); W-517 is traced from the NAVFAC
+"Airspace in the Mariana Islands Range Complex" chart. Those are drawn as
+thin closed lines (`airspace=True`), the range's smaller sectors inside them
+as filled outlines. Where two sectors overlap the engine reports the
+smaller one, so a restricted area inside a warning area reads the way it
+does on a chart.
 
 Shapes:
     ("rect", (lat, lon), east_west_m, north_south_m)
@@ -43,6 +45,7 @@ THEATRE = "MarianaIslands"
 ANDERSEN = (13.5840, 144.9300)   # RWY 06/24 L/R
 WON_PAT = (13.4834, 144.7960)    # RWY 06/24 L/R
 FDM = (16.0170, 146.0600)        # Farallon de Medinilla, the middle of the island
+FDM_STRAFE_HDG = 209             # strafe run-in along the island from the NNE, rounds into the sea
 
 # Discipline colours for the F10 drawings, 0xRRGGBB. Fill alpha is added by
 # the builder; the legend on the map explains them.
@@ -65,9 +68,6 @@ COLOURS = {
     "pattern":       0xF2F2F2,   # white, dashed
     "ship_deck":     0xF2F2F2,   # white, dashed
 }
-
-# The real airspace's outlines: a quiet grey, dotted, under the sectors.
-AIRSPACE_COLOUR = 0xB4BEC8
 
 # Drawn with a dashed outline rather than a solid one.
 DASHED_KINDS = ("aar", "csar", "pattern", "ship_deck", "hot_zone")
@@ -110,18 +110,6 @@ ATCAA_3C = [(17.0000, 147.0000), (17.0000, 147.1667), (16.2500, 148.0000), (14.7
 ATCAA_5 = [(13.5833, 144.0000), (13.2500, 144.0000), (12.0000, 141.5000), (13.7000, 141.5000),
            (14.0000, 142.8333)]
 ATCAA_6 = [(15.4167, 144.2500), (15.4167, 146.4167), (13.0000, 146.4167), (13.0000, 144.2500)]
-
-# Reference outlines, drawn only (the sectors below carry the jobs). W-517,
-# ATCAA 1 and R-7201 are sectors themselves and are not repeated here.
-AIRSPACE = [
-    dict(name="ATCAA 2", shape=("poly", ATCAA_2), note="over W-12 / W-517"),
-    dict(name="ATCAA 3A", shape=("poly", ATCAA_3A), note="W-13A, over FDM"),
-    dict(name="ATCAA 3B", shape=("poly", ATCAA_3B), note="W-13B"),
-    dict(name="ATCAA 3C", shape=("poly", ATCAA_3C), note="W-13C"),
-    dict(name="ATCAA 5", shape=("poly", ATCAA_5), note=""),
-    dict(name="ATCAA 6", shape=("poly", ATCAA_6), note="over the islands"),
-    dict(name="R-7201A", shape=("circle", FDM, 12 * NM), note="FDM 12 nm"),
-]
 
 # Refuelling tracks as published: the racetrack's centre, its long axis and
 # footprint (from the SUA mission's drawings), and the entry (ARIP to ARCP)
@@ -166,29 +154,51 @@ LL1_GATES = [("LL1-G1", (13.660, 144.862), "RITIDIAN"), ("LL1-G2", (13.602, 144.
 
 # id, name, kind, for ("blue" | "red" | "all"), shape, one line of what is in it
 SECTORS = [
-    # ---- the warning areas and ATCAAs: air-to-air, as in life
-    dict(id="w-517", name="W-517", kind="air_to_air", side="all",
+    # ---- the warning areas and ATCAAs: every block has a job, as in life
+    dict(id="w-517", name="W-517", kind="air_to_air", side="all", airspace=True,
          shape=("poly", W_517),
-         purpose="Warning area SW of Guam: BFM / ACM set-ups, duels, live missile shots. Floor 5,000 ft"),
-    dict(id="atcaa-1", name="ATCAA 1 (W-11)", kind="bvr", side="all",
+         purpose="Warning area SW of Guam: BFM / ACM set-ups, live missile shots. Floor 5,000 ft"),
+    dict(id="atcaa-2", name="ATCAA 2 (W-12)", kind="duel", side="all", airspace=True,
+         shape=("poly", ATCAA_2),
+         purpose="Duels round W-517: 1v1 / 2v2 by agreement, missile trainer on, guns are real"),
+    dict(id="atcaa-1", name="ATCAA 1 (W-11)", kind="bvr", side="all", airspace=True,
          shape=("poly", ATCAA_1),
-         purpose="BVR presentations, Fox 1 / Fox 3 missile defence, large-force set-ups"),
+         purpose="BVR presentations, Fox 1 / Fox 3 missile defence"),
+    dict(id="atcaa-5", name="ATCAA 5", kind="air_to_air", side="all", airspace=True,
+         shape=("poly", ATCAA_5),
+         purpose="BFM west of Guam: set-ups and dogfights away from the W-517 traffic. Floor 5,000 ft"),
+    dict(id="atcaa-6", name="ATCAA 6", kind="air_to_air", side="all", airspace=True,
+         shape=("poly", ATCAA_6),
+         purpose="Over the islands: intercepts and DCA CAP above FL150; the ground ranges work below it"),
+    dict(id="atcaa-3a", name="ATCAA 3A (W-13A)", kind="bvr", side="all", airspace=True,
+         shape=("poly", ATCAA_3A),
+         purpose="Large-force exercises: strike packages into R-7201 against red air presentations"),
+    dict(id="atcaa-3b", name="ATCAA 3B (W-13B)", kind="anti_ship", side="all", airspace=True,
+         shape=("poly", ATCAA_3B),
+         purpose="Maritime strike: the escorted convoy (AS-2) steams here; SINKEX and harpoon shots"),
+    dict(id="atcaa-3c", name="ATCAA 3C (W-13C)", kind="bvr", side="all", airspace=True,
+         shape=("poly", ATCAA_3C),
+         purpose="Intercepts east of the chain: Fox 3 presentations at range"),
 
     # ---- the published refuelling tracks
-    dict(id="ar-rio", name="AR RIO", kind="aar", side="all", shape=_track("rio"),
+    dict(id="ar-rio", name="AR RIO", kind="aar", side="all", shape=_track("rio"), tag="KC-135 51Y 251.0 FL250",
          purpose="KC-135 boom, FL250, TACAN 51Y, 251.0. Enter on the RIO line from W-11"),
-    dict(id="ar-mirage", name="AR MIRAGE", kind="aar", side="all", shape=_track("mirage"),
+    dict(id="ar-mirage", name="AR MIRAGE", kind="aar", side="all", shape=_track("mirage"), tag="MPRS 52Y 252.0 FL210",
          purpose="KC-135MPRS basket, FL210, TACAN 52Y, 252.0. Next to FDM: tank before or after R-7201"),
-    dict(id="ar-luxor", name="AR LUXOR", kind="aar", side="all", shape=_track("luxor"),
+    dict(id="ar-luxor", name="AR LUXOR", kind="aar", side="all", shape=_track("luxor"), tag="KC-135 54Y 254.0 FL240",
          purpose="KC-135 boom, FL240, TACAN 54Y, 254.0. Enter on the LUXOR line past W-517"),
-    dict(id="ar-shell", name="AR SHELL (LOCAL)", kind="aar", side="all",
+    dict(id="ar-shell", name="AR SHELL", kind="aar", side="all", tag="KC-130 53Y 253.0 14,000 ft",
          shape=("track", (13.42, 144.42), 0, 20 * NM, 6 * NM),
          purpose="KC-130 basket (helicopters too), 14,000 ft, TACAN 53Y, 253.0. West of Guam"),
 
-    # ---- R-7201: Farallon de Medinilla, the live impact area
+    # ---- R-7201: Farallon de Medinilla, the live impact area, and its
+    # 12 nm R-7201A round it for holding and run-ins
+    dict(id="r-7201a", name="R-7201A", kind="air_to_ground", side="all", airspace=True,
+         shape=("circle", FDM, 12 * NM),
+         purpose="FDM approach: hold on the 12 nm ring, check the range clear, run in to R-7201"),
     dict(id="r-7201", name="R-7201 FDM", kind="air_to_ground", side="all",
          shape=("circle", FDM, 3 * NM),
-         purpose="Farallon de Medinilla: bomb circle, strafe pit (run in from the SSW), coordinate targets"),
+         purpose="Farallon de Medinilla: bomb circle, strafe pit (run in from the NNE along the island), coordinate targets"),
 
     # ---- Tinian, the military lease area: north to south, CAS, tiers, jamming
     dict(id="tn-1", name="TN-1 NORTH FIELD", kind="tactical", side="all",
@@ -230,7 +240,7 @@ SECTORS = [
          purpose="Low-level route round the coast, Ritidian to Orote, 8 gates: below 500 ft AGL, 420 kts"),
 
     # ---- the sea
-    dict(id="oparea", name="CV OPAREA", kind="carrier", side="all",
+    dict(id="oparea", name="CV OPAREA", kind="carrier", side="all", tag="CVN 72X ICLS 11 | LHA 71X",
          shape=("circle", (13.100, 145.350), 20 * NM),
          purpose="CVN-72 TACAN 72X ICLS 11 Link-4 336.0 | LHA-1 TACAN 71X | recovery tanker A-6E 63Y 261.0"),
     dict(id="fd-1", name="FD-1 APRA", kind="ship_deck", side="all",
@@ -259,13 +269,11 @@ def centre(sector_id):
 # outline whichever way DCS grows the box from its anchor.
 LEGEND_AT = (15.30, 141.70)
 
-# Sectors that get a two-line tag (name and kind) instead of a full label.
-# DCS draws text at a fixed screen size, so at theatre zoom full labels pile
-# on top of each other; what each sector is for is on F10 > Range > Sectors
-# and is announced when you fly in. Tanker tracks and the carrier keep their
-# full labels: the frequencies and TACANs on them are what you need in flight.
-SMALL_KINDS = ("air_to_ground", "tactical", "threat", "gunnery", "helo", "ew", "csar", "pattern", "ship_deck",
-               "low_level", "hot_zone", "anti_ship", "air_to_air", "bvr", "duel")
+# Every sector's label is two short lines: its name, and its `tag` (the
+# frequencies, for tankers and the carrier) or else its kind. DCS draws text
+# at a fixed screen size, so at theatre zoom anything longer piles up; what
+# each sector is for is on F10 > Range > Sectors and is announced when you
+# fly in.
 
 
 # ------------------------------------------------------------------ zones
@@ -278,8 +286,9 @@ SMALL_KINDS = ("air_to_ground", "tactical", "threat", "gunnery", "helo", "ew", "
 ZONES = [
     # R-7201 FDM: the island runs NNE-SSW (029), about 4 km by 600 m at its
     # widest. Bomb circle on its middle, strafe pit on the south end (run in
-    # along the island from the SSW, over the water), coordinate targets on
-    # the wide north end. Placed on satellite imagery.
+    # along the island from the NNE so the foul line is on land and the
+    # rounds go into the sea), coordinate targets on the wide north end.
+    # Placed on satellite imagery.
     ("R7201-BOMB", (16.0175, 146.0592), 150),
     ("R7201-STRAFE", (16.0061, 146.0520), 150),
     ("R7201-JDAM", (16.0270, 146.0625), 200),

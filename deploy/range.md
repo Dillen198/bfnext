@@ -17,7 +17,7 @@ Every step, in order. The sections further down have the detail.
 |---|---|---|
 | 1 | **Build the three binaries/apps** on the dev box: `. .\setup-build.ps1`, then `cargo build --release --package=bfrange` (`target\release\bfrange.dll`) and `cargo build --release --package=bfdb` (the new bfdb with the range module); `cd bfrange-web; npm install; npm run build` for the site. | `bfrange/README.md`, `bfrange-web/README.md` |
 | 2 | **Build the mission.** `python bfrange/mission/build_range_miz.py` writes `VS_Range_Marianas.miz` and its config `VSRANGE_RANGE` to `E:\Saved Games\DCS\Missions\Vector\range\` (already done once; re-run after editing `bfrange/mission/layout.py`). Sortie is `VSRANGE`. The mission loads bfrange through its init script, so there is no trigger to add. | "The range mission" below |
-| 3 | **Check it in the Mission Editor.** Open the `.miz`: the F10 map shows the real range complex airspace in grey and the 22 coloured sectors inside it. Look at the target zones on the islands (`R7201-*` on Farallon de Medinilla, `TN1-*`, `TN2-*`, `EW1-*` on Tinian, `S1-*` on Rota, `HZ1-*` on Saipan) and the helicopter zones (`H1-*` round Andersen): they should sit on dry land, and `H1-PINNACLE` on Mt Santa Rosa. They were placed on satellite imagery, not probed in the sim. To move one, edit `bfrange/mission/layout.py` and re-run the builder (zones, config and drawings move together); a zone dragged in the ME is overwritten by the next build. The engine moves any single target that lands in water to the bank. | "The range mission" |
+| 3 | **Check it in the Mission Editor.** Open the `.miz`: the F10 map shows the 29 sectors (thin lines for the real airspace, filled areas for the ranges inside it). Look at the target zones on the islands (`R7201-*` on Farallon de Medinilla, `TN1-*`, `TN2-*`, `EW1-*` on Tinian, `S1-*` on Rota, `HZ1-*` on Saipan) and the helicopter zones (`H1-*` round Andersen): they should sit on dry land, and `H1-PINNACLE` on Mt Santa Rosa. They were placed on satellite imagery, not probed in the sim. To move one, edit `bfrange/mission/layout.py` and re-run the builder (zones, config and drawings move together); a zone dragged in the ME is overwritten by the next build. The engine moves any single target that lands in water to the bank. | "The range mission" |
 | 4 | **Create the server's Saved Games folder** `DCS.range` (copy a campaign instance's `Config\`), set `serverSettings.lua` name/port/password and put `VS_Range_Marianas.miz` in its mission list. | DCSServerBot step 1 |
 | 5 | **Copy the engine files** into `DCS.range`: `Scripts\bfrange.dll`, `Scripts\Hooks\bfrange_hooks.lua` (and **not** bflib's hooks), `Scripts\Export.lua` + `Scripts\bf_export_port.lua` (`return 42004`), and the config as `DCS.range\VSRANGE_RANGE`. | DCSServerBot steps 2, 3, 5 |
 | 6 | **Tacview** on the instance, export path `DCS.range\Tacview`. | DCSServerBot step 6 |
@@ -47,15 +47,21 @@ with the range's own, and adds:
   under the IADS, the hot zone and the jammer).
 * **Combined Arms**: 2 tactical commanders, 2 JTAC/operators and 2 observers,
   1 Game Master.
-* **The real Mariana Islands Range Complex airspace** drawn in grey with its
-  real names (ATCAA 2, 3A/B/C, 5, 6, R-7201A) and the published refuelling
-  tracks' entry and exit lines (RIO, MIRAGE, LUXOR), and **22 sectors** inside
-  it, one job each (`bfrange/mission/layout.py`; the table is in
-  `bfrange/README.md`): W-517 for air-to-air, ATCAA 1 for BVR, R-7201 at
+* **29 sectors** (`bfrange/mission/layout.py`; the table is in
+  `bfrange/README.md`). Every block of the real Mariana Islands Range Complex
+  airspace is one, drawn as a thin line with its real name and given the job
+  it has in life: W-517 and ATCAA 5 BFM, ATCAA 2 duels, ATCAA 1 and 3C BVR,
+  ATCAA 3A large-force strikes, ATCAA 3B maritime strike, ATCAA 6 intercepts
+  over the islands, R-7201A the run-in ring. The published refuelling tracks
+  (RIO, MIRAGE, LUXOR) are drawn with their entry and exit lines. The ranges
+  inside the airspace are filled areas: R-7201 at
   Farallon de Medinilla for bombing, Tinian's lease area for CAS, tiered
   targets and jamming, an IADS on Rota, a hot zone on Saipan, helicopters,
   gunnery, CSAR and a low-level route on Guam, the carrier and anti-ship
   sectors at sea.
+* **Range markings on the ground** (`bfrange/mission/markers.py`), as on a
+  real range: tyre rings, the strafe pit's foul line, flags, helicopter pads
+  and cones. They are neutral statics, hidden on F10.
 * **43 trigger zones** inside them, one per thing the config places, named
   `<SECTOR>-<WHAT>` (`R7201-BOMB`, `TN1-CONVOY-END`, `H1-PINNACLE`).
 * a clear June morning, sortie `VSRANGE`, and a training briefing.

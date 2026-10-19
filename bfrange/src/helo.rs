@@ -852,7 +852,7 @@ fn draw_pad(lua: MizLua, p: V3, name: &str, radius: f64) {
         act.text_to_all(
             SideFilter::All,
             dcso3::trigger::MarkId::new(),
-            TextSpec { pos: LuaVec3(l), color: c, fill_color: Color::new(0., 0., 0., 0.5), font_size: 11, read_only: true, text: name.into() },
+            TextSpec { pos: LuaVec3(l), color: c, fill_color: Color::new(0., 0., 0., 0.), font_size: 9, read_only: true, text: name.into() },
         )?;
         Ok(())
     })();
