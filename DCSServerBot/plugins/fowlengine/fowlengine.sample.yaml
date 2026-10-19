@@ -223,6 +223,11 @@ DEFAULT:
     # Handed to bfdb as BFDB_ATC_LLM_KEY, never written to gci.json.
     # atc_llm_key: ""                            # secret
     #
+    # Its voices: with gci.range_atc.tts set to openai or elevenlabs, this is
+    # that service's API key (handed to bfdb as BFDB_ATC_TTS_KEY, never
+    # written to gci.json). Kokoro on the box needs none.
+    # atc_tts_key: ""                            # secret
+    #
     # War diary PICTURES (bfdb/src/news_image.rs): one wire-photo style image
     # per filed daily dispatch, shown on the dashboard's WAR NEWS panel / War
     # Diary page and posted with the dispatch to news_channel. OFF until a
@@ -446,6 +451,11 @@ DEFAULT:
     #     tower: {piper_model: 'C:\piper\en_US-ryan-medium.onnx'}
     #     ground: {piper_model: 'C:\piper\en_US-joe-medium.onnx'}
     #   llm: {model: claude-haiku-5-5, timeout_ms: 4000}
+    #   tts:                         # voices that sound like people (key: bfdb.atc_tts_key)
+    #     engine: openai             # openai | elevenlabs | kokoro (Kokoro-FastAPI on the box)
+    #     when: audience             # audience: only while a player is on or someone listens on the site
+    #   publish_pilot_audio: true    # players' own calls on the site's live feed (default on)
+    #   range_control: {freqs: [{mhz: 348.6}], slot_minutes: 20}
 
   # ---------------------------------------------
   # Staged engine binaries  (drag-and-drop)

@@ -9,9 +9,9 @@
 //! turns that into what the voice says, by the radiotelephony rules: numbers
 //! digit by digit ("zero seven zero", "one two"), altitudes in thousands
 //! ("four thousand"), flight levels and frequencies with "point", runway
-//! suffixes as words, and the ICAO "tree", "fife" and "niner" that survive a
-//! noisy radio. A transcript and the audio can then never say different
-//! things.
+//! suffixes as words, and the "niner" that survives a noisy radio (US
+//! controllers say "three" and "five", not ICAO's "tree" and "fife"). A
+//! transcript and the audio can then never say different things.
 
 /// ICAO digit word.
 pub(crate) fn digit_word(d: u32) -> &'static str {
@@ -19,9 +19,10 @@ pub(crate) fn digit_word(d: u32) -> &'static str {
         0 => "zero",
         1 => "one",
         2 => "two",
-        3 => "tree",
+        // US military controllers say "three" and "five"; only "niner" survives
+        3 => "three",
         4 => "four",
-        5 => "fife",
+        5 => "five",
         6 => "six",
         7 => "seven",
         8 => "eight",
@@ -59,7 +60,7 @@ fn cardinal(n: u32) -> String {
 }
 
 /// An altitude in feet, the way a controller says it: "four thousand",
-/// "two thousand one hundred", "one two thousand fife hundred".
+/// "two thousand one hundred", "one two thousand five hundred".
 fn altitude_spoken(ft: u32) -> String {
     let thousands = ft / 1000;
     let hundreds = (ft % 1000) / 100;
@@ -339,10 +340,10 @@ mod tests {
         );
         assert_eq!(
             speak("climb and maintain 4,000, expect FL220, departure 363.8, squawk 4215"),
-            "climb and maintain four thousand, expect flight level two two zero, departure tree six tree point eight, squawk four two one fife"
+            "climb and maintain four thousand, expect flight level two two zero, departure three six three point eight, squawk four two one five"
         );
         assert_eq!(speak("pattern altitude 2,100"), "pattern altitude two thousand one hundred");
-        assert_eq!(speak("12,500"), "one two thousand fife hundred");
+        assert_eq!(speak("12,500"), "one two thousand five hundred");
         assert_eq!(speak("10 miles from touchdown"), "ten miles from touchdown");
         assert_eq!(speak("altimeter 2992"), "altimeter two niner niner two");
         assert_eq!(speak("traffic two o'clock, 3 miles"), "traffic two o'clock, three miles");

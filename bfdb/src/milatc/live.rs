@@ -93,17 +93,33 @@ pub(crate) fn to_feed_rate(pcm16k: &[i16]) -> Vec<i16> {
     pcm16k.chunks(2).map(|p| ((p[0] as i32 + *p.get(1).unwrap_or(&p[0]) as i32) / 2) as i16).collect()
 }
 
-/// Put one transmission on the feed, paced in real time. Returns at once; the
-/// pacing runs on its own task. Costs nothing when nobody is listening.
+/// One frequency's turn on the feed: a player's call (which reaches us only
+/// once they unkey) and the controller's answer never play over each other.
+fn floor(inst: &str, station: &str) -> Arc<tokio::sync::Mutex<()>> {
+    static F: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    F.get_or_init(Default::default).lock().unwrap().entry(format!("{inst}|{station}")).or_default().clone()
+}
+
+/// Is anyone listening to an instance's feed right now?
+pub(crate) fn listening(inst: &str) -> bool {
+    hub(inst).receiver_count() > 0
+}
+
+/// Put one transmission on the feed, paced in real time, after anything
+/// still playing on the same frequency. Returns at once; the pacing runs on
+/// its own task. Costs nothing when nobody is listening.
 pub(crate) fn play(inst: &str, station: &str, who: &str, text: &str, pcm16k: &[i16]) {
     let tx = hub(inst);
     if tx.receiver_count() == 0 || pcm16k.is_empty() {
         return;
     }
+    let turn = floor(inst, station);
     let station: Arc<str> = Arc::from(station);
     let pcm = to_feed_rate(pcm16k);
     let on = Frame::On { station: station.clone(), who: Arc::from(who), text: Arc::from(text) };
     tokio::spawn(async move {
+        let _turn = turn.lock().await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
         let _ = tx.send(Arc::new(on));
         let mut tick = tokio::time::interval(Duration::from_millis(100));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

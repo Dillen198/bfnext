@@ -19,6 +19,26 @@ interface Station {
 const tabName = (s: Station) =>
   s.label || (s.position === 'atis' ? 'ATIS' : s.position[0].toUpperCase() + s.position.slice(1))
 
+/** What a frequency is remembered by between visits (ids change when bfdb restarts). */
+const scanKey = (s: Station) => `${s.name}|${s.freq}`
+
+/** The frequencies picked to listen to; null = all of them. */
+function loadScan(): string[] | null {
+  try {
+    const v = JSON.parse(localStorage.getItem('atc-scan') ?? 'null')
+    return Array.isArray(v) && v.length ? v.map(String) : null
+  } catch {
+    return null
+  }
+}
+
+function saveScan(v: string[] | null) {
+  try {
+    if (v) localStorage.setItem('atc-scan', JSON.stringify(v))
+    else localStorage.removeItem('atc-scan')
+  } catch { /* storage blocked */ }
+}
+
 interface Line {
   t: number
   station: string
@@ -198,8 +218,8 @@ class ClipPlayer {
 type OnAir = Record<string, { who: string; text: string }>
 
 /**
- * The live feed: a frequency (or all of them) as it happens, the way
- * LiveATC streams a real airport. Audio arrives over a WebSocket in 100 ms
+ * The live feed: the frequencies picked (or all of them) as they happen, the
+ * way LiveATC streams a real airport. Audio arrives over a WebSocket in 100 ms
  * chunks and is scheduled back to back per frequency, with a little buffer
  * against network jitter; between transmissions there is only silence.
  */
@@ -233,12 +253,16 @@ class LiveFeed {
     void this.ctx.resume()
   }
 
-  /** Tune to a frequency (or `all`), reconnecting if already tuned elsewhere. */
+  /**
+   * Tune to some frequencies (comma-separated ids, or `all`), reconnecting
+   * only when that changes. `skip` filters on this side (ATIS on "all").
+   */
   start(station: string, skip: (station: string) => boolean) {
-    this.station = station
     this.skip = skip
+    const again = !this.live || station !== this.station || !this.ws
+    this.station = station
     this.live = true
-    this.connect()
+    if (again) this.connect()
   }
 
   stop() {
@@ -419,6 +443,8 @@ export default function AtcPage() {
   const [connected, setConnected] = useState(false)
   const [onAir, setOnAir] = useState<OnAir>({})
   const [withAtis, setWithAtis] = useState(false)
+  /** The frequencies picked to listen to, by scanKey; null = all. */
+  const [scan, setScan] = useState<string[] | null>(loadScan)
   const [volume, setVolume] = useState(loadVolume)
   const [playing, setPlaying] = useState<number | null>(null)
   const clips = useMemo(() => new ClipPlayer(setPlaying), [])
@@ -445,12 +471,32 @@ export default function AtcPage() {
     } catch { /* storage blocked */ }
   }, [clips, volume])
 
-  // On "All", ATIS repeats every minute and would drown the rest out.
-  const skip = useCallback((station: string) => tab === 'all' && !withAtis && station.endsWith(':atis'), [tab, withAtis])
-  // Retune when the tab (or the ATIS choice) changes while listening.
+  // The ids of the frequencies picked; ones not on the air right now drop out.
+  const tuned = useMemo(() => {
+    if (!scan || !stations) return null
+    const ids = stations.filter(s => scan.includes(scanKey(s))).map(s => s.id)
+    return ids.length ? ids : null
+  }, [scan, stations])
+  // On "all", ATIS repeats every minute and would drown the rest out.
+  const skip = useCallback((station: string) => !tuned && !withAtis && station.endsWith(':atis'), [tuned, withAtis])
+  const tunedParam = tuned ? tuned.join(',') : 'all'
+  // Retune when the picked frequencies (or the ATIS choice) change while listening.
   useEffect(() => {
-    if (listen) feed.current?.start(tab, skip)
-  }, [listen, tab, skip])
+    if (listen) feed.current?.start(tunedParam, skip)
+  }, [listen, tunedParam, skip])
+  const pickAll = () => {
+    setScan(null)
+    saveScan(null)
+  }
+  /** Add or drop one frequency; from "all", picking one listens to just that one. */
+  const pick = (s: Station) => {
+    const k = scanKey(s)
+    const cur = tuned ? (stations ?? []).filter(x => tuned.includes(x.id)).map(scanKey) : []
+    const next = cur.includes(k) ? cur.filter(x => x !== k) : [...cur, k]
+    const v = next.length ? next : null
+    setScan(v)
+    saveScan(v)
+  }
 
   const toggleListen = () => {
     if (listen) {
@@ -478,7 +524,9 @@ export default function AtcPage() {
   // A frequency someone has spoken on in the last minute.
   const busy = (id: string) => lines.some(l => l.station === id && now - l.t < 60_000)
   const byId = new Map((stations ?? []).map(s => [s.id, s]))
-  const listening = tab === 'all' ? `all frequencies${withAtis ? '' : ' except ATIS'}` : byId.get(tab)?.name ?? ''
+  const listening = !tuned
+    ? `all frequencies${withAtis ? '' : ' except ATIS'}`
+    : tuned.map(id => (byId.get(id) ? `${tabName(byId.get(id)!)} ${byId.get(id)!.freq}` : id)).join(', ')
   const talking = Object.entries(onAir)
 
   return (
@@ -506,12 +554,7 @@ export default function AtcPage() {
               Vol
               <input type="range" min={0.05} max={1} step={0.05} value={volume} onChange={e => setVolume(Number(e.target.value))} style={{ width: 90 }} />
             </label>
-            {tab === 'all' && (
-              <label className="flex items-center gap-1.5 text-[12px] dim">
-                <input type="checkbox" checked={withAtis} onChange={e => setWithAtis(e.target.checked)} />
-                ATIS too
-              </label>
-            )}
+
           </div>
         )}
       </div>
@@ -539,6 +582,41 @@ export default function AtcPage() {
                 <span className="mono dim ml-1.5 text-[11px]">{s.freq}</span>
               </button>
             ))}
+          </div>
+          <div className="panel mb-3">
+            <div className="panel-b">
+              <div className="flex items-center gap-2 flex-wrap text-[12px]" role="group" aria-label="Frequencies to listen to">
+                <span className="dim mr-1">Listen to</span>
+                <button className={`btn-range sm ${tuned ? 'ghost' : ''}`} aria-pressed={!tuned} onClick={pickAll} title="Every frequency at once">
+                  All
+                </button>
+                {stations.map(s => {
+                  const on = !!tuned?.includes(s.id)
+                  return (
+                    <button
+                      key={s.id}
+                      className={`btn-range sm ${on ? '' : 'ghost'}`}
+                      aria-pressed={on}
+                      onClick={() => pick(s)}
+                      title={`${s.name} ${s.freq}`}
+                    >
+                      {onAir[s.id] && (
+                        <span className="mr-1.5" style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 9, background: 'var(--wave)' }} />
+                      )}
+                      {tabName(s)}
+                      <span className="mono ml-1.5 text-[11px]" style={{ opacity: 0.7 }}>{s.freq}</span>
+                    </button>
+                  )
+                })}
+                {!tuned && (
+                  <label className="flex items-center gap-1.5 dim ml-1">
+                    <input type="checkbox" checked={withAtis} onChange={e => setWithAtis(e.target.checked)} />
+                    ATIS too
+                  </label>
+                )}
+              </div>
+              {!listen && <div className="dim text-[12px] mt-2">Pick one frequency, several, or all, then press Listen live.</div>}
+            </div>
           </div>
           {listen && (
             <div className="panel mb-3">
