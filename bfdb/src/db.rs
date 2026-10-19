@@ -1174,6 +1174,9 @@ const RANGE_PROCS: &[&str] = &[
     "range-spawn",
     "range-despawn",
     "range-reset-station",
+    // the spoken ATC (milatc): the radar picture, and its commands back
+    "query-atc",
+    "range-atc",
 ];
 
 /// How long an instance's `stats.jsonl` may go without growing before the
