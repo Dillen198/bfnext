@@ -1994,5 +1994,13 @@
   },
   "in_game_results": true,
   "message_s": 20,
-  "record_tracks": true
+  "record_tracks": true,
+  "live_weather": {
+    "lat": 13.584,
+    "lon": 144.93,
+    "metar_station": "PGUA",
+    "checkwx_api_key": null,
+    "sync_time": true,
+    "utc_offset_hours": 10
+  }
 }

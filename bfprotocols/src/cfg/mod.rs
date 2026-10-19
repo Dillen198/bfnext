@@ -1163,7 +1163,8 @@ pub struct HeloCargoConfig {
 /// to change an already-running mission's weather or clock, so this rewrites
 /// the .miz on disk before bflib triggers the process restart; the new
 /// conditions take effect the next time the mission loads, same approach as
-/// the dcs-real-weather project.
+/// the dcs-real-weather project. The training range uses the same settings
+/// (`RangeCfg::live_weather`); the work itself is the `livewx` crate.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LiveWeatherConfig {
     /// latitude to fetch live weather for
@@ -1171,9 +1172,15 @@ pub struct LiveWeatherConfig {
     /// longitude to fetch live weather for
     pub lon: f64,
     /// also set the mission's date/start_time to the real-world local date
-    /// and time of the machine running the server
+    /// and time (see `utc_offset_hours` for whose)
     #[serde(default)]
     pub sync_time: bool,
+    /// With `sync_time`: the theatre's offset from UTC in hours, so the
+    /// mission clock is the real local time where the mission is set (10 for
+    /// the Marianas, which keep no daylight saving). Unset, the clock of the
+    /// machine running the server is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub utc_offset_hours: Option<f64>,
     /// checkwxapi.com API key. When set together with `metar_station`, the
     /// mission's *surface* layer (wind, temperature, QNH, cloud cover) is taken
     /// from that station's real decoded METAR instead of the open-meteo model.

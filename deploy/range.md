@@ -331,7 +331,9 @@ Paste the blocks from `DCSServerBot/config/SAMPLE-range-server.md`:
   `dll_name: bfrange.dll` + its own `staging_dir`, and `Tacview`.
   **No `BFWeather`**: it rebuilds the mission from the *campaign* base
   template before every load, which would replace the range mission with the
-  campaign. `BFViewLock` isn't needed either (nothing to scout on a range).
+  campaign. The range gets the real weather and time from the engine itself
+  instead (`live_weather` in the `_RANGE` config, see `bfrange/README.md`).
+  `BFViewLock` isn't needed either (nothing to scout on a range).
 * **`servers.yaml`**: the server's own `status` / `chat` channels.
 * **`plugins/scheduler.yaml`**: restart every 8 h of mission time
   (`mission_time: 480`), only when empty (`populated: false`), with

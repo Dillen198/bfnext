@@ -1,62 +1,60 @@
-/*
-Copyright 2024 Eric Stokes.
+// Copyright 2026 Dillen Weerasinghe. MIT licensed: see livewx/LICENSE.
+// Moved out of bflib (bflib/src/bg/live_weather.rs) so the training range
+// engine (bfrange) can share it.
 
-This file is part of bflib.
-
-bflib is free software: you can redistribute it and/or modify it under
-the terms of the GNU Affero Public License as published by the Free
-Software Foundation, either version 3 of the License, or (at your
-option) any later version.
-
-bflib is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
-for more details.
-*/
-
+//! Real-world weather and time for a DCS mission file.
+//!
 //! DCS has no API to change an already-running mission's weather or clock,
 //! so live weather sync works the same way as the dcs-real-weather project:
-//! rewrite the .miz on disk right before bflib triggers the process restart
-//! (see admin::admin_shutdown), so the new conditions take effect the next
-//! time the mission loads.
+//! rewrite the .miz on disk before the mission next loads. bflib does it
+//! right before it triggers the process restart (bflib admin_shutdown);
+//! bfrange does it when DCS starts and when a mission stops.
 
 use anyhow::{Context, Result};
 use bfprotocols::cfg::LiveWeatherConfig;
-use chrono::{Datelike, Timelike, Utc};
+use chrono::{Datelike, FixedOffset, Timelike, Utc};
 use dcso3::env::miz_pack::{
     read_table_from_miz, rewrite_entry_in_miz, scratch_lua, serialize_to_lua,
 };
 use mlua::{Table, Value};
-use std::path::PathBuf;
+use std::path::Path;
 
-pub(super) struct LiveWeatherRequest {
-    pub miz_path: PathBuf,
-    pub cfg: LiveWeatherConfig,
-}
-
-pub(super) fn apply(req: &LiveWeatherRequest) -> Result<()> {
+/// Fetch the real weather (and, with `cfg.sync_time`, the real time) and
+/// write it into the mission file at `miz_path`. Blocking: two HTTP requests
+/// of up to 10 s each, then a rewrite of the archive (atomic: written beside
+/// it and renamed over it).
+pub fn apply(miz_path: &Path, cfg: &LiveWeatherConfig) -> Result<()> {
     // Dropped at the end of the call. This used to be leaked, because
     // serialize_to_lua only took 'static values -- a whole Lua state holding
     // the entire mission table, lost on every call. scratch_lua also keeps
     // io/os away from the mission script it evaluates.
     let lua = scratch_lua()?;
-    let mission: Table = read_table_from_miz(&lua, &req.miz_path, "mission")
+    let mission: Table = read_table_from_miz(&lua, miz_path, "mission")
         .context("reading mission table from miz")?;
-    if req.cfg.sync_time {
-        apply_live_time(&mission).context("applying live time")?;
+    if cfg.sync_time {
+        apply_live_time(&mission, cfg.utc_offset_hours).context("applying live time")?;
     }
-    apply_live_weather(&mission, &req.cfg).context("applying live weather")?;
+    apply_live_weather(&mission, cfg).context("applying live weather")?;
     let s = serialize_to_lua("mission", Value::Table(mission))
         .context("serializing updated mission table")?;
-    rewrite_entry_in_miz(&req.miz_path, "mission", &s)
+    rewrite_entry_in_miz(miz_path, "mission", &s)
         .context("writing updated mission back into miz")?;
     Ok(())
 }
 
 /// set the mission's date and start_time to the current real-world local
-/// date/time of the machine running the server
-fn apply_live_time(mission: &Table) -> Result<()> {
-    let now = chrono::Local::now();
+/// date/time: the theatre's, when its UTC offset is given (the Marianas are
+/// UTC+10), else the machine running the server's
+fn apply_live_time(mission: &Table, utc_offset_hours: Option<f64>) -> Result<()> {
+    let now = match utc_offset_hours {
+        Some(h) => {
+            let secs = (h * 3600.).round() as i32;
+            let tz = FixedOffset::east_opt(secs)
+                .with_context(|| format!("utc_offset_hours {h} is not a UTC offset"))?;
+            Utc::now().with_timezone(&tz).naive_local()
+        }
+        None => chrono::Local::now().naive_local(),
+    };
     let date: Table = mission.raw_get("date").context("getting date table")?;
     date.raw_set("Day", now.day() as i64)
         .context("setting date.Day")?;

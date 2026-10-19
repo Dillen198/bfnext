@@ -24,6 +24,7 @@ hdrhistogram = { workspace = true }
 humantime = { workspace = true }
 immutable-chunkmap = { workspace = true }
 indexmap = { workspace = true }
+livewx = { version = "0.1", path = "../livewx" }
 log = { workspace = true }
 mlua = { version = "0.9.9", features = ["lua51", "module", "serialize"] }
 nalgebra = { workspace = true }

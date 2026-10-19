@@ -14,7 +14,6 @@ FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero Public License
 for more details.
 */
 
-mod live_weather;
 mod logpub;
 mod perf;
 mod rpcs;
@@ -869,8 +868,7 @@ impl<'a> Background<'a> {
                 Err(e) => error!("failed to save config {e:?}"),
             },
             Task::RewriteMissionWeather { miz_path, cfg } => {
-                let req = live_weather::LiveWeatherRequest { miz_path, cfg };
-                match task::spawn_blocking(move || live_weather::apply(&req)).await {
+                match task::spawn_blocking(move || livewx::apply(&miz_path, &cfg)).await {
                     Ok(Ok(())) => log::info!("applied live weather/time to mission file"),
                     Ok(Err(e)) => error!("failed to apply live weather to mission file {e:?}"),
                     Err(e) => error!("live weather task panicked {e:?}"),

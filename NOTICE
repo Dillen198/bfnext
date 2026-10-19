@@ -90,6 +90,11 @@ file before using, copying, modifying, or redistributing any part of it.
   Eric Stokes' code in files governed by section 1; they are not separately
   licensed.
 
+  livewx/ (real-world weather and time written into a mission file, shared
+  by bflib and bfrange) was written by Dillen Weerasinghe; it was moved out
+  of bflib/src/bg/live_weather.rs so both can link it, and is MIT licensed
+  (see livewx/LICENSE).
+
 
 4. Contact
 ------------------------------------------------------------------------

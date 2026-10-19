@@ -1641,6 +1641,17 @@ pub struct RangeCfg {
     /// Welcome text shown on slot-in.
     #[serde(default)]
     pub welcome: Option<String>,
+    /// Real-world weather and time, the campaign's live weather: when set,
+    /// the engine fetches the real conditions (the station's METAR from
+    /// CheckWX, winds aloft from open-meteo) and the real local time and
+    /// writes them into the mission file when DCS starts and when the mission
+    /// stops, so every restart flies today's weather at today's time. DCS
+    /// cannot change a running mission's weather, so it takes effect on the
+    /// next load. For the Marianas: `{"lat": 13.584, "lon": 144.93,
+    /// "metar_station": "PGUA", "checkwx_api_key": "...", "sync_time": true,
+    /// "utc_offset_hours": 10}`.
+    #[serde(default)]
+    pub live_weather: Option<crate::cfg::LiveWeatherConfig>,
 }
 
 fn default_range_name() -> String {

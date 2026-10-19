@@ -23,6 +23,7 @@ futures = { workspace = true }
 fxhash = { workspace = true }
 log = { workspace = true }
 mlua = { version = "0.9.9", features = ["lua51", "module", "serialize"] }
+livewx = { version = "0.1", path = "../livewx" }
 nalgebra = { workspace = true }
 netidx = { workspace = true }
 netidx-protocols = { workspace = true }

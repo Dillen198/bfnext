@@ -484,6 +484,12 @@ def build_config():
         "in_game_results": True,
         "message_s": 20,
         "record_tracks": True,
+        # the real weather and time, written into the mission before every
+        # load (bfrange/README.md, "Live weather"): Andersen's METAR, Guam
+        # time (UTC+10, no daylight saving). Put the CheckWX key in on the
+        # server; without one the surface comes from open-meteo's model too
+        "live_weather": {"lat": 13.584, "lon": 144.930, "metar_station": "PGUA", "checkwx_api_key": None,
+                         "sync_time": True, "utc_offset_hours": 10},
     }
 
 

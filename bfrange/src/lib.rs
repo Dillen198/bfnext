@@ -29,6 +29,7 @@ mod harvest;
 mod helo;
 mod hotzone;
 mod iads;
+mod live_weather;
 mod lowlevel;
 mod menu;
 mod pattern;
@@ -224,6 +225,18 @@ fn on_mission_load_end(lua: HooksLua) -> Result<()> {
             warn!("DCS database harvest failed: {e:?}")
         }
     }
+    match dcso3::dcs::Dcs::singleton(lua).and_then(|dcs| dcs.get_mission_filename()) {
+        Ok(path) => live_weather::set_mission(PathBuf::from(path.as_str())),
+        Err(e) => warn!("could not get the mission filename: {e:?}"),
+    }
+    Ok(())
+}
+
+/// The mission is stopping: a restart inside this DCS loads the file again,
+/// so give it the real weather first.
+fn on_simulation_stop(_lua: HooksLua) -> Result<()> {
+    let ctx = unsafe { Ctx::get() };
+    live_weather::apply_noted(&ctx.write_dir, "mission stop");
     Ok(())
 }
 
@@ -237,7 +250,11 @@ fn init_hooks(lua: HooksLua) -> Result<()> {
         .on_player_disconnect(on_player_disconnect)?
         .on_player_try_send_chat(on_player_try_send_chat)?
         .on_mission_load_end(on_mission_load_end)?
+        .on_simulation_stop(on_simulation_stop)?
         .register()?;
+    // DCS is starting and has not loaded the server's mission yet: the last
+    // chance to give it the real weather and time (see live_weather.rs)
+    live_weather::apply_noted(&unsafe { Ctx::get() }.write_dir, "DCS start");
     Ok(())
 }
 
@@ -276,6 +293,7 @@ fn delayed_init(lua: MizLua) -> Result<()> {
         c
     };
     cfg.validate()?;
+    live_weather::note(&ctx.write_dir, cfg.live_weather.as_ref());
     info!(
         "range {:?} (sortie {sortie}): {} stations, {} tankers, {} carriers, {} pads, {} JTACs, {} IADS, {} hot zones, {} jammers, {} low-level routes, {} CSAR areas, {} ship decks",
         cfg.name,

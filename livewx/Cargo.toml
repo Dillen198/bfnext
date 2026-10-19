@@ -1,0 +1,17 @@
+[package]
+name = "livewx"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Real-world weather and time for a DCS mission file: fetches METAR (CheckWX) and open-meteo, and rewrites the .miz before the mission next loads. Shared by bflib (campaign) and bfrange (training range)."
+
+[dependencies]
+anyhow = { workspace = true }
+bfprotocols = { version = "0.1", path = "../bfprotocols" }
+chrono = { workspace = true }
+dcso3 = { version = "0.1", path = "../dcso3" }
+log = { workspace = true }
+mlua = { version = "0.9.9", features = ["lua51", "module", "serialize"] }
+serde_json = { workspace = true }
+ureq = { workspace = true }

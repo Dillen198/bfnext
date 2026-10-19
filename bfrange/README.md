@@ -29,6 +29,8 @@ channel so it is staged as `_bfrange.dll` and swapped in on the next restart.
 | `Logs\stats.jsonl` | identity stats only: NewRound (once per range), Register, Connect, Slot, Takeoff, Land, Disconnect | bfdb, so range pilots are the same people as on the campaign servers |
 | `Logs\bfrange.txt` | the engine log; every result is logged as `RESULT <id>: <headline>` | you |
 | `<sortie>_RANGE` | the range layout (JSON), written empty on first start if missing | the engine |
+| `bfrange_live_weather.json` | with `live_weather` set: which mission file to give the real weather, and how (see "Live weather and time") | the engine, when DCS next starts |
+| the mission `.miz` | with `live_weather` set: its weather, date and start time, rewritten in place | DCS, when it loads the mission |
 
 Its netidx RPCs are published under `<netidx_base>/<sortie>/api/`: `query-range`,
 `query-range-catalog`, `query-weapons`, `range-spawn`, `range-despawn` and
@@ -233,6 +235,77 @@ they are used:
 | Carrier passes and status | The ship's heading (BRC) and velocity from its own unit (`getPosition`, `getVelocity`) at every sample; FB = that heading plus the deck angle; wind over deck = DCS wind at the landing point minus the ship's velocity. The recovery tanker and plane guard are placed off the ship's heading at that moment. |
 | Bomb results | Wind (`getWind`) and temperature (`getTemperatureAndPressure`) at the release point for TAS and Mach; plus a profile of wind, temperature and pressure from the target's ground up to the release altitude, stored with the result. bfdb's drag calibration flies each recorded drop through that profile. |
 | Range site | Each station's live picture carries DCS's air over it, ground to 10 km, and its ground height; each carrier its heading, speed, deck angle and the true wind at the deck. The release and wind-over-deck calculators start from those values (marked **LIVE · DCS**) and fall back to typed-in values only when edited or when the server is down. |
+
+## Live weather and time
+
+The range can fly today's real weather at today's real time, the same live
+weather the campaign has. The work is the `livewx` crate, shared with bflib.
+Add `live_weather` to the `_RANGE` config:
+
+```json
+"live_weather": {
+  "lat": 13.584,
+  "lon": 144.93,
+  "metar_station": "PGUA",
+  "checkwx_api_key": "your checkwxapi.com key",
+  "sync_time": true,
+  "utc_offset_hours": 10
+}
+```
+
+| Key | What |
+|---|---|
+| `metar_station`, `checkwx_api_key` | The surface weather is that station's real METAR, decoded by CheckWX (free key at checkwxapi.com): wind, temperature, QNH, cloud cover and rain. PGUA is Andersen AFB. Without a key, or when the fetch fails, the surface comes from open-meteo's model for `lat`/`lon` instead. |
+| `lat`, `lon` | Where the winds aloft are taken (open-meteo, 800 and 300 hPa, as DCS's 2,000 m and 8,000 m layers). METAR has no upper air. Andersen is 13.584, 144.93. |
+| `sync_time` | Also set the mission's date and start time to the real time. |
+| `utc_offset_hours` | Whose time: the theatre's offset from UTC. The Marianas are UTC+10 with no daylight saving, so `10`. Unset, it is the clock of the PC running DCS, which is wrong unless that PC is on Guam time. |
+
+The builder (`build_range_miz.py`) and `RANGE_CFG.sample.json` already
+have this block with no key. A range config that is already on a server
+does not change when the sample does (the Manager only copies it to a new
+box), so add the block there by hand, with the key. Delete the block to
+turn it off.
+
+**How it gets into the mission.** DCS cannot change a running mission's
+weather or clock, so the engine rewrites the mission file before the mission
+next loads, like bflib does before its own restarts. The range is restarted
+from outside (the bot's scheduler restarts DCS every 8 hours of mission time
+when empty, `shutdown: true`), so the engine does it at the two moments it
+sees:
+
+1. **When DCS starts**, before the server loads its mission. The engine's
+   hooks load first and write the real weather into the mission the range
+   ran last. That covers the scheduled restart, a crash and a reboot. Which
+   file, and the settings, come from `bfrange_live_weather.json` in Saved
+   Games, written while that mission ran (the `_RANGE` config is only read
+   once a mission is running). The time written is the time DCS starts, so
+   the mission clock starts at the real time give or take the load.
+2. **When a mission stops**, for a mission restart inside the running DCS
+   (`/mission restart`), which never passes DCS start.
+
+So a restart of DCS does it twice (once on the way down, once on the way
+up), which is two CheckWX requests out of its daily allowance. Each pass
+blocks DCS while it fetches (at most 10 s per request) and writes; the file
+is written beside the mission and renamed over it, so a pass cut short
+leaves the mission as it was. A failed fetch or write is logged in
+`Logsfrange.txt` (`live weather (...)`, and the `[LIVE_WX]` lines with
+every value applied) and the mission loads as it is.
+
+**What is written** is the campaign's: temperature, QNH, the surface wind
+(capped at 8 m/s, with a little turbulence from it), the 2,000 m and
+8,000 m winds (capped at 12 and 20 m/s), and the DCS 2.9 cloud preset
+nearest the reported cover and rain. The METAR's visibility and fog are
+not applied. Changing that changes the campaign too.
+
+**What the site shows** needs nothing extra: the live picture's wind and
+sky (`sky.rs`: clouds, visibility, fog, rain) are read from the loaded
+mission, so once the real weather is in, the brief and the live page show
+it. The site's clock is the mission clock, which `sync_time` sets; its
+Zulu is that less the theatre's offset (10 for the Marianas), so with
+`utc_offset_hours: 10` the site's Zulu is the real Zulu.
+
+The station's METAR is fetched by the DCS server itself, so that PC needs
+internet access to api.checkwx.com and api.open-meteo.com.
 
 ## Limits worth knowing
 
