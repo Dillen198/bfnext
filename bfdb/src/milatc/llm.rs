@@ -176,6 +176,14 @@ Choose the single intent that best describes what the pilot wants from ATC:
 - readback: acknowledges or reads back an instruction with no new request (\"roger\", \"wilco\", \"cleared for takeoff, Viper 1-1\").
 - unable: cannot comply with the last instruction.
 - emergency: mayday, pan-pan, or any declared emergency or serious malfunction.
+- request_range: asks Range Control for a range, station or range time (destination: the range or station named).
+- ip_inbound: running in on a range target (\"IP inbound\", \"in from the north\", \"in hot\").
+- off_target: coming off a range target (\"off safe\", \"off dry\").
+- departing_range: leaving the range, finished or winchester.
+- request_fuel: asks a tanker to join for fuel.
+- fuel_complete: finished refuelling, disconnecting, leaving the tanker.
+- ball: the carrier ball call (\"Hornet ball, 5.2\"), or \"clara\" (no ball in sight).
+- commencing: leaving the carrier's Marshal stack to start the approach.
 - none: not addressed to ATC (intra-flight chatter, noise, or unintelligible).
 
 Use the controller's last transmission to tell a readback from a request. \
@@ -215,6 +223,14 @@ fn schema() -> serde_json::Value {
         "readback",
         "unable",
         "emergency",
+        "request_range",
+        "ip_inbound",
+        "off_target",
+        "departing_range",
+        "request_fuel",
+        "fuel_complete",
+        "ball",
+        "commencing",
         "none",
     ];
     serde_json::json!({
@@ -222,7 +238,7 @@ fn schema() -> serde_json::Value {
         "additionalProperties": false,
         "required": ["intent", "callsign", "runway", "approach", "option", "altitude_ft", "squawk", "destination"],
         "properties": {
-            "intent": { "type": "string", "enum": intents },
+            "intent": { "type": "string", "enum": intents.to_vec() },
             "callsign": { "type": "string" },
             "runway": { "type": "string" },
             "approach": { "type": "string", "enum": ["", "overhead", "straight_in", "visual", "par", "ils", "tacan", "asr"] },

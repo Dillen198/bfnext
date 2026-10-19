@@ -25,7 +25,19 @@ use std::{collections::HashMap, path::PathBuf};
 
 /// Positions in casting order: the busiest get the first (usually the
 /// best) voices.
-const ORDER: [Pos; 7] = [Pos::Tower, Pos::Ground, Pos::Approach, Pos::Departure, Pos::Clearance, Pos::Final, Pos::Atis];
+const ORDER: [Pos; 11] = [
+    Pos::Tower,
+    Pos::Ground,
+    Pos::Approach,
+    Pos::Departure,
+    Pos::Clearance,
+    Pos::Final,
+    Pos::Atis,
+    Pos::Marshal,
+    Pos::Paddles,
+    Pos::Range,
+    Pos::Tanker,
+];
 
 /// Piper `length_scale` (above 1 is slower) and SAPI rate per position.
 fn pace(pos: Pos) -> (f32, i32) {
@@ -37,6 +49,11 @@ fn pace(pos: Pos) -> (f32, i32) {
         Pos::Departure => (0.92, 2),
         Pos::Approach => (0.96, 1),
         Pos::Final => (1.04, 0),
+        Pos::Marshal => (0.95, 1),
+        // the LSO talks fast in the groove
+        Pos::Paddles => (0.86, 3),
+        Pos::Tanker => (1.0, 0),
+        Pos::Range => (0.97, 1),
     }
 }
 
@@ -86,7 +103,7 @@ fn piper_candidates(model: &std::path::Path) -> Vec<Candidate> {
         } else {
             // A spread across the speaker list: neighbours in a libritts
             // model often sound alike.
-            let k = n.min(16);
+            let k = n.min(32);
             for i in 0..k {
                 let s = ((i as u64 * 7919) % n as u64) as u32;
                 out.push(Candidate::Piper { model: m.clone(), speaker: Some(s) });

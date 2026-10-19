@@ -48,6 +48,22 @@ pub(crate) enum Intent {
     Readback,
     Unable,
     Emergency,
+    /// Range Control: a slot on a range ("request R-7201", "request range time").
+    RequestRange,
+    /// Range Control: running in ("IP inbound", "in from the north").
+    IpInbound,
+    /// Range Control: off the target ("off safe", "off dry").
+    OffTarget,
+    /// Range Control: leaving the range ("departing the range", "winchester").
+    DepartingRange,
+    /// Tanker: wants fuel ("request rejoin", "request fuel").
+    RequestFuel,
+    /// Tanker: finished ("fuel complete", "topped off", "disconnect").
+    FuelComplete,
+    /// Carrier: the ball call ("Hornet ball, 5.2", "clara").
+    Ball,
+    /// Carrier: leaving the Marshal stack at the approach time ("commencing").
+    Commencing,
     /// Nothing for ATC (intra-flight chatter, noise).
     None,
 }
@@ -193,6 +209,11 @@ const NOT_A_CALLSIGN: &[&str] = &[
 /// The callsign a pilot gave: a name word followed by two or three digits.
 /// `facility` words (the controllers' own callsign) are skipped.
 pub(crate) fn callsign(text: &str, facility: &str) -> Option<String> {
+    // digits never run on past a comma: "Rhino 11, 30 miles" is Rhino 1-1
+    text.split([',', ';', '!', '?']).find_map(|seg| callsign_in(seg, facility))
+}
+
+fn callsign_in(text: &str, facility: &str) -> Option<String> {
     let t = tokens(text);
     let fac = facility.to_lowercase();
     for i in 0..t.len() {
@@ -375,6 +396,15 @@ fn option_kind(t: &str) -> LandingOption {
 
 /// Parse a transmission with the phraseology rules. `None` means "not sure":
 /// the caller may try the language model before giving up.
+/// "request R-7201 bomb circle": a request naming a range target, not a
+/// taxi or a clearance to go to the range.
+fn range_request(t: &str) -> bool {
+    let t = t.replace("range control", "");
+    has(&t, "request")
+        && any(&t, &["range", "circle", "pit", "strafe", "bomb", "array", "target", "lane", "convoy", "r-72", "r72"])
+        && !any(&t, &["taxi", "clearance", "startup", "start up", "takeoff", "take off", "departure", "approach", "landing"])
+}
+
 pub(crate) fn parse(text: &str, facility: &str) -> Option<Parsed> {
     let t = text.to_lowercase();
     let t = t.trim();
@@ -384,6 +414,27 @@ pub(crate) fn parse(text: &str, facility: &str) -> Option<Parsed> {
     use Intent::*;
     let intent = if any(t, &["mayday", "pan pan", "pan-pan", "declaring an emergency", "declare emergency", "emergency"]) {
         Emergency
+    } else if word(t, "ball") || word(t, "clara") || has(t, "no ball") {
+        Ball
+    } else if word(t, "commencing") || has(t, "commencing approach") {
+        Commencing
+    } else if any(t, &["ip inbound", "i p inbound", "in from the", "in hot", "rolling in", "in dry", "inbound from the ip", "turning in"]) {
+        IpInbound
+    } else if any(t, &["off safe", "off target", "off dry", "off hot", "coming off", "off the target"]) {
+        OffTarget
+    } else if any(t, &["departing the range", "leaving the range", "off the range", "out of the range", "winchester", "clearing the range", "exiting the range"]) {
+        DepartingRange
+    } else if any(t, &["request range", "range time", "request the range", "request into", "request entry", "request station", "request the circle", "request the pit", "request bomb", "request strafe", "request a slot", "request slot", "cleared into"]) && !has(t, "cleared into the")
+        || range_request(t)
+    {
+        RequestRange
+    } else if any(t, &["request rejoin", "request fuel", "request gas", "request a drink", "need fuel", "need gas", "for gas", "for fuel", "request to join", "request join", "request tanking", "on the boom", "for the boom", "request contact"]) {
+        RequestFuel
+    } else if any(t, &["fuel complete", "topped off", "complete with fuel", "disconnecting", "full of gas", "thanks for the gas", "thanks for the fuel"]) && !has(t, "fuel state") {
+        FuelComplete
+    } else if word(t, "marshal") && any(t, &["angels", "state", " miles", " dme"]) {
+        // the carrier check-in: "Marshal, 401, 30 miles, angels 20, state 6.2"
+        CheckIn
     } else if any(t, &["radio check", "how do you read", "how do you hear", "comm check"]) {
         RadioCheck
     } else if any(t, &["say again", "repeat your last", "say last", "didn't copy", "did not copy"]) {
@@ -465,6 +516,7 @@ mod tests {
         assert_eq!(callsign("andersen tower viper 11 ready for departure", "Andersen").as_deref(), Some("Viper 1-1"));
         assert_eq!(callsign("Enfield 2-1, request startup", "Andersen").as_deref(), Some("Enfield 2-1"));
         assert_eq!(callsign("Andersen tower, runway 06R", "Andersen"), None);
+        assert_eq!(callsign("Marshal, Rhino 11, 30 miles, angels 20", "Lincoln").as_deref(), Some("Rhino 1-1"));
     }
 
     #[test]
@@ -502,5 +554,13 @@ mod tests {
         assert_eq!(p("Andersen Ground, Viper 11, request taxi to parking").intent, Intent::RequestTaxiParking);
         assert_eq!(p("Andersen Tower Viper 11 radio check").intent, Intent::RadioCheck);
         assert_eq!(p("Mayday mayday Viper 11 engine failure").intent, Intent::Emergency);
+        assert_eq!(p("Range Control, Viper 11, request R-7201 bomb circle").intent, Intent::RequestRange);
+        assert_eq!(p("Viper 11, IP inbound").intent, Intent::IpInbound);
+        assert_eq!(p("Viper 11 off safe").intent, Intent::OffTarget);
+        assert_eq!(p("Range Control, Viper 11, winchester, departing the range").intent, Intent::DepartingRange);
+        assert_eq!(p("Texaco 11, Viper 11, request rejoin, 4000 pounds").intent, Intent::RequestFuel);
+        assert_eq!(p("Texaco 11, Viper 11, fuel complete").intent, Intent::FuelComplete);
+        assert_eq!(p("Viper 11, Hornet ball, 5.2").intent, Intent::Ball);
+        assert_eq!(p("Viper 11 commencing").intent, Intent::Commencing);
     }
 }

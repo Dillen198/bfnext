@@ -21,29 +21,44 @@
 //! - [`voices`]: a different voice per frequency, others for AI pilots.
 //! - [`live`]: the live audio feed for listeners on the range site.
 //!
-//! This module is the plumbing: it polls the range engine's `query-atc`
-//! picture once a second, listens on every position's frequency through the
-//! shared voice bus ([`crate::voice`]), runs heard calls through whisper and
-//! the parsers, and speaks the controllers' replies with Piper.
+//! Beyond the airfield, the same plumbing runs the range's other controllers
+//! ([`facility`] is what they share):
+//!
+//! - [`carrier`]: each carrier's Marshal (stack slots), Approach and Paddles.
+//! - [`tanker`]: each tanker's crew, running the line of receivers.
+//! - [`rangectl`]: Range Control, booking the ranges in slots.
+//! - [`airfield`]: the airfield's controllers as a facility.
+//!
+//! This module is the plumbing: it polls the range engine's `query-atc` and
+//! `query-range` pictures, brings facilities on the air as carriers and
+//! tankers appear, listens on every position's frequency through a pool of
+//! SRS clients ([`crate::voice`]), runs heard calls through whisper and the
+//! parsers, and speaks the controllers' replies with Piper.
 //!
 //! The campaign's spoken tower ([`crate::atc`]) is a different, simpler thing
 //! and is untouched by this.
 
+pub(crate) mod airfield;
 pub(crate) mod airport;
+pub(crate) mod carrier;
 pub(crate) mod controller;
+pub(crate) mod facility;
 pub(crate) mod intent;
 pub(crate) mod live;
 pub(crate) mod llm;
+pub(crate) mod rangectl;
 pub(crate) mod speech;
+pub(crate) mod tanker;
 pub(crate) mod voices;
 
 use crate::{
     db::StatsDb,
     voice::{srs, stt, FreqSpec, Radio},
 };
-use airport::{Airport, P2, BUILTIN_ANDERSEN};
-use bfprotocols::atc::AtcPicture;
+use airport::{Airport, BUILTIN_ANDERSEN};
+use bfprotocols::{atc::AtcPicture, range::RangeLive};
 use controller::{Caller, Controller, CtlCfg, Tx};
+use facility::{Facility, Picture};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
@@ -64,11 +79,33 @@ pub(crate) enum Pos {
     Departure,
     Approach,
     Final,
+    /// A carrier's Marshal: check-in and the holding stack.
+    Marshal,
+    /// A carrier's LSO. Talks on the carrier's approach frequency ("button").
+    Paddles,
+    /// A tanker's crew, on the tanker's frequency.
+    Tanker,
+    /// Range Control: who works which range when.
+    Range,
 }
 
 impl Pos {
+    /// An airfield's positions, in the order they are set up.
     pub(crate) const ALL: [Pos; 7] =
         [Pos::Atis, Pos::Clearance, Pos::Ground, Pos::Tower, Pos::Departure, Pos::Approach, Pos::Final];
+    const EVERY: [Pos; 11] = [
+        Pos::Atis,
+        Pos::Clearance,
+        Pos::Ground,
+        Pos::Tower,
+        Pos::Departure,
+        Pos::Approach,
+        Pos::Final,
+        Pos::Marshal,
+        Pos::Paddles,
+        Pos::Tanker,
+        Pos::Range,
+    ];
 
     /// What the position calls itself after the field's name.
     pub(crate) fn title(self) -> &'static str {
@@ -80,10 +117,14 @@ impl Pos {
             Pos::Departure => "Departure",
             Pos::Approach => "Approach",
             Pos::Final => "Final",
+            Pos::Marshal => "Marshal",
+            Pos::Paddles => "Paddles",
+            Pos::Tanker => "",
+            Pos::Range => "Range Control",
         }
     }
 
-    fn key(self) -> &'static str {
+    pub(crate) fn key(self) -> &'static str {
         match self {
             Pos::Atis => "atis",
             Pos::Clearance => "clearance",
@@ -92,11 +133,15 @@ impl Pos {
             Pos::Departure => "departure",
             Pos::Approach => "approach",
             Pos::Final => "final",
+            Pos::Marshal => "marshal",
+            Pos::Paddles => "paddles",
+            Pos::Tanker => "tanker",
+            Pos::Range => "range",
         }
     }
 
     fn from_key(s: &str) -> Option<Pos> {
-        Pos::ALL.into_iter().find(|p| p.key() == s)
+        Pos::EVERY.into_iter().find(|p| p.key() == s)
     }
 }
 
@@ -188,6 +233,19 @@ pub(crate) struct RangeAtcConfig {
     /// the controllers and AI pilots can be listened to.
     #[serde(default)]
     pub publish_pilot_audio: bool,
+    /// Range Control (on by default, 348.6).
+    #[serde(default)]
+    pub range_control: Option<rangectl::RangeControlCfg>,
+    /// Marshal, Approach and Paddles on every carrier.
+    #[serde(default = "d_true")]
+    pub carrier_atc: bool,
+    /// Carrier frequency overrides, by the engine's carrier id. Default:
+    /// Marshal on the carrier's own frequency, Approach 0.5 MHz above.
+    #[serde(default)]
+    pub carriers: HashMap<String, carrier::CarrierFreqCfg>,
+    /// A crew voice on every tanker's frequency.
+    #[serde(default = "d_true")]
+    pub tanker_atc: bool,
 }
 
 fn load_airport(f: &FieldCfg) -> anyhow::Result<Airport> {
@@ -234,6 +292,8 @@ pub(crate) struct StationInfo {
     pub field: String,
     pub position: Pos,
     pub name: String,
+    /// What the site's tab says ("Tower", "Lincoln Marshal", "Texaco 1-1").
+    pub label: String,
     pub freq: String,
 }
 
@@ -332,28 +392,193 @@ fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+/// One facility and its radio plumbing.
 struct Station {
-    /// Index into the instance's fields, for station ids.
+    /// Index for station ids; never reused while bfdb runs.
     index: usize,
-    ctl: Mutex<Controller>,
-    /// Per position: its transmit queue.
+    /// "airfield:Andersen AFB", "carrier:cvn72", "tanker:texaco", "range".
+    key: String,
+    ctl: Mutex<Box<dyn Facility>>,
+    /// Per position: its transmit queue. Dropping the station ends the
+    /// transmitters.
     queues: HashMap<Pos, tokio::sync::mpsc::UnboundedSender<Tx>>,
-    /// Logged once: the field is not in the engine's picture.
-    missing_logged: Mutex<bool>,
-    /// Aligning the taxi network to DCS was tried (and failed, if the airport
-    /// is still unaligned): do not retry every second.
-    align_tried: Mutex<bool>,
+    /// Which pool client carries its radios.
+    client: usize,
 }
 
-/// Radio labels carry "field index:position" so an inbound transmission
+/// Radio labels carry "station index:position" so an inbound transmission
 /// routes straight to its controller.
-fn label(field: usize, pos: Pos) -> String {
-    format!("{field}:{}", pos.key())
+fn label(index: usize, pos: Pos) -> String {
+    format!("{index}:{}", pos.key())
 }
 
 fn parse_label(l: &str) -> Option<(usize, Pos)> {
     let (a, b) = l.split_once(':')?;
     Some((a.parse().ok()?, Pos::from_key(b)?))
+}
+
+/// SRS clients shared by all the facilities. SRS allows 11 radios a client
+/// and a client cannot be shut down, so facilities that come and go (an
+/// on-demand tanker) have their radios added to and taken off a client
+/// rather than getting their own.
+struct Pool {
+    clients: Vec<(srs::SrsClient, Vec<Radio>)>,
+}
+
+const RADIOS_PER_CLIENT: usize = 10;
+
+impl Pool {
+    fn sync(c: &srs::SrsClient, radios: &[Radio]) {
+        if radios.is_empty() {
+            // a client must carry a radio: park it somewhere nobody is
+            c.set_radios(vec![Radio::new(1.0, 0, "idle")]);
+        } else {
+            c.set_radios(radios.to_vec());
+        }
+    }
+}
+
+/// Everything the runtime shares between the facilities.
+struct Ctx {
+    inst_id: String,
+    gci: crate::gci::GciConfig,
+    coalition: u8,
+    eam: String,
+    opus: Option<Arc<srs::Opus>>,
+    rx_tx: Option<tokio::sync::mpsc::UnboundedSender<srs::Transmission>>,
+    cast: Arc<Cast>,
+    engine: Engine,
+    pool: Mutex<Pool>,
+    stations: std::sync::RwLock<Vec<Arc<Station>>>,
+    next_index: std::sync::atomic::AtomicUsize,
+    start: Instant,
+}
+
+impl Ctx {
+    fn clock(&self) -> f64 {
+        self.start.elapsed().as_secs_f64()
+    }
+
+    fn station(&self, index: usize) -> Option<Arc<Station>> {
+        self.stations.read().unwrap().iter().find(|s| s.index == index).cloned()
+    }
+
+    fn has(&self, key: &str) -> bool {
+        self.stations.read().unwrap().iter().any(|s| s.key == key)
+    }
+
+    /// Bring a facility on the air: its radios on a pool client, a
+    /// transmitter per position, and its frequencies on the site's tabs.
+    fn add(self: &Arc<Self>, key: String, f: Box<dyn Facility>) {
+        let index = self.next_index.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut radios: HashMap<Pos, Vec<Radio>> = HashMap::new();
+        for (pos, specs) in f.radios() {
+            let title = f.facility(pos);
+            let rs: Vec<Radio> = specs
+                .iter()
+                .map(|s| {
+                    let mut r = s.to_radio(&title);
+                    r.label = label(index, pos);
+                    r
+                })
+                .collect();
+            if !rs.is_empty() {
+                radios.insert(pos, rs);
+            }
+        }
+        let all: Vec<Radio> = radios.values().flatten().cloned().collect();
+        // a pool client with room, or a new one
+        let (ci, client) = {
+            let mut pool = self.pool.lock().unwrap();
+            let ci = match pool.clients.iter().position(|(_, r)| r.len() + all.len() <= RADIOS_PER_CLIENT) {
+                Some(i) => i,
+                None => {
+                    let n = pool.clients.len();
+                    let name = if n == 0 { "Range ATC".to_string() } else { format!("Range ATC {}", n + 1) };
+                    match srs::SrsClient::start(
+                        &self.gci.srs_host,
+                        self.gci.srs_port,
+                        self.coalition,
+                        &name,
+                        all.clone(),
+                        &self.eam,
+                        self.opus.clone(),
+                        self.rx_tx.clone(),
+                    ) {
+                        Ok(c) => {
+                            pool.clients.push((c, vec![]));
+                            n
+                        }
+                        Err(e) => {
+                            log::error!("[{}] range ATC: SRS client '{name}' failed: {e:#}", self.inst_id);
+                            return;
+                        }
+                    }
+                }
+            };
+            let (c, rs) = &mut pool.clients[ci];
+            rs.extend(all.iter().cloned());
+            Pool::sync(c, rs);
+            (ci, c.clone())
+        };
+        let mut queues = HashMap::new();
+        let mut infos = vec![];
+        for (pos, rs) in &radios {
+            let (qtx, qrx) = tokio::sync::mpsc::unbounded_channel::<Tx>();
+            queues.insert(*pos, qtx);
+            let me = Speaker {
+                station: label(index, *pos),
+                name: f.facility(*pos),
+                pos: *pos,
+                inst: self.inst_id.clone(),
+                salt: index as u64,
+            };
+            tokio::spawn(transmitter(client.clone(), rs.clone(), self.cast.clone(), qrx, self.clone(), me));
+            infos.push(StationInfo {
+                id: label(index, *pos),
+                field: f.name(),
+                position: *pos,
+                name: f.facility(*pos),
+                label: f.label(*pos),
+                freq: rs.first().map(|r| speech::freq(r.freq_hz / 1e6)).unwrap_or_default(),
+            });
+        }
+        // keep the airfield's positions in their natural order on the site
+        infos.sort_by_key(|i| Pos::EVERY.iter().position(|p| *p == i.position));
+        log::info!(
+            "[{}] range ATC: {} on the air: {}",
+            self.inst_id,
+            f.name(),
+            infos.iter().map(|i| format!("{} {}", i.name, i.freq)).collect::<Vec<_>>().join(", ")
+        );
+        if let Ok(mut b) = boards().lock() {
+            b.entry(self.inst_id.clone()).or_default().stations.extend(infos);
+        }
+        self.stations.write().unwrap().push(Arc::new(Station { index, key, ctl: Mutex::new(f), queues, client: ci }));
+    }
+
+    /// Take a facility off the air.
+    fn remove(&self, index: usize) {
+        let st = {
+            let mut v = self.stations.write().unwrap();
+            let Some(i) = v.iter().position(|s| s.index == index) else { return };
+            v.remove(i)
+        };
+        let prefix = format!("{index}:");
+        {
+            let mut pool = self.pool.lock().unwrap();
+            if let Some((c, rs)) = pool.clients.get_mut(st.client) {
+                rs.retain(|r| !r.label.starts_with(&prefix));
+                Pool::sync(c, rs);
+            }
+        }
+        if let Ok(mut b) = boards().lock() {
+            if let Some(board) = b.get_mut(&self.inst_id) {
+                board.stations.retain(|s| !s.id.starts_with(&prefix));
+            }
+        }
+        log::info!("[{}] range ATC: {} off the air", self.inst_id, st.ctl.lock().unwrap().name());
+    }
 }
 
 /// Run the range's controllers for one instance until the process exits.
@@ -373,20 +598,6 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
         _ => 2,
     };
     let eam = if coalition == 1 { gci.red_eam_password.clone() } else { gci.blue_eam_password.clone() };
-
-    // Airfields and their radios.
-    let mut airports = vec![];
-    for f in &fields {
-        match load_airport(f) {
-            Ok(ap) => airports.push(ap),
-            Err(e) => log::error!("[{}] range ATC: airfield {:?} not loaded: {e:#}", inst.id, f.data.as_ref().or(None::<&PathBuf>)),
-        }
-    }
-    if airports.is_empty() {
-        log::error!("[{}] range ATC: no airfields, not starting", inst.id);
-        return;
-    }
-
     let opus = match srs::Opus::load(gci.opus_dll_path.as_deref()) {
         Ok(o) => Some(Arc::new(o)),
         Err(e) => {
@@ -397,9 +608,6 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
     let stt = stt::Stt::from_cfg(gci.whisper_exe.as_ref(), gci.whisper_model.as_ref(), gci.whisper_server_url.as_deref());
     let llm = llm::Llm::from_cfg(cfg.llm.as_ref());
     let (rx_tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<srs::Transmission>();
-
-    let start = Instant::now();
-    let clock = move || start.elapsed().as_secs_f64();
     // Who sounds like whom (reads model folders / asks Windows for voices).
     let cast = {
         let (g, v) = (gci.clone(), cfg.voices.clone());
@@ -411,120 +619,69 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
             }
         }
     };
-    let engine = Engine { db: db.clone(), inst: inst.clone() };
-    let inst_id = inst.id.to_string();
-    let mut board_stations = vec![];
+    log::info!(
+        "[{}] range ATC: voices: {}{}{}",
+        inst.id,
+        cast.describe(),
+        match &stt {
+            Some(s) => format!("; listening via {}", s.describe()),
+            None => "; broadcast only (no whisper configured)".into(),
+        },
+        match &llm {
+            Some(l) => format!("; language model {}", l.describe()),
+            None => String::new(),
+        }
+    );
+    let ctx = Arc::new(Ctx {
+        inst_id: inst.id.to_string(),
+        gci: gci.clone(),
+        coalition,
+        eam,
+        opus,
+        rx_tx: stt.as_ref().map(|_| rx_tx.clone()),
+        cast,
+        engine: Engine { db: db.clone(), inst: inst.clone() },
+        pool: Mutex::new(Pool { clients: vec![] }),
+        stations: std::sync::RwLock::new(vec![]),
+        next_index: std::sync::atomic::AtomicUsize::new(0),
+        start: Instant::now(),
+    });
 
-    let mut stations: Vec<Arc<Station>> = vec![];
-    let mut clients: Vec<srs::SrsClient> = vec![];
-    for (fi, ap) in airports.into_iter().enumerate() {
-        let mut radios: HashMap<Pos, Vec<Radio>> = HashMap::new();
-        for pos in Pos::ALL {
-            let Some(specs) = ap.positions.get(&pos) else { continue };
-            let title = format!("{} {}", ap.callsign, pos.title());
-            let rs: Vec<Radio> = specs
-                .iter()
-                .map(|s| {
-                    let mut r = s.to_radio(&title);
-                    r.label = label(fi, pos);
-                    r
-                })
-                .collect();
-            radios.insert(pos, rs);
-        }
-        // SRS carries at most 11 radios per client: split if needed.
-        let all: Vec<Radio> = Pos::ALL.iter().filter_map(|p| radios.get(p)).flatten().cloned().collect();
-        let mut field_clients = vec![];
-        for (ci, chunk) in all.chunks(10).enumerate() {
-            let name = if ci == 0 { format!("{} ATC", ap.callsign) } else { format!("{} ATC {}", ap.callsign, ci + 1) };
-            // ATIS is broadcast only: nothing heard on it needs whisper.
-            match srs::SrsClient::start(&gci.srs_host, gci.srs_port, coalition, &name, chunk.to_vec(), &eam, opus.clone(), stt.as_ref().map(|_| rx_tx.clone())) {
-                Ok(c) => field_clients.push((chunk.to_vec(), c)),
-                Err(e) => log::error!("[{}] range ATC: SRS client '{name}' failed: {e:#}", inst.id),
+    // The airfields, and Range Control, are on the air from the start.
+    for f in &fields {
+        match load_airport(f) {
+            Ok(ap) => {
+                let key = format!("airfield:{}", ap.dcs_name);
+                ctx.add(key, Box::new(airfield::Airfield::new(Controller::new(ap, ctl_cfg.clone()), &inst.id)));
             }
+            Err(e) => log::error!("[{}] range ATC: airfield {:?} not loaded: {e:#}", inst.id, f.data.as_ref().or(None::<&PathBuf>)),
         }
-        let mut queues = HashMap::new();
-        for (pos, rs) in &radios {
-            let Some((_, client)) = field_clients.iter().find(|(chunk, _)| chunk.iter().any(|r| rs.iter().any(|x| x.key() == r.key())))
-            else {
-                continue;
-            };
-            let (qtx, qrx) = tokio::sync::mpsc::unbounded_channel::<Tx>();
-            queues.insert(*pos, qtx);
-            let me = Speaker {
-                station: label(fi, *pos),
-                name: format!("{} {}", ap.callsign, pos.title()),
-                pos: *pos,
-                inst: inst_id.clone(),
-            };
-            tokio::spawn(transmitter(client.clone(), rs.clone(), cast.clone(), qrx, clock, me, engine.clone()));
-        }
-        for p in Pos::ALL {
-            if let Some(r) = radios.get(&p).and_then(|r| r.first()) {
-                board_stations.push(StationInfo {
-                    id: label(fi, p),
-                    field: ap.callsign.clone(),
-                    position: p,
-                    name: format!("{} {}", ap.callsign, p.title()),
-                    freq: speech::freq(r.freq_hz / 1e6),
-                });
-            }
-        }
-        clients.extend(field_clients.into_iter().map(|(_, c)| c));
-        log::info!(
-            "[{}] range ATC: {} ({}) on {}; voices: {}{}{}",
-            inst.id,
-            ap.callsign,
-            ap.icao,
-            Pos::ALL
-                .iter()
-                .filter_map(|p| radios.get(p).and_then(|r| r.first()).map(|r| format!("{} {}", p.title(), r.describe())))
-                .collect::<Vec<_>>()
-                .join(", "),
-            cast.describe(),
-            match &stt {
-                Some(s) => format!("; listening via {}", s.describe()),
-                None => "; broadcast only (no whisper configured)".into(),
-            },
-            match &llm {
-                Some(l) => format!("; language model {}", l.describe()),
-                None => String::new(),
-            }
-        );
-        stations.push(Arc::new(Station {
-            index: fi,
-            ctl: Mutex::new(Controller::new(ap, ctl_cfg.clone())),
-            queues,
-            missing_logged: Mutex::new(false),
-            align_tried: Mutex::new(false),
-        }));
     }
-    let stations = Arc::new(stations);
-    if let Ok(mut b) = boards().lock() {
-        b.entry(inst_id.clone()).or_default().stations = board_stations;
+    let range_cfg = cfg.range_control.clone().unwrap_or_default();
+    if range_cfg.enabled {
+        ctx.add("range".into(), Box::new(rangectl::RangeControl::new(range_cfg)));
     }
 
     // Heard transmissions.
     if let Some(stt) = stt.clone() {
-        let stations = stations.clone();
+        let ctx = ctx.clone();
         let llm = llm.clone();
-        let inst_id = inst_id.clone();
         let publish_pilot_audio = cfg.publish_pilot_audio;
         tokio::spawn(async move {
             while let Some(mut tr) = rx.recv().await {
-                let Some((fi, pos)) = parse_label(&tr.label) else { continue };
-                let Some(st) = stations.get(fi).cloned() else { continue };
+                let Some((index, pos)) = parse_label(&tr.label) else { continue };
+                let Some(st) = ctx.station(index) else { continue };
                 if pos == Pos::Atis {
                     continue;
                 }
                 let pcm = std::mem::take(&mut tr.pcm);
                 let keep = publish_pilot_audio.then(|| pcm.clone());
                 if publish_pilot_audio {
-                    live::play(&inst_id, &tr.label, &tr.name, "", &pcm);
+                    live::play(&ctx.inst_id, &tr.label, &tr.name, "", &pcm);
                 }
                 let stt = stt.clone();
                 let llm = llm.clone();
-                let inst_id = inst_id.clone();
+                let ctx = ctx.clone();
                 tokio::spawn(async move {
                     let s = stt.clone();
                     let heard = match tokio::task::spawn_blocking(move || s.transcribe(&pcm)).await {
@@ -535,21 +692,23 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
                         }
                         _ => return,
                     };
-                    let audio = keep.and_then(|p| store_audio(&inst_id, &p));
-                    heard_call(st, pos, tr.unit_id, tr.name, heard, llm, clock, &inst_id, audio).await;
+                    let audio = keep.and_then(|p| store_audio(&ctx.inst_id, &p));
+                    heard_call(&ctx, st, pos, tr.unit_id, tr.name, heard, llm, audio).await;
                 });
             }
         });
     }
 
-    // The picture.
+    // The pictures.
     let mut ticker = tokio::time::interval(Duration::from_millis(cfg.poll_ms.max(250)));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_vocab = f64::NEG_INFINITY;
+    let mut last_range = f64::NEG_INFINITY;
+    let mut range: Option<RangeLive> = None;
     let mut fails = 0u32;
     loop {
         ticker.tick().await;
-        let picture = match fetch(&db, &inst).await {
+        let atc = match fetch(&db, &inst).await {
             Ok(p) => {
                 fails = 0;
                 p
@@ -562,63 +721,61 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
                 continue;
             }
         };
-        let now = clock();
-        for st in stations.iter() {
-            let out = {
-                let mut ctl = st.ctl.lock().unwrap();
-                let Some(field) = picture.airfields.iter().find(|a| ctl.ap.is_named(&a.name)).cloned() else {
-                    let mut logged = st.missing_logged.lock().unwrap();
-                    if !*logged {
-                        *logged = true;
-                        log::warn!(
-                            "[{}] range ATC: {} is not in the engine's picture (has: {})",
-                            inst.id,
-                            ctl.ap.dcs_name,
-                            picture.airfields.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
-                        );
-                    }
-                    continue;
-                };
-                let mut tried = st.align_tried.lock().unwrap();
-                if ctl.ap.aligned.is_none() && !*tried {
-                    let dcs: Vec<(String, P2)> = field
-                        .runways
-                        .iter()
-                        .filter_map(|r| Some((r.name.clone(), ctl.ap.local(r.thr_lat?, r.thr_lon?))))
-                        .collect();
-                    if !dcs.is_empty() {
-                        *tried = true;
-                        match ctl.ap.align(&dcs) {
-                            Some(m) => log::info!("[{}] range ATC: {} taxi network aligned to DCS ({m:.0} m shift)", inst.id, ctl.ap.callsign),
-                            None => {
-                                log::warn!(
-                                    "[{}] range ATC: {} taxi network does not match the DCS runways; taxi clearances will not name taxiways",
-                                    inst.id,
-                                    ctl.ap.callsign
-                                );
-                            }
-                        }
+        let now = ctx.clock();
+        // carriers, tankers and range stations change slowly: every 2 s
+        if now - last_range >= 2. {
+            last_range = now;
+            match fetch_range(&db, &inst).await {
+                Ok(r) => range = Some(r),
+                Err(e) => log::debug!("[{}] range ATC: no range picture: {e}", inst.id),
+            }
+        }
+
+        // Carriers and tankers come on the air as the engine reports them.
+        if let Some(r) = &range {
+            if cfg.carrier_atc {
+                for c in &r.carriers {
+                    let key = format!("carrier:{}", c.id);
+                    if !ctx.has(&key) {
+                        ctx.add(key, Box::new(carrier::Carrier::new(c, cfg.carriers.get(&c.id))));
                     }
                 }
-                drop(tried);
-                ctl.update(&field, &picture.traffic, now)
-            };
-            dispatch(&st, out);
+            }
+            if cfg.tanker_atc {
+                for t in &r.tankers {
+                    let key = format!("tanker:{}", t.id);
+                    if t.state == bfprotocols::range::TankerState::OnStation && t.freq_mhz > 0. && !ctx.has(&key) {
+                        ctx.add(key, Box::new(tanker::Tanker::new(t)));
+                    }
+                }
+            }
         }
+
+        let pic = Picture { atc: &atc, range: range.as_ref(), now, mission_s: range.as_ref().and_then(facility::mission_seconds) };
+        let stations: Vec<Arc<Station>> = ctx.stations.read().unwrap().clone();
+        let mut gone = vec![];
+        for st in &stations {
+            let out = {
+                let mut ctl = st.ctl.lock().unwrap();
+                let out = ctl.update(&pic);
+                if ctl.gone() {
+                    gone.push(st.index);
+                }
+                out
+            };
+            dispatch(st, out);
+        }
+        for i in gone {
+            ctx.remove(i);
+        }
+
         // Keep whisper primed with what it will hear.
         if now - last_vocab > 30. {
             last_vocab = now;
             if let Some(stt) = &stt {
                 let mut words: Vec<String> = vec![];
-                for st in stations.iter() {
-                    let ctl = st.ctl.lock().unwrap();
-                    for p in Pos::ALL {
-                        words.push(ctl.facility(p));
-                    }
-                    for f in ctl.flights.values() {
-                        words.push(f.call.clone());
-                    }
-                    words.extend(ctl.ap.runways.iter().map(|r| format!("runway {}", r.name)));
+                for st in &stations {
+                    words.extend(st.ctl.lock().unwrap().vocabulary());
                 }
                 words.extend(
                     [
@@ -636,44 +793,40 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
 }
 
 /// Process one recognised transmission: rules first, the language model for
-/// what the rules miss, then the controller.
+/// what the rules miss, then the facility.
 #[allow(clippy::too_many_arguments)]
 async fn heard_call(
+    ctx: &Ctx,
     st: Arc<Station>,
     pos: Pos,
     unit_id: Option<u64>,
     srs_name: String,
     heard: String,
     llm: Option<llm::Llm>,
-    clock: impl Fn() -> f64,
-    inst: &str,
     audio: Option<u64>,
 ) {
-    let callsign = st.ctl.lock().unwrap().ap.callsign.clone();
-    let mut parsed = intent::parse(&heard, &callsign);
+    let caller = Caller { unit_id, srs_name: srs_name.clone() };
+    let wake = st.ctl.lock().unwrap().wake();
+    let mut parsed = intent::parse(&heard, &wake);
     // The transcript names the flight, and its type, when we know them.
-    let (who, aircraft) = {
-        let mut ctl = st.ctl.lock().unwrap();
-        let f = ctl
-            .identify(&Caller { unit_id, srs_name: srs_name.clone() }, parsed.as_ref())
-            .and_then(|k| ctl.flights.get(&k));
-        (
-            f.map(|f| f.call.clone()).unwrap_or_else(|| srs_name.clone()),
-            f.and_then(|f| controller::type_label(&f.ac.typ)),
-        )
-    };
+    let (who, aircraft) = st.ctl.lock().unwrap().caller(&caller, parsed.as_ref());
     note(
-        inst,
-        Line { t: now_ms(), station: label(st.index, pos), who, text: heard.clone(), pilot: true, ai: false, aircraft, audio },
+        &ctx.inst_id,
+        Line {
+            t: now_ms(),
+            station: label(st.index, pos),
+            who: who.unwrap_or_else(|| srs_name.clone()),
+            text: heard.clone(),
+            pilot: true,
+            ai: false,
+            aircraft,
+            audio,
+        },
     );
     if parsed.is_none() {
         if let Some(llm) = llm {
-            let ctx = {
-                let mut ctl = st.ctl.lock().unwrap();
-                let key = ctl.identify(&Caller { unit_id, srs_name: srs_name.clone() }, None);
-                ctl.llm_context(pos, key, &heard)
-            };
-            match tokio::task::spawn_blocking(move || llm.classify(&ctx)).await {
+            let c = st.ctl.lock().unwrap().llm_context(pos, &caller, &heard);
+            match tokio::task::spawn_blocking(move || llm.classify(&c)).await {
                 Ok(Ok(p)) => {
                     log::info!("milatc: model read \"{heard}\" as {:?}", p.intent);
                     parsed = Some(p);
@@ -683,10 +836,7 @@ async fn heard_call(
             }
         }
     }
-    let out = {
-        let mut ctl = st.ctl.lock().unwrap();
-        ctl.respond(pos, &Caller { unit_id, srs_name }, &heard, parsed, clock())
-    };
+    let out = st.ctl.lock().unwrap().respond(pos, &caller, &heard, parsed, ctx.clock());
     dispatch(&st, out);
 }
 
@@ -738,32 +888,42 @@ struct Speaker {
     name: String,
     pos: Pos,
     inst: String,
+    /// Tells apart facilities sharing a position (two tankers' crews).
+    salt: u64,
 }
 
 /// One position's transmitter. One utterance at a time; a human pause
 /// before each (counted from when the frequency last went quiet, so a reply
 /// follows the call it answers the way a person's would); never over a pilot
 /// (the SRS client waits for a clear frequency); stale calls dropped. AI
-/// pilots speak through here too, in their own voices.
+/// pilots, and the LSO on a carrier's approach frequency, speak through here
+/// too, in their own voices.
 async fn transmitter(
     client: srs::SrsClient,
     radios: Vec<Radio>,
     cast: Arc<Cast>,
     mut q: tokio::sync::mpsc::UnboundedReceiver<Tx>,
-    clock: impl Fn() -> f64,
+    ctx: Arc<Ctx>,
     me: Speaker,
-    engine: Engine,
 ) {
     let mut quiet_since = Instant::now();
     while let Some(tx) = q.recv().await {
         let got = Instant::now();
-        if clock() > tx.expires {
+        if ctx.clock() > tx.expires {
             log::debug!("milatc: dropped stale {} call: {}", me.name, tx.text);
             continue;
         }
-        let voice = match &tx.pilot {
-            Some(_) => cast.pilot(tx.to.unwrap_or(0)),
-            None => cast.controller(me.pos),
+        let voice = match (&tx.pilot, tx.voice) {
+            (Some(_), _) => cast.pilot(tx.to.unwrap_or(0)),
+            (None, Some(v)) => cast.controller(v),
+            // every tanker crew sounds different
+            (None, None) if me.pos == Pos::Tanker => cast.pilot(me.salt.wrapping_mul(0x5bd1_e995) ^ 0xa5a5),
+            (None, None) => cast.controller(me.pos),
+        };
+        let who = match (&tx.pilot, tx.voice) {
+            (Some(p), _) => p.clone(),
+            (None, Some(Pos::Paddles)) => "Paddles".to_string(),
+            _ => me.name.clone(),
         };
         // Synthesis overlaps the pause.
         let spoken = speech::speak(&tx.text);
@@ -784,7 +944,7 @@ async fn transmitter(
             Line {
                 t: now_ms(),
                 station: me.station.clone(),
-                who: tx.pilot.clone().unwrap_or_else(|| me.name.clone()),
+                who: who.clone(),
                 text: tx.text.clone(),
                 pilot: tx.pilot.is_some(),
                 ai: tx.pilot.is_some(),
@@ -793,7 +953,6 @@ async fn transmitter(
             },
         );
         if let Some(p) = &pcm {
-            let who = tx.pilot.clone().unwrap_or_else(|| me.name.clone());
             live::play(&me.inst, &me.station, &who, &tx.text, p);
         }
         if let (Some(pcm), true) = (pcm, client.is_connected()) {
@@ -806,13 +965,22 @@ async fn transmitter(
         }
         quiet_since = Instant::now();
         if let Some(unit) = tx.subtitle {
-            let e = engine.clone();
-            let text = format!("{}: {}", me.name.to_uppercase(), tx.text);
+            let e = ctx.engine.clone();
+            let text = format!("{}: {}", who.to_uppercase(), tx.text);
             tokio::spawn(async move { e.command("text", &unit.to_string(), &text).await });
         }
         if let Some((group, action)) = &tx.action {
-            engine.command(action, group, "").await;
+            ctx.engine.command(action, group, "").await;
         }
+    }
+}
+
+async fn fetch_range(db: &StatsDb, inst: &crate::db::InstanceState) -> Result<RangeLive, String> {
+    let res = tokio::time::timeout(Duration::from_secs(4), crate::call_engine_rpc_str(db, inst, "query-range", vec![])).await;
+    match res {
+        Ok(Ok(json)) => serde_json::from_str::<RangeLive>(&json).map_err(|e| format!("bad query-range JSON: {e}")),
+        Ok(Err(e)) => Err(format!("query-range RPC error: {e:?}")),
+        Err(_) => Err("query-range timed out".to_string()),
     }
 }
 

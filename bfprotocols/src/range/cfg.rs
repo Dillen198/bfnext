@@ -1398,6 +1398,16 @@ pub struct AtcTrafficCfg {
     /// itself, seconds; 0 = wait for Ground forever.
     #[serde(default = "default_atc_self_release")]
     pub self_release_s: f64,
+    /// Fighters off Andersen to work a range (dry passes in a Range Control
+    /// slot) and come home.
+    #[serde(default = "default_atc_sortie_rate")]
+    pub range_sorties_per_hour: f64,
+    /// Fighters off Andersen to take fuel from a tanker and come home.
+    #[serde(default = "default_atc_sortie_rate")]
+    pub tanker_sorties_per_hour: f64,
+    /// Hornets inbound to the carrier, recovering through Marshal.
+    #[serde(default = "default_atc_sortie_rate")]
+    pub carrier_recoveries_per_hour: f64,
     /// What flies; empty = a USAF/USN mix (C-17, KC-135, C-130, B-52, F-16,
     /// F/A-18).
     #[serde(default)]
@@ -1427,6 +1437,9 @@ fn default_atc_max() -> u32 {
 }
 fn default_atc_country() -> String {
     "USA".into()
+}
+fn default_atc_sortie_rate() -> f64 {
+    2.
 }
 fn default_atc_self_release() -> f64 {
     480.
