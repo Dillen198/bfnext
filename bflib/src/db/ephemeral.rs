@@ -693,6 +693,53 @@ fn bucket_pct(pct: u8) -> u8 {
     (pct / 5) * 5
 }
 
+/// Ground "vehicles" that are really fixed structures. DCS 2.9.30 crashes
+/// the server outright (woCar::initObject via woCar::setColumn, a null read)
+/// when one of these is unit 1 of a vehicle group: the column has no usable
+/// leader. Further back in a column they are fine, which is how the missions
+/// that work place them. The Vector Strike Modern logistics templates led
+/// with an FPS-117 Dome and its neutral blocks were lone armed houses, and
+/// the server could not load the mission at all.
+const NO_LEAD_TYPES: &[&str] = &["FPS-117 Dome", "houseA_arm", "house1arm", "house2arm"];
+
+enum Lead {
+    /// Unit 1 is a vehicle that can lead a column.
+    Ok,
+    /// A fixed structure led; the units were reordered so a vehicle leads.
+    Reordered,
+    /// Every unit is a fixed structure, so nothing can lead the column.
+    OnlyFixed,
+}
+
+/// Make sure no `NO_LEAD_TYPES` unit leads a vehicle group's `units` table:
+/// move them behind the vehicles, keeping both sets in their original order.
+/// Only renumbers the units table, so names, positions and ids are untouched.
+fn keep_fixed_structures_out_of_lead(units: &LuaTable) -> Result<Lead> {
+    let n = units.raw_len();
+    if n == 0 {
+        return Ok(Lead::Ok);
+    }
+    let mut all: Vec<LuaTable> = (1..=n)
+        .map(|i| units.raw_get(i))
+        .collect::<LuaResult<_>>()?;
+    let fixed = |t: &LuaTable| {
+        t.raw_get::<_, std::string::String>("type")
+            .map(|typ| NO_LEAD_TYPES.contains(&typ.as_str()))
+            .unwrap_or(false)
+    };
+    if !fixed(&all[0]) {
+        return Ok(Lead::Ok);
+    }
+    if all.iter().all(fixed) {
+        return Ok(Lead::OnlyFixed);
+    }
+    all.sort_by_key(|t| fixed(t));
+    for (i, t) in all.into_iter().enumerate() {
+        units.raw_set(i + 1, t)?;
+    }
+    Ok(Lead::Reordered)
+}
+
 impl Ephemeral {
     /// Where `side`'s convoys, cargo flights, supply ships and helo missions
     /// are headed.
@@ -2945,7 +2992,25 @@ impl Ephemeral {
                         }
                     }
                 }
-                units.len() > 0
+                let lead = if matches!(template.category, GroupKind::Vehicle) {
+                    keep_fixed_structures_out_of_lead(&template.group.raw_get("units")?)?
+                } else {
+                    Lead::Ok
+                };
+                match lead {
+                    Lead::Ok => (),
+                    Lead::Reordered => info!(
+                        "[SPAWN] {}: moved a fixed structure out of the lead, DCS crashes \
+                         creating a column it leads",
+                        group.name
+                    ),
+                    Lead::OnlyFixed => warn!(
+                        "[SPAWN] {} not spawned: its only surviving units are fixed structures, \
+                         and DCS crashes creating a column one of them leads",
+                        group.name
+                    ),
+                }
+                units.len() > 0 && !matches!(lead, Lead::OnlyFixed)
             };
             (template, alive)
         };
