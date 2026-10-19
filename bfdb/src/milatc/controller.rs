@@ -49,11 +49,13 @@ pub(crate) struct Tx {
     pub action: Option<(String, &'static str)>,
     /// Show the text in DCS to the player in this unit.
     pub subtitle: Option<u64>,
+    /// The type of the aircraft it is from or to, for the transcript.
+    pub aircraft: Option<String>,
 }
 
 impl Tx {
     pub(crate) fn new(pos: Pos, text: String, to: Option<u64>, expires: f64) -> Self {
-        Tx { pos, text, to, expires, pilot: None, delay: 0., action: None, subtitle: None }
+        Tx { pos, text, to, expires, pilot: None, delay: 0., action: None, subtitle: None, aircraft: None }
     }
 }
 
@@ -496,7 +498,9 @@ impl Controller {
             v.push(tx);
             if let Some(text) = rb {
                 let mut r = Tx::new(pos, text, to, now + 30.);
-                r.pilot = to.and_then(|k| self.flights.get(&k)).map(|f| f.call.clone());
+                let f = to.and_then(|k| self.flights.get(&k));
+                r.pilot = f.map(|f| f.call.clone());
+                r.aircraft = f.and_then(|f| type_label(&f.ac.typ));
                 r.delay = self.between(0.7, 1.8);
                 v.push(r);
             }
@@ -639,6 +643,7 @@ impl Controller {
         // key the mic.
         tx.delay = self.between(0.8, 2.4);
         tx.subtitle = (!f.is_ai()).then_some(f.key);
+        tx.aircraft = type_label(&f.ac.typ);
         out.push(tx);
     }
 
@@ -648,6 +653,7 @@ impl Controller {
         let mut tx = Tx::new(pos, text, Some(f.key), now + 30.);
         tx.pilot = Some(f.call.clone());
         tx.delay = self.between(0.3, 1.2);
+        tx.aircraft = type_label(&f.ac.typ);
         out.push(tx);
         f.freq = Some(pos);
         f.ai_next = now + self.between(25., 45.);
@@ -1979,7 +1985,7 @@ impl Controller {
             (AiPlan::Departure, Phase::Ground) if f.ac.ai_state == "waiting" && !f.ai_taxi_hold => {
                 if quiet(self, Pos::Ground) && f.once("ai-taxi") {
                     let ramp = self.ap.ramp_for(f.ac.p, None).map(|r| r.name.clone()).unwrap_or_else(|| "the ramp".into());
-                    let t = format!("{}, {}, {ramp}, with {letter}, request taxi.", self.facility(Pos::Ground), f.call);
+                    let t = format!("{}, {}{}, {ramp}, with {letter}, request taxi.", self.facility(Pos::Ground), f.call, spoken_type(&f.ac.typ));
                     self.pilot_says(f, Pos::Ground, t, now, out);
                     let p = Parsed::of(Intent::RequestTaxi);
                     self.taxi(f, Pos::Ground, &p, now, out);
@@ -2023,9 +2029,10 @@ impl Controller {
             (AiPlan::Arrival, Phase::Enroute) => {
                 if self.has(Pos::Approach) && quiet(self, Pos::Approach) && f.once("ai-app") {
                     let t = format!(
-                        "{}, {}, {d_nm} miles {dir}, {}, inbound full stop with {letter}.",
+                        "{}, {}{}, {d_nm} miles {dir}, {}, inbound full stop with {letter}.",
                         self.facility(Pos::Approach),
                         f.call,
+                        spoken_type(&f.ac.typ),
                         alt(((f.ac.alt_ft + 500) / 1000) * 1000)
                     );
                     self.pilot_says(f, Pos::Approach, t, now, out);
@@ -2037,7 +2044,7 @@ impl Controller {
             }
             (AiPlan::Arrival, Phase::Pattern) => {
                 if f.freq == Some(Pos::Tower) && now - f.t_handoff > 4. && quiet(self, Pos::Tower) && f.once("ai-twr") {
-                    let t = format!("{}, {}, {d_nm} miles {dir}, full stop.", self.facility(Pos::Tower), f.call);
+                    let t = format!("{}, {}{}, {d_nm} miles {dir}, full stop.", self.facility(Pos::Tower), f.call, spoken_type(&f.ac.typ));
                     self.pilot_says(f, Pos::Tower, t, now, out);
                     let mut p = Parsed::of(Intent::CheckIn);
                     p.option = LandingOption::FullStop;
@@ -2113,11 +2120,11 @@ pub(crate) fn readback(text: &str, call: &str, field: &str, r: f64) -> Option<St
     Some(format!("{s}, {call}{tail}."))
 }
 
-/// ", a C-17 on a" / ", an F-16 on a" for a traffic call; "" when the type
-/// means nothing to a listener.
-fn type_phrase(dcs_type: &str) -> String {
+/// What pilots and controllers call a DCS type: "C-17", "Hornet". `None`
+/// when the type means nothing said over the radio.
+fn type_name(dcs_type: &str) -> Option<&'static str> {
     let t = dcs_type.to_uppercase();
-    let name = if t.starts_with("C-17") {
+    Some(if t.starts_with("C-17") {
         "C-17"
     } else if t.starts_with("KC-135") || t.starts_with("KC135") {
         "KC-135"
@@ -2141,9 +2148,48 @@ fn type_phrase(dcs_type: &str) -> String {
         "A-10"
     } else if t.starts_with("AV8") {
         "Harrier"
+    } else if t.starts_with("A-4") {
+        "A-4"
+    } else if t.starts_with("M-2000") || t.starts_with("MIRAGE") {
+        "Mirage"
+    } else if t.starts_with("MIG-29") {
+        "MiG-29"
+    } else if t.starts_with("SU-27") || t.starts_with("SU-33") {
+        "Flanker"
+    } else if t.starts_with("UH-1") {
+        "Huey"
+    } else if t.starts_with("AH-64") {
+        "Apache"
+    } else if t.starts_with("CH-47") {
+        "Chinook"
+    } else if t.starts_with("MI-8") {
+        "Hip"
+    } else if t.starts_with("E-3") {
+        "AWACS"
     } else {
-        return String::new();
-    };
+        return None;
+    })
+}
+
+/// The type for the transcript: the radio name when there is one, else the
+/// DCS type as it is ("JF-17").
+pub(crate) fn type_label(dcs_type: &str) -> Option<String> {
+    let t = dcs_type.trim();
+    if t.is_empty() {
+        return None;
+    }
+    Some(type_name(t).map(str::to_string).unwrap_or_else(|| t.replace('_', " ")))
+}
+
+/// ", C-17" after a callsign on first contact, or nothing.
+fn spoken_type(dcs_type: &str) -> String {
+    type_name(dcs_type).map(|n| format!(", {n}")).unwrap_or_default()
+}
+
+/// ", a C-17 on a" / ", an F-16 on a" for a traffic call; "" when the type
+/// means nothing to a listener.
+fn type_phrase(dcs_type: &str) -> String {
+    let Some(name) = type_name(dcs_type) else { return String::new() };
     let article = if name.starts_with(['A', 'E', 'F', 'H']) && !name.starts_with("Ho") && !name.starts_with("Ha") { "an" } else { "a" };
     format!(", {article} {name} on a")
 }
@@ -2418,6 +2464,17 @@ mod tests {
     }
 
     #[test]
+    fn aircraft_types() {
+        assert_eq!(type_label("C-17A").as_deref(), Some("C-17"));
+        assert_eq!(type_label("FA-18C_hornet").as_deref(), Some("Hornet"));
+        assert_eq!(type_label("JF-17").as_deref(), Some("JF-17"));
+        assert_eq!(type_label("Bf_109").as_deref(), Some("Bf 109"));
+        assert_eq!(type_label(""), None);
+        assert_eq!(spoken_type("KC-135"), ", KC-135");
+        assert_eq!(spoken_type("JF-17"), "");
+    }
+
+    #[test]
     fn readbacks_keep_the_clearance() {
         assert_eq!(
             readback("Reach 3-1, Andersen Ground, runway 06R, taxi via Bravo, Echo, hold short runway 06R, wind 070 at 12, altimeter 2992.", "Reach 3-1", "Andersen", 0.9).unwrap(),
@@ -2442,6 +2499,7 @@ mod tests {
         t.player_name = format!("ATC-{id}");
         t.ai_plan = Some(plan.into());
         t.ai_state = Some(state.into());
+        t.unit_type = "C-17A".into();
     }
 
     #[test]
@@ -2457,7 +2515,8 @@ mod tests {
             said.extend(w.tick());
         }
         let all = texts(&said).join(" | ");
-        assert!(all.contains("Andersen Ground, Reach 3-1"), "{all}");
+        assert!(all.contains("Andersen Ground, Reach 3-1, C-17"), "{all}");
+        assert!(said.iter().any(|t| t.pilot.is_some() && t.aircraft.is_some()), "AI calls carry the type");
         assert!(all.contains("hold position, traffic"), "{all}");
         assert!(said.iter().all(|t| t.action.is_none()), "not released while the final is busy");
         // the player lands and is gone: Ground releases it

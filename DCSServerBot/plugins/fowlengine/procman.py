@@ -138,6 +138,8 @@ _RANGE_ATC_KEY_MAP = {
     "require_clearance": "requireClearance",
     "gca_interval_secs": "gcaIntervalSecs",
     "atis_interval_secs": "atisIntervalSecs",
+    # players' own voices on the range site's ATC radio page (off: text only)
+    "publish_pilot_audio": "publishPilotAudio",
 }
 _RANGE_ATC_LLM_KEY_MAP = {
     "enabled": "enabled",

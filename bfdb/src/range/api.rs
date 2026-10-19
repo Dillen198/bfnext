@@ -944,6 +944,71 @@ async fn h_atc(ctx: Arc<RangeCtx>, q: Q) -> Response {
     ok(&crate::milatc::transcript_json(&sc.primary().id, since))
 }
 
+/// The live ATC feed (LiveATC style): every transmission on `?station=`
+/// (a station id, or `all`) as it is said, over a WebSocket.
+async fn h_atc_live(ws: warp::ws::Ws, ctx: Arc<RangeCtx>, q: Q) -> Response {
+    let sc = scope_or_400!(ctx, q);
+    let inst = sc.primary().id.clone();
+    let station = nonempty(&q, "station").unwrap_or("all").to_string();
+    let Some(slot) = crate::milatc::live::Slot::take() else {
+        return crate::websec::ws_refused(StatusCode::SERVICE_UNAVAILABLE, "too many listeners on the ATC feed");
+    };
+    ws.on_upgrade(move |socket| async move {
+        let _slot = slot;
+        atc_live(socket, inst, station).await
+    })
+    .into_response()
+}
+
+async fn atc_live(ws: warp::ws::WebSocket, inst: String, station: String) {
+    use crate::milatc::live::{self, Wire};
+    use futures::{SinkExt, StreamExt};
+    use warp::ws::Message;
+    let (mut sink, mut stream) = ws.split();
+    let mut rx = live::subscribe(&inst);
+    // proxies close a silent socket: keep it warm between transmissions
+    let mut ping = tokio::time::interval(Duration::from_secs(20));
+    loop {
+        tokio::select! {
+            f = rx.recv() => match f {
+                Ok(f) => {
+                    if station != "all" && f.station() != station {
+                        continue;
+                    }
+                    let m = match live::wire(&f) {
+                        Wire::Text(t) => Message::text(t),
+                        Wire::Binary(b) => Message::binary(b),
+                    };
+                    if sink.send(m).await.is_err() {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            },
+            m = stream.next() => match m {
+                Some(Ok(m)) if m.is_close() => break,
+                Some(Ok(_)) => {}
+                _ => break,
+            },
+            _ = ping.tick() => {
+                if sink.send(Message::ping(Vec::<u8>::new())).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// One ATC transmission's audio, as WAV. Kept for the last half hour or so.
+async fn h_atc_audio(ctx: Arc<RangeCtx>, q: Q, id: u64) -> Response {
+    let sc = scope_or_400!(ctx, q);
+    match crate::milatc::audio_wav(&sc.primary().id, id) {
+        Some(w) => bytes_reply((*w).clone(), "audio/wav", 86_400),
+        None => err(StatusCode::NOT_FOUND, "that transmission's audio is no longer kept".to_string()),
+    }
+}
+
 // ── routes ─────────────────────────────────────────────────────────────
 
 /// Every `/api/range/*` route as one boxed filter.
@@ -981,6 +1046,14 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
     );
     let catalog = warp::path!("api" / "range" / "catalog").and(c.clone()).and(q.clone()).then(h_catalog);
     let atc = warp::path!("api" / "range" / "atc").and(c.clone()).and(q.clone()).then(h_atc);
+    let atc_live = warp::path!("api" / "range" / "atc" / "live")
+        .and(crate::websec::ws_limited())
+        .and(c.clone())
+        .and(q.clone())
+        .then(|ws, _ip, ctx: Arc<RangeCtx>, q: Q| h_atc_live(ws, ctx, q));
+    let atc_audio = warp::path!("api" / "range" / "atc" / "audio" / u64).and(c.clone()).and(q.clone()).then(
+        |id: u64, ctx: Arc<RangeCtx>, q: Q| h_atc_audio(ctx, q, id),
+    );
     let weapons = warp::path!("api" / "range" / "weapons").and(c.clone()).and(q.clone()).then(h_weapons);
     let tacview = warp::path!("api" / "range" / "tacview" / String).and(c.clone()).then(
         |id: String, ctx: Arc<RangeCtx>| h_tacview(ctx, id),
@@ -1049,7 +1122,7 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
         .or(impacts)
         .unify()
         .boxed();
-    let reads_c = catalog.or(atc).unify().or(weapons).unify().or(tacview).unify().or(clip_json).unify().or(clip_acmi).unify().or(replay_link).unify().or(replay_results).unify().boxed();
+    let reads_c = catalog.or(atc).unify().or(atc_live).unify().or(atc_audio).unify().or(weapons).unify().or(tacview).unify().or(clip_json).unify().or(clip_acmi).unify().or(replay_link).unify().or(replay_results).unify().boxed();
     let reads = warp::get().and(reads_a.or(reads_b).unify().or(reads_c).unify()).boxed();
     let writes = spawn.or(despawn).unify().or(reset).unify().boxed();
     // Anything else under /api/range/ is a JSON 404 rather than falling
