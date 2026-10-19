@@ -19,6 +19,7 @@
 //! - [`llm`]: the language-model fallback for what the rules miss.
 //! - [`speech`]: written and spoken phraseology.
 //! - [`voices`]: a different voice per frequency, others for AI pilots.
+//! - [`live`]: the live audio feed for listeners on the range site.
 //!
 //! This module is the plumbing: it polls the range engine's `query-atc`
 //! picture once a second, listens on every position's frequency through the
@@ -31,6 +32,7 @@
 pub(crate) mod airport;
 pub(crate) mod controller;
 pub(crate) mod intent;
+pub(crate) mod live;
 pub(crate) mod llm;
 pub(crate) mod speech;
 pub(crate) mod voices;
@@ -181,6 +183,11 @@ pub(crate) struct RangeAtcConfig {
     pub atis_interval_secs: f64,
     #[serde(default)]
     pub voices: HashMap<Pos, VoiceCfg>,
+    /// Put players' own transmissions on the range site's ATC radio page
+    /// (`/api/range/atc/audio`). Off: their calls show as text only, and only
+    /// the controllers and AI pilots can be listened to.
+    #[serde(default)]
+    pub publish_pilot_audio: bool,
 }
 
 fn load_airport(f: &FieldCfg) -> anyhow::Result<Airport> {
@@ -212,6 +219,12 @@ pub(crate) struct Line {
     /// A pilot (player or AI) rather than the controller.
     pub pilot: bool,
     pub ai: bool,
+    /// The aircraft the transmission is from or to ("C-17").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aircraft: Option<String>,
+    /// Its audio, at `/api/range/atc/audio/<id>`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio: Option<u64>,
 }
 
 /// A frequency on the transcript page.
@@ -228,6 +241,61 @@ pub(crate) struct StationInfo {
 struct Board {
     stations: Vec<StationInfo>,
     lines: VecDeque<Line>,
+    /// Recent transmissions as WAV, newest last, for listening on the web.
+    audio: VecDeque<(u64, Arc<Vec<u8>>)>,
+    audio_bytes: usize,
+}
+
+/// How much transmission audio to keep per instance: about 25 minutes of
+/// speech at 16 kHz mono.
+const AUDIO_KEEP_BYTES: usize = 48 << 20;
+
+/// 16 kHz mono PCM as a WAV file.
+fn wav(pcm: &[i16]) -> Vec<u8> {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: crate::voice::tts::SRS_RATE,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut c = std::io::Cursor::new(Vec::with_capacity(44 + pcm.len() * 2));
+    if let Ok(mut w) = hound::WavWriter::new(&mut c, spec) {
+        for s in pcm {
+            let _ = w.write_sample(*s);
+        }
+        let _ = w.finalize();
+    }
+    c.into_inner()
+}
+
+/// Keep a transmission's audio; returns its id. Ids are unique across bfdb
+/// restarts (millisecond clock plus a counter), so a browser's cached copy of
+/// an old id can never be a different transmission.
+fn store_audio(inst: &str, pcm: &[i16]) -> Option<u64> {
+    if pcm.is_empty() {
+        return None;
+    }
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) & 0xff;
+    let id = ((now_ms().max(0) as u64) << 8) | n;
+    let bytes = Arc::new(wav(pcm));
+    let mut b = boards().lock().ok()?;
+    let board = b.entry(inst.to_string()).or_default();
+    board.audio_bytes += bytes.len();
+    board.audio.push_back((id, bytes));
+    while board.audio_bytes > AUDIO_KEEP_BYTES {
+        match board.audio.pop_front() {
+            Some((_, a)) => board.audio_bytes -= a.len(),
+            None => break,
+        }
+    }
+    Some(id)
+}
+
+/// A kept transmission, as WAV.
+pub(crate) fn audio_wav(inst: &str, id: u64) -> Option<Arc<Vec<u8>>> {
+    let b = boards().lock().ok()?;
+    b.get(inst)?.audio.iter().find(|(i, _)| *i == id).map(|(_, a)| a.clone())
 }
 
 /// Every range instance's transcript, for `/api/range/atc`.
@@ -441,6 +509,7 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
         let stations = stations.clone();
         let llm = llm.clone();
         let inst_id = inst_id.clone();
+        let publish_pilot_audio = cfg.publish_pilot_audio;
         tokio::spawn(async move {
             while let Some(mut tr) = rx.recv().await {
                 let Some((fi, pos)) = parse_label(&tr.label) else { continue };
@@ -449,6 +518,10 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
                     continue;
                 }
                 let pcm = std::mem::take(&mut tr.pcm);
+                let keep = publish_pilot_audio.then(|| pcm.clone());
+                if publish_pilot_audio {
+                    live::play(&inst_id, &tr.label, &tr.name, "", &pcm);
+                }
                 let stt = stt.clone();
                 let llm = llm.clone();
                 let inst_id = inst_id.clone();
@@ -462,7 +535,8 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
                         }
                         _ => return,
                     };
-                    heard_call(st, pos, tr.unit_id, tr.name, heard, llm, clock, &inst_id).await;
+                    let audio = keep.and_then(|p| store_audio(&inst_id, &p));
+                    heard_call(st, pos, tr.unit_id, tr.name, heard, llm, clock, &inst_id, audio).await;
                 });
             }
         });
@@ -573,17 +647,25 @@ async fn heard_call(
     llm: Option<llm::Llm>,
     clock: impl Fn() -> f64,
     inst: &str,
+    audio: Option<u64>,
 ) {
     let callsign = st.ctl.lock().unwrap().ap.callsign.clone();
     let mut parsed = intent::parse(&heard, &callsign);
-    // The transcript names the flight when we know it.
-    let who = {
+    // The transcript names the flight, and its type, when we know them.
+    let (who, aircraft) = {
         let mut ctl = st.ctl.lock().unwrap();
-        ctl.identify(&Caller { unit_id, srs_name: srs_name.clone() }, parsed.as_ref())
-            .and_then(|k| ctl.flights.get(&k).map(|f| f.call.clone()))
-            .unwrap_or_else(|| srs_name.clone())
+        let f = ctl
+            .identify(&Caller { unit_id, srs_name: srs_name.clone() }, parsed.as_ref())
+            .and_then(|k| ctl.flights.get(&k));
+        (
+            f.map(|f| f.call.clone()).unwrap_or_else(|| srs_name.clone()),
+            f.and_then(|f| controller::type_label(&f.ac.typ)),
+        )
     };
-    note(inst, Line { t: now_ms(), station: label(st.index, pos), who, text: heard.clone(), pilot: true, ai: false });
+    note(
+        inst,
+        Line { t: now_ms(), station: label(st.index, pos), who, text: heard.clone(), pilot: true, ai: false, aircraft, audio },
+    );
     if parsed.is_none() {
         if let Some(llm) = llm {
             let ctx = {
@@ -696,6 +778,7 @@ async fn transmitter(
         let from = quiet_since.max(got);
         let due = from + Duration::from_secs_f64(tx.delay.clamp(0., 6.));
         tokio::time::sleep_until(tokio::time::Instant::from_std(due)).await;
+        let audio = pcm.as_deref().and_then(|p| store_audio(&me.inst, p));
         note(
             &me.inst,
             Line {
@@ -705,8 +788,14 @@ async fn transmitter(
                 text: tx.text.clone(),
                 pilot: tx.pilot.is_some(),
                 ai: tx.pilot.is_some(),
+                aircraft: tx.aircraft.clone(),
+                audio,
             },
         );
+        if let Some(p) = &pcm {
+            let who = tx.pilot.clone().unwrap_or_else(|| me.name.clone());
+            live::play(&me.inst, &me.station, &who, &tx.text, p);
+        }
         if let (Some(pcm), true) = (pcm, client.is_connected()) {
             let client = client.clone();
             let radios = radios.clone();
@@ -756,5 +845,24 @@ mod tests {
         assert!(!ap.positions.contains_key(&Pos::Final));
         assert_eq!(ap.positions[&Pos::Tower][0].mhz, 251.1);
         assert_eq!(parse_label(&label(0, Pos::Ground)), Some((0, Pos::Ground)));
+    }
+
+    #[test]
+    fn audio_is_kept_as_wav_and_bounded() {
+        let inst = "test-audio";
+        let pcm = vec![1000i16; 16_000]; // a second
+        let id = store_audio(inst, &pcm).unwrap();
+        let w = audio_wav(inst, id).unwrap();
+        assert_eq!(&w[..4], b"RIFF");
+        assert_eq!(w.len(), 44 + 32_000);
+        assert!(audio_wav(inst, id + 1).is_none());
+        // keeping far more than the cap drops the oldest first
+        let big = vec![0i16; 8_000_000]; // 16 MB each
+        for _ in 0..5 {
+            store_audio(inst, &big);
+        }
+        assert!(audio_wav(inst, id).is_none(), "the first clip aged out");
+        let b = boards().lock().unwrap();
+        assert!(b[inst].audio_bytes <= AUDIO_KEEP_BYTES);
     }
 }
