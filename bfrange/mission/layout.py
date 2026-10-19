@@ -291,15 +291,17 @@ ZONES = [
     # Placed on satellite imagery.
     ("R7201-BOMB", (16.0175, 146.0592), 150),
     ("R7201-STRAFE", (16.0061, 146.0520), 150),
-    ("R7201-JDAM", (16.0270, 146.0625), 200),
-    # TN-1 North Field: the convoy drives the length of the old runways
-    ("TN1-ARRAY", (15.086, 145.627), 200),
+    ("R7201-JDAM", (16.0262, 146.0615), 200),
+    # TN-1 North Field: the convoy drives the length of the old runways. The
+    # array sits on the airfield itself: DCS's coastline in the north-west of
+    # Tinian is a couple of hundred metres inside the real one.
+    ("TN1-ARRAY", (15.083, 145.637), 200),
     ("TN1-CONVOY", (15.068, 145.612), 150),
     ("TN1-CONVOY-END", (15.074, 145.652), 150),
     ("TN1-JDAM", (15.091, 145.645), 250),
     # TN-2: three tiers west to east across the island
     ("TN2-EASY", (15.038, 145.612), 150), ("TN2-MEDIUM", (15.035, 145.630), 150),
-    ("TN2-HARD", (15.032, 145.648), 150),
+    ("TN2-HARD", (15.032, 145.644), 150),
     # EW-1
     ("EW1-JAMMER", (14.963, 145.645), 150), ("EW1-TARGETS", (14.990, 145.612), 200),
     # R-3 Aguijan

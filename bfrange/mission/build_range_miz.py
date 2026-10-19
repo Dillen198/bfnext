@@ -324,7 +324,7 @@ def coord_targets(p, sid, name, side, country):
             "loc": cfg_loc(f"{p}-JDAM"), "side": side, "country": country, "respawn_s": 900,
             "targets": [{"typ": "Hangar A", "category": "static", "name": "Hangar"},
                         {"typ": "Garage A", "category": "static", "x": 120, "y": 60, "name": "Garage"},
-                        {"typ": ".Command Center", "category": "static", "x": -150, "y": 80, "name": "Command post"}],
+                        {"typ": "FARP CP Blindage", "category": "static", "x": -150, "y": 80, "name": "Command post"}],
             "note": "JDAM / JSOW / coordinate weapons. Coordinates: F10 > Range > Air-to-Ground > Stations."}
 
 

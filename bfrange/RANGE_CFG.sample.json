@@ -827,7 +827,7 @@
           "name": "Garage"
         },
         {
-          "typ": ".Command Center",
+          "typ": "FARP CP Blindage",
           "category": "static",
           "x": -150,
           "y": 80,
@@ -957,7 +957,7 @@
           "name": "Garage"
         },
         {
-          "typ": ".Command Center",
+          "typ": "FARP CP Blindage",
           "category": "static",
           "x": -150,
           "y": 80,
@@ -1211,7 +1211,7 @@
           "name": "Garage"
         },
         {
-          "typ": ".Command Center",
+          "typ": "FARP CP Blindage",
           "category": "static",
           "x": -150,
           "y": 80,

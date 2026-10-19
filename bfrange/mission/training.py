@@ -129,7 +129,7 @@ def jammer_cfg_and_stations():
             "loc": cfg_loc(j["targets_zone"]), "side": target_side, "country": COUNTRY[target_side], "respawn_s": 900,
             "targets": [{"typ": "Hangar A", "category": "static", "name": "Hangar"},
                         {"typ": "Garage A", "category": "static", "x": 120, "y": 60, "name": "Garage"},
-                        {"typ": ".Command Center", "category": "static", "x": -150, "y": 80, "name": "Command post"}],
+                        {"typ": "FARP CP Blindage", "category": "static", "x": -150, "y": 80, "name": "Command post"}],
             "note": "Inside the jammer's radius: GPS/INS weapons degrade. Kill the jammer, or use laser, TV or your eyes.",
         })
     return jams, stations
