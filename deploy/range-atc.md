@@ -44,7 +44,7 @@ You:   Cleared to the range, 4,000, 363.8, squawk 4201, Viper 1-1.
 CLR:   Viper 1-1, readback correct, contact Andersen Ground 275.8 when ready to taxi.
 You:   Andersen Ground, Viper 1-1, request taxi.
 GND:   Viper 1-1, Andersen Ground, runway 06R, taxi via Bravo, Echo, hold short
-       runway 06R, wind 070 at 12, altimeter 2992.
+       runway 06R at Echo, wind 070 at 12, altimeter 2992.
 You:   Taxi via Bravo, Echo, hold short 06R, Viper 1-1.
   (you reach the hold line)
 GND:   Viper 1-1, contact Andersen Tower 340.2.
@@ -114,6 +114,38 @@ weather or a radio check.
   you loud and clear"). Clearances always use the standard words.
 - **Traffic calls name the aircraft type:** "hold short runway 06R, traffic,
   a C-17 on a 3 mile final".
+
+## Ground traffic
+
+Ground works everyone on the taxiways, not just the one it is talking to:
+
+- **Every taxi clearance names the route and the holding point**: "runway
+  24L, taxi via Alpha, Kilo, hold short runway 24L at Kilo". From the north
+  ramp it stops you short of 06L/24R first and clears you across when the
+  runway is free.
+- **Traffic crossing ahead, or coming the other way**: "hold position,
+  traffic crossing left to right, a KC-135 on Bravo", then "traffic has
+  passed, continue taxi".
+- **Following**: "follow the C-17 ahead" when you end up behind someone
+  going your way.
+- **AI departures wait on their stands** while a player is taxiing where
+  they would go ("Shell 1-1, hold position, traffic taxiing on Bravo, expect
+  taxi in three minutes"). DCS gives no way to stop AI once it is rolling,
+  so Ground holds it before it starts.
+
+Tower keeps the order: departures go in the order they called ready ("hold
+short runway 06R, number 2 for departure"), a second one is never cleared
+while the first is still on the runway, and after a heavy goes there is
+"caution wake turbulence, departing KC-135". An arrival behind a heavy on
+final hears the same for the landing heavy, and a number 2 in the overhead
+is told who to follow ("number 2, follow the C-17 on a 3 mile final").
+
+Approach and Departure call traffic: "Viper 1-1, traffic, 2 o'clock, 3
+miles, crossing left to right, a C-130, 4,000."
+
+If the taxi network does not line up with DCS's runways, bfdb's log says
+by how much and routes are still given from the network; if a stand is
+too far from any taxiway for a route, the log says where it is.
 
 ## When things go wrong
 
