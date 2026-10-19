@@ -417,17 +417,12 @@ a.rail-status:hover { border-color: color-mix(in srgb, var(--datum) 45%, var(--l
   -webkit-mask-position: center; mask-position: center;
 }
 .bd-carrier { width: min(1650px, 118vw); aspect-ratio: 1800 / 1302; right: -26%; bottom: -44%; }
-.bd-hornet { width: min(560px, 42vw); aspect-ratio: 1400 / 866; left: 42%; top: 2%; transform: rotate(-8deg); }
 .bd-hornet-big { width: min(1250px, 100vw); aspect-ratio: 1400 / 866; right: -14%; top: 6%; transform: rotate(-4deg); }
-.bd-carrier-far { width: min(620px, 50vw); aspect-ratio: 1800 / 1302; right: 4%; bottom: -3%; opacity: 0.55; }
 .bd-tomcat { width: min(900px, 80vw); aspect-ratio: 1200 / 1177; right: -9%; top: -4%; transform: rotate(32deg); }
-.bd-cap .bd-carrier-far { right: auto; left: 36%; bottom: -8%; opacity: 0.4; }
 @media (max-width: 767px) {
   .bd-carrier { width: 190vw; right: -70%; bottom: -12%; }
-  .bd-hornet { width: 90vw; right: -12%; top: 1%; }
   .bd-hornet-big { width: 170vw; right: -60%; }
   .bd-tomcat { width: 140vw; right: -50%; }
-  .bd-carrier-far { display: none; }
 }
 @media (prefers-reduced-transparency: reduce) { .backdrop { display: none; } }
 
