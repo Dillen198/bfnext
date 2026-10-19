@@ -285,7 +285,7 @@
       "name": "AR RIO",
       "kind": "aar",
       "side": "all",
-      "purpose": "KC-135 boom, FL250, TACAN 51Y, 251.0. Enter on the RIO line from W-11",
+      "purpose": "KC-135 boom, FL250 at 300 KIAS, TACAN 51Y, 251.0. Enter on the RIO line from W-11",
       "shape": {
         "track": {
           "lat": 11.17739,
@@ -301,7 +301,7 @@
       "name": "AR MIRAGE",
       "kind": "aar",
       "side": "all",
-      "purpose": "KC-135MPRS basket, FL210, TACAN 52Y, 252.0. Next to FDM: tank before or after R-7201",
+      "purpose": "KC-135MPRS basket, FL210 at 270 KIAS, TACAN 52Y, 252.0. Next to FDM: tank before or after R-7201",
       "shape": {
         "track": {
           "lat": 16.36653,
@@ -317,7 +317,7 @@
       "name": "AR LUXOR",
       "kind": "aar",
       "side": "all",
-      "purpose": "KC-135 boom, FL240, TACAN 54Y, 254.0. Enter on the LUXOR line past W-517",
+      "purpose": "KC-135 boom, FL240 at 300 KIAS, TACAN 54Y, 254.0. Enter on the LUXOR line past W-517",
       "shape": {
         "track": {
           "lat": 11.1503,
@@ -333,7 +333,7 @@
       "name": "AR SHELL",
       "kind": "aar",
       "side": "all",
-      "purpose": "KC-130 basket (helicopters too), 14,000 ft, TACAN 53Y, 253.0. West of Guam",
+      "purpose": "KC-130 basket, 14,000 ft at 220 KIAS for the slower jets (Harrier, A-4), TACAN 53Y, 253.0. West of Guam",
       "shape": {
         "track": {
           "lat": 13.42,
@@ -1330,6 +1330,7 @@
       "heading_deg": 346,
       "leg_nm": 12.0,
       "alt_ft": 25000,
+      "speed_kias": 300,
       "freq_mhz": 251.0,
       "tacan": {
         "channel": 51,
@@ -1351,6 +1352,7 @@
       "heading_deg": 354,
       "leg_nm": 14.2,
       "alt_ft": 21000,
+      "speed_kias": 270,
       "freq_mhz": 252.0,
       "tacan": {
         "channel": 52,
@@ -1372,6 +1374,7 @@
       "heading_deg": 1,
       "leg_nm": 11.8,
       "alt_ft": 24000,
+      "speed_kias": 300,
       "freq_mhz": 254.0,
       "tacan": {
         "channel": 54,
@@ -1393,6 +1396,7 @@
       "heading_deg": 0,
       "leg_nm": 20.0,
       "alt_ft": 14000,
+      "speed_kias": 220,
       "freq_mhz": 253.0,
       "tacan": {
         "channel": 53,
@@ -1434,6 +1438,7 @@
         "heading_deg": 0,
         "leg_nm": 10,
         "alt_ft": 6000,
+        "speed_kias": 250,
         "freq_mhz": 261.0,
         "tacan": {
           "channel": 63,

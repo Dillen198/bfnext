@@ -181,15 +181,15 @@ SECTORS = [
          purpose="Intercepts east of the chain: Fox 3 presentations at range"),
 
     # ---- the published refuelling tracks
-    dict(id="ar-rio", name="AR RIO", kind="aar", side="all", shape=_track("rio"), tag="KC-135 51Y 251.0 FL250",
-         purpose="KC-135 boom, FL250, TACAN 51Y, 251.0. Enter on the RIO line from W-11"),
-    dict(id="ar-mirage", name="AR MIRAGE", kind="aar", side="all", shape=_track("mirage"), tag="MPRS 52Y 252.0 FL210",
-         purpose="KC-135MPRS basket, FL210, TACAN 52Y, 252.0. Next to FDM: tank before or after R-7201"),
-    dict(id="ar-luxor", name="AR LUXOR", kind="aar", side="all", shape=_track("luxor"), tag="KC-135 54Y 254.0 FL240",
-         purpose="KC-135 boom, FL240, TACAN 54Y, 254.0. Enter on the LUXOR line past W-517"),
-    dict(id="ar-shell", name="AR SHELL", kind="aar", side="all", tag="KC-130 53Y 253.0 14,000 ft",
+    dict(id="ar-rio", name="AR RIO", kind="aar", side="all", shape=_track("rio"), tag="KC-135 51Y 251.0 FL250 300 KIAS",
+         purpose="KC-135 boom, FL250 at 300 KIAS, TACAN 51Y, 251.0. Enter on the RIO line from W-11"),
+    dict(id="ar-mirage", name="AR MIRAGE", kind="aar", side="all", shape=_track("mirage"), tag="MPRS 52Y 252.0 FL210 270 KIAS",
+         purpose="KC-135MPRS basket, FL210 at 270 KIAS, TACAN 52Y, 252.0. Next to FDM: tank before or after R-7201"),
+    dict(id="ar-luxor", name="AR LUXOR", kind="aar", side="all", shape=_track("luxor"), tag="KC-135 54Y 254.0 FL240 300 KIAS",
+         purpose="KC-135 boom, FL240 at 300 KIAS, TACAN 54Y, 254.0. Enter on the LUXOR line past W-517"),
+    dict(id="ar-shell", name="AR SHELL", kind="aar", side="all", tag="KC-130 53Y 253.0 14,000 ft 220 KIAS",
          shape=("track", (13.42, 144.42), 0, 20 * NM, 6 * NM),
-         purpose="KC-130 basket (helicopters too), 14,000 ft, TACAN 53Y, 253.0. West of Guam"),
+         purpose="KC-130 basket, 14,000 ft at 220 KIAS for the slower jets (Harrier, A-4), TACAN 53Y, 253.0. West of Guam"),
 
     # ---- R-7201: Farallon de Medinilla, the live impact area, and its
     # 12 nm R-7201A round it for holding and run-ins

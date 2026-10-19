@@ -84,8 +84,15 @@ fly into it, once per 15 minutes per sector.
 | ATCAA 3C (W-13C) | east of the chain | intercepts, Fox 3 at range |
 | ATCAA 6 | over the islands | intercepts and DCA above FL150 (arena floor 15,000 ft) |
 | R-7201A | 12 nm round FDM | holding and run-ins for R-7201 |
-| AR RIO, AR MIRAGE, AR LUXOR | the published tracks | KC-135 51Y 251.0, KC-135MPRS 52Y 252.0, KC-135 54Y 254.0 |
-| AR SHELL (LOCAL) | west of Guam | KC-130 53Y 253.0, helicopters too |
+| AR RIO, AR MIRAGE, AR LUXOR | the published tracks | KC-135 51Y 251.0 FL250 300 KIAS, KC-135MPRS 52Y 252.0 FL210 270 KIAS, KC-135 54Y 254.0 FL240 300 KIAS |
+| AR SHELL | west of Guam | KC-130 53Y 253.0, 14,000 ft, 220 KIAS |
+
+Tanker speeds are set as indicated airspeed (`speed_kias`), the way they
+are flown. DCS flies AI at true airspeed, so the engine converts them at
+the track's altitude: 300 KIAS at FL250 is about 430 kts true. A bare
+`speed_kts` is still read as true and wins if both are set. Without
+either, the type's usual refuelling speed is used: KC-135 300, MPRS 270,
+KC-130 220, S-3B and A-6E 250, IL-78M 290.
 | R-7201 FDM | Farallon de Medinilla | bomb circle, strafe pit (run in 209 from the NNE, rounds into the sea), coordinate targets |
 | TN-1 NORTH FIELD | Tinian | tactical array (laser 1688), convoy on the old runways, JDAM targets, JTAC Axeman 133.0 |
 | TN-2 TINIAN MLA | Tinian | **tiered** targets: easy, medium (AAA), hard (SHORAD) |

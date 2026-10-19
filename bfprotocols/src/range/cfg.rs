@@ -425,9 +425,15 @@ pub struct TankerCfg {
     #[serde(default = "default_leg")]
     pub leg_nm: f64,
     pub alt_ft: f64,
-    /// Knots true. Default is the type's usual refuelling speed.
+    /// Knots true. Overrides `speed_kias`; leave it out and give the speed
+    /// the way pilots fly it, indicated.
     #[serde(default)]
     pub speed_kts: Option<f64>,
+    /// Knots indicated (calibrated), turned into true at `alt_ft` for DCS,
+    /// which flies AI speeds as true airspeed. Default is the type's usual
+    /// refuelling speed.
+    #[serde(default)]
+    pub speed_kias: Option<f64>,
     pub freq_mhz: f64,
     #[serde(default)]
     pub tacan: Option<TacanCfg>,
@@ -463,7 +469,8 @@ fn default_country_blue() -> String {
 pub struct TankerType {
     pub typ: &'static str,
     pub method: RefuelMethod,
-    pub default_speed_kts: f64,
+    /// The usual refuelling speed, knots indicated.
+    pub refuel_kias: f64,
     pub carrier_capable: bool,
     /// (pylon, CLSID) the type must carry to refuel anyone.
     pub required_store: Option<(u8, &'static str)>,
@@ -473,17 +480,44 @@ pub struct TankerType {
 /// store on the centreline pylon (Heatblur's AI A-6E; the separate KA-6D is
 /// commented out in DCS's own files).
 pub const TANKER_TYPES: &[TankerType] = &[
-    TankerType { typ: "KC-135", method: RefuelMethod::Boom, default_speed_kts: 320., carrier_capable: false, required_store: None },
-    TankerType { typ: "KC135MPRS", method: RefuelMethod::Drogue, default_speed_kts: 320., carrier_capable: false, required_store: None },
-    TankerType { typ: "KC130", method: RefuelMethod::Drogue, default_speed_kts: 240., carrier_capable: false, required_store: None },
-    TankerType { typ: "KC130J", method: RefuelMethod::Drogue, default_speed_kts: 240., carrier_capable: false, required_store: None },
-    TankerType { typ: "S-3B Tanker", method: RefuelMethod::Drogue, default_speed_kts: 274., carrier_capable: true, required_store: None },
-    TankerType { typ: "A-6E", method: RefuelMethod::Drogue, default_speed_kts: 280., carrier_capable: true, required_store: Some((3, "{HB_A6E_D704}")) },
-    TankerType { typ: "IL-78M", method: RefuelMethod::Drogue, default_speed_kts: 300., carrier_capable: false, required_store: None },
+    TankerType { typ: "KC-135", method: RefuelMethod::Boom, refuel_kias: 300., carrier_capable: false, required_store: None },
+    TankerType { typ: "KC135MPRS", method: RefuelMethod::Drogue, refuel_kias: 270., carrier_capable: false, required_store: None },
+    TankerType { typ: "KC130", method: RefuelMethod::Drogue, refuel_kias: 220., carrier_capable: false, required_store: None },
+    TankerType { typ: "KC130J", method: RefuelMethod::Drogue, refuel_kias: 220., carrier_capable: false, required_store: None },
+    TankerType { typ: "S-3B Tanker", method: RefuelMethod::Drogue, refuel_kias: 250., carrier_capable: true, required_store: None },
+    TankerType { typ: "A-6E", method: RefuelMethod::Drogue, refuel_kias: 250., carrier_capable: true, required_store: Some((3, "{HB_A6E_D704}")) },
+    TankerType { typ: "IL-78M", method: RefuelMethod::Drogue, refuel_kias: 290., carrier_capable: false, required_store: None },
 ];
 
 pub fn tanker_type(typ: &str) -> Option<&'static TankerType> {
     TANKER_TYPES.iter().find(|t| t.typ == typ)
+}
+
+impl TankerCfg {
+    /// The speed to give DCS, knots true: `speed_kts` if set, else the
+    /// indicated speed (`speed_kias`, or the type's) at the track altitude.
+    pub fn true_speed_kts(&self) -> f64 {
+        self.speed_kts.unwrap_or_else(|| {
+            let kias = self.speed_kias.or_else(|| tanker_type(&self.typ).map(|t| t.refuel_kias)).unwrap_or(280.);
+            cas_to_tas_kts(kias, self.alt_ft)
+        })
+    }
+}
+
+/// Calibrated to true airspeed in the ISA atmosphere (troposphere and the
+/// lower stratosphere), compressibility included.
+pub fn cas_to_tas_kts(cas_kts: f64, alt_ft: f64) -> f64 {
+    const A0: f64 = 661.4786; // speed of sound at sea level, knots
+    let h = alt_ft.min(65_000.);
+    let (t, p) = if h <= 36_089. {
+        let t = 288.15 - 0.0019812 * h;
+        (t, (t / 288.15).powf(5.255_88))
+    } else {
+        (216.65, 0.223_36 * (-(h - 36_089.) / 20_806.).exp())
+    };
+    let qc = (1. + 0.2 * (cas_kts / A0).powi(2)).powf(3.5) - 1.; // over sea-level pressure
+    let mach = (5. * ((qc / p + 1.).powf(2. / 7.) - 1.)).sqrt();
+    mach * A0 * (t / 288.15).sqrt()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1826,6 +1860,19 @@ mod tests {
         assert!(c.sectors.iter().any(|s| s.id == "w-517" && s.shape.polygon.is_some()));
         assert!(c.iads.iter().all(|n| n.engage_within.is_some()));
         assert!(c.sectors.iter().any(|s| s.kind == SectorKind::LowLevel && s.shape.polygon.is_some()));
+    }
+
+    #[test]
+    fn tanker_speeds_are_indicated() {
+        // 300 KIAS at FL250 is about M0.72, 431 kts true; at sea level CAS is TAS
+        assert!((cas_to_tas_kts(300., 25_000.) - 431.).abs() < 3.);
+        assert!((cas_to_tas_kts(250., 0.) - 250.).abs() < 0.5);
+        let c: RangeCfg =
+            serde_json::from_str(include_str!("../../../bfrange/RANGE_CFG.sample.json")).unwrap();
+        for t in &c.tankers {
+            let tas = t.true_speed_kts();
+            assert!(tas > 250. && tas < 470., "{} {} kts true", t.id, tas);
+        }
     }
 
     #[test]

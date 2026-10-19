@@ -82,11 +82,11 @@ pub struct Aar {
     tacan_pool: u8,
 }
 
+/// DCS flies AI speeds as true airspeed; the config gives tankers theirs
+/// indicated, so a track at FL250 is flown at refuelling speed, not 100 kts
+/// slow.
 pub fn tanker_speed_ms(t: &TankerCfg) -> f64 {
-    t.speed_kts
-        .or_else(|| bfprotocols::range::cfg::tanker_type(&t.typ).map(|tt| tt.default_speed_kts))
-        .unwrap_or(280.)
-        / util::MS_TO_KTS
+    t.true_speed_kts() / util::MS_TO_KTS
 }
 
 /// Build and add a tanker group. Returns the group name.
@@ -241,6 +241,7 @@ impl Aar {
             leg_nm,
             alt_ft,
             speed_kts: None,
+            speed_kias: None,
             freq_mhz: freq,
             tacan: Some(tacan.clone()),
             permanent: false,

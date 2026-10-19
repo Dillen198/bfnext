@@ -161,10 +161,11 @@ AT SEA
   AS-1 SINKEX        undefended hulks in W-517
   ATCAA 3B (W-13B)   maritime strike; AS-2 escorted convoy, weapons free
 TANKERS
-  AR RIO     KC-135 boom        51Y 251.0  FL250
-  AR MIRAGE  KC-135MPRS basket  52Y 252.0  FL210, next to FDM
-  AR LUXOR   KC-135 boom        54Y 254.0  FL240
-  AR SHELL   KC-130 basket      53Y 253.0  14,000 ft, west of Guam (helos too)
+  AR RIO     KC-135 boom        51Y 251.0  FL250     300 KIAS
+  AR MIRAGE  KC-135MPRS basket  52Y 252.0  FL210     270 KIAS, next to FDM
+  AR LUXOR   KC-135 boom        54Y 254.0  FL240     300 KIAS
+  AR SHELL   KC-130 basket      53Y 253.0  14,000 ft 220 KIAS, west of Guam
+  Recovery tanker A-6E over the carrier: 63Y 261.0, 6,000 ft, 250 KIAS
 
 The MISSILE TRAINER removes any missile that would kill you and tells you
 so - SAMs included, so the SEAD range, hot zone and escorted convoy are
@@ -374,12 +375,16 @@ def helo_cfg(p, sid, name):
     }
 
 
-# tanker per AR sector: id, callsign, number, type, alt ft, MHz, TACAN channel, morse, side, country
+# tanker per AR sector: id, callsign, number, type, alt ft, KIAS, MHz, TACAN channel, morse, side, country.
+# Speeds are indicated, as flown on the boom or the basket: KC-135 boom 300
+# for fighters, the MPRS basket 270 for the Navy jets, the KC-130 220 for
+# the Harrier and the slower jets. The engine turns them into true airspeed
+# at the track's altitude for DCS (300 KIAS at FL250 is about 430 kts true).
 TANKERS = {
-    "ar-rio": ("texaco", "Texaco", 1, "KC-135", 25000, 251.0, 51, "TEX", "blue", "CJTF Blue"),
-    "ar-mirage": ("arco", "Arco", 1, "KC135MPRS", 21000, 252.0, 52, "ARC", "blue", "CJTF Blue"),
-    "ar-shell": ("shell", "Shell", 1, "KC130", 14000, 253.0, 53, "SHL", "blue", "CJTF Blue"),
-    "ar-luxor": ("texaco2", "Texaco", 2, "KC-135", 24000, 254.0, 54, "TX2", "blue", "CJTF Blue"),
+    "ar-rio": ("texaco", "Texaco", 1, "KC-135", 25000, 300, 251.0, 51, "TEX", "blue", "CJTF Blue"),
+    "ar-mirage": ("arco", "Arco", 1, "KC135MPRS", 21000, 270, 252.0, 52, "ARC", "blue", "CJTF Blue"),
+    "ar-shell": ("shell", "Shell", 1, "KC130", 14000, 220, 253.0, 53, "SHL", "blue", "CJTF Blue"),
+    "ar-luxor": ("texaco2", "Texaco", 2, "KC-135", 24000, 300, 254.0, 54, "TX2", "blue", "CJTF Blue"),
 }
 
 ARENA_FLOOR_FT = {"atcaa-6": 15000}
@@ -423,10 +428,10 @@ def build_config():
     tankers = []
     for s in SECTORS:
         if s["id"] in TANKERS:
-            i, cs, n, typ, alt, mhz, ch, morse, side, country = TANKERS[s["id"]]
+            i, cs, n, typ, alt, kias, mhz, ch, morse, side, country = TANKERS[s["id"]]
             _, start, hdg, leg, _ = s["shape"]
             tankers.append({"id": i, "callsign": cs, "callsign_number": n, "typ": typ, "side": side, "country": country,
-                            "loc": cfg_ll(start), "heading_deg": hdg, "leg_nm": round(leg / NM, 1), "alt_ft": alt,
+                            "loc": cfg_ll(start), "heading_deg": hdg, "leg_nm": round(leg / NM, 1), "alt_ft": alt, "speed_kias": kias,
                             "freq_mhz": mhz, "tacan": {"channel": ch, "band": "Y", "morse": morse}})
     arenas = []
     for s in SECTORS:
@@ -448,7 +453,7 @@ def build_config():
              "link4_mhz": 336.0, "tower_mhz": 305.0, "wind_over_deck_kts": 27,
              "op_center": cfg_ll(CVN_POS), "op_radius_nm": 20,
              "recovery_tanker": {"id": "cvn72-tanker", "callsign": "Arco", "callsign_number": 3, "typ": "A-6E",
-                                 "loc": cfg_ll(CVN_POS), "heading_deg": 0, "leg_nm": 10, "alt_ft": 6000,
+                                 "loc": cfg_ll(CVN_POS), "heading_deg": 0, "leg_nm": 10, "alt_ft": 6000, "speed_kias": 250,
                                  "freq_mhz": 261.0, "tacan": {"channel": 63, "band": "Y", "morse": "A6E"}},
              "plane_guard": "SH-60B"},
             {"id": "lha1", "unit_name": "LHA-1", "name": "LHA-1 Tarawa", "kind": "tarawa",
