@@ -1299,6 +1299,8 @@ pub(crate) fn query_atc(
                             heading: mag(course),
                             length_m: r.length().unwrap_or(0.0) as u32,
                             width_m: r.width().unwrap_or(0.0) as u32,
+                            thr_lat: None,
+                            thr_lon: None,
                         });
                     }
                 }
@@ -1418,6 +1420,10 @@ pub(crate) fn query_atc(
             field_brg: nearest.as_ref().map_or(0, |(_, b, _)| *b),
             field_rng_m: nearest.as_ref().map_or(0, |(r, _, _)| *r as u32),
             rotary: false,
+            ai: false,
+            ai_plan: None,
+            ai_state: None,
+            unit_type: String::new(),
         });
     }
 

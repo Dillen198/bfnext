@@ -1298,6 +1298,68 @@ fn default_ll_tot() -> f64 {
     15.
 }
 
+// ---------------------------------------------------------------- ATC traffic
+
+/// AI departures and arrivals at the home field, for the spoken ATC
+/// (bfdb milatc) to control: departures wait on their stands, engines
+/// running, until Ground releases them; arrivals can be put in a hold by
+/// Approach. Nothing flies while nobody is on the server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AtcTrafficCfg {
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// The airbase, as DCS names it (or a part of the name).
+    #[serde(default = "default_atc_field")]
+    pub field: String,
+    #[serde(default = "default_atc_rate")]
+    pub departures_per_hour: f64,
+    #[serde(default = "default_atc_rate")]
+    pub arrivals_per_hour: f64,
+    /// Most AI flights alive at once.
+    #[serde(default = "default_atc_max")]
+    pub max_active: u32,
+    #[serde(default = "default_atc_country")]
+    pub country: String,
+    /// What flies; empty = a USAF/USN mix (C-17, KC-135, C-130, B-52, F-16,
+    /// F/A-18).
+    #[serde(default)]
+    pub types: Vec<AtcTrafficType>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AtcTrafficType {
+    /// DCS type name.
+    pub typ: String,
+    /// Spoken callsign word ("Reach").
+    pub callsign: String,
+    #[serde(default)]
+    pub livery: Option<String>,
+    #[serde(default = "default_atc_weight")]
+    pub weight: u32,
+}
+
+fn default_atc_field() -> String {
+    "Andersen".into()
+}
+fn default_atc_rate() -> f64 {
+    4.
+}
+fn default_atc_max() -> u32 {
+    4
+}
+fn default_atc_country() -> String {
+    "USA".into()
+}
+fn default_atc_weight() -> u32 {
+    1
+}
+
+impl Default for AtcTrafficCfg {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("empty atc traffic cfg parses")
+    }
+}
+
 // ---------------------------------------------------------------- pattern
 
 /// Field landings: every runway landing at the listed fields is graded
@@ -1448,6 +1510,9 @@ pub struct RangeCfg {
     pub low_level: Vec<LowLevelRouteCfg>,
     #[serde(default)]
     pub pattern: PatternCfg,
+    /// AI traffic in and out of the home field for the spoken ATC to work.
+    #[serde(default)]
+    pub atc_traffic: AtcTrafficCfg,
     #[serde(default)]
     pub csar: CsarCfg,
     #[serde(default)]

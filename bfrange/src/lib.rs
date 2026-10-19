@@ -16,6 +16,8 @@ mod aa;
 mod aar;
 mod ag;
 mod antiship;
+mod atc;
+mod atctraffic;
 mod bg;
 mod carrier;
 mod catalog;
@@ -130,6 +132,8 @@ struct Ctx {
     ew: ew::Ew,
     ll: lowlevel::LowLevel,
     pattern: pattern::Pattern,
+    atc: atc::Atc,
+    traffic: atctraffic::AtcTrafficSim,
     csar: csar::Csar,
     decks: decks::Decks,
     last_fine: f64,
@@ -317,6 +321,8 @@ fn delayed_init(lua: MizLua) -> Result<()> {
     ctx.ew.init(lua, &cfg, &mut ctx.spawns, now);
     ctx.ll.init(lua, &cfg);
     ctx.pattern.init(lua, &cfg);
+    ctx.atc.init(lua);
+    ctx.traffic.init(lua, &cfg.atc_traffic, now);
     ctx.csar.init(lua, &cfg);
     ctx.decks.init(lua, &cfg, &mut ctx.spawns, now);
     for a in &cfg.air_to_air.arenas {
@@ -945,6 +951,10 @@ fn slow_tick_inner(lua: MizLua, ctx: &mut Ctx, now: f64) -> Result<()> {
             forget_spawn(ctx, &s);
         }
     }
+    // AI traffic for the spoken ATC, and the radar picture it works from
+    ctx.traffic.tick(lua, &mut ctx.spawns, ctx.players.flying.len(), now);
+    let ai = ctx.traffic.live(lua);
+    ctx.atc.tick(lua, &ctx.players, ai, now);
     // live picture for the website, refreshed every second
     ctx.live_json = serde_json::to_string(&live(lua, ctx, now)).ok();
     ctx.last_slow = now;
@@ -1136,6 +1146,26 @@ fn reply_json<T: serde::Serialize>(t: &T) -> Value {
 fn handle_cmd(lua: MizLua, ctx: &mut Ctx, cmd: bg::Cmd, now: f64) -> Value {
     match cmd {
         bg::Cmd::QueryRange => match &ctx.live_json {
+            Some(s) => Value::String(s.clone().into()),
+            None => Value::Error("the range is starting".into()),
+        },
+        bg::Cmd::Atc { action, target, text } => {
+            let r = if action == "text" {
+                // a subtitle for the aircraft the controller is talking to
+                let uid: i64 = target.parse().unwrap_or(-1);
+                match ctx.players.flying.values().find(|f| f.unit_id.inner() == uid) {
+                    Some(f) => {
+                        records::to_group(lua, f.group_id, &text, 12);
+                        Ok("shown".to_string())
+                    }
+                    None => Err(anyhow!("no player in unit {target}")),
+                }
+            } else {
+                ctx.traffic.command(lua, &target, &action)
+            };
+            reply_json(&json!({ "ok": r.is_ok(), "message": match r { Ok(m) => m, Err(e) => e.to_string() } }))
+        }
+        bg::Cmd::QueryAtc => match &ctx.atc.json {
             Some(s) => Value::String(s.clone().into()),
             None => Value::Error("the range is starting".into()),
         },

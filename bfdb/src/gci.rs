@@ -175,6 +175,12 @@ pub(crate) struct GciConfig {
     /// whisper settings; omit the block to leave ATC off.
     #[serde(default)]
     pub atc: Option<crate::atc::AtcConfig>,
+    /// The training range's military ATC (Clearance, Ground, Tower,
+    /// Departure, Approach, PAR Final) — see `crate::milatc`. Only a `kind:
+    /// range` instance runs it; it shares this file's SRS, TTS and whisper
+    /// settings.
+    #[serde(default)]
+    pub range_atc: Option<crate::milatc::RangeAtcConfig>,
     /// Discord webhook URL. When set, every GCI call is also posted there as a
     /// text transcript, both coalitions in one channel, tagged 🔵/🔴. Create it
     /// in a channel's Integrations → Webhooks.

@@ -936,6 +936,14 @@ async fn h_replay_results(ctx: Arc<RangeCtx>, rec: String) -> Response {
     ok(&json!({ "items": items, "site": ctx.site_url }))
 }
 
+/// The spoken ATC's radio transcript, frequency by frequency.
+/// `?since=<unix ms>` returns only what is new.
+async fn h_atc(ctx: Arc<RangeCtx>, q: Q) -> Response {
+    let sc = scope_or_400!(ctx, q);
+    let since = num::<i64>(&q, "since").unwrap_or(0);
+    ok(&crate::milatc::transcript_json(&sc.primary().id, since))
+}
+
 // ── routes ─────────────────────────────────────────────────────────────
 
 /// Every `/api/range/*` route as one boxed filter.
@@ -972,6 +980,7 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
         |st: String, ctx: Arc<RangeCtx>, q: Q| h_impacts(ctx, st, q),
     );
     let catalog = warp::path!("api" / "range" / "catalog").and(c.clone()).and(q.clone()).then(h_catalog);
+    let atc = warp::path!("api" / "range" / "atc").and(c.clone()).and(q.clone()).then(h_atc);
     let weapons = warp::path!("api" / "range" / "weapons").and(c.clone()).and(q.clone()).then(h_weapons);
     let tacview = warp::path!("api" / "range" / "tacview" / String).and(c.clone()).then(
         |id: String, ctx: Arc<RangeCtx>| h_tacview(ctx, id),
@@ -1040,7 +1049,7 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
         .or(impacts)
         .unify()
         .boxed();
-    let reads_c = catalog.or(weapons).unify().or(tacview).unify().or(clip_json).unify().or(clip_acmi).unify().or(replay_link).unify().or(replay_results).unify().boxed();
+    let reads_c = catalog.or(atc).unify().or(weapons).unify().or(tacview).unify().or(clip_json).unify().or(clip_acmi).unify().or(replay_link).unify().or(replay_results).unify().boxed();
     let reads = warp::get().and(reads_a.or(reads_b).unify().or(reads_c).unify()).boxed();
     let writes = spawn.or(despawn).unify().or(reset).unify().boxed();
     // Anything else under /api/range/ is a JSON 404 rather than falling

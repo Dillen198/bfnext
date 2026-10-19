@@ -123,6 +123,62 @@ _ATC_KEY_MAP = {
     "atis_exclude": "atisExclude",
 }
 
+# The `range_atc:` sub-block (the training range's military ATC: Clearance,
+# Ground, Tower, Departure, Approach, PAR Final). Rendered under gci.json's
+# "rangeAtc" key -- see bfdb/src/milatc/mod.rs RangeAtcConfig. Only a
+# `kind: range` instance runs it.
+_RANGE_ATC_KEY_MAP = {
+    "enabled": "enabled",
+    "coalition": "coalition",
+    "poll_ms": "pollMs",
+    # [{builtin: andersen | data: path, positions: {tower: [{mhz: 340.2}]}}]
+    # -- inner keys are single words and pass through.
+    "fields": "fields",
+    "handoff_out": "handoffOut",  # {name: Overlord, mhz: 251.5}
+    "require_clearance": "requireClearance",
+    "gca_interval_secs": "gcaIntervalSecs",
+    "atis_interval_secs": "atisIntervalSecs",
+}
+_RANGE_ATC_LLM_KEY_MAP = {
+    "enabled": "enabled",
+    "url": "url",
+    "model": "model",
+    "timeout_ms": "timeoutMs",
+}
+_RANGE_ATC_VOICE_KEY_MAP = {
+    "piper_model": "piperModel",
+    "tts_voice": "ttsVoice",
+    "speaker": "speaker",  # a speaker of a multi-speaker Piper model
+    "speed": "speed",      # 1 = normal
+}
+
+
+def _map_range_atc(src: dict) -> dict:
+    """`range_atc:` YAML -> the camelCase "rangeAtc" object. The language
+    model's API key is never written here: it reaches bfdb as
+    BFDB_ATC_LLM_KEY (see Procman._bfdb_env)."""
+    out = {camel: src[snake] for snake, camel in _RANGE_ATC_KEY_MAP.items()
+           if snake in src and src[snake] != ""}
+    llm = src.get("llm")
+    if isinstance(llm, dict):
+        out["llm"] = {camel: llm[snake] for snake, camel in _RANGE_ATC_LLM_KEY_MAP.items()
+                      if snake in llm and llm[snake] != ""}
+    voices = src.get("voices")
+    if isinstance(voices, dict):
+        out["voices"] = {
+            pos: {camel: v[snake] for snake, camel in _RANGE_ATC_VOICE_KEY_MAP.items()
+                  if snake in v and v[snake] != ""}
+            for pos, v in voices.items() if isinstance(v, dict)
+        }
+    return out
+
+
+def range_atc_on(merged: dict) -> bool:
+    """Is the military ATC switched on in an instance's effective `gci:`?"""
+    r = merged.get("range_atc")
+    return isinstance(r, dict) and bool(r.get("enabled", True))
+
+
 # Which rendered keys are secrets (masked by gci_effective(mask=True)).
 _GCI_SECRET_KEYS = {
     "blueEamPassword",
@@ -166,6 +222,9 @@ def _map_gci(src: dict, mask: bool = False) -> dict:
             mapped[camel] = val
         if mapped:
             out["atc"] = mapped
+    range_atc = src.get("range_atc")
+    if isinstance(range_atc, dict):
+        out["rangeAtc"] = _map_range_atc(range_atc)
     return out
 
 
@@ -221,6 +280,10 @@ def effective_instance_gci(global_gci: Optional[dict], inst: Optional[dict]) -> 
         merged_atc = dict(global_gci["atc"])
         merged_atc.update(inst_gci["atc"])
         merged["atc"] = merged_atc
+    if isinstance(global_gci.get("range_atc"), dict) and isinstance(inst_gci.get("range_atc"), dict):
+        merged_ratc = dict(global_gci["range_atc"])
+        merged_ratc.update(inst_gci["range_atc"])
+        merged["range_atc"] = merged_ratc
     if instance_kind(inst) == "range" and "enabled" not in inst_gci:
         merged["enabled"] = False
     return merged
@@ -484,7 +547,10 @@ class Procman:
                 f"gci.enabled from the shared block (set `gci: {{enabled: true}}` on the "
                 f"instance to run a controller there)"
             )
-        if not merged.get("enabled"):
+        # A range's voice service is the military ATC, which needs the file
+        # (SRS, whisper, Piper) whether or not GCI is on there.
+        is_range = instance_kind(inst) == "range"
+        if not merged.get("enabled") and not (is_range and range_atc_on(merged)):
             if os.path.exists(path):
                 try:
                     os.remove(path)
@@ -496,6 +562,8 @@ class Procman:
         # them is rejected outright and GCI silently stays off for that server.
         # Catch it here, where we can say which instance is misconfigured.
         for single, multi in (("blue_freq_mhz", "blue_freqs"), ("red_freq_mhz", "red_freqs")):
+            if is_range:
+                break  # no GCI on a range: the controller frequencies are unused
             if merged.get(single) is None and not merged.get(multi):
                 self.log.error(
                     f"FowlEngine/procman: instance {inst_id} has gci.enabled but neither "
@@ -1186,6 +1254,10 @@ class Procman:
         key = self.cfg.get("news_llm_key")
         if key:
             env["BFDB_NEWS_LLM_KEY"] = str(key)
+        # The range ATC's language model (bfdb/src/milatc/llm.rs).
+        atc_key = self.cfg.get("atc_llm_key")
+        if atc_key:
+            env["BFDB_ATC_LLM_KEY"] = str(atc_key)
         image_key = self.cfg.get("news_image_key")
         if image_key:
             env["BFDB_NEWS_IMAGE_KEY"] = str(image_key)

@@ -125,7 +125,7 @@ pub struct Pattern {
 
 /// The runway end number closest to a true landing heading, from DCS's
 /// "09-27" style name.
-fn designator(name: &str, hdg: f64) -> String {
+pub(crate) fn designator(name: &str, hdg: f64) -> String {
     let parts: Vec<&str> = name.split(['-', '/', ' ']).map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
     let num = |s: &str| s.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse::<f64>().ok();
     parts

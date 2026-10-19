@@ -18,8 +18,11 @@ pub(crate) const SRS_RATE: u32 = 16_000;
 
 #[derive(Clone)]
 pub(crate) enum Tts {
-    Piper { exe: PathBuf, model: PathBuf },
-    Sapi { voice: Option<String> },
+    /// `speaker` picks one voice of a multi-speaker model (libritts has
+    /// hundreds); `length_scale` is Piper's speed (above 1 is slower).
+    Piper { exe: PathBuf, model: PathBuf, speaker: Option<u32>, length_scale: Option<f32> },
+    /// `rate` is SAPI's -10..10.
+    Sapi { voice: Option<String>, rate: i32 },
 }
 
 impl Tts {
@@ -32,18 +35,22 @@ impl Tts {
             (Some(e), Some(m)) => Tts::Piper {
                 exe: e.clone(),
                 model: m.clone(),
+                speaker: None,
+                length_scale: None,
             },
             _ => Tts::Sapi {
                 voice: voice.cloned(),
+                rate: 0,
             },
         }
     }
 
     pub(crate) fn describe(&self) -> String {
         match self {
+            Tts::Piper { model, speaker: Some(s), .. } => format!("Piper ({} speaker {s})", model.display()),
             Tts::Piper { model, .. } => format!("Piper ({})", model.display()),
-            Tts::Sapi { voice: Some(v) } => format!("Windows SAPI ({v})"),
-            Tts::Sapi { voice: None } => "Windows SAPI (default voice)".into(),
+            Tts::Sapi { voice: Some(v), .. } => format!("Windows SAPI ({v})"),
+            Tts::Sapi { voice: None, .. } => "Windows SAPI (default voice)".into(),
         }
     }
 
@@ -60,8 +67,10 @@ impl Tts {
             let tmp = std::env::temp_dir().join(format!("bfgci-{}.wav", uuid::Uuid::new_v4()));
             let r = (|| -> Result<Vec<i16>> {
                 match self {
-                    Tts::Piper { exe, model } => run_piper(exe, model, text, &tmp)?,
-                    Tts::Sapi { voice } => run_sapi(voice.as_deref(), text, &tmp)?,
+                    Tts::Piper { exe, model, speaker, length_scale } => {
+                        run_piper(exe, model, *speaker, *length_scale, text, &tmp)?
+                    }
+                    Tts::Sapi { voice, rate } => run_sapi(voice.as_deref(), *rate, text, &tmp)?,
                 }
                 let (samples, rate) = read_wav_mono(&tmp)?;
                 Ok(resample_to(&samples, rate, SRS_RATE))
@@ -81,12 +90,16 @@ impl Tts {
     }
 }
 
-fn run_piper(exe: &Path, model: &Path, text: &str, out: &Path) -> Result<()> {
-    let mut child = Command::new(exe)
-        .arg("--model")
-        .arg(model)
-        .arg("--output_file")
-        .arg(out)
+fn run_piper(exe: &Path, model: &Path, speaker: Option<u32>, length_scale: Option<f32>, text: &str, out: &Path) -> Result<()> {
+    let mut cmd = Command::new(exe);
+    cmd.arg("--model").arg(model).arg("--output_file").arg(out);
+    if let Some(s) = speaker {
+        cmd.arg("--speaker").arg(s.to_string());
+    }
+    if let Some(l) = length_scale {
+        cmd.arg("--length_scale").arg(format!("{l:.2}"));
+    }
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -104,7 +117,24 @@ fn run_piper(exe: &Path, model: &Path, text: &str, out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_sapi(voice: Option<&str>, text: &str, out: &Path) -> Result<()> {
+/// The SAPI voices installed on this machine ("Microsoft David Desktop", ...).
+pub(crate) fn sapi_voices() -> Vec<String> {
+    let out = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices() | Where-Object { $_.Enabled } | ForEach-Object { $_.VoiceInfo.Name }",
+        ])
+        .stderr(Stdio::null())
+        .output();
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
+        Err(_) => vec![],
+    }
+}
+
+fn run_sapi(voice: Option<&str>, rate: i32, text: &str, out: &Path) -> Result<()> {
     // System.Speech is present on every Windows install. Text is passed on
     // stdin so it never has to be escaped into the command line.
     let select_voice = match voice {
@@ -115,6 +145,7 @@ fn run_sapi(voice: Option<&str>, text: &str, out: &Path) -> Result<()> {
         "Add-Type -AssemblyName System.Speech; \
          $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
          {select_voice} \
+         $s.Rate = {rate}; \
          $s.SetOutputToWaveFile('{}'); \
          $s.Speak([Console]::In.ReadToEnd()); \
          $s.Dispose()",

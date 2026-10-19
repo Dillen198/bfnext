@@ -17,6 +17,12 @@ pub struct AtcRunway {
     pub heading: u16,
     pub length_m: u32,
     pub width_m: u32,
+    /// Where this end's threshold is. Set by the training range, whose
+    /// controllers align their taxi network to it; the campaign leaves it out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thr_lat: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thr_lon: Option<f64>,
 }
 
 /// An airfield or carrier a controller can speak for.
@@ -109,6 +115,21 @@ pub struct AtcTraffic {
     /// clearances.
     #[serde(default)]
     pub rotary: bool,
+    /// An AI flight the range flies for the controllers to work. Its
+    /// `player_name` is the DCS group name, which the controllers' commands
+    /// (`range-atc`) address.
+    #[serde(default)]
+    pub ai: bool,
+    /// For AI: "departure" or "arrival".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_plan: Option<String>,
+    /// For AI: "waiting" (parked, engines running, until released), "holding"
+    /// or "active".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_state: Option<String>,
+    /// DCS type name ("C-17A").
+    #[serde(default)]
+    pub unit_type: String,
 }
 
 /// One coalition's ATC picture.

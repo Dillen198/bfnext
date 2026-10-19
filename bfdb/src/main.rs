@@ -63,6 +63,7 @@ mod squadrons;
 mod pilot_card;
 mod db_id;
 mod atc;
+mod milatc;
 mod gci;
 mod voice;
 mod intel;
@@ -8559,6 +8560,17 @@ async fn main() -> Result<()> {
                 }
             });
         match (cfg.base.is_some(), cfg_for_inst) {
+            // A range has no GCI picture or campaign towers; its voice
+            // service is the military ATC.
+            (true, Some(c)) if cfg.is_range() => {
+                match c.range_atc.clone() {
+                    Some(r) if r.enabled => {
+                        log::info!("[{}] range ATC enabled", cfg.id);
+                        tokio::spawn(milatc::run(db.clone(), inst, c.clone(), r));
+                    }
+                    _ => log::info!("[{}] range instance has a gci_config but no rangeAtc block", cfg.id),
+                }
+            }
             (true, Some(c)) => {
                 log::info!("[{}] live GCI enabled", cfg.id);
                 // ATC rides the same config file and the same voice bus, on

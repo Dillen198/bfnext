@@ -21,6 +21,7 @@ export const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
       { to: '/', label: 'Range control', short: 'Live', icon: Tacmap, end: true, hint: 'Live map, traffic, carriers, tankers, threats and results as they land', tab: true },
       { to: '/spawn', label: 'Spawn', icon: Plus, hint: 'Put adversaries, targets, tankers and ships on the range', tab: true },
       { to: '/brief', label: 'Range brief', short: 'Brief', icon: Comms, hint: 'Frequencies, TACANs, laser codes, coordinates and weather: the kneeboard card', tab: true },
+      { to: '/atc', label: 'ATC radio', short: 'ATC', icon: Comms, hint: 'Andersen Clearance, Ground, Tower, Departure, Approach and Final: every transmission, frequency by frequency' },
     ],
   },
   {

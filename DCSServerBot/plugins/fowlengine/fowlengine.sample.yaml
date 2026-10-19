@@ -218,6 +218,11 @@ DEFAULT:
     # news_llm_key is handed to bfdb in its environment (BFDB_NEWS_LLM_KEY),
     # never on its command line.
     #
+    # The training range's spoken ATC (gci.range_atc below) reads calls it
+    # cannot place with a language model when this Anthropic API key is set.
+    # Handed to bfdb as BFDB_ATC_LLM_KEY, never written to gci.json.
+    # atc_llm_key: ""                            # secret
+    #
     # War diary PICTURES (bfdb/src/news_image.rs): one wire-photo style image
     # per filed daily dispatch, shown on the dashboard's WAR NEWS panel / War
     # Diary page and posted with the dispatch to news_channel. OFF until a
@@ -419,6 +424,28 @@ DEFAULT:
     whisper_exe: ""
     whisper_model: ""
     # discord_webhook_url: ""  # legacy -- prefer gci_transcript_channel above (bot-managed)
+    #
+    # Training range only (`kind: range` instances): military ATC at Andersen
+    # over SRS -- ATIS, Clearance, Ground, Tower, Departure, Approach and a PAR
+    # Final controller, handing pilots from one to the next. Put it in the
+    # range instance's own `gci:` (gci.enabled can stay false there: the file
+    # is rendered for range_atc alone). Needs EXTERNAL_AWACS_MODE=true in the
+    # range's SRS.cfg and that password as blue_eam_password; whisper to
+    # listen, Piper for a natural voice (SAPI otherwise). See deploy/range-atc.md.
+    # range_atc:
+    #   enabled: true
+    #   coalition: blue
+    #   require_clearance: false     # Ground sends you to Clearance first
+    #   handoff_out: {name: Overlord, mhz: 251.5}
+    #   fields:                      # default: Andersen with its built-in frequencies
+    #     - builtin: andersen
+    #       positions:               # override any: {mhz, modulation}
+    #         tower: [{mhz: 340.2}]
+    #         final: []              # empty switches a position off
+    #   voices:                      # a different voice per position
+    #     tower: {piper_model: 'C:\piper\en_US-ryan-medium.onnx'}
+    #     ground: {piper_model: 'C:\piper\en_US-joe-medium.onnx'}
+    #   llm: {model: claude-haiku-5-5, timeout_ms: 4000}
 
   # ---------------------------------------------
   # Staged engine binaries  (drag-and-drop)

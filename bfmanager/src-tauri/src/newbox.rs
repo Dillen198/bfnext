@@ -868,6 +868,19 @@ fn write_new(p: &Path, text: &str) -> Result<bool> {
     Ok(true)
 }
 
+/// The blue External AWACS Mode password in an SRS.cfg, when EAM is on.
+fn srs_eam_password(p: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(p).ok()?;
+    let on = text.lines().any(|l| l.trim().eq_ignore_ascii_case("EXTERNAL_AWACS_MODE=true"));
+    if !on {
+        return None;
+    }
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix("EXTERNAL_AWACS_MODE_BLUE_PASSWORD="))
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 fn lua_str(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n"))
 }
@@ -907,12 +920,17 @@ fn instance_folder(o: &NewBoxOptions, home: &Path) -> Result<()> {
     // The bot's SRS extension reads these sections and keys from SRS.cfg and
     // fails every minute without them; an SRS 2.4 install has no server.cfg
     // for it to copy, so the file is written here.
+    //
+    // External AWACS Mode is on so the range's spoken ATC (bfdb, milatc) can
+    // join SRS as a controller; players are unaffected. write_bot_config
+    // reads the password back out of this file for the bot's `gci:` block.
+    let eam = crate::botcfg::generate_secret()?;
     let srs_cfg = format!(
-        "[General Settings]\r\nCLIENT_EXPORT_ENABLED=true\r\nEXTERNAL_AWACS_MODE=false\r\nLOTATC_EXPORT_ENABLED=false\r\n\
+        "[General Settings]\r\nCLIENT_EXPORT_ENABLED=true\r\nEXTERNAL_AWACS_MODE=true\r\nLOTATC_EXPORT_ENABLED=false\r\n\
          LOTATC_EXPORT_PORT=10712\r\nALLOW_INSTRUCTOR_MODE=false\r\nSPECTATORS_AUDIO_DISABLED=false\r\nRADIO_EFFECT_OVERRIDE=false\r\n\r\n\
          [Server Settings]\r\nSERVER_PORT={port}\r\nSERVER_IP=0.0.0.0\r\nCLIENT_EXPORT_FILE_PATH={export}\r\n\
          HTTP_SERVER_ENABLED=false\r\nHTTP_SERVER_PORT=8090\r\nUPNP_ENABLED=false\r\n\r\n\
-         [External AWACS Mode Settings]\r\nEXTERNAL_AWACS_MODE_BLUE_PASSWORD=\r\nEXTERNAL_AWACS_MODE_RED_PASSWORD=\r\n",
+         [External AWACS Mode Settings]\r\nEXTERNAL_AWACS_MODE_BLUE_PASSWORD={eam}\r\nEXTERNAL_AWACS_MODE_RED_PASSWORD={eam}r\r\n",
         port = o.srs_port,
         export = home.join("Config").join("clients-list.json").display(),
     );
@@ -1240,6 +1258,10 @@ fn write_bot_config(o: &NewBoxOptions, cfg_dir: &Path, home: &Path, db_pw: Optio
     };
     let ops_key = crate::botcfg::generate_secret()?;
     let admin_pw = crate::botcfg::generate_secret()?;
+    // The range ATC joins SRS through External AWACS Mode with the password
+    // instance_folder put in SRS.cfg. An SRS.cfg from before that (EAM off)
+    // leaves the ATC configured but unable to connect until EAM is turned on.
+    let eam = srs_eam_password(&home.join("Config").join("SRS.cfg")).unwrap_or_default();
     put_config(
         cfg_dir,
         "plugins/restapi.yaml",
@@ -1336,6 +1358,17 @@ fn write_bot_config(o: &NewBoxOptions, cfg_dir: &Path, home: &Path, db_pw: Optio
         public: true
         gci:
           enabled: false
+          srs_port: {srs_port}
+          blue_eam_password: {eam}
+          # Military ATC at Andersen: Clearance, Ground, Tower, Departure,
+          # Approach and PAR Final over SRS. Listening needs whisper
+          # (whisper_server_url, or whisper_exe + whisper_model) and a natural
+          # voice needs Piper (piper_exe + piper_model); without them it
+          # speaks with Windows SAPI and does not listen. Set bfdb.atc_llm_key
+          # to let a language model read non-standard calls.
+          range_atc:
+            enabled: true
+            handoff_out: {{name: Overlord, mhz: 251.5}}
 {name}:
   # campaign feeds off: this is a range
   status_channel: null
@@ -1376,9 +1409,14 @@ fn write_bot_config(o: &NewBoxOptions, cfg_dir: &Path, home: &Path, db_pw: Optio
             rs = chan(&ch.range_status),
             rr = chan(&ch.range_results),
             gr = chan(&ch.greenie),
+            srs_port = o.srs_port,
+            eam = q(&eam),
         ),
         w,
     )?;
+    if eam.is_empty() {
+        next_step("SRS.cfg has External AWACS Mode off: turn it on with a password and put that password in fowlengine.yaml (range instance gci.blue_eam_password) so the range ATC can join SRS.".into());
+    }
     if key_line.is_empty() {
         next_step("Engine auto-update is off: paste the engine release public key into fowlengine.yaml autoupdate.public_key (Bot config tab) and set enabled: true.".into());
     }

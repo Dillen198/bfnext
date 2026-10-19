@@ -49,6 +49,10 @@ use tokio::{
 #[derive(Debug)]
 pub enum Cmd {
     QueryRange,
+    QueryAtc,
+    /// A controller's command: "start" / "hold" / "resume" an AI flight (target =
+    /// group), or "text": show `text` to the player in unit `target`.
+    Atc { action: String, target: String, text: String },
     QueryCatalog,
     QueryWeapons,
     Spawn(bfprotocols::range::SpawnRequest),
@@ -179,6 +183,8 @@ async fn wait_task(mut ch: fmpsc::Receiver<(RpcCall, oneshot::Receiver<Value>)>)
 #[allow(dead_code)]
 struct Rpcs {
     query_range: Proc,
+    query_atc: Proc,
+    atc_cmd: Proc,
     query_catalog: Proc,
     query_weapons: Proc,
     spawn: Proc,
@@ -203,6 +209,38 @@ impl Rpcs {
             },
             Some(wait.clone()),
             arg: Value = Value::Null; ""
+        )?;
+        let _q = Arc::clone(q);
+        let query_atc = define_rpc!(
+            publisher,
+            base.append("query-atc"),
+            "Radar picture for the spoken ATC: airfields, runways, weather and player traffic (returns JSON AtcPicture)",
+            |c: RpcCall, side: Chars| {
+                let _ = side;
+                let (tx, rx) = oneshot::channel();
+                _q.push((Cmd::QueryAtc, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            side: Chars = Value::Null; "Accepted for compatibility with the campaign's query-atc; the range returns every side"
+        )?;
+        let _q = Arc::clone(q);
+        let atc_cmd = define_rpc!(
+            publisher,
+            base.append("range-atc"),
+            "The spoken ATC's commands: start/hold/resume an AI flight, or show a player a transmission's text",
+            |c: RpcCall, action: Chars, target: Chars, text: Chars| {
+                let (tx, rx) = oneshot::channel();
+                _q.push((
+                    Cmd::Atc { action: action.to_string(), target: target.to_string(), text: text.to_string() },
+                    tx,
+                ));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            action: Chars = Value::Null; "start | hold | resume | text",
+            target: Chars = Value::Null; "AI group name, or a player's unit id for text",
+            text: Chars = Value::from(""); "The text to show (action text)"
         )?;
         let _q = Arc::clone(q);
         let query_catalog = define_rpc!(
@@ -295,7 +333,7 @@ impl Rpcs {
             station: Chars = Value::Null; "The station id",
             instructor: bool = false; "The caller is an instructor/admin"
         )?;
-        Ok(Self { query_range, query_catalog, query_weapons, spawn, despawn, reset_station })
+        Ok(Self { query_range, query_atc, atc_cmd, query_catalog, query_weapons, spawn, despawn, reset_station })
     }
 }
 

@@ -1936,3 +1936,42 @@ def test_range_embed_links_become_buttons():
     assert len({l["url"] for l in links}) == len(links)
     assert all(len(l["label"]) <= 80 for l in links)
     assert rf.normalize_embed({"title": "t"})["links"] == []
+
+
+# ---- procman: the range's military ATC ------------------------------------------
+
+def test_range_atc_block_renders_for_a_range_instance_without_gci():
+    shared = {"enabled": True, "piper_exe": "piper.exe", "range_atc": {"enabled": True, "poll_ms": 500}}
+    inst = {
+        "id": "range",
+        "kind": "range",
+        "gci": {
+            "srs_port": 5005,
+            "blue_eam_password": "pw",
+            "range_atc": {
+                "handoff_out": {"name": "Overlord", "mhz": 251.5},
+                "voices": {"tower": {"piper_model": "a.onnx", "speaker": 7, "speed": 1.1}},
+                "llm": {"model": "claude-haiku-5-5", "timeout_ms": 3000, "key": "never-written"},
+            },
+        },
+    }
+    merged = pmmod.effective_instance_gci(shared, inst)
+    # GCI stays off on a range; the ATC block is merged key by key
+    assert merged["enabled"] is False
+    assert pmmod.range_atc_on(merged)
+    out = pmmod._map_gci(merged)
+    assert out["srsPort"] == 5005
+    assert out["rangeAtc"] == {
+        "enabled": True,
+        "pollMs": 500,
+        "handoffOut": {"name": "Overlord", "mhz": 251.5},
+        "llm": {"model": "claude-haiku-5-5", "timeoutMs": 3000},
+        "voices": {"tower": {"piperModel": "a.onnx", "speaker": 7, "speed": 1.1}},
+    }
+    # the API key only ever travels in the environment
+    assert "never-written" not in json.dumps(out)
+
+
+def test_range_atc_off_when_disabled():
+    assert not pmmod.range_atc_on({"range_atc": {"enabled": False}})
+    assert not pmmod.range_atc_on({})

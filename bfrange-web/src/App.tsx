@@ -16,6 +16,7 @@ const SpawnPage = lazy(() => import('./pages/SpawnPage'))
 const BriefPage = lazy(() => import('./pages/BriefPage'))
 const CalcPage = lazy(() => import('./pages/CalcPage'))
 const LeaderboardsPage = lazy(() => import('./pages/LeaderboardsPage'))
+const AtcPage = lazy(() => import('./pages/AtcPage'))
 
 function NotFound() {
   return (
@@ -65,6 +66,7 @@ export default function App() {
             <Route path="/brief" element={<BriefPage />} />
             <Route path="/calc" element={<CalcPage />} />
             <Route path="/leaderboards" element={<LeaderboardsPage />} />
+            <Route path="/atc" element={<AtcPage />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
