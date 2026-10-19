@@ -16,7 +16,10 @@
 //!   player's way, then `resume` it.
 //!
 //! Arrivals are removed once they have stopped after landing, departures once
-//! they are well clear, and nothing is spawned while nobody is flying.
+//! they are well clear. The traffic flies whether or not anyone is on the
+//! server (`fly_when_empty`), so a pilot who joins finds a field already
+//! busy. A departure Ground never answers (no ATC running, or its call lost)
+//! starts on its own after `self_release_s`, so it cannot block the stands.
 
 use crate::{
     harvest,
@@ -152,7 +155,8 @@ impl AtcTrafficSim {
         }
         self.last = now;
         self.cleanup(lua, &home, now);
-        if players_flying == 0 {
+        self.self_release(lua, &cfg, now);
+        if players_flying == 0 && !cfg.fly_when_empty {
             // Push the schedule along so traffic does not burst in when the
             // first player arrives.
             self.next_dep = self.next_dep.max(now + 60.);
@@ -363,6 +367,26 @@ impl AtcTrafficSim {
             let f = self.flights.remove(i);
             if destroy {
                 spawn::destroy_group(lua, &f.group);
+            }
+        }
+    }
+
+    /// Start departures that have waited on their stands longer than
+    /// `self_release_s` without a word from Ground.
+    fn self_release(&mut self, lua: MizLua, cfg: &AtcTrafficCfg, now: f64) {
+        if cfg.self_release_s <= 0. {
+            return;
+        }
+        let due: Vec<String> = self
+            .flights
+            .iter()
+            .filter(|f| f.state == State::Waiting && now - f.spawned > cfg.self_release_s)
+            .map(|f| f.group.clone())
+            .collect();
+        for g in due {
+            match self.command(lua, &g, "start") {
+                Ok(m) => info!("atc traffic: {m} by itself: Ground never released it"),
+                Err(e) => warn!("atc traffic: could not start {g}: {e:#}"),
             }
         }
     }
