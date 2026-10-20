@@ -325,8 +325,9 @@ in `types` (F-16 and Hornet if there are none).
   to listen to under **Listen to**: **All**, one frequency, or several (tap
   each one you want), then press **Listen live**. You hear them as it
   happens: controllers, AI pilots and players, through a radio filter with
-  squelch. A player's call plays as soon as they unkey, and the reply follows
-  it, never over it. The page remembers your pick. Each transmission can
+  squelch. It is what is on SRS: players' voices are streamed from SRS as
+  they talk, and the controllers and AI pilots are the same audio they put
+  on SRS. Only the ATC frequencies are on it. The page remembers your pick. Each transmission can
   also be replayed with ▶.
 - **In the cockpit.** Every controller transmission addressed to you also
   appears as text in DCS for 12 seconds ("ANDERSEN TOWER: Viper 1-1, runway

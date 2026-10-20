@@ -488,6 +488,8 @@ struct Ctx {
     start: Instant,
     /// A player is in the air picture (someone may be listening on SRS).
     players_on: std::sync::atomic::AtomicBool,
+    /// Players' own voices go on the site's feed.
+    publish_pilot_audio: bool,
 }
 
 impl Ctx {
@@ -542,6 +544,11 @@ impl Ctx {
                         self.rx_tx.clone(),
                     ) {
                         Ok(c) => {
+                            // players' voices onto the site's live feed as they talk
+                            if self.publish_pilot_audio {
+                                let inst = self.inst_id.clone();
+                                c.set_live(Arc::new(move |v| live::stream(&inst, v)));
+                            }
                             pool.clients.push((c, vec![]));
                             n
                         }
@@ -682,6 +689,7 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
         next_index: std::sync::atomic::AtomicUsize::new(0),
         start: Instant::now(),
         players_on: std::sync::atomic::AtomicBool::new(false),
+        publish_pilot_audio: cfg.publish_pilot_audio,
     });
 
     // The airfields, and Range Control, are on the air from the start.
@@ -712,10 +720,8 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
                     continue;
                 }
                 let pcm = std::mem::take(&mut tr.pcm);
+                // (already streamed live from SRS as it was said; kept for replays)
                 let keep = publish_pilot_audio.then(|| pcm.clone());
-                if publish_pilot_audio {
-                    live::play(&ctx.inst_id, &tr.label, &tr.name, "", &pcm);
-                }
                 let stt = stt.clone();
                 let llm = llm.clone();
                 let ctx = ctx.clone();

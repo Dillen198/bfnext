@@ -51,6 +51,18 @@ pub(crate) struct Transmission {
     pub pcm: Vec<i16>,
 }
 
+/// Someone else's voice on one of our frequencies, as it arrives: for
+/// streaming it on (the range site's live ATC feed) while they talk.
+pub(crate) enum LiveVoice {
+    /// They keyed up on `label`'s frequency.
+    On { label: String, name: String },
+    /// 16 kHz mono PCM, one SRS frame (40 ms) at a time.
+    Audio { label: String, pcm: Vec<i16> },
+    Off { label: String },
+}
+
+pub(crate) type LiveTap = Arc<dyn Fn(LiveVoice) + Send + Sync>;
+
 /// What the TCP client stream tells us about another SRS client.
 #[derive(Debug, Clone)]
 struct ClientInfo {
@@ -90,6 +102,27 @@ const _: () = {
 };
 
 // ─── Opus (dynamically loaded) ─────────────────────────────────────────────
+
+/// An Opus decoder kept across the frames of one transmission. Lives on the
+/// receive thread.
+struct StreamDecoder {
+    dec: *mut OpusDecoder,
+    opus: Arc<Opus>,
+}
+
+impl StreamDecoder {
+    fn decode(&mut self, frame: &[u8]) -> Vec<i16> {
+        let mut out = [0i16; FRAME_SAMPLES * 6];
+        let n = unsafe { (self.opus.decode)(self.dec, frame.as_ptr(), frame.len() as i32, out.as_mut_ptr(), out.len() as i32, 0) };
+        if n > 0 { out[..n as usize].to_vec() } else { vec![] }
+    }
+}
+
+impl Drop for StreamDecoder {
+    fn drop(&mut self) {
+        unsafe { (self.opus.dec_destroy)(self.dec) };
+    }
+}
 
 #[repr(C)]
 struct OpusEncoder {
@@ -180,6 +213,13 @@ impl Opus {
         result
     }
 
+    /// A decoder for one stream of frames, decoded as they arrive.
+    fn stream(self: &Arc<Self>) -> Option<StreamDecoder> {
+        let mut err = 0i32;
+        let dec = unsafe { (self.dec_create)(16_000, 1, &mut err) };
+        (!dec.is_null() && err == 0).then(|| StreamDecoder { dec, opus: Arc::clone(self) })
+    }
+
     /// Encode one full transmission of 16 kHz mono `i16` PCM into a sequence of
     /// Opus frame byte-buffers (one per 40 ms).
     fn encode_transmission(&self, pcm: &[i16]) -> Result<Vec<Vec<u8>>> {
@@ -250,6 +290,8 @@ struct Inner {
     /// `None` when opus.dll could not be loaded — the client still connects
     /// (so EAM auth can be verified in the SRS client list) but cannot transmit.
     opus: Option<Arc<Opus>>,
+    /// Where inbound voice is streamed as it arrives, if anywhere.
+    live: Mutex<Option<LiveTap>>,
 }
 
 fn now_millis() -> u64 {
@@ -298,6 +340,7 @@ impl SrsClient {
             clients: Mutex::new(HashMap::new()),
             rx_tx,
             opus,
+            live: Mutex::new(None),
         });
         let mgr = Arc::clone(&inner);
         std::thread::Builder::new()
@@ -314,6 +357,11 @@ impl SrsClient {
 
     pub(crate) fn is_connected(&self) -> bool {
         self.0.connected.load(Ordering::Relaxed)
+    }
+
+    /// Stream other clients' voice on our frequencies as it arrives.
+    pub(crate) fn set_live(&self, tap: LiveTap) {
+        *self.0.live.lock().unwrap() = Some(tap);
     }
 
     /// Retune the client. Used when the set of positions changes — an airfield
@@ -551,7 +599,15 @@ fn udp_rx_loop(c: Arc<Inner>) {
     let mut buf = [0u8; 1500];
     let mut rxb: Option<RxBuf> = None;
     let mut tail: Option<RxTail> = None;
+    // the transmission being streamed live: who, on what, its decoder, when it goes quiet
+    let mut live: Option<([u8; GUID_LEN], String, Option<StreamDecoder>, Instant)> = None;
     loop {
+        if live.as_ref().is_some_and(|l| Instant::now() >= l.3) {
+            let (_, label, _, _) = live.take().unwrap();
+            if let Some(tap) = c.live.lock().unwrap().clone() {
+                tap(LiveVoice::Off { label });
+            }
+        }
         if let Some(b) = &rxb {
             if Instant::now() >= b.deadline {
                 let b = rxb.take().unwrap();
@@ -614,14 +670,42 @@ fn udp_rx_loop(c: Arc<Inner>) {
             .unwrap()
             .insert(freq_hz.max(0.0) as u64, now_millis());
 
-        if c.rx_tx.is_none() {
-            continue;
-        }
         // Another of this process's own controllers (Red ATC's ATIS heard by
         // Blue ATC on a shared 340.000): it still counts as a busy channel
         // above, but it is not a player and must not be transcribed -- the log
         // was full of Blue ATC "hearing" Red ATC's weather broadcasts.
         if is_own_guid(&pkt[n - GUID_LEN..n]) {
+            continue;
+        }
+        // Streamed on as it arrives, one transmission at a time.
+        let tap = c.live.lock().unwrap().clone();
+        if let (Some(tap), Some(opus)) = (tap, c.opus.as_ref()) {
+            let who: [u8; GUID_LEN] = pkt[n - GUID_LEN..n].try_into().unwrap();
+            let quiet = Instant::now() + RX_END_GAP;
+            let mine = match &mut live {
+                Some(l) if l.0 == who => {
+                    l.3 = quiet;
+                    true
+                }
+                Some(_) => false,
+                None => {
+                    let guid = std::str::from_utf8(&who).unwrap_or("").to_string();
+                    let name = c.clients.lock().unwrap().get(&guid).map(|i| i.name.clone()).unwrap_or_default();
+                    tap(LiveVoice::On { label: label.clone(), name });
+                    live = Some((who, label.clone(), opus.stream(), quiet));
+                    true
+                }
+            };
+            if mine {
+                if let Some((_, l, Some(dec), _)) = &mut live {
+                    let pcm = dec.decode(&pkt[6..6 + audio_len]);
+                    if !pcm.is_empty() {
+                        tap(LiveVoice::Audio { label: l.clone(), pcm });
+                    }
+                }
+            }
+        }
+        if c.rx_tx.is_none() {
             continue;
         }
         let who: [u8; GUID_LEN] = pkt[n - GUID_LEN..n].try_into().unwrap();
