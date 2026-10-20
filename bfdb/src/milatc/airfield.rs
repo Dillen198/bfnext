@@ -72,11 +72,17 @@ impl Facility for Airfield {
                 self.align_tried = true;
                 let shift = self.ctl.ap.alignment(&dcs);
                 match self.ctl.ap.align(&dcs) {
-                    Some(m) => log::info!("[{}] range ATC: {} taxi network aligned to DCS ({m:.0} m shift)", self.inst, self.ctl.ap.callsign),
-                    None => log::warn!(
-                        "[{}] range ATC: {} taxi network is {} off the DCS runways ({}); taxi routes are given from the unshifted network",
+                    Some(m) => log::info!(
+                        "[{}] range ATC: {} ({}) taxi network aligned to DCS ({m:.0} m shift)",
                         self.inst,
                         self.ctl.ap.callsign,
+                        self.ctl.ap.icao
+                    ),
+                    None => log::warn!(
+                        "[{}] range ATC: {} ({}) taxi network is {} off the DCS runways ({}); taxi routes are given from the unshifted network",
+                        self.inst,
+                        self.ctl.ap.callsign,
+                        self.ctl.ap.icao,
                         shift.map(|d| format!("{:.0} m", d.dist(P2::default()))).unwrap_or_else(|| "nowhere near".into()),
                         dcs.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")
                     ),

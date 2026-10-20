@@ -8,7 +8,9 @@
 //! Every transmission (controllers, AI pilots, and players when
 //! `publishPilotAudio` allows) is pushed onto a per-instance broadcast in
 //! real time, in 100 ms chunks of 8 kHz audio: radio quality, 16 KB/s per
-//! listener. A WebSocket (`/api/range/atc/live`) carries it out, bracketed by
+//! listener. Players' voices are streamed straight from SRS as they talk
+//! ([`stream`]); what the controllers and AI pilots say is the same audio
+//! that goes out on SRS. A WebSocket (`/api/range/atc/live`) carries it out, bracketed by
 //! "on air" / "off air" messages so the page can show who is talking and
 //! play the squelch. Nothing is sent between transmissions.
 
@@ -130,6 +132,22 @@ pub(crate) fn play(inst: &str, station: &str, who: &str, text: &str, pcm16k: &[i
         tick.tick().await;
         let _ = tx.send(Arc::new(Frame::Off { station }));
     });
+}
+
+/// A player's voice, streamed as it arrives from SRS (see
+/// [`crate::voice::srs::LiveVoice`]): no pacing needed, it comes in real time.
+pub(crate) fn stream(inst: &str, v: crate::voice::srs::LiveVoice) {
+    use crate::voice::srs::LiveVoice;
+    let tx = hub(inst);
+    if tx.receiver_count() == 0 {
+        return;
+    }
+    let f = match v {
+        LiveVoice::On { label, name } => Frame::On { station: Arc::from(label.as_str()), who: Arc::from(name.as_str()), text: Arc::from("") },
+        LiveVoice::Audio { label, pcm } => Frame::Audio { station: Arc::from(label.as_str()), pcm: to_feed_rate(&pcm) },
+        LiveVoice::Off { label } => Frame::Off { station: Arc::from(label.as_str()) },
+    };
+    let _ = tx.send(Arc::new(f));
 }
 
 /// The WebSocket message for a frame: JSON for on/off, binary for audio

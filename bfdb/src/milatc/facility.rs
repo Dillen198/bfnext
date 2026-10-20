@@ -73,16 +73,13 @@ pub(crate) struct Air {
     pub lat: f64,
     pub lon: f64,
     pub alt_ft: i32,
-    pub agl_ft: i32,
     pub hdg: f64,
     pub gs: f64,
-    pub vs_fpm: i32,
     pub on_ground: bool,
     pub ai: bool,
     /// For AI: what it is doing, as "range:<station>", "tanker:<id>",
     /// "carrier:<id>", "departure", "arrival".
     pub ai_plan: Option<String>,
-    pub ai_state: String,
     pub typ: String,
 }
 
@@ -98,14 +95,11 @@ fn air(t: &AtcTraffic) -> Option<Air> {
         lat: t.lat,
         lon: t.lon,
         alt_ft: t.alt_ft,
-        agl_ft: t.agl_ft,
         hdg: t.heading as f64,
         gs: t.speed_kts as f64,
-        vs_fpm: t.vspd_fpm,
         on_ground: t.on_ground,
         ai: t.ai,
         ai_plan: t.ai_plan.clone(),
-        ai_state: t.ai_state.clone().unwrap_or_default(),
         typ: t.unit_type.clone(),
     })
 }
