@@ -423,6 +423,13 @@ pub struct Ephemeral {
     /// Fixed-wing AI flights started on a parking spot, and when, until they
     /// are seen in the air (`Db::check_ramp_watch`).
     pub(super) ramp_watch: FxHashMap<GroupId, (DateTime<Utc>, Option<ObjectiveId>)>,
+    /// Fields the ramp watch last removed a stuck flight from, and when.
+    /// Whatever held that flight -- a cratered runway, a wreck on the
+    /// taxiway -- holds the next one too: Adana sent one CAP after another
+    /// to sit 15 min on its stand and be removed. For `RAMP_BLOCK_SECS`
+    /// after that, fixed wing don't ground-start there (`ramp_blocked`); a
+    /// flight seen leaving it opens it again.
+    pub(super) ramp_blocked: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Station orders (AWACS/tanker/drone/fighter waypoints) given to a
     /// flight still on the ground: the new orbit point and who ordered it.
     /// Applied once the flight is airborne (`Db::flush_pending_air_stations`)
@@ -651,6 +658,7 @@ impl Default for Ephemeral {
             despawn_failures: FxHashMap::default(),
             launch_requests: FxHashMap::default(),
             ramp_watch: FxHashMap::default(),
+            ramp_blocked: FxHashMap::default(),
             pending_air_station: FxHashMap::default(),
             contributions: Default::default(),
             ramp_rejected: FxHashSet::default(),
@@ -681,6 +689,10 @@ impl Default for Ephemeral {
 /// Quantising the countdown means a label redraws a handful of times a minute
 /// instead of sixty, at no cost to how useful the number is to a player.
 const ETA_BUCKET_SECS: i64 = 15;
+
+/// How long a field stays closed to fixed-wing ground starts after the ramp
+/// watch removed a stuck flight from it (`Ephemeral::ramp_blocked`).
+pub(super) const RAMP_BLOCK_SECS: i64 = 30 * 60;
 
 fn bucket_eta(secs: i64) -> i64 {
     if secs <= 0 {
@@ -846,6 +858,14 @@ impl Ephemeral {
             })
             .unwrap_or(0);
         Some((Vector2::new(p.0.x, p.0.z), n))
+    }
+
+    /// Whether the ramp watch removed a stuck flight from `oid` within the
+    /// last `RAMP_BLOCK_SECS` (see `ramp_blocked`).
+    pub(super) fn ramp_blocked(&self, oid: &ObjectiveId) -> bool {
+        self.ramp_blocked
+            .get(oid)
+            .map_or(false, |t| Utc::now() - *t < chrono::Duration::seconds(RAMP_BLOCK_SECS))
     }
 
     pub fn get_airbase_by_oid(&self, oid: &ObjectiveId) -> Option<&DcsOid<ClassAirbase>> {
@@ -2648,13 +2668,16 @@ impl Ephemeral {
                         // "assigned one by DCS": DCS deletes the group on the
                         // spot, which is how every C-17 put on a full field
                         // vanished seconds after spawning, cargo and all. Same
-                        // for a template this field already refused.
+                        // for a template this field already refused, and for
+                        // fixed wing at a field the ramp watch just had to
+                        // clear a stuck flight from.
                         (Some((abid, p, cat)), Some(anchor))
                             if (!open_ground || !parking_plan.is_empty())
                                 && (helicopter || !parking_plan.is_empty())
                                 && !launch_oid.map_or(false, |o| {
                                     self.ramp_rejected
                                         .contains(&(o, group.template_name.clone()))
+                                        || (!helicopter && self.ramp_blocked(&o))
                                 }) =>
                         {
                             // The exact shape DCS itself uses when it spawns a

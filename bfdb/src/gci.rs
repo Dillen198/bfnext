@@ -412,7 +412,7 @@ pub(crate) async fn run(
     let (commit_tx, mut commit_rx) = tokio::sync::mpsc::unbounded_channel::<(Side, String)>();
     if stt.is_none() {
         log::info!(
-            "gci: speech recognition disabled (set whisperExe + whisperModel to let              players call '{}' / '{}'); outbound calls still work",
+            "gci: speech recognition disabled (set whisperExe + whisperModel to let players call '{}' / '{}'); outbound calls still work",
             cfg.blue_controller_callsign,
             cfg.red_controller_callsign,
         );
@@ -2080,7 +2080,7 @@ fn build_voice(
     let mk = |coalition: u8, name: &str, radios: Vec<Radio>, pw: &str| -> Option<srs::SrsClient> {
         if radios.is_empty() {
             log::error!(
-                "gci: no frequency configured for '{name}' — set freqs (or the legacy freqMhz)                  in gci.json; this side will not transmit"
+                "gci: no frequency configured for '{name}' — set freqs (or the legacy freqMhz) in gci.json; this side will not transmit"
             );
             return None;
         }

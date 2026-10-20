@@ -3679,7 +3679,7 @@ impl Db {
             TransportKind::Air
         } else {
             bail!(
-                "no transport free for {dest_name} (road cut {road_cut}, convoys {convoys_out}/{convoy_max},                  cargo flights {air_out}/{air_max:?})"
+                "no transport free for {dest_name} (road cut {road_cut}, convoys {convoys_out}/{convoy_max}, cargo flights {air_out}/{air_max:?})"
             )
         };
         let load = self.build_transfers(hub, dest, 1.0);
@@ -3712,6 +3712,25 @@ impl Db {
             TransportEnd::Returned => self.refund_cargo(id),
         }
         self.drop_transport_group(gid);
+    }
+
+    /// The ramp watch is removing `gid` because it never left its field: if
+    /// that is a cargo flight, end its route with the load handed back (and
+    /// the group removed). False when `gid` flies no air route.
+    pub(super) fn return_stuck_air_route(&mut self, gid: GroupId) -> bool {
+        let Some((id, side)) = self
+            .ephemeral
+            .active_air_routes
+            .iter()
+            .find(|(_, r)| r.group_id == gid)
+            .map(|(id, r)| (id.clone(), r.side))
+        else {
+            return false;
+        };
+        info!("Air route {id} never got off its hub, returning its load");
+        self.ephemeral.active_air_routes.remove(&id);
+        self.finish_transport(&id, side, gid, TransportEnd::Returned);
+        true
     }
 
     /// Poll every in-flight convoy, cargo flight and supply ship.

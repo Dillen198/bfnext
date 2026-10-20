@@ -933,7 +933,7 @@ impl InstanceState {
         e.2 += 1;
         if e.0.map_or(true, |t: std::time::Instant| t.elapsed() >= std::time::Duration::from_secs(60)) {
             warn!(
-                "[{}] engine slow: {proc_name} answered after {} ms ({} slow replies, worst {} ms,                  since the last report)",
+                "[{}] engine slow: {proc_name} answered after {} ms ({} slow replies, worst {} ms, since the last report)",
                 self.id,
                 took.as_millis(),
                 e.2,

@@ -331,7 +331,7 @@ impl LoadedMiz {
                     .with_context(|| format_compact!("replacing helipads in {path:?}"))?;
                 if n > 0 {
                     warn!(
-                        "{path:?}: {n} FARP_SINGLE_01 helipad(s) turned into Invisible FARPs --                          the dedicated server can't load that model and crashes loading the mission"
+                        "{path:?}: {n} FARP_SINGLE_01 helipad(s) turned into Invisible FARPs -- the dedicated server can't load that model and crashes loading the mission"
                     );
                 }
             }

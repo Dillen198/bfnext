@@ -691,7 +691,7 @@ fn process_slot_rejection(ctx: &mut Context, id: PlayerId, ucid: Ucid, rej: Slot
         }
         SlotAuth::Consolidating(secs) => {
             let msg = format_compact!(
-                "Objective is still consolidating ({}s left) -- hold it with troops,                  or land a logistics crate to speed it up",
+                "Objective is still consolidating ({}s left) -- hold it with troops, or land a logistics crate to speed it up",
                 secs
             );
             ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
@@ -2965,7 +2965,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             break;
                         }
                         Err(e) if warn_missing_template_once(template.as_str()) => warn!(
-                            "SpawnCap: {} template '{}' not found -- add a {} group named '{}' to your mission file,                              or drop it from the roster. Trying the next one; not repeating this warning. ({e:?})",
+                            "SpawnCap: {} template '{}' not found -- add a {} group named '{}' to your mission file, or drop it from the roster. Trying the next one; not repeating this warning. ({e:?})",
                             if rotary { "helo patrol" } else { "CAP" },
                             template,
                             if rotary { "helicopter-section" } else { "plane-section" },

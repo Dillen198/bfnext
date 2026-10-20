@@ -1218,7 +1218,7 @@ async fn rpc_str_uncounted(
         Err(_) => {
             log::warn!("[{}] {proc_name}: no reply in {}s", inst.id, RPC_TIMEOUT.as_secs());
             return Err(Error(websec::unavailable(format!(
-                "the game server did not answer {proc_name} within {}s -- the engine may be                  busy; this page retries every minute",
+                "the game server did not answer {proc_name} within {}s -- the engine may be busy; this page retries every minute",
                 RPC_TIMEOUT.as_secs()
             ))))
         }
@@ -6542,7 +6542,7 @@ async fn news_generator(
                 // Worth a line: an empty diary with no explanation looks
                 // identical to a broken one.
                 log::info!(
-                    "[{}] news: no round recorded for this instance yet --                      nothing to report on",
+                    "[{}] news: no round recorded for this instance yet -- nothing to report on",
                     inst.id
                 );
                 return Ok(0);
@@ -6751,7 +6751,7 @@ async fn unitdb_refresher(db: StatsDb, inst: Inst) {
                 if !warned_no_version {
                     warned_no_version = true;
                     log::warn!(
-                        "[{}] unitdb_refresher: snapshot has no DCS version -- storing it as \"{}\"                          (the engine could not read DCS.getVersion; the unit data itself is fine)",
+                        "[{}] unitdb_refresher: snapshot has no DCS version -- storing it as \"{}\" (the engine could not read DCS.getVersion; the unit data itself is fine)",
                         inst.id,
                         UNKNOWN_DCS_VERSION
                     );
@@ -6983,7 +6983,7 @@ async fn tacmap_poller(db: StatsDb, inst: Inst, state: TacState) {
                     }
                 } else if fail_streak[i] > 30 {
                     log::warn!(
-                        "[{id}] tacmap_poller: query-tacmap({side}) {detail}                          (failing since {} attempt(s) ago -- is this instance's DCS server running?)",
+                        "[{id}] tacmap_poller: query-tacmap({side}) {detail} (failing since {} attempt(s) ago -- is this instance's DCS server running?)",
                         fail_streak[i]
                     );
                 } else {

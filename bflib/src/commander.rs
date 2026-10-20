@@ -808,7 +808,7 @@ fn tick_objective_funding(db: &mut Db, cfg: &SmartCommanderCfg, ts: DateTime<Utc
             // be ~100 lines a session of "funded X +200" with no way to see the
             // shape of the spend.
             info!(
-                "[Commander] {side:?} funded {funded} objective(s) for {spent} pts                  (asked {total_want}, budget {budget} = income over the funding window,                  treasury → {})",
+                "[Commander] {side:?} funded {funded} objective(s) for {spent} pts (asked {total_want}, budget {budget} = income over the funding window, treasury → {})",
                 db.persisted.treasury(side)
             );
             db.ephemeral.dirty();

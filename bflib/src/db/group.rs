@@ -528,6 +528,10 @@ impl Db {
                 .unwrap_or(false);
             if airborne {
                 self.ephemeral.ramp_watch.remove(&gid);
+                // Something got off this field, so whatever blocked it is gone.
+                if let Some(f) = field {
+                    self.ephemeral.ramp_blocked.remove(&f);
+                }
                 continue;
             }
             if now - since < chrono::Duration::seconds(RAMP_LIMIT_SECS) {
@@ -538,10 +542,35 @@ impl Db {
                 .and_then(|f| self.persisted.objectives.get(&f))
                 .map(|o| o.name.to_string())
                 .unwrap_or_else(|| "its field".into());
+            let newly_blocked = match field {
+                Some(f) => {
+                    let was = self.ephemeral.ramp_blocked(&f);
+                    self.ephemeral.ramp_blocked.insert(f, now);
+                    !was
+                }
+                None => false,
+            };
             warn!(
-                "[RAMP] {name} still on the ground at {at} {} min after starting up -- something blocks the                  taxiway or runway there; removed so it stops holding a parking spot",
-                RAMP_LIMIT_SECS / 60
+                "[RAMP] {name} still on the ground at {at} {} min after starting up -- something blocks the \
+                 taxiway or runway there; removed so it stops holding a parking spot{}",
+                RAMP_LIMIT_SECS / 60,
+                if newly_blocked {
+                    format_compact!(
+                        ". No fixed-wing ground starts at {at} for {} min: launches go from the next \
+                         field out, cargo flights air-start over it",
+                        super::ephemeral::RAMP_BLOCK_SECS / 60
+                    )
+                } else {
+                    CompactString::default()
+                }
             );
+            // A cargo flight that never left its hub lost nothing: its load
+            // goes back (this also removes the group). Deleted out from under
+            // its route instead, the route found it gone and wrote the load
+            // off as shot down.
+            if self.return_stuck_air_route(gid) {
+                continue;
+            }
             if let Err(e) = self.delete_group(&gid) {
                 warn!("[RAMP] removing {name}: {e:?}");
             }
@@ -1428,6 +1457,10 @@ impl Db {
         let obj = self.persisted.objectives.get(oid)?;
         if rotary {
             return Some(self.clear_helo_spot(obj.zone.pos()));
+        }
+        if self.ephemeral.ramp_blocked(oid) {
+            info!("[LAUNCH] {} had a flight stuck on its ramp, not launching fixed wing there", obj.name);
+            return None;
         }
         match self.ephemeral.usable_parking(lua, &self.persisted, oid, false, heavy) {
             Some((pos, n)) if n > 0 => Some(pos),
