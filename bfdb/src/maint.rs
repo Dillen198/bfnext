@@ -157,8 +157,25 @@ pub(crate) fn backup_now(db: &sled::Db, dir: &Path, keep: usize) -> Result<PathB
             .map_err(|_| anyhow::anyhow!("sled import panicked while writing the backup"))?;
         out.flush().context("flushing the backup")?;
     }
-    std::fs::rename(&partial, &target)
-        .with_context(|| format!("renaming {} -> {}", partial.display(), target.display()))?;
+    // On Windows a file in the backup can still be open for a moment after
+    // sled lets go of it (its own threads winding down, or a virus scanner
+    // looking at the new files), and renaming the folder then fails with
+    // "Access is denied". Give it a few seconds before calling it a failure.
+    let mut tries = 0;
+    loop {
+        match std::fs::rename(&partial, &target) {
+            Ok(()) => break,
+            Err(e) if tries < 40 && e.kind() == std::io::ErrorKind::PermissionDenied => {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!("renaming {} -> {}", partial.display(), target.display())
+                })
+            }
+        }
+    }
     prune_backups(dir, keep);
     Ok(target)
 }
