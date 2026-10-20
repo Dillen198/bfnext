@@ -219,8 +219,39 @@ struct Queued {
 /// Now a delete leaves a tombstone (entries for that mark issued before it are
 /// skipped when they reach the front) and pending mutations are found through
 /// an index, so both are O(1).
+/// Who a text message was addressed to, kept for the feed below.
+#[derive(Debug, Clone, Copy)]
+pub enum FeedTo {
+    All,
+    Side(Side),
+    Group(GroupId),
+    Unit(UnitId),
+    /// A chat line; `None` is chat to everyone.
+    Chat(Option<PlayerId>),
+}
+
+/// One text message as it was queued for DCS.
+#[derive(Debug, Clone)]
+pub struct FeedMsg {
+    pub seq: u64,
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub to: FeedTo,
+    pub text: String,
+}
+
+/// How many recent messages the feed keeps. Enough for a minute or two of a
+/// busy server -- the cockpit panel polls every few seconds.
+const FEED_LEN: usize = 400;
+
 #[derive(Debug, Clone, Default)]
 pub struct MsgQ {
+    /// Every panel and chat message sent, newest last, with who it was for.
+    /// F10 handlers answer the player in these messages ("3 more crates
+    /// needed", "you must land to spawn crates"), and the in-DCS cockpit panel
+    /// has no other way to see them -- it reads them from here (see
+    /// cockpit::messages). Never sent anywhere by itself.
+    feed: VecDeque<FeedMsg>,
+    feed_seq: u64,
     q: [VecDeque<Queued>; 3],
     /// entries ever pushed to / popped from each queue; an entry's position
     /// is its per-queue sequence number minus `popped`
@@ -342,13 +373,40 @@ impl MsgQ {
     }
 
     fn send_with_priority<S: Into<String>>(&mut self, p: usize, typ: MsgTyp, text: S) {
-        self.push(
-            p,
-            Cmd::Send(Msg::Message {
-                typ,
-                text: text.into(),
+        let text = text.into();
+        let to = match &typ {
+            MsgTyp::Panel { to, .. } => Some(match to {
+                PanelDest::All => FeedTo::All,
+                PanelDest::Side(s) => FeedTo::Side(*s),
+                PanelDest::Group(g) => FeedTo::Group(*g),
+                PanelDest::Unit(u) => FeedTo::Unit(*u),
             }),
-        )
+            MsgTyp::Chat(to) => Some(FeedTo::Chat(*to)),
+            MsgTyp::Mark { .. } => None,
+        };
+        if let Some(to) = to {
+            self.feed_seq += 1;
+            self.feed.push_back(FeedMsg {
+                seq: self.feed_seq,
+                at: chrono::Utc::now(),
+                to,
+                text: text.clone(),
+            });
+            while self.feed.len() > FEED_LEN {
+                self.feed.pop_front();
+            }
+        }
+        self.push(p, Cmd::Send(Msg::Message { typ, text }))
+    }
+
+    /// Sequence number of the newest feed message (0 before the first).
+    pub fn feed_seq(&self) -> u64 {
+        self.feed_seq
+    }
+
+    /// Feed messages newer than `since`, oldest first.
+    pub fn feed_since(&self, since: u64) -> impl Iterator<Item = &FeedMsg> {
+        self.feed.iter().filter(move |m| m.seq > since)
     }
 
     pub fn send<S: Into<String>>(&mut self, typ: MsgTyp, text: S) {

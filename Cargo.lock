@@ -244,6 +244,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bfcockpit-net"
+version = "1.0.0"
+dependencies = [
+ "mlua",
+ "ureq",
+]
+
+[[package]]
 name = "bfdb"
 version = "0.1.0"
 dependencies = [

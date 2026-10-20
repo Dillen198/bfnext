@@ -96,6 +96,8 @@ pub struct Rpcs {
     _cockpit_context: Proc,
     _cockpit_menu: Proc,
     _cockpit_menu_invoke: Proc,
+    _cockpit_messages: Proc,
+    _cockpit_cargo: Proc,
     _set_server_info: Proc,
     _intel_marks: Proc,
 }
@@ -1454,6 +1456,47 @@ impl Rpcs {
             path: Chars = Value::Null; "JSON array of menu path segments, e.g. [\"Cargo\",\"Unpack Crate\"]"
         )?;
         let _q = Arc::clone(&q);
+        let cockpit_messages = define_rpc!(
+            publisher,
+            base.append("cockpit-messages"),
+            "Text messages the calling player was sent after feed sequence `since`, as JSON",
+            |mut c: RpcCall, ucid: Chars, since: i64| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::CockpitMessages { ucid, since: since.max(0) as u64 }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid",
+            since: i64 = Value::Null; "Feed sequence the caller has already seen (0 for the recent backlog)"
+        )?;
+        let _q = Arc::clone(&q);
+        let cockpit_cargo = define_rpc!(
+            publisher,
+            base.append("cockpit-cargo"),
+            "What the calling player's slot can spawn, crate requirements, cargo on board and crates nearby, as JSON",
+            |mut c: RpcCall, ucid: Chars| {
+                let (tx, rx) = oneshot::channel();
+                let ucid = match Ucid::from_str(&ucid) {
+                    Ok(ucid) => ucid,
+                    Err(e) => {
+                        c.reply.send(Value::Error(format!("{e:?}").into()));
+                        return None
+                    }
+                };
+                _q.push((AdminCommand::CockpitCargo { ucid }, tx));
+                Some((c, rx))
+            },
+            Some(wait.clone()),
+            ucid: Chars = Value::Null; "The calling player's ucid"
+        )?;
+        let _q = Arc::clone(&q);
         let set_server_info = define_rpc!(
             publisher,
             base.append("set-server-info"),
@@ -1561,6 +1604,8 @@ impl Rpcs {
             _cockpit_context: cockpit_context,
             _cockpit_menu: cockpit_menu,
             _cockpit_menu_invoke: cockpit_menu_invoke,
+            _cockpit_messages: cockpit_messages,
+            _cockpit_cargo: cockpit_cargo,
             _set_server_info: set_server_info,
             _intel_marks: intel_marks,
         })

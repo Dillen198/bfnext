@@ -2438,6 +2438,8 @@ export const api = {
     pluginVersion: () => get<{ version: string }>('/cockpit/plugin/version'),
     /** Direct link to the plugin script. */
     pluginDownloadUrl: () => `${BASE}/cockpit/plugin/download`,
+    /** The installer for that version (a redirect to its GitHub release). */
+    pluginInstallerUrl: () => `${BASE}/cockpit/plugin/installer`,
   },
   intel: {
     /** Recon captures visible to the caller's coalition in the active round.

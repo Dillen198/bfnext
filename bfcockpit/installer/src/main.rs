@@ -1,4 +1,4 @@
-//! The windowed installer for the BFNext cockpit overlay.
+//! The windowed installer for the Vector Strike cockpit panel and wheel.
 //!
 //! This is what a player runs. It opens a window, lists the DCS profiles it
 //! found, and installs into the ones they tick — no console, no typing, and
@@ -43,7 +43,7 @@ fn main() {
 /// Last-resort error path: if the window itself cannot be created there is
 /// nowhere to print to, so use the one UI primitive that needs no setup.
 fn fatal(msg: &str) {
-    nwg::modal_fatal_message(&nwg::Window::default(), "BFNext Cockpit Overlay", msg);
+    nwg::modal_fatal_message(&nwg::Window::default(), "Vector Strike Cockpit", msg);
 }
 
 #[derive(Default)]
@@ -265,7 +265,7 @@ mod installer_ui {
                 .size((W, H))
                 .position((350, 200))
                 .title(&format!(
-                    "BFNext Cockpit Overlay {} — Installer",
+                    "Vector Strike Cockpit {} — Installer",
                     installer::plugin_version()
                 ))
                 // No resize/maximize: every control is absolutely positioned,

@@ -1,188 +1,330 @@
-# The Cockpit Overlay (In-Game UI)
+# Vector Strike Cockpit: In-Game Panel & Wheel
 
 The F10 radio menu works, but it makes you dig: open comms, pick a submenu, page
-down, pick again, and hope you remembered which branch the thing you wanted
-lives under. The **cockpit overlay** puts the same functions on a real panel
-drawn on top of DCS — buttons you click, fields you type numbers into, lists you
-can actually read.
+down, pick again, and the answer flashes in the corner of the screen for a few
+seconds. The **Vector Strike cockpit** gives you two better ways in, both drawn
+inside DCS:
 
-It is an **optional add-on you install yourself**. The F10 menu is not going
-anywhere and keeps working exactly as before, so nothing breaks if you skip
-this, and nothing breaks for the people you fly with if they do.
+- the **panel** — the whole F10 menu, your cargo, status, EWR picture and every
+  message the server sends you, on a window you can read;
+- the **wheel** — a ring you point at with your head or the mouse, for doing
+  things in a second without looking away from flying.
 
-## What's on it
+It is an **optional add-on you install yourself**. The F10 menu keeps working
+exactly as before, so nothing breaks if you skip it, and nothing changes for the
+people you fly with.
 
-**MENU** is the whole F10 menu — Actions, Cargo, Troops, JTAC, Objectives,
-Info, Recon, all of it — as a clickable list with a breadcrumb trail instead
-of a tree you have to keep re-opening. It is not a copy: it reads the live
-menu out of the engine and clicking an item runs the exact same thing F10
-runs, so it can never say something different from the real menu, and
-anything added to the campaign later turns up here on its own.
-
-Two things are better than F10:
-
-- **No `More >>` pages.** Those exist only because DCS throws away a menu's
-  eleventh entry. The panel scrolls, so forty deployables are one list.
-- **You can see where you are.** The strip along the top shows your aircraft,
-  altitude, heading, groundspeed, points, crates in hand and the nearest
-  objective with its bearing and range — read from the engine, never typed in
-  by you.
-
-**EWR** gives BRAA calls and ground intel, **CARP** is the C-130J release-point
-computer, and **CARGO** spawns crates by name and free-typed quantity — the one
-thing a fixed F10 click-list can't do.
+*The pictures on this page show the real layout and colours with example data.*
 
 ## Install
 
-Download the overlay from the Discord, run **`bfcockpit-install.exe`**, press
-**Install**, and restart DCS. That's it.
+**[Download the installer](/api/cockpit/plugin/installer)**
+(`VectorStrike-Cockpit-Install.exe`, always the current version). Close DCS,
+run it, press **Install**, and start DCS again.
 
-A window opens listing every DCS profile on your machine — `DCS`,
-`DCS.openbeta`, anything else named `DCS*` — all ticked. Having two profiles
-and installing into the wrong one is the single most common reason this
-"doesn't work", so it doesn't make you choose. It also finds your Saved Games
-folder where Windows actually says it is, so a Saved Games moved to another
-drive or into OneDrive is still found; if yours is somewhere stranger than
-that, **Add profile...** lets you point at it.
+Every version is also on the project's
+[GitHub releases](https://github.com/Dillen198/bfnext/releases?q=cockpit-v&expanded=true),
+with a `.zip` for installing by hand or with a mod manager. Windows may warn
+that the installer is from an unknown publisher (it isn't code-signed): choose
+**More info → Run anyway**.
 
-**Uninstall** is right next to it, and leaves your settings alone so
-reinstalling keeps your keys, opacity and window position.
+The installer finds every DCS profile on your machine (`DCS`, `DCS.openbeta`,
+anything else named `DCS*`) and ticks them all — installing into the wrong one
+is the most common reason it "doesn't work". A Saved Games folder moved to
+another drive or into OneDrive is still found; if yours is somewhere stranger,
+**Add profile...** lets you point at it. **Uninstall** is next to it and keeps
+your settings.
 
-If you'd rather do it by hand, it is one file:
-
-```
-%USERPROFILE%\Saved Games\DCS\Scripts\Hooks\bfcockpit.lua
-```
-
-There is **no login, no pairing code and no account linking** — the script asks
-DCS who you are on the connection you're already flying, and the server matches
-that to your pilot record. It works the moment you join.
-
-### Do I need to edit MissionScripting.lua?
-
-**No.** You may have seen that file mentioned for other DCS mods. It sanitizes
-the *mission scripting* Lua state — the one mission files run in, which is
-locked down because a mission can come from a server you don't control.
-
-The overlay doesn't run there. It runs in the GUI/hooks state, which DCS never
-sanitizes. Nothing in your DCS installation folder is touched by this plugin.
+There is **no login, no pairing code and no account linking** — it knows who you
+are from the connection you're already flying on. You do **not** need to edit
+`MissionScripting.lua`, and nothing in your DCS installation folder is touched.
 
 ## Opening it
 
-**Press your normal Comms / radio-menu key.** That opens the overlay.
-
-This is deliberate: it's the key your hands already go to when you want to do
-campaign things, and DCS lets you rebind it in *Options → Controls → UI Layer*
-like any other key, so "which key opens the cockpit UI" stays your choice.
-
-Once the window is on screen it has its own keys:
-
 | Key | What it does |
 | --- | --- |
-| `Ctrl+Alt+C` | Show / hide the overlay |
-| `Ctrl+Alt+O` / `Ctrl+Alt+L` | Opacity up / down |
-| `Ctrl+Alt+T` | Click-through on / off |
-| `Ctrl+Alt+R` | Reload the panel |
-| `Escape` | Hide |
+| your **Comms / radio-menu** key | opens the panel |
+| `Ctrl+Alt+C` | shows / hides the panel, from anywhere |
+| `Ctrl+Alt+W` | opens the wheel |
 
-**Click-through** is the one worth learning. With it on, the panel stays
-visible but the mouse passes straight through it to the aircraft — so you can
-leave a BRAA picture up on the corner of your screen while you keep flying,
-instead of choosing between seeing it and using your cockpit.
+All three can be changed in **Options → Special → Vector Strike** (see
+[Settings](#settings)). Changes apply within a few seconds, even mid-mission.
 
-The window is draggable and resizable by its edges, and where you put it,
-how big you made it and how transparent you set it are all remembered for
-next time.
+## The panel
 
-## Using it in VR
+Every tab shares the same frame: the **tabs** across the top, **-** / **+** to
+make the panel more see-through or more solid, **X** to hide it, and a **status
+line** at the bottom that shows the result of what you just did (or your keys).
+Drag the panel by its title bar and resize it from its edges; its position,
+size and opacity are remembered.
 
-The overlay is a normal DCS window, so it shows up in the headset the same way
-the briefing and ESC menu do — and it detects VR on its own by reading your own
-DCS options.
+### MENU — your whole F10 menu
 
-In VR it automatically:
+![The MENU tab inside the Cargo submenu, with the server's answer at the top](/api/wiki/images/2ca24e67-39ef-4941-8713-3195728bd999)
 
-- **Centres itself** and opens much larger, instead of tucking into a corner
-  that sits outside your comfortable field of view.
-- **Scales the whole panel up** and enlarges every button, field and scrollbar,
-  because a headset cursor lands *near* a target far more often than on it.
+- Every F10 item for your slot, read live from the server: Actions, Cargo,
+  Troops, JTAC, Objectives, Info, Recon — and anything added later.
+- **Bright green rows ending in `>`** are submenus: click to go in. **< Back**
+  goes up one level; the trail next to it shows where you are.
+- **Plain rows** are commands: click to run them — exactly what F10 runs.
+- **The box at the top** is what the server answered ("SA-3 Launcher crate
+  spawned. 3 more needed…", "you must land to spawn crates"), so you don't
+  have to catch it in the corner of the screen.
+- **☆ / ★** pins a command to your [wheel](#the-wheel) (★ means it's pinned).
+- No `More >>` pages: long lists just scroll.
 
-If it's still too small or now too large, set `scale` in the settings file
-below — `1.6` and `2.0` are reasonable for dense headsets.
+### CARGO — what to carry, and how much of it
+
+![The CARGO tab: on board, nearby crates, quick actions and categories](/api/wiki/images/56eaa9cf-0803-4eae-9226-802ad10c2eeb)
+
+- **ON BOARD** — crates and troops you're carrying, against how many your
+  aircraft can take.
+- **NEARBY CRATES** — crates close enough to load or unpack, with range and
+  bearing.
+- **Quick buttons** — Unpack, Load, Unload, List Cargo, Destroy: the same F10
+  commands, one click away. Only the ones your aircraft has are shown.
+- **BASE SUPPLY** — repair kits and fuel / weapons transfer crates.
+- **BUILD SOMETHING** — every deployable, grouped by category. Pick one:
+
+![A cargo category: each deployable with the crates it needs, weights and cost](/api/wiki/images/de33e85d-f738-4cb7-b515-9fe24e15592e)
+
+- Each deployable shows its **points cost** and **how many crates of each kind
+  it needs in all** — the number you need to bring and unpack together.
+- Each crate shows **how many are needed** and **what one weighs**.
+- **SPAWN 1** spawns one crate; **SPAWN ALL n** spawns the full set at once
+  (where your aircraft can do that). They are the F10 commands, so the same
+  rules apply — land first, spawn at a friendly base — and if something stops
+  you, the reason shows up in the panel.
+
+### STATUS — who and where you are
+
+![The STATUS tab: pilot, points, lives, aircraft, position and nearest objective](/api/wiki/images/9171f745-71d3-44e9-93fc-4c91f11aa070)
+
+Your name, side, **points**, **lives** and crates in hand; then your aircraft,
+**position** (degrees and decimal minutes, ready for a waypoint), altitude,
+heading and speed, airborne or on the ground, your **home base**, the base
+you're parked at, the **nearest objective** with range and bearing, and any
+**takeoff hold** still counting down.
+
+### EWR — the radar picture
+
+![The EWR tab showing threats with BRAA calls](/api/wiki/images/9e5839e7-b4cc-46a0-a092-497663354263)
+
+- **THREATS / FRIENDLIES / GROUND INTEL** — the early-warning network's
+  picture of enemy aircraft, your own side, or known enemy ground units.
+- **EWR CALLS ON/OFF** — turns the automatic EWR radio calls on or off for you.
+- **IMPERIAL / METRIC** — the units those calls and this picture use.
+
+### LOG — everything the server told you
+
+![The LOG tab: messages newest first, tagged YOU, SIDE and ALL](/api/wiki/images/05732d53-90e8-402b-9e50-f333720a706b)
+
+Every message sent to you, newest first, tagged **YOU** (just you), **SIDE**
+(your coalition), **ALL** (everyone) or **CHAT**. When something arrives while
+you're on another tab, the tab shows a count — **LOG 3**.
+
+### WHEEL — build your own wheel
+
+See [Building your own wheel](#building-your-own-wheel) below.
+
+## The wheel
+
+The wheel is a ring of buttons you **point at** instead of clicking through
+menus — like Flow for MSFS. Tap **Ctrl+Alt+W** and it opens in front of you.
+
+![The wheel: CARGO is pointed at, its commands fan out on an arc, UNLOAD is picked](/api/wiki/images/cb4d087b-8805-487e-a4ff-e1a95386dc24)
+
+**Pointing.** Three ways, all at once — whichever you used last wins:
+
+- **Your head** (TrackIR or VR): where you were looking when the wheel opened
+  is the middle; turn your head toward a segment to light it up. A **dot**
+  shows where you are pointing. Turning the aircraft doesn't move it.
+- **The mouse** (or a VR controller's laser): hover a segment.
+- **Keys or HOTAS buttons only** — no mouse, no head; see
+  [Keys only](#keys-only-no-mouse-no-head-tracking) below.
+
+**Groups fan out.** Point at a group — an F10 menu like **Cargo**, marked with
+a small dot near its edge — and its commands appear on an **arc** just outside
+it. Push further out (turn your head a bit more, or move the mouse out) onto
+the arc to pick one. No clicking into submenus.
+
+**Firing.** **Click**, or **tap the wheel key again**, to run what's lit up.
+Pick a group itself to open it as the whole ring (handy for long lists). The
+**middle** shows what you're pointing at; clicking it goes back a level, or
+closes the wheel at the top. Tapping the key with nothing lit up closes it too.
+
+**Feedback.** The server's answer appears in the strip under the wheel.
+Anything that destroys or deletes is drawn in red and has to be **picked
+twice**.
+
+### Keys only (no mouse, no head tracking)
+
+Everything the wheel does can be done from keys — ideal in VR, or with a hat
+switch on your stick. These keys are **only taken while the wheel is open**, so
+they never interfere with flying.
+
+| Arrow set (default) | Numpad set | What it does |
+| --- | --- | --- |
+| **← / →** | **4 / 6** | step to the previous / next segment (or along the arc) |
+| **↑** | **8** | move **out** onto the highlighted group's arc |
+| **↓** | **2** | come back **in** from the arc to the ring |
+| **Enter** (or tap the wheel key) | **5** | **fire** what's highlighted — or open a group as the whole ring |
+| **Backspace** | **0** | **back** a level, or close the wheel at the top |
+
+A third set uses **Ctrl+Alt + the arrows / Enter / Backspace**, for when the
+plain arrows are bound in your aircraft. Pick the set (or turn it off) with
+**Wheel keys** in the [settings](#settings). The middle of the wheel shows the
+keys while you use them.
+
+**On a HOTAS:** use your stick's software (VKB, Virpil, Thrustmaster TARGET,
+Joystick Gremlin…) to map a 4-way hat to the four arrows, one button to
+**Enter**, one to **Backspace** and one to the **wheel key**. Then: wheel key
+to open, hat to move, button to fire — without letting go of the stick.
+
+While you're using keys, small head movements are ignored, so a VR headset
+can't steal your selection; turn your head clearly (a few degrees) to hand
+pointing back to the head.
+
+### Live info
+
+![A live-info slot pointed at: the middle shows the nearest objective in full](/api/wiki/images/9d90d6b9-13b8-4052-8684-12d5c5605742)
+
+Some segments show a value instead of running a command. Point at one and the
+middle spells it out; pick it to open the panel where it comes from.
+
+| Slot | Shows | Picking it opens |
+| --- | --- | --- |
+| **Nearest objective** | range and bearing, e.g. `12NM 012°` | STATUS |
+| **Crates aboard** | crates carried against room, e.g. `1/2 CRATES` | CARGO |
+| **Takeoff** | `CLEARED`, or the time left on a takeoff hold | STATUS |
+| **Points** | your points | STATUS |
+| **Last message** | the latest thing the server told you | LOG |
+
+### What's on it to start with
+
+Until you change it, each aircraft type gets a preset: helicopters and the
+C-130 get **Cargo**, **Troops**, **crates aboard**, **Objectives**, **Actions**,
+the **nearest objective** and **Open panel**; everything else gets **JTAC**,
+**GCI/EWR**, the **EWR picture**, the **nearest objective**, **Objectives**,
+**Actions**, **Flight** and **Open panel**. Menus your slot doesn't have are
+left out.
+
+![The wheel in the blue colour scheme, as set up for a jet](/api/wiki/images/f7e01aaf-8460-48c5-a6dc-81ab6f36fb17)
+
+### Building your own wheel
+
+![The WHEEL tab: the wheel's items with move, icon and remove buttons, and the add buttons](/api/wiki/images/e260230b-1070-4e58-896a-cad801e27529)
+
+The panel's **WHEEL** tab edits the wheel for the aircraft type you're sitting
+in — each type keeps its own.
+
+| Button | What it does |
+| --- | --- |
+| **▲ ▼** | move an item round the ring (or within its group) |
+| **ICON** | change the item's icon (click again for the next one) |
+| **RENAME** | rename one of your groups |
+| **→ GROUP** | move a pinned command into your group |
+| **OUT** | take an item back out of its group |
+| **✕** | remove it from the wheel |
+| **RESET TO DEFAULT** | throw your changes away and go back to the preset |
+| **+ F10 MENU** | add any of your F10 menus as a group that fans out |
+| **+ LIVE INFO** | add a live-info slot |
+| **+ PANEL** | add a shortcut that opens a panel tab |
+| **+ NEW GROUP** | add your own group to collect pinned commands in |
+
+To put a **single command** on the wheel, use the **☆** next to it in the MENU
+tab. The ring holds up to **10** items; anything beyond that sits behind
+**MORE**.
+
+### Icons
+
+![The Vector Strike icon set](/api/wiki/images/da866270-2d36-4ebb-8582-49420aaa561a)
+
+Commands get an icon from what they do — crates, troops, CSAR, JTAC, smoke,
+objectives and so on. Change any of them with **ICON** in the WHEEL tab.
 
 ## Settings
 
-The first time it runs, the script writes:
+![Options, Special, Vector Strike: every setting numbered](/api/wiki/images/f5215d94-4653-4aa6-aab7-f6dcec4fca6b)
 
-```
-%USERPROFILE%\Saved Games\DCS\Config\BFCockpit.lua
-```
+Everything is in **Options → Special → Vector Strike**, and changes apply
+within a few seconds, even in the middle of a mission.
 
-Edit **that** file, not the script — that way updating the script never wipes
-your setup. Everything is optional; anything you leave out keeps its default.
+| # | Setting | Default | What it's for |
+| --- | --- | --- | --- |
+| 1 | **Show / hide key** | Ctrl+Alt+C | The key that opens and closes the panel from anywhere. Pick any letter, digit, F1–F12, numpad digit, Insert, Delete, Home, End or Pause, with any of Ctrl / Alt / Shift. Choose a combination none of your aircraft use. |
+| 2 | **Also open with the Comms key** | on | The panel also opens when you open the radio menu, so the key you already use for campaign things gets you there. |
+| 3 | **Panel size** | Auto | How big the panel's text and buttons are. Auto is 100% on a monitor and 135% in VR. |
+| 4 | **Wheel key** | Ctrl+Alt+W | The key that opens the wheel, and (tapped again) fires what you're pointing at. |
+| 5 | **Point with head tracking** | on | Turn off if you only want the mouse to point, e.g. if your head moves the pointer when you don't mean it to. |
+| 6 | **Head turn to reach an item** | Medium (10°) | How far you turn your head to reach the ring; the outer arc is twice that. Short suits TrackIR with high curves, Long suits VR or relaxed head movement. |
+| 7 | **Fire by looking at an item** | Off | Fire an item just by looking at it for 0.8–2 seconds — fully hands-free. Off by default so a glance never fires anything. |
+| 8 | **Wheel size** | 100% | How big the wheel is (80–150%). |
+| 9 | **Wheel colour** | Vector Strike green | Green, blue, amber, red or white. |
+| 10 | **Wheel opacity** | 90% | How see-through the wheel's segments are. |
+| 11 | **Open the wheel at** | Centre of the screen | Or **where the mouse is**. In VR it always opens where you're looking. |
+| 12 | **Wheel keys (while it is open)** | Arrow keys, Enter, Backspace | Drive the wheel with keys only — see [Keys only](#keys-only-no-mouse-no-head-tracking). Choose the arrows, the numpad, Ctrl+Alt + arrows, or Off. |
+
+**HOTAS buttons:** DCS doesn't let add-ons add their own entry to the
+**Controls** page, so to open the panel or wheel — or drive the wheel — from
+your stick, map buttons and a hat to the keys with your stick's software (VKB,
+Virpil, Thrustmaster TARGET, Joystick Gremlin…).
+
+A few rarer settings live in a file the cockpit writes the first time it runs,
+`%USERPROFILE%\Saved Games\DCS\Config\BFCockpit.lua`:
 
 ```lua
 cockpit = {
     -- The campaign API. Only change this if you're told to.
-    url = "https://api.vectorstrike.org/cockpit",
+    api = "https://api.vectorstrike.org",
 
-    -- 0.15 (ghost) .. 1.0 (solid). Ctrl+Alt+O / L change it live.
-    opacity = 0.92,
-
-    -- Open the panel when you open the comms menu.
-    open_on_radio_menu = true,
-
-    -- Have it up from mission start.
-    open_on_start = false,
+    -- Pin to one server if it ever shows the wrong one's war, e.g. "vs1".
+    instance = nil,
 
     -- "auto" reads VR from your own DCS options; "on" / "off" force it.
     vr = "auto",
-
-    -- UI magnification. Leave unset for 1.0 flat / 1.35 in VR.
-    scale = nil,
-
-    hotkeys = {
-        toggle        = "ctrl+alt+c",
-        hide          = "escape",
-        opacity_up    = "ctrl+alt+o",
-        opacity_down  = "ctrl+alt+l",
-        click_through = "ctrl+alt+t",
-        reload        = "ctrl+alt+r",
-    },
 }
 ```
 
+## Using it in VR
+
+Both the panel and the wheel show up in the headset like DCS's own menus, and
+VR is detected from your own DCS options:
+
+- the panel and wheel are drawn **larger** — a headset cursor lands *near* a
+  target far more often than on it;
+- the wheel always opens **in the middle of your view**;
+- **head pointing** works with the headset exactly as with TrackIR — and with
+  **Fire by looking at an item** turned on, you can use the wheel without
+  touching anything;
+- or skip pointing altogether and drive it with **keys or a HOTAS hat** (see
+  [Keys only](#keys-only-no-mouse-no-head-tracking)) — the most reliable way
+  in a headset;
+- a VR controller's **laser** works like the mouse.
+
+If things are too small or too large, change **Panel size** (150–200% suits
+dense headsets) and **Wheel size**.
+
 ## Flying on more than one of our servers
 
-Nothing to do. The overlay tells the campaign which server you're actually
-connected to, so joining the test server shows you the test server's war and
-joining the main server shows you the main one. The server's name is printed
-along the top of the panel so you can see at a glance which picture you're
-reading.
+Nothing to do. The cockpit tells the campaign which server you're on, so the
+test server shows the test server's war and the main server the main one. If it
+ever shows the wrong one, set `instance` in the settings file as above.
 
-If it ever shows the wrong one, pin it by adding the server's short id to your
-settings file:
+## If it doesn't work
 
-```lua
-cockpit = { instance = "vs1" }
-```
+The line along the bottom of the panel says what went wrong in plain words.
+Everything is also logged — open
+`%USERPROFILE%\Saved Games\DCS\Logs\dcs.log` and search for `BFCOCKPIT`. Bring
+those lines to the Discord.
 
-## If it doesn't appear
-
-Everything the script does is logged. Open:
-
-```
-%USERPROFILE%\Saved Games\DCS\Logs\dcs.log
-```
-
-and search for `BFCOCKPIT`. You'll see whether it loaded, which settings it
-read, whether VR was detected, and the exact address it tried to open. Bring
-those lines to the Discord and they'll tell us immediately what went wrong.
-
-Common causes:
-
-- **Nothing in the log at all** — the file isn't in `Scripts\Hooks`, or it's
-  named something DCS skips. It must end in `.lua`.
-- **Window opens but stays blank** — your DCS can't reach the campaign API.
-  Check the `loading ...` line in the log and try that address in a browser.
-- **Opens on the wrong server's data** — set `instance` as above.
+- **No "Vector Strike" under Options → Special** — DCS only looks for add-ons
+  when it starts: quit DCS completely and start it again.
+- **Nothing happens and nothing is in the log** — it isn't installed in the
+  profile DCS is using. Re-run the installer.
+- **"bfcockpit_net.dll is missing"** or **"the wheel's art is missing"** —
+  re-run the installer with DCS closed.
+- **"can't reach the campaign server"** — the message says why. Usually a
+  firewall, or a wrong `api` in the settings file.
+- **"not supported by this server yet"** — that server hasn't been updated to
+  the version the CARGO and LOG tabs need yet. Everything else still works.

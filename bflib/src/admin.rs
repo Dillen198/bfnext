@@ -393,6 +393,17 @@ pub enum AdminCommand {
         ucid: Ucid,
         path: Vec<std::string::String>,
     },
+    /// Text messages the caller was sent after feed sequence `since` -- what
+    /// F10 handlers answered them with.
+    CockpitMessages {
+        ucid: Ucid,
+        since: u64,
+    },
+    /// What the caller's slot can spawn, crate requirements, cargo on board
+    /// and crates nearby.
+    CockpitCargo {
+        ucid: Ucid,
+    },
     /// DCSServerBot-derived server state, pushed in from bfdb: the scheduled
     /// restart time and the current surface weather, for the F10 Info menu.
     SetServerInfo {
@@ -3170,6 +3181,8 @@ impl AdminCommand {
                 | Self::CockpitContext { .. }
                 | Self::CockpitMenu { .. }
                 | Self::CockpitMenuInvoke { .. }
+                | Self::CockpitMessages { .. }
+                | Self::CockpitCargo { .. }
                 | Self::SetServerInfo { .. }
                 | Self::SetCommanders { .. }
                 | Self::QueryCommand { .. }
@@ -3928,9 +3941,28 @@ fn run_admin_command(
                 }
             }
             AdminCommand::CockpitMenuInvoke { ucid, path } => {
-                match crate::cockpit::invoke(ctx, lua, &ucid, &path) {
-                    Ok(true) => reply_ok!("ok"),
-                    Ok(false) => reply_err!("no such menu item: {}", path.join(" > ")),
+                // Replies with what the handler told the player, so the panel
+                // shows the answer ("Need 3 crates", "you must land first")
+                // rather than a bare "ok".
+                match crate::cockpit::invoke_and_report(ctx, lua, &ucid, &path) {
+                    Ok(Some(said)) => reply_ok!("{said}"),
+                    Ok(None) => reply_err!("no such menu item: {}", path.join(" > ")),
+                    Err(e) => reply_err!("{e:?}"),
+                }
+            }
+            AdminCommand::CockpitMessages { ucid, since } => {
+                match crate::cockpit::messages(ctx, &ucid, since)
+                    .and_then(|m| Ok(serde_json::to_string(&m)?))
+                {
+                    Ok(json) => reply_ok!("{json}"),
+                    Err(e) => reply_err!("{e:?}"),
+                }
+            }
+            AdminCommand::CockpitCargo { ucid } => {
+                match crate::cockpit::cargo(ctx, lua, &ucid)
+                    .and_then(|c| Ok(serde_json::to_string(&c)?))
+                {
+                    Ok(json) => reply_ok!("{json}"),
                     Err(e) => reply_err!("{e:?}"),
                 }
             }

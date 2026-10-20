@@ -3817,7 +3817,7 @@ impl StatsDb {
             ("getting-started/welcome", "Welcome", "Getting Started", 0, include_str!("../seed_wiki/getting-started/welcome.md")),
             ("getting-started/joining-team", "Joining a Team", "Getting Started", 1, include_str!("../seed_wiki/getting-started/joining-team.md")),
             ("getting-started/hud-and-menus", "Understanding the Menus", "Getting Started", 2, include_str!("../seed_wiki/getting-started/hud-and-menus.md")),
-            ("getting-started/cockpit-overlay", "The Cockpit Overlay (In-Game UI)", "Getting Started", 3, include_str!("../seed_wiki/getting-started/cockpit-overlay.md")),
+            ("getting-started/cockpit-overlay", "Vector Strike Cockpit: Panel & Wheel", "Getting Started", 3, include_str!("../seed_wiki/getting-started/cockpit-overlay.md")),
             ("playbooks/first-sortie", "Your First Sortie", "Playbooks", 0, include_str!("../seed_wiki/playbooks/first-sortie.md")),
             ("playbooks/reading-live-ops", "Reading the Live Ops Dashboard", "Playbooks", 1, include_str!("../seed_wiki/playbooks/reading-live-ops.md")),
             ("playbooks/capturing-a-base", "Capturing a Base", "Playbooks", 2, include_str!("../seed_wiki/playbooks/capturing-a-base.md")),
@@ -3906,15 +3906,13 @@ impl StatsDb {
         Ok(())
     }
 
-    /// One-time seed of the images referenced by the built-in gameplay wiki
-    /// content (pulled from bfsite's marketing screenshots). Fixed ids so
-    /// every fresh deployment gets the same URLs the seed Markdown embeds --
-    /// only runs if the images tree is completely empty.
+    /// Seed the images referenced by the built-in gameplay wiki content
+    /// (bfsite's marketing screenshots and the cockpit panel previews from
+    /// bfcockpit/tools/wikipreviews.py). Fixed ids, so every deployment gets
+    /// the same URLs the seed Markdown embeds. Any seed image that is missing
+    /// is added -- so a deploy that brings new pages brings their pictures --
+    /// and one already there is never replaced.
     fn seed_wiki_images_if_empty(&self) -> Result<()> {
-        if self.wiki_images.iter().next().is_some() {
-            return Ok(());
-        }
-        info!("seeding bfwiki with default screenshots");
         let now = Utc::now();
         let seed: &[(&str, &[u8])] = &[
             ("cf08da53-e826-49b2-8b67-7ddded3cbb74", include_bytes!("../seed_wiki/images/server-browser.jpeg")),
@@ -3938,14 +3936,35 @@ impl StatsDb {
             ("ed912e81-5a74-493c-a691-2bfff1541054", include_bytes!("../seed_wiki/images/kneeboard-hud.jpeg")),
             ("d7eee98b-0f14-4ed3-a1e0-3bf815ffde9a", include_bytes!("../seed_wiki/images/aircraft-roster.jpeg")),
             ("f5701fbb-6bec-4db2-b96b-7bd33d41880f", include_bytes!("../seed_wiki/images/sa22-pantsir.jpeg")),
+            ("2ca24e67-39ef-4941-8713-3195728bd999", include_bytes!("../seed_wiki/images/cockpit-panel-menu.jpeg")),
+            ("56eaa9cf-0803-4eae-9226-802ad10c2eeb", include_bytes!("../seed_wiki/images/cockpit-panel-cargo.jpeg")),
+            ("de33e85d-f738-4cb7-b515-9fe24e15592e", include_bytes!("../seed_wiki/images/cockpit-panel-cargo-category.jpeg")),
+            ("9171f745-71d3-44e9-93fc-4c91f11aa070", include_bytes!("../seed_wiki/images/cockpit-panel-status.jpeg")),
+            ("9e5839e7-b4cc-46a0-a092-497663354263", include_bytes!("../seed_wiki/images/cockpit-panel-ewr.jpeg")),
+            ("05732d53-90e8-402b-9e50-f333720a706b", include_bytes!("../seed_wiki/images/cockpit-panel-log.jpeg")),
+            ("e260230b-1070-4e58-896a-cad801e27529", include_bytes!("../seed_wiki/images/cockpit-panel-wheel-editor.jpeg")),
+            ("cb4d087b-8805-487e-a4ff-e1a95386dc24", include_bytes!("../seed_wiki/images/cockpit-wheel-arc.jpeg")),
+            ("9d90d6b9-13b8-4052-8684-12d5c5605742", include_bytes!("../seed_wiki/images/cockpit-wheel-info.jpeg")),
+            ("f7e01aaf-8460-48c5-a6dc-81ab6f36fb17", include_bytes!("../seed_wiki/images/cockpit-wheel-blue.jpeg")),
+            ("f5215d94-4653-4aa6-aab7-f6dcec4fca6b", include_bytes!("../seed_wiki/images/cockpit-settings.jpeg")),
+            ("da866270-2d36-4ebb-8582-49420aaa561a", include_bytes!("../seed_wiki/images/cockpit-icons.jpeg")),
         ];
+        let mut added = 0usize;
         for (id, data) in seed {
-            self.wiki_images.insert(&Uuid::parse_str(id)?, &WikiImage {
+            let id = Uuid::parse_str(id)?;
+            if self.wiki_images.get(&id)?.is_some() {
+                continue;
+            }
+            added += 1;
+            self.wiki_images.insert(&id, &WikiImage {
                 content_type: "image/jpeg".to_string(),
                 data: data.to_vec(),
                 uploaded_at: now,
                 uploaded_by: "seed".to_string(),
             })?;
+        }
+        if added > 0 {
+            info!("seeded {added} bfwiki image(s)");
         }
         Ok(())
     }

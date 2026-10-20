@@ -1420,6 +1420,11 @@ impl Ephemeral {
         &mut self.msgs
     }
 
+    /// Read-only access, for the cockpit panel's message feed.
+    pub fn msgs_ref(&self) -> &MsgQ {
+        &self.msgs
+    }
+
     pub fn map_layer_and_msgs(&mut self) -> (&mut MapLayer, &mut MsgQ) {
         (&mut self.map_layer, &mut self.msgs)
     }

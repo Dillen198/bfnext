@@ -289,8 +289,9 @@ function UpdateNotice() {
     }}>
       <strong>OVERLAY UPDATE</strong>
       <span>
-        you have {PLUGIN_VERSION}, {data.version} is current — download
-        bfcockpit.lua and re-run the installer
+        you have {PLUGIN_VERSION}, {data.version} is current — download{' '}
+        <a href={api.cockpit.pluginInstallerUrl()} style={{ color: 'inherit' }}>the new installer</a>{' '}
+        and run it
       </span>
     </div>
   )

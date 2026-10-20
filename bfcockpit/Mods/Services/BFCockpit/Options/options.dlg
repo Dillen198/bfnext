@@ -1,0 +1,151 @@
+-- Options -> Special -> Vector Strike. Widgets are bound to the settings in
+-- optionsDb.lua by name: <setting><Control>, e.g. toggleKeyComboList.
+
+local left   = 56
+local labelW = 210
+local ctrlX  = 282
+local ctrlW  = 225
+local rowH   = 25
+
+local TitleSkin    = { ["params"] = { ["name"] = "staticOptionsTitleSkin" },
+	["states"] = { ["released"] = { [1] = { ["text"] = { ["horzAlign"] = { ["type"] = "min" } } } } } }
+local LabelSkin    = { ["params"] = { ["name"] = "staticOptionsCaptionSkin" } }
+local CheckBoxSkin = { ["params"] = { ["name"] = "checkBoxSkin_options" } }
+local ComboSkin    = { ["params"] = { ["name"] = "comboListSkin_options" } }
+local HelpSkin     = { ["params"] = { ["name"] = "staticSkin2" },
+	["states"] = { ["released"] = { [1] = { ["text"] = { ["fontSize"] = 10, ["horzAlign"] = { ["type"] = "min" } } } } } }
+
+local function static(text, x, y, w, h, skin)
+	return {
+		["params"] = {
+			["bounds"] = { ["x"] = x, ["y"] = y, ["w"] = w, ["h"] = h },
+			["enabled"] = true, ["text"] = text, ["tooltip"] = "", ["visible"] = true, ["zindex"] = 0,
+		},
+		["skin"] = skin,
+		["type"] = "Static",
+	}
+end
+
+local function checkbox(text, x, y, w)
+	return {
+		["params"] = {
+			["bounds"] = { ["x"] = x, ["y"] = y, ["w"] = w, ["h"] = 20 },
+			["enabled"] = true, ["state"] = false, ["text"] = text, ["tooltip"] = "",
+			["visible"] = true, ["zindex"] = 0, ["tabOrder"] = 0,
+		},
+		["skin"] = CheckBoxSkin,
+		["type"] = "CheckBox",
+	}
+end
+
+local function combo(x, y)
+	return {
+		["params"] = {
+			["bounds"] = { ["x"] = x, ["y"] = y, ["w"] = ctrlW, ["h"] = rowH },
+			["enabled"] = true, ["tabOrder"] = 0, ["text"] = "Item1", ["tooltip"] = "",
+			["visible"] = true, ["zindex"] = 0,
+		},
+		["skin"] = ComboSkin,
+		["type"] = "ComboList",
+	}
+end
+
+-- The Vector Strike logo, from this plugin's own Theme folder.
+--
+-- DCS runs a .dlg in an EMPTY environment (dxgui/loader/DialogLoader.lua:
+-- setfenv(f, {})) -- no lfs, no pcall, no globals at all -- so this file
+-- cannot find its own folder, and calling any global would stop the whole
+-- page from loading. The installer, which knows the profile path, rewrites the
+-- next line with the logo's absolute path. Copied by hand, it stays nil and
+-- the page simply has no logo.
+local logoFile = nil -- BFCOCKPIT_LOGO_PATH
+
+local function logo(x, y, w, h)
+	local released = { ["text"] = { ["horzAlign"] = { ["type"] = "min" } } }
+	if logoFile then
+		released["picture"] = {
+			["file"] = logoFile,
+			["color"] = "0xffffffff",
+			["horzAlign"] = { ["type"] = "middle", ["offset"] = 0 },
+			["vertAlign"] = { ["type"] = "middle", ["offset"] = 0 },
+			["size"] = { ["horz"] = w, ["vert"] = h },
+			["userTexSampler"] = 0,
+		}
+	end
+	return {
+		["params"] = {
+			["bounds"] = { ["x"] = x, ["y"] = y, ["w"] = w, ["h"] = h },
+			["enabled"] = true, ["text"] = "", ["tooltip"] = "", ["visible"] = true, ["zindex"] = 0,
+		},
+		["skin"] = { ["params"] = { ["name"] = "staticSkin2" }, ["states"] = { ["released"] = { [1] = released } } },
+		["type"] = "Static",
+	}
+end
+
+dialog = {
+	["children"] = {
+		["containerPlugin"] = {
+			["children"] = {
+				["titleLabel"]          = static("$BFC_TITLE", left, 30, 640, 24, TitleSkin),
+				["vsLogo"]              = logo(800, 14, 110, 112),
+
+				["keySectionLabel"]     = static("$BFC_KEY_SECTION", left, 75, 850, 24, LabelSkin),
+				["toggleKeyLabel"]      = static("$BFC_KEY", left, 110, labelW, rowH, LabelSkin),
+				["toggleKeyComboList"]  = combo(ctrlX, 110),
+				["toggleCtrlCheckbox"]  = checkbox("$BFC_CTRL", ctrlX, 145, 160),
+				["toggleAltCheckbox"]   = checkbox("$BFC_ALT", ctrlX + 165, 145, 160),
+				["toggleShiftCheckbox"] = checkbox("$BFC_SHIFT", ctrlX + 330, 145, 160),
+				["toggleKeyHelp"]       = static("$BFC_KEY_INFO", left, 175, 850, 36, HelpSkin),
+
+				["openOnCommsCheckbox"] = checkbox("$BFC_COMMS", left, 230, 700),
+
+				["uiScaleLabel"]        = static("$BFC_SCALE", left, 280, labelW, rowH, LabelSkin),
+				["uiScaleComboList"]    = combo(ctrlX, 280),
+				["uiScaleHelp"]         = static("$BFC_SCALE_INFO", left, 312, 850, 20, HelpSkin),
+
+				["wheelSectionLabel"]   = static("$BFC_WHEEL_SECTION", left, 360, 850, 24, LabelSkin),
+				["wheelKeyLabel"]       = static("$BFC_WHEEL_KEY", left, 395, labelW, rowH, LabelSkin),
+				["wheelKeyComboList"]   = combo(ctrlX, 395),
+				["wheelCtrlCheckbox"]   = checkbox("$BFC_CTRL", ctrlX, 430, 160),
+				["wheelAltCheckbox"]    = checkbox("$BFC_ALT", ctrlX + 165, 430, 160),
+				["wheelShiftCheckbox"]  = checkbox("$BFC_SHIFT", ctrlX + 330, 430, 160),
+				["wheelKeyHelp"]        = static("$BFC_WHEEL_INFO", left, 458, 850, 36, HelpSkin),
+				["wheelHeadCheckbox"]   = checkbox("$BFC_WHEEL_HEAD", left, 505, 700),
+				["wheelReachLabel"]     = static("$BFC_WHEEL_REACH", left, 540, labelW, rowH, LabelSkin),
+				["wheelReachComboList"] = combo(ctrlX, 540),
+				["wheelDwellLabel"]     = static("$BFC_WHEEL_DWELL", left, 575, labelW, rowH, LabelSkin),
+				["wheelDwellComboList"] = combo(ctrlX, 575),
+				["wheelSizeLabel"]      = static("$BFC_WHEEL_SIZE", left, 610, labelW, rowH, LabelSkin),
+				["wheelSizeComboList"]  = combo(ctrlX, 610),
+				["wheelThemeLabel"]     = static("$BFC_WHEEL_THEME", left, 645, labelW, rowH, LabelSkin),
+				["wheelThemeComboList"] = combo(ctrlX, 645),
+				["wheelOpacityLabel"]   = static("$BFC_WHEEL_OPACITY", left, 680, labelW, rowH, LabelSkin),
+				["wheelOpacityComboList"] = combo(ctrlX, 680),
+				["wheelOpenAtLabel"]    = static("$BFC_WHEEL_OPENAT", left, 715, labelW, rowH, LabelSkin),
+				["wheelOpenAtComboList"] = combo(ctrlX, 715),
+				["wheelNavLabel"]       = static("$BFC_WHEEL_NAV", left, 750, labelW, rowH, LabelSkin),
+				["wheelNavComboList"]   = combo(ctrlX, 750),
+				["wheelNavHelp"]        = static("$BFC_WHEEL_NAV_INFO", left, 780, 850, 36, HelpSkin),
+				["wheelVrHelp"]         = static("$BFC_WHEEL_VR", left, 822, 850, 36, HelpSkin),
+			},
+			["params"] = {
+				["bounds"] = { ["x"] = 0, ["y"] = 0, ["w"] = 974, ["h"] = 880 },
+				["enabled"] = true, ["text"] = "", ["tooltip"] = "", ["visible"] = true, ["zindex"] = 2,
+			},
+			["skin"] = { ["params"] = { ["name"] = "panelSkin" } },
+			["type"] = "Panel",
+		},
+	},
+	["params"] = {
+		["bounds"] = { ["x"] = 0, ["y"] = 0, ["w"] = 1135, ["h"] = 851 },
+		["draggable"] = true,
+		["enabled"] = true,
+		["hasCursor"] = true,
+		["lockFlow"] = false,
+		["modal"] = false,
+		["text"] = "dialog",
+		["zOrder"] = 1,
+	},
+	["skin"] = { ["params"] = { ["name"] = "windowSkin" } },
+	["type"] = "Window",
+}

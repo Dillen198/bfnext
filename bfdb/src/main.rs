@@ -3493,7 +3493,26 @@ async fn api_cockpit_plugin_version() -> std::result::Result<impl warp::Reply, E
     })))
 }
 
-/// GET /api/cockpit/plugin/download — the overlay script itself.
+/// Where the installer for each plugin version is published: a GitHub release
+/// tagged `cockpit-v<version>` (outside the `engine-` / `manager-v` prefixes,
+/// so neither updater mistakes it for one of theirs).
+const COCKPIT_RELEASES: &str = "https://github.com/Dillen198/bfnext/releases/download";
+const COCKPIT_INSTALLER_ASSET: &str = "VectorStrike-Cockpit-Install.exe";
+
+/// GET /api/cockpit/plugin/installer — the installer for the version this bfdb
+/// ships, so the wiki and dashboard have one link that is never out of date.
+async fn api_cockpit_plugin_installer() -> std::result::Result<impl warp::Reply, Error> {
+    let url = format!(
+        "{COCKPIT_RELEASES}/cockpit-v{}/{COCKPIT_INSTALLER_ASSET}",
+        cockpit_plugin_version()
+    );
+    Ok(warp::redirect::temporary(url.parse::<warp::http::Uri>().unwrap()))
+}
+
+/// GET /api/cockpit/plugin/download — the plugin script itself.
+///
+/// Since 2.0 the script needs bfcockpit_net.dll beside it, which only the
+/// installer ships; a script fetched on its own says so on its panel.
 async fn api_cockpit_plugin_download() -> std::result::Result<impl warp::Reply, Error> {
     Ok(warp::reply::with_header(
         warp::reply::with_header(
@@ -3545,6 +3564,49 @@ async fn api_cockpit_menu(
     let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
     use netidx::publisher::Value;
     let json = call_engine_rpc_str(&db, &inst, "cockpit-menu", vec![
+        ("ucid", Value::from(ucid.to_string())),
+    ]).await?;
+    Ok(json_response(json))
+}
+
+/// GET /api/cockpit/messages?since=<seq> — the text messages the caller was
+/// sent (F10 answers, crate counts, warnings), newer than `since`.
+///
+/// F10 handlers reply in DCS message boxes, not return values, so this is how
+/// the panel shows what a click actually said. `since` is the `next` value
+/// from the previous call; 0 (or absent) gets the recent backlog.
+async fn api_cockpit_messages(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+    ip: std::net::IpAddr,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
+    let since = query.get("since").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0).max(0);
+    use netidx::publisher::Value;
+    let json = call_engine_rpc_str(&db, &inst, "cockpit-messages", vec![
+        ("ucid", Value::from(ucid.to_string())),
+        ("since", Value::from(since)),
+    ]).await?;
+    Ok(json_response(json))
+}
+
+/// GET /api/cockpit/cargo — what the caller's slot can spawn, how many of each
+/// crate every deployable needs, what is on board and what is lying nearby.
+/// Each crate names the F10 path that spawns it, for /menu/invoke.
+async fn api_cockpit_cargo(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+    ip: std::net::IpAddr,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let ucid = require_linked_player(&query, session_id, db.clone(), &bot_cfg, &inst, ip).await?;
+    use netidx::publisher::Value;
+    let json = call_engine_rpc_str(&db, &inst, "cockpit-cargo", vec![
         ("ucid", Value::from(ucid.to_string())),
     ]).await?;
     Ok(json_response(json))
@@ -9031,6 +9093,10 @@ async fn main() -> Result<()> {
         .and(warp::get())
         .then(api_cockpit_plugin_download);
 
+    let cockpit_plugin_installer_route = warp::path!("api" / "cockpit" / "plugin" / "installer")
+        .and(warp::get())
+        .then(api_cockpit_plugin_installer);
+
     let cockpit_context_route = warp::path!("api" / "cockpit" / "context")
         .and(extract_session_cookie())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
@@ -9049,6 +9115,26 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .and(websec::with_client_ip())
         .then(api_cockpit_menu);
+
+    let cockpit_messages_route = warp::path!("api" / "cockpit" / "messages")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .and(websec::with_client_ip())
+        .then(api_cockpit_messages);
+
+    let cockpit_cargo_route = warp::path!("api" / "cockpit" / "cargo")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .and(websec::with_client_ip())
+        .then(api_cockpit_cargo);
 
     let cockpit_menu_invoke_route = warp::path!("api" / "cockpit" / "menu" / "invoke")
         .and(warp::post())
@@ -9404,8 +9490,11 @@ async fn main() -> Result<()> {
         .or(srs_route)
         .or(cockpit_plugin_version_route)
         .or(cockpit_plugin_download_route)
+        .or(cockpit_plugin_installer_route)
         .or(cockpit_context_route)
         .or(cockpit_menu_route)
+        .or(cockpit_messages_route)
+        .or(cockpit_cargo_route)
         .or(cockpit_ewr_report_route)
         .or(cockpit_ewr_intel_route)
         .or(cockpit_carp_solve_route)

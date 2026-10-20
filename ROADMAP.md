@@ -258,7 +258,10 @@ fn tick_naval_logistics(db: &mut Db) -> Result<()> {
 
 - **Priority**: Medium
 - **Status**: In progress. The pieces so far:
-  - `bfcockpit/`: a client-side DCS hook plus a Win32 installer.
+  - `bfcockpit/`: a client-side DCS hook plus a Win32 installer. Version 2 draws the panel with DCS's
+    own dxgui widgets instead of the embedded browser, and calls the bfdb API over HTTPS through
+    `bfcockpit_net.dll`. It mirrors the F10 menu and has CARGO, STATUS, EWR and LOG tabs, plus a Flow-style radial wheel
+    (head, mouse or keys; VR). The installer is published as GitHub release `cockpit-v<version>`.
   - A fog-of-war tactical map fed by `/ws/tacmap` (`bfprotocols/src/tacmap.rs`).
   - Two bfweb pages, `CockpitPage` and `KneeboardTab`.
   - The web dashboard, which already covers the territory map, logistics, points and briefing.

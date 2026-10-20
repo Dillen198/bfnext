@@ -4,7 +4,7 @@
 
 # Interface
 
-- Client side plugin for richer ui (in progress: bfcockpit, CockpitPage/KneeboardTab; F10 menu not yet replaced)
+- Client side plugin for richer ui (in progress: Vector Strike cockpit 3.1 is native dxgui + bfcockpit_net.dll with MENU/CARGO/STATUS/EWR/LOG/WHEEL tabs, a radial wheel (head, mouse or keys) and an Options -> Special page; installer on GitHub releases as cockpit-v<version>; F10 answers reach it through the msgq feed (/api/cockpit/messages); needs the new bflib/bfdb deployed and a final in-game pass)
 
 # Lua API
 

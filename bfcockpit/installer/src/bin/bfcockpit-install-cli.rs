@@ -18,7 +18,7 @@ use std::{
 #[derive(Parser, Debug)]
 #[command(
     name = "bfcockpit-install-cli",
-    about = "Install the BFNext cockpit overlay into your DCS profile(s)",
+    about = "Install the Vector Strike cockpit panel and wheel into your DCS profile(s)",
     version
 )]
 struct Args {
@@ -32,8 +32,9 @@ struct Args {
     #[arg(long, value_name = "PATH")]
     search: Vec<PathBuf>,
 
-    /// Campaign URL to seed into a new settings file. Only needed if you run
-    /// your own bfdb.
+    /// Campaign API address to seed into a new settings file, e.g.
+    /// http://192.168.1.50:8880. Only needed if you run your own bfdb. A
+    /// version 1 page address (".../cockpit") is accepted and trimmed.
     #[arg(long, value_name = "URL", default_value = installer::DEFAULT_URL)]
     url: String,
 
@@ -76,7 +77,7 @@ fn main() {
 
 fn run(args: &Args, interactive: bool) -> Result<()> {
     println!();
-    println!("BFNext cockpit overlay {}", installer::plugin_version());
+    println!("Vector Strike cockpit {}", installer::plugin_version());
     println!("-------------------------------");
 
     let (profiles, scan) = if args.write_dir.is_empty() {

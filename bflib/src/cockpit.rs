@@ -33,11 +33,12 @@ for more details.
 //! first day. Instead the overlay renders the same tree DCS renders, and
 //! clicking an item calls the very same handler -- so the cockpit UI is
 //! automatically complete, and stays that way when menus are added or changed.
-use crate::Context;
+use crate::{db::cargo::SlotStats, msgq::FeedTo, Context};
 use anyhow::{anyhow, Result};
 use dcso3::{
     coalition::Side,
     coord::Coord,
+    env::miz::{GroupId, UnitId},
     mission_commands::{invoke_mirrored_menu, mirrored_menu, MirroredMenuItem},
     net::{PlayerId, Ucid},
     LuaVec3, MizLua, Vector2, Vector3,
@@ -236,6 +237,301 @@ pub(crate) fn menu(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Result<Vec<Mirror
 pub(crate) fn invoke(ctx: &Context, lua: MizLua, ucid: &Ucid, path: &[String]) -> Result<bool> {
     let group = menu_group(ctx, ucid)?;
     invoke_mirrored_menu(lua, group, path)
+}
+
+// ── Message feed ──────────────────────────────────────────────────────────
+//
+// F10 handlers answer the player with DCS text messages, not return values:
+// "Need 3 crates", "you must land to spawn crates", the cargo list, the
+// nearby-crate bearings. A panel that only showed "ok" after a click left out
+// everything the click was for. So the panel reads the same messages back out
+// of the message queue's feed (msgq::MsgQ::feed), filtered to the ones this
+// player would have seen.
+
+/// One message the player was sent.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CockpitMsg {
+    pub seq: u64,
+    /// RFC 3339, UTC.
+    pub at: String,
+    /// "you" (to this player, their group or unit), "side", "all" or "chat".
+    pub scope: &'static str,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CockpitMsgs {
+    /// Pass back as `since` to get only what is newer.
+    pub next: u64,
+    pub messages: Vec<CockpitMsg>,
+}
+
+/// Everything a message can be addressed to that means this player.
+struct Audience {
+    side: Side,
+    player: Option<PlayerId>,
+    group: Option<GroupId>,
+    unit: Option<UnitId>,
+}
+
+fn audience(ctx: &Context, ucid: &Ucid) -> Result<Audience> {
+    let player = ctx
+        .db
+        .player(ucid)
+        .ok_or_else(|| anyhow!("unknown player {ucid}"))?;
+    let (group, unit) = match player.current_slot.as_ref() {
+        Some((slot, _)) => (
+            ctx.db.ephemeral.get_slot_info(slot).map(|si| si.miz_gid),
+            slot.as_unit_id(),
+        ),
+        None => (None, None),
+    };
+    Ok(Audience {
+        side: player.side,
+        player: ctx.connected.id_by_ucid.get(ucid).copied(),
+        group,
+        unit,
+    })
+}
+
+fn scope_for(a: &Audience, to: &FeedTo) -> Option<&'static str> {
+    match to {
+        FeedTo::All => Some("all"),
+        FeedTo::Side(s) if *s == a.side => Some("side"),
+        FeedTo::Group(g) if Some(*g) == a.group => Some("you"),
+        FeedTo::Unit(u) if Some(*u) == a.unit => Some("you"),
+        FeedTo::Chat(None) => Some("chat"),
+        FeedTo::Chat(Some(p)) if Some(*p) == a.player => Some("you"),
+        _ => None,
+    }
+}
+
+/// How much history a panel gets when it first asks (`since` = 0).
+const FIRST_LOOK: usize = 25;
+
+/// Messages for `ucid` newer than `since`.
+pub(crate) fn messages(ctx: &Context, ucid: &Ucid, since: u64) -> Result<CockpitMsgs> {
+    let a = audience(ctx, ucid)?;
+    let q = ctx.db.ephemeral.msgs_ref();
+    let mut out: Vec<CockpitMsg> = q
+        .feed_since(since)
+        .filter_map(|m| {
+            scope_for(&a, &m.to).map(|scope| CockpitMsg {
+                seq: m.seq,
+                at: m.at.to_rfc3339(),
+                scope,
+                text: m.text.to_string(),
+            })
+        })
+        .collect();
+    if since == 0 && out.len() > FIRST_LOOK {
+        out.drain(..out.len() - FIRST_LOOK);
+    }
+    Ok(CockpitMsgs { next: q.feed_seq(), messages: out })
+}
+
+/// Click a menu item and return what its handler told the player, joined --
+/// the text the player would have read in the top right of the screen.
+pub(crate) fn invoke_and_report(
+    ctx: &Context,
+    lua: MizLua,
+    ucid: &Ucid,
+    path: &[String],
+) -> Result<Option<String>> {
+    let before = ctx.db.ephemeral.msgs_ref().feed_seq();
+    if !invoke(ctx, lua, ucid, path)? {
+        return Ok(None);
+    }
+    // The handler took its own Context::get_mut() while it ran; re-borrow.
+    let ctx = unsafe { Context::get_mut() };
+    let said = messages(ctx, ucid, before)?
+        .messages
+        .into_iter()
+        .filter(|m| m.scope == "you")
+        .map(|m| m.text)
+        .collect::<Vec<_>>();
+    Ok(Some(if said.is_empty() { "Done.".to_string() } else { said.join("\n") }))
+}
+
+// ── Cargo ─────────────────────────────────────────────────────────────────
+//
+// What the slot can spawn and how many of each crate a deployable needs, as
+// data rather than menu labels ("SA 3 Launcher(4)"), plus what is on board and
+// what is lying nearby. Each crate carries the path of its own F10 spawn
+// command, so the panel's spawn button fires exactly what F10 fires --
+// same rules, same messages -- instead of a second implementation.
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CargoCrate {
+    pub name: String,
+    /// How many of this crate the deployable needs.
+    pub required: u32,
+    pub weight_kg: u32,
+    /// F10 path of the "spawn one" command, if this slot's menu has one.
+    pub spawn: Option<Vec<String>>,
+    /// F10 path of the "<crate> xN" submenu (C-130 / dynamic cargo), whose
+    /// children "1".."9" spawn that many.
+    pub spawn_n: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CargoDeployable {
+    pub name: String,
+    pub path: Vec<String>,
+    pub cost: u32,
+    pub crates: Vec<CargoCrate>,
+    pub repair: Option<CargoCrate>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct NearbyCrateInfo {
+    pub name: String,
+    pub distance_m: u32,
+    pub bearing_deg: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CargoInfo {
+    /// False in spectators: everything below is then empty.
+    pub in_slot: bool,
+    pub crate_slots: Option<u8>,
+    pub troop_slots: Option<u8>,
+    pub carrying: Vec<String>,
+    pub troops: Vec<String>,
+    pub nearby: Vec<NearbyCrateInfo>,
+    /// Base supply crates: repair kit, fuel / weapons transfer, emergency.
+    pub supply: Vec<CargoCrate>,
+    pub deployables: Vec<CargoDeployable>,
+}
+
+/// The F10 paths to spawn `name`, found in the slot's mirrored menu by the
+/// labels the cargo menus give them (menu/cargo.rs): the single command is
+/// "<name>" or "<name>(<required>)" somewhere under a "Crates" submenu, and the
+/// quantity submenu is "<name> xN".
+fn spawn_paths(
+    menu: &[MirroredMenuItem],
+    name: &str,
+    required: u32,
+) -> (Option<Vec<String>>, Option<Vec<String>>) {
+    let titled = format!("{name}({required})");
+    let under_crates = |it: &MirroredMenuItem| it.path.iter().any(|p| p == "Crates");
+    let one = menu
+        .iter()
+        .find(|it| it.command && under_crates(it) && (it.name == name || it.name == titled))
+        .map(|it| it.path.clone());
+    let xn = format!("{name} xN");
+    let n = menu
+        .iter()
+        .find(|it| !it.command && under_crates(it) && it.name == xn)
+        .map(|it| it.path.clone());
+    (one, n)
+}
+
+fn cargo_crate(menu: &[MirroredMenuItem], cr: &bfprotocols::cfg::Crate) -> CargoCrate {
+    let (spawn, spawn_n) = spawn_paths(menu, cr.name.as_str(), cr.required);
+    CargoCrate {
+        name: cr.name.to_string(),
+        required: cr.required,
+        weight_kg: cr.weight,
+        spawn,
+        spawn_n,
+    }
+}
+
+pub(crate) fn cargo(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Result<CargoInfo> {
+    let player = ctx
+        .db
+        .player(ucid)
+        .ok_or_else(|| anyhow!("unknown player {ucid}"))?;
+    let side = player.side;
+    let Some((slot, _)) = player.current_slot.clone() else {
+        return Ok(CargoInfo {
+            in_slot: false,
+            crate_slots: None,
+            troop_slots: None,
+            carrying: vec![],
+            troops: vec![],
+            nearby: vec![],
+            supply: vec![],
+            deployables: vec![],
+        });
+    };
+    let menu = menu(ctx, lua, ucid).unwrap_or_default();
+    let cfg = &ctx.db.ephemeral.cfg;
+
+    let capacity = ctx
+        .db
+        .ephemeral
+        .get_slot_info(&slot)
+        .and_then(|si| ctx.db.cargo_capacity(&si.typ).ok());
+    let (carrying, troops) = match ctx.db.list_cargo(&slot) {
+        Some(c) => (
+            c.crates.iter().map(|(_, cr)| cr.name.to_string()).collect(),
+            c.troops.iter().map(|t| t.troop.name.to_string()).collect(),
+        ),
+        None => (vec![], vec![]),
+    };
+    let nearby = SlotStats::get(&ctx.db, lua, &slot)
+        .ok()
+        .and_then(|st| ctx.db.list_nearby_crates(&st).ok())
+        .map(|v| {
+            v.iter()
+                .map(|nc| NearbyCrateInfo {
+                    name: nc.crate_def.name.to_string(),
+                    distance_m: nc.distance as u32,
+                    bearing_deg: nc.heading as u32,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut supply = vec![];
+    if let Some(rep) = cfg.repair_crate.get(&side) {
+        supply.push(cargo_crate(&menu, rep));
+    }
+    if let Some(w) = cfg.warehouse.as_ref() {
+        for cr in [
+            w.supply_transfer_fuel_crate.get(&side),
+            w.supply_transfer_weapons_crate.get(&side),
+            w.carrier_repair_crate.get(&side),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            supply.push(cargo_crate(&menu, cr));
+        }
+    }
+    // Only offer what this slot's menu actually has: a supply crate with no
+    // spawn command here is not spawnable from this airframe.
+    supply.retain(|c| c.spawn.is_some() || c.spawn_n.is_some());
+
+    let deployables = cfg
+        .deployables
+        .get(&side)
+        .map(|deps| {
+            deps.iter()
+                .filter(|d| !d.crates.is_empty() || d.repair_crate.is_some())
+                .map(|d| CargoDeployable {
+                    name: d.path.last().map(|s| s.to_string()).unwrap_or_default(),
+                    path: d.path.iter().map(|s| s.to_string()).collect(),
+                    cost: d.cost,
+                    crates: d.crates.iter().map(|cr| cargo_crate(&menu, cr)).collect(),
+                    repair: d.repair_crate.as_ref().map(|cr| cargo_crate(&menu, cr)),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Ok(CargoInfo {
+        in_slot: true,
+        crate_slots: capacity.as_ref().map(|c| c.crate_slots),
+        troop_slots: capacity.as_ref().map(|c| c.troop_slots),
+        carrying,
+        troops,
+        nearby,
+        supply,
+        deployables,
+    })
 }
 
 // ── Overlay keys ──────────────────────────────────────────────────────────
