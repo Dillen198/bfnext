@@ -1,5 +1,31 @@
 # Changelog — v2.0
 
+## October 20, 2026
+
+**Dashboard** — see [Reading the Live Ops Dashboard](../playbooks/reading-live-ops.md)
+- **Sortie debriefs**: each flight in your Flight Log opens a panel with that
+  sortie's kills, shots, deploys and how it ended, and a full-page debrief
+  with the flight profile, ground track and shot log.
+- Your pilot page has career charts, your rivals, and a side-by-side compare
+  with another pilot.
+- **KILL FEED**: one filter row for the whole page, activity over time, what
+  each side destroyed, and the top killers and weapons.
+- **OBJECTIVES**: a clickable map, a list of the bases that need attention,
+  holdings by type, and when each base was last taken.
+- **RANKINGS** can show all time or a single round, for either side.
+- The sitrep shows the front line, bases at risk, the last hour's kills and
+  how territory has moved.
+- The top bar shows the selected server's flags.
+
+**Fixes**
+- A logistics group whose first unit was a radar dome or a building crashed
+  the server when it respawned. It no longer does.
+- When an AI jet flight gets stuck on a field's ramp and is removed, jets stop
+  starting on the ground there for 30 minutes: they launch from the next field
+  out, and cargo flights start in the air over it.
+- A cargo flight removed for being stuck returns its load to its hub, instead
+  of the load being lost as if it was shot down.
+
 ## October 17, 2026
 
 **Your task, and rookie mode** — see [Your Task & Rookie Mode](../gameplay/your-task.md)
