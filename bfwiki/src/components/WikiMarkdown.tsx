@@ -109,6 +109,15 @@ export default function WikiMarkdown({ children, slug }: { children: string; slu
         },
         img: ({ src, alt, title }) => <img src={resolveSrc(src)} alt={alt} title={title} />,
         a: ({ href, children, title }) => {
+          // A bfdb endpoint (e.g. the cockpit installer download), not a wiki
+          // page: it lives on the API's origin, like the images above.
+          if (href && href.startsWith('/api/')) {
+            return (
+              <a href={resolveSrc(href)} title={title}>
+                {children}
+              </a>
+            )
+          }
           if (href && isExternal(href)) {
             return (
               <a href={href} target="_blank" rel="noopener noreferrer" title={title}>
