@@ -1212,6 +1212,17 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             Some(initiator) => handle_birth(lua, ctx, initiator)?,
             None => debug!("Birth with no initiator (object already gone)"),
         },
+        Event::PlayerEnterUnit(e) => {
+            // Combined Arms: a commander jumping into one of our vehicles.
+            if let Some(id) = e
+                .initiator
+                .as_ref()
+                .and_then(|o| o.as_unit().ok())
+                .and_then(|u| u.object_id().ok())
+            {
+                ctx.db.player_entered_unit(&id);
+            }
+        }
         Event::PlayerLeaveUnit(e) => {
             if let Some(initiator) = e.initiator {
                 // Snapshot what we need before the deslot invalidates it.

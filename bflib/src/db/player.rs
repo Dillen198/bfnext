@@ -1871,6 +1871,23 @@ impl Db {
         Ok(())
     }
 
+    /// A player took control of `objid`: a Combined Arms commander driving one
+    /// of the campaign's ground vehicles. The enemy bases it drives up to wake
+    /// (`cull_or_respawn_objectives`) only if its position is being read, and
+    /// a vehicle that doesn't start out tracked (not `Driveable`) never was.
+    pub fn player_entered_unit(&mut self, objid: &DcsOid<ClassUnit>) {
+        let Some(uid) = self.ephemeral.uid_by_object_id.get(objid).copied() else {
+            return;
+        };
+        let ground = self.persisted.units.get(&uid).is_some_and(|u| {
+            !u.dead && !u.tags.contains(UnitTag::Aircraft) && !u.tags.contains(UnitTag::Helicopter)
+        });
+        if ground {
+            self.ephemeral.units_able_to_move.insert(uid);
+            self.ephemeral.units_potentially_close_to_enemies.insert(uid);
+        }
+    }
+
     pub fn player_left_unit(
         &mut self,
         lua: MizLua,
@@ -1884,7 +1901,11 @@ impl Db {
                 Ok(v) => dead = v,
                 Err(e) => error!("could not sync final CA unit position {e}"),
             }
-            self.ephemeral.units_able_to_move.swap_remove(&uid);
+            // Still tracked once the player is out: a Combined Arms vehicle
+            // keeps driving the route its commander drew on the F10 map. It
+            // used to be dropped here, and from then on nothing read where it
+            // was, so the enemy bases it drove up to never woke and it rolled
+            // into an empty objective.
         }
         if let Some(slot) = self.ephemeral.slot_by_object_id.get(&objid).cloned() {
             if let Some(ucid) = self.ephemeral.player_in_slot(&slot).cloned() {
