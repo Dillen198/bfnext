@@ -760,6 +760,7 @@ DEFAULT:
 #   blue_briefing_channel: 100000000000000008
 #   red_briefing_channel: 100000000000000009
 #   news_channel: 100000000000000012          # the war diary, one post per filed day
+#   round_channel: 100000000000000013         # round over: who won and the rundown (also posted to news_ and alerts_channel)
 #   coalition_roles:
 #     manage: true
 #     blue: 100000000000000010      # this server's OWN Blue role

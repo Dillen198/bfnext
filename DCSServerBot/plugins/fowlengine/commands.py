@@ -26,6 +26,7 @@ from .briefing import build_briefing_embed
 from .icons import IconSet, icon, icon_emoji, render as render_icons
 from . import rangefeed
 from . import newsfeed
+from . import roundresult
 from . import mapsnap
 from . import serverinfo
 
@@ -496,6 +497,7 @@ class FowlEngine(Plugin):
         # Persisted, so a restart never posts a dispatch twice.
         self.news_feed_state = {}
         self.rotation_index = {}        # server name -> index into its rotation.theatres
+        self.round_result_state = {}    # server name -> id of the last round announced as won
         # Staged DLL / bftools.exe an admin asked to "apply when empty":
         # server name -> {"by", "utc", "attempts", "why"}. Persisted (fsync'd),
         # so a bot restart or a crash of the whole box doesn't drop the ask.
@@ -537,6 +539,7 @@ class FowlEngine(Plugin):
                     self.range_feed_cursors = state.get('range_feed_cursors') or {}
                     self.news_feed_state = state.get('news_feed_state') or {}
                     self.rotation_index = state.get('rotation_index') or {}
+                    self.round_result_state = state.get('round_result_state') or {}
                     self.stage_apply_when_empty = state.get('stage_apply_when_empty') or {}
             except Exception as ex:
                 self.log.error(f"Failed to load Fowl Engine state: {ex}")
@@ -564,6 +567,7 @@ class FowlEngine(Plugin):
         self._kill_announced = {}       # server name -> {ucid: highest threshold already announced}
         self._capture_cursor = {}       # server name -> last-processed capture-event ISO timestamp
         self._active_round = {}         # server name -> last-seen active round id
+        self._round_number = {}         # server name -> that round's number on its server
         # bfdb.exe + netidx resolver process manager (replaces bfsystem.ps1).
         # Constructed in cog_load once the config is available.
         self.procman: Procman | None = None
@@ -1222,6 +1226,7 @@ class FowlEngine(Plugin):
                     'range_feed_cursors': self.range_feed_cursors,
                     'news_feed_state': self.news_feed_state,
                     'rotation_index': self.rotation_index,
+                    'round_result_state': self.round_result_state,
                     'stage_apply_when_empty': self.stage_apply_when_empty,
                 }, f)
                 f.flush()
@@ -2326,8 +2331,18 @@ class FowlEngine(Plugin):
         rid = active_round.get('id')
         if rid is None:
             return
+        # What players call it: the id is a database key (0, then 108000656).
+        self._round_number[server_name] = active_round.get('number')
         prev_rid = self._active_round.get(server_name)
         self._active_round[server_name] = rid
+        # A new round means the last one just ended -- and a bot that has just
+        # started may have missed the change -- so look for a result to post.
+        if prev_rid != rid:
+            try:
+                await self._announce_round_result(session, api_url, server_name)
+            except Exception as ex:
+                self.log.warning(f"FowlEngine: round result for {server_name} failed: "
+                                 f"{type(ex).__name__}: {ex or '(no message)'}")
         if prev_rid is not None and prev_rid != rid:
             self.log.info(
                 f"FowlEngine: {server_name} started round {rid} (was {prev_rid}) -- "
@@ -2343,6 +2358,62 @@ class FowlEngine(Plugin):
             self._kill_streaks.setdefault(server_name, {}).clear()
             self._kill_announced.setdefault(server_name, {}).clear()
             await self._announce_rotation(server_name, rid)
+
+    async def _announce_round_result(self, session, api_url, server_name):
+        """Post the rundown of the server's last won round, once per round.
+
+        Goes to `round_channel` when set (one announcements channel can serve
+        every server), and to `news_channel` and `alerts_channel` -- each
+        once, wherever two of them are the same channel. See roundresult.py."""
+        server = self.bot.servers.get(server_name)
+        config = (self.get_config(server) or {}) if server else {}
+        iid = self._instance_id(server) if server else None
+        async with session.get(f"{api_url}/api/instances", timeout=10) as resp:
+            if resp.status != 200:
+                return
+            instances = await resp.json(content_type=None)
+        row = roundresult.find_instance(instances, iid, server_name)
+        lr = (row or {}).get("last_round")
+        if not lr or lr.get("id") is None:
+            return
+        iid = iid or (row or {}).get("id")
+        announced = self.round_result_state.get(server_name)
+        post = roundresult.should_announce(lr, announced, time.time())
+        if not post and announced is not None:
+            return
+        # Recorded BEFORE posting, like the news feed: a Discord hiccup halfway
+        # must never make the next round change post the same result again.
+        self.round_result_state[server_name] = lr["id"]
+        self.save_state()
+        if not post:
+            return
+        params = {"instance": iid} if iid else srv_params(server_name)
+
+        async def get(path):
+            try:
+                async with session.get(f"{api_url}{path}", params=params, timeout=10) as r:
+                    return await r.json(content_type=None) if r.status == 200 else None
+            except Exception:
+                return None
+
+        summary = await get(f"/api/rounds/{lr['id']}/summary")
+        report = await get(f"/api/rounds/{lr['id']}/report")
+        label = (row or {}).get("label") or server_name
+        embed = self._embed_from_dict(roundresult.build_embed(
+            lr, summary, report, config.get("dashboard_url"), iid, label))
+        seen = set()
+        for key in ("round_channel", "news_channel", "alerts_channel"):
+            channel = self._channel_for(config, key, server_name)
+            if channel is None or channel.id in seen:
+                continue
+            seen.add(channel.id)
+            try:
+                await channel.send(embed=embed, allowed_mentions=NO_PINGS)
+            except discord.HTTPException as ex:
+                self.log.error(f"FowlEngine: posting round {lr['id']} result for {server_name} "
+                               f"to {channel.id} failed: {ex}")
+        self.log.info(f"FowlEngine: announced round {lr.get('number') or lr['id']} "
+                      f"({lr.get('winner')} won) for {server_name}")
 
     # ── theatre rotation ─────────────────────────────────────────────────
     # `rotation: {theatres: [...], channel: <id>}` per server. The bot keeps
@@ -2375,7 +2446,8 @@ class FowlEngine(Plugin):
         channel = self.bot.get_channel(int(rot['channel']))
         if not channel:
             return
-        embed = self._vs_embed(f"Round {rid} has started", color=discord.Color.gold())
+        embed = self._vs_embed(f"Round {self._round_number.get(server_name) or rid} has started",
+                               color=discord.Color.gold())
         embed.description = "\n".join(self._rotation_lines(server_name)) + \
             "\n\nVote on what comes next with `/fe_rotation_vote`."
         try:
