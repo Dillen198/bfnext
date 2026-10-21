@@ -1,6 +1,36 @@
-# Changelog — v2.0
+# Changelog
 
-## October 20, 2026
+Current version: **v2.6**. Each update gets the next number; the newest is at the top.
+
+## v2.6 — October 21, 2026
+
+**Cockpit overlay** — see [Cockpit Overlay](../getting-started/cockpit-overlay.md)
+- **3.1**: the in-game panel is rebuilt on DCS's own menus. Tabs for MENU,
+  CARGO, STATUS, EWR, LOG and WHEEL, plus a radial wheel you drive with your
+  head, mouse or keys (works in VR and on HOTAS). The installer is on GitHub.
+- **3.2**: it updates itself. When a newer version is out it downloads it and
+  installs it once DCS closes (Options → Special → "Update automatically", on
+  by default).
+- **3.3**: smaller panel sizes (down to 60%) and a separate Text size setting
+  for small screens.
+
+**Fixes**
+- Picking a slot of the other side used to say "Red does not own the objective
+  associated with this slot", and on dynamic slots DCS then showed "All
+  spawn/parking slots are occupied", which looked like a full airfield. Chat
+  now tells you which side you're on and why you can't change: sides are
+  locked, or you have no side switches left.
+- The 2008 status map in Discord and on the dashboard no longer shows leftover
+  Syria objectives or a Syria front line, and the side totals count only the
+  real campaign.
+- A JTAC whose target vanished without being destroyed now moves on to the next
+  contact instead of staying stuck on it.
+- Units the engine picked up after a missed spawn event now show their positions
+  in the stats.
+- A long run of spaces in the middle of some messages is gone, including
+  "Objective is still consolidating".
+
+## v2.5 — October 20, 2026
 
 **Dashboard** — see [Reading the Live Ops Dashboard](../playbooks/reading-live-ops.md)
 - **Sortie debriefs**: each flight in your Flight Log opens a panel with that
@@ -26,7 +56,7 @@
 - A cargo flight removed for being stuck returns its load to its hub, instead
   of the load being lost as if it was shot down.
 
-## October 17, 2026
+## v2.4 — October 17, 2026
 
 **Your task, and rookie mode** — see [Your Task & Rookie Mode](../gameplay/your-task.md)
 - Every slot gets **one task**: the most urgent job on your side's list that
@@ -118,7 +148,7 @@
   them stays visible.
 - The AI ground commander stops reissuing an order a formation got stuck on.
 
-## October 9, 2026
+## v2.3 — October 9, 2026
 
 **Flight replay** — see [Debriefing With Flight Replay](../playbooks/flight-replay.md)
 - Every sortie can be replayed in the browser, in 2D or 3D, from the server's
@@ -149,7 +179,7 @@
 - A damaged database says how to recover, and `/feops db_restore` in Discord
   puts back the newest daily backup (the damaged copy is kept).
 
-## October 7, 2026
+## v2.2 — October 7, 2026
 
 **Command: a real command display**
 - Zones of control, the supply network (cut routes in red), your air-defence
@@ -211,7 +241,7 @@
   marked as old instead of "assets offline".
 - The F10 attack arrows point at the target again.
 
-## October 4, 2026
+## v2.1 — October 4, 2026
 
 **Theatre HQ** (where enabled) — see [Theatre HQ](../advanced/theatre-hq.md)
 - Each side has an AI commander that sets a posture and main effort and runs the
@@ -241,7 +271,7 @@
 - Ambush parties, CSAR search parties, reinforcements and captured carrier task
   forces all set out from a base.
 
-## September 28, 2026
+## v2.0 — September 28, 2026
 
 **Bases and captures**
 - Repairs now wait out an attack: the repair countdown restarts from the last
