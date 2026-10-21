@@ -281,6 +281,7 @@ fn read_sortie(lua: MizLua) -> std::string::String {
 
 fn delayed_init(lua: MizLua) -> Result<()> {
     let ctx = unsafe { Ctx::get() };
+    harvest::bombs_from_mission(lua);
     let sortie = read_sortie(lua);
     let cfg_path = ctx.write_dir.join(format!("{sortie}_RANGE"));
     let cfg = if cfg_path.exists() {

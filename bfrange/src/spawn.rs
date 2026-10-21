@@ -221,7 +221,13 @@ pub fn static_object(name: &str, typ: &str, p: V3, hdg: f64, cargo_mass: Option<
         }
         // DCS infers most statics' category from the type, but an explicit
         // one is what the Mission Editor always writes
-        None => s["category"] = json!("Fortifications"),
+        None => {
+            s["category"] = json!("Fortifications");
+            // and a type whose shape is named differently is refused without it
+            if let Some(shape) = crate::harvest::static_shape(typ) {
+                s["shape_name"] = json!(shape);
+            }
+        }
     }
     s
 }

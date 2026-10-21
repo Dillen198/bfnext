@@ -12,16 +12,22 @@
 //!   calculator on the range site, and
 //! - each aircraft type's maximum internal fuel (`db.Units.Planes/Helicopters`),
 //!   which turns `Unit:getFuel()`'s fraction into kilograms for AAR grading.
+//! - each static type's shape name (`db.Units.*`), which `addStaticObject`
+//!   needs for the types whose shape isn't named after them (".Command
+//!   Center" is "ComCenter").
+//!
+//! When the hooks state has no bomb tables, the mission state is tried once
+//! the range starts (`bombs_from_mission`).
 
 use anyhow::{anyhow, Result};
 use bfprotocols::range::{WeaponBallistics, WeaponDb};
-use dcso3::{dcs::Dcs, HooksLua, LuaEnv};
+use dcso3::{dcs::Dcs, HooksLua, LuaEnv, MizLua};
 use fxhash::FxHashMap;
 use log::{info, warn};
 use mlua::prelude::*;
 use std::sync::{Arc, RwLock};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Harvest {
     pub weapons: WeaponDb,
     /// DCS type -> max internal fuel, kg
@@ -32,6 +38,8 @@ pub struct Harvest {
     /// `db.Weapons`, so loadouts can be picked by what a store IS rather
     /// than by a guessed CLSID
     pub clsid_names: FxHashMap<String, String>,
+    /// DCS type -> shape name, for statics
+    pub shapes: FxHashMap<String, String>,
 }
 
 static HARVEST: RwLock<Option<Arc<Harvest>>> = RwLock::new(None);
@@ -42,6 +50,19 @@ pub fn get() -> Option<Arc<Harvest>> {
 
 pub fn max_fuel_kg(typ: &str) -> Option<f64> {
     get().and_then(|h| h.max_fuel_kg.get(typ).copied())
+}
+
+/// The shape a static of `typ` is drawn with, when it isn't the type name.
+/// DCS refuses `addStaticObject` for those without it.
+pub fn static_shape(typ: &str) -> Option<String> {
+    if let Some(s) = get().and_then(|h| h.shapes.get(typ).cloned()) {
+        return Some(s);
+    }
+    // the ones the range uses, should the harvest not have run
+    match typ {
+        ".Command Center" => Some("ComCenter".into()),
+        _ => None,
+    }
 }
 
 /// Build a loadout by placing, in preference order, the first CLSIDs from
@@ -245,6 +266,72 @@ fn harvest_clsid_names(g: &LuaTable) -> FxHashMap<String, String> {
     m
 }
 
+fn harvest_shapes(g: &LuaTable) -> FxHashMap<String, String> {
+    let mut m = FxHashMap::default();
+    let Ok(Some(db)) = g.raw_get::<_, Option<LuaTable>>("db") else { return m };
+    let Ok(Some(units)) = db.raw_get::<_, Option<LuaTable>>("Units") else { return m };
+    // db.Units.<Category>.<Subcategory> = { {type=..., ShapeName=...}, ... }
+    for (_, cat) in units.pairs::<LuaValue, LuaTable>().flatten() {
+        for (_, list) in cat.pairs::<LuaValue, LuaTable>().flatten() {
+            for t in list.sequence_values::<LuaTable>().flatten() {
+                let Some(typ) = t.raw_get::<_, Option<String>>("type").ok().flatten() else { continue };
+                let shape = ["ShapeName", "shape_name"]
+                    .iter()
+                    .find_map(|k| t.raw_get::<_, Option<String>>(*k).ok().flatten());
+                if let Some(shape) = shape.filter(|s| !s.is_empty() && *s != typ) {
+                    m.insert(typ, shape);
+                }
+            }
+        }
+    }
+    m
+}
+
+/// Where bomb tables were looked for and what was there, for the log when
+/// none turned up.
+fn bomb_sources(g: &LuaTable) -> String {
+    let count = |t: Option<LuaTable>| t.map(|t| t.pairs::<LuaValue, LuaValue>().count());
+    let bombs = count(g.raw_get::<_, Option<LuaTable>>("bombs").ok().flatten());
+    let wt = g.raw_get::<_, Option<LuaTable>>("weapons_table").ok().flatten();
+    let wt_bombs = count(
+        wt.as_ref()
+            .and_then(|t| t.raw_get::<_, Option<LuaTable>>("weapons").ok().flatten())
+            .and_then(|w| w.raw_get::<_, Option<LuaTable>>("bombs").ok().flatten()),
+    );
+    let show = |c: Option<usize>| c.map(|c| format!("{c} entries")).unwrap_or("absent".into());
+    format!(
+        "_G.bombs {}, weapons_table {}, weapons_table.weapons.bombs {}",
+        show(bombs),
+        if wt.is_some() { "present" } else { "absent" },
+        show(wt_bombs)
+    )
+}
+
+/// The hooks state on some DCS versions has no bomb tables; try the mission
+/// state's. Does nothing when the hooks harvest already found bombs.
+pub fn bombs_from_mission(lua: MizLua) {
+    let Some(h) = get() else { return };
+    if !h.weapons.bombs.is_empty() {
+        return;
+    }
+    let g = lua.inner().globals();
+    let bombs = harvest_bombs(&g);
+    if bombs.is_empty() {
+        warn!(
+            "no bomb ballistics in the hooks or mission state, the release calculator has no data (mission state: {})",
+            bomb_sources(&g)
+        );
+        return;
+    }
+    info!("harvested {} bomb types from the mission state", bombs.len());
+    let mut h = (*h).clone();
+    h.weapons.bombs = bombs;
+    match HARVEST.write() {
+        Ok(mut w) => *w = Some(Arc::new(h)),
+        Err(_) => warn!("harvest lock poisoned"),
+    }
+}
+
 fn harvest_fuel(g: &LuaTable) -> FxHashMap<String, f64> {
     let mut m = FxHashMap::default();
     let Ok(Some(db)) = g.raw_get::<_, Option<LuaTable>>("db") else { return m };
@@ -271,6 +358,7 @@ pub fn init(lua: HooksLua) -> Result<()> {
     let max_fuel_kg = harvest_fuel(&g);
     let pylons = harvest_pylons(&g);
     let clsid_names = harvest_clsid_names(&g);
+    let shapes = harvest_shapes(&g);
     if bombs.is_empty() && max_fuel_kg.is_empty() {
         return Err(anyhow!("DCS databases are not populated yet"));
     }
@@ -279,13 +367,17 @@ pub fn init(lua: HooksLua) -> Result<()> {
         .map(|v| v.to_string())
         .unwrap_or_default();
     info!(
-        "harvested {} bomb types, max fuel for {} and pylon tables for {} aircraft types, {} store names (DCS {dcs_version})",
+        "harvested {} bomb types, max fuel for {} and pylon tables for {} aircraft types, {} store names, {} static shapes (DCS {dcs_version})",
         bombs.len(),
         max_fuel_kg.len(),
         pylons.len(),
-        clsid_names.len()
+        clsid_names.len(),
+        shapes.len()
     );
-    let h = Harvest { weapons: WeaponDb { dcs_version, bombs }, max_fuel_kg, pylons, clsid_names };
+    if bombs.is_empty() {
+        info!("no bomb tables in the hooks state ({}); the mission state is tried at range start", bomb_sources(&g));
+    }
+    let h = Harvest { weapons: WeaponDb { dcs_version, bombs }, max_fuel_kg, pylons, clsid_names, shapes };
     match HARVEST.write() {
         Ok(mut w) => *w = Some(Arc::new(h)),
         Err(_) => warn!("harvest lock poisoned"),
