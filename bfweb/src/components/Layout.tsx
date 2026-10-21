@@ -1,7 +1,7 @@
 import React from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { api, type Round, type ServerInstance } from '../api'
+import { api, roundNo, type Round, type ServerInstance } from '../api'
 import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
@@ -10,6 +10,7 @@ import { useInstance } from '../context/InstanceContext'
 import LogoMark from './LogoMark'
 import Backdrop from './Backdrop'
 import StatusBanner from './StatusBanner'
+import NotificationBell from './NotificationBell'
 import { useFlagBackground } from '../lib/flags'
 import { getDevUser } from '../lib/devAuth'
 import {
@@ -198,10 +199,11 @@ function DiscordIcon({ size = 11 }: { size?: number }) {
    the live round in multi-server mode: the <optgroup> above it already
    names the server and its campaign. `named` drops it there. */
 function roundLabel(r: Round, named = true) {
-  if (r.active) return named ? `${r.scenario} — Active` : 'Current — Active'
+  const n = roundNo(r)
+  if (r.active) return named ? `${r.scenario} · Round ${n} — Active` : `Round ${n} — Active`
   const start = new Date(r.start).toLocaleDateString([], { month: 'short', day: 'numeric' })
   const end   = r.end ? new Date(r.end).toLocaleDateString([], { month: 'short', day: 'numeric' }) : '?'
-  return `${r.scenario} · ${start}–${end}`
+  return `Round ${n} · ${r.scenario} · ${start}–${end}`
 }
 
 /* Campaign selector. With one DCS server this is the round picker it has
@@ -484,6 +486,11 @@ export default function Layout() {
             </div>
           </div>
         )}
+
+        {/* Notifications: round results, notices, maintenance. On every
+            screen size -- it is where all of it went instead of banners. */}
+        <Sep />
+        <NotificationBell />
 
         {/* Theme toggle -- topbar copy (mobile gets the drawer copy) */}
         <div className="topbar-theme">

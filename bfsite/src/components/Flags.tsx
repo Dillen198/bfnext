@@ -2,13 +2,22 @@ import type { FlagId } from '../config/servers'
 
 // Country flags are drawn as plain SVG at 3:2, so they stay crisp at any card
 // size. The coalition flags are cloth pictures (public/media/flag-*.png), the
-// red one mirrored so both fly toward the middle. All of them are backdrop
-// art, blended in at low opacity: close to the real thing, not a reference.
+// red one mirrored so both fly toward the middle. NATO and the four-nation
+// block it fights are pictures too (bfweb/scripts/gen-flags.py), the Iraqi
+// script and Iranian emblem being more than a hand-drawn SVG can carry. All
+// of them are backdrop art, blended in at low opacity: close to the real
+// thing, not a reference.
 
 /** Coalitions have no national flag; these fly plain blue and red cloth. */
 const CLOTH: Partial<Record<FlagId, string>> = {
   blufor: '/media/flag-blufor.png',
   redfor: '/media/flag-redfor.png',
+}
+
+/** Flat flag pictures, masked like the SVG ones. */
+const PICTURE: Partial<Record<FlagId, string>> = {
+  nato: '/media/flag-nato.png',
+  rsii: '/media/flag-rsii.png',
 }
 
 function Georgia() {
@@ -50,6 +59,8 @@ function FlagArt({ id }: { id: FlagId }) {
 function Flag({ id, side }: { id: FlagId; side: 'left' | 'right' }) {
   const cloth = CLOTH[id]
   if (cloth) return <img className={`flag flag-${side} flag-cloth`} src={cloth} alt="" />
+  const picture = PICTURE[id]
+  if (picture) return <img className={`flag flag-${side} flag-picture flag-${id}`} src={picture} alt="" />
   return (
     <svg className={`flag flag-${side}`} viewBox="0 0 300 200" preserveAspectRatio="xMidYMid slice">
       <FlagArt id={id} />

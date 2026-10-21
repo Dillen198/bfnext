@@ -11,6 +11,7 @@ import PilotCharts from './PilotCharts'
 import { RivalsCard, CompareCard } from './PilotRivals'
 import { OUTCOME, outcomeOf, replayFor } from '../lib/sortie'
 import { useAuth } from '../context/AuthContext'
+import { useRoundNo } from '../lib/rounds'
 import {
   Pilot as PilotIcon,
   KillFeed as KillIcon,
@@ -148,6 +149,7 @@ function FlightLog({ ucid, sorties, breakdown, replays }: { ucid: string; sortie
   }, [])
   const PER_PAGE = 10
 
+  const roundNum = useRoundNo()
   const ridToScenario = useMemo(() => {
     const m: Record<number, string> = {}
     for (const r of breakdown) m[r.round_id] = r.scenario
@@ -236,7 +238,7 @@ function FlightLog({ ucid, sorties, breakdown, replays }: { ucid: string; sortie
                 }}>
                 <td style={{ ...cell, fontFamily: 'monospace', color: '#64748b' }}>{fmtDate(s.takeoff)}</td>
                 <td style={{ ...cell, color: '#60a5fa' }}>{s.aircraft}</td>
-                <td style={{ ...cell, color: '#94a3b8' }}>{ridToScenario[s.round_id] ?? `Round ${s.round_id}`}</td>
+                <td style={{ ...cell, color: '#94a3b8' }}>{ridToScenario[s.round_id] ?? `Round ${roundNum(s.round_id)}`}</td>
                 <td style={{ ...cell, fontFamily: 'monospace' }}>{fmtTime(s.takeoff)}</td>
                 <td style={{ ...cell, fontFamily: 'monospace' }}>{s.land ? fmtTime(s.land) : '—'}</td>
                 <td style={{ ...cell, fontFamily: 'monospace', color: s.duration_secs > 0 ? 'var(--text)' : '#64748b' }}>{fmtDuration(s.duration_secs)}</td>
@@ -300,6 +302,7 @@ function KillLog({ kills, allPilots, breakdown }: {
   const [page, setPage] = useState(0)
   const PER_PAGE = 15
 
+  const roundNum = useRoundNo()
   const ridToScenario = useMemo(() => {
     const m: Record<number, string> = {}
     for (const r of breakdown) m[r.round_id] = r.scenario
@@ -402,7 +405,7 @@ function KillLog({ kills, allPilots, breakdown }: {
                     ) : <span style={{ color: '#374151' }}>—</span>}
                   </td>
                   <td style={{ ...cell, color: '#fbbf24', fontFamily: 'monospace' }}>{k.weapon ?? <span style={{ color: '#374151' }}>—</span>}</td>
-                  <td style={{ ...cell, color: '#475569' }}>{ridToScenario[k.round_id] ?? `Round ${k.round_id}`}</td>
+                  <td style={{ ...cell, color: '#475569' }}>{ridToScenario[k.round_id] ?? `Round ${roundNum(k.round_id)}`}</td>
                 </tr>
               )
             })}
@@ -627,6 +630,7 @@ function ProgressionCard({ p, dim, ucid, pilot }: { p: PilotProgression; dim: Re
 // ── Theater breakdown ─────────────────────────────────────────────────────────
 
 function TheaterCard({ td }: { td: TheaterBreakdown }) {
+  const roundNum = useRoundNo()
   const kd_val = kd(td.air_kills, td.ground_kills, td.deaths)
   const kd_color = td.deaths === 0 ? '#22c55e' : parseFloat(kd_val) >= 5 ? '#22c55e' : parseFloat(kd_val) >= 2 ? '#f59e0b' : '#ef4444'
   const dim: React.CSSProperties = { fontSize: '0.58rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase' }
@@ -642,10 +646,10 @@ function TheaterCard({ td }: { td: TheaterBreakdown }) {
       {/* Header */}
       <div className="px-3 py-2.5" style={{ background: 'rgba(0,0,0,0.25)', borderBottom: '1px solid var(--border)' }}>
         <div style={{ fontSize: '0.78rem', color: 'var(--text)', fontWeight: 700, letterSpacing: '0.04em' }}>
-          {td.scenario || `Round ${td.round_id}`}
+          {td.scenario || `Round ${roundNum(td.round_id)}`}
         </div>
         <div style={{ fontSize: '0.58rem', color: 'var(--text-dim)', marginTop: '0.1rem' }}>
-          Round #{td.round_id}
+          Round #{roundNum(td.round_id)}
         </div>
       </div>
       <div className="px-3 py-2">

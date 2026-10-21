@@ -26,7 +26,8 @@ const COALITION: FlagPair = { left: '/media/flag-blufor-l.png', right: '/media/f
 
 /** Flags per bfdb instance id. A server not listed flies the coalition colours. */
 const BY_INSTANCE: Record<string, FlagPair> = {
-  vs1: COALITION,
+  // NATO against Russia, Syria, Iran and Iraq; scripts/gen-flags.py draws both.
+  vs1: { left: '/media/flag-nato-l.png', right: '/media/flag-rsii-r.png' },
   vs2: { left: '/media/flag-georgia-l.png', right: '/media/flag-russia-r.png', bright: true },
 }
 

@@ -2,45 +2,20 @@ import { useQuery } from '@tanstack/react-query'
 import { Alert, ExternalLink } from '@icons'
 import { api } from '../api'
 import { useInstance } from '../context/InstanceContext'
+import { appliesTo, fmtUtc, RANK, STATUS_PAGE, useStatusFile, type Level, type Notice } from '../lib/statusFile'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Server status banner, fed from outside bfdb.
+// Outage banner: one line across every page, only while the server is down.
 //
-// The notices ("down for a RAM upgrade, back Sunday") live in bfsite's
-// public/status.json, served by the public site's static host -- so they
-// are readable when the game host, and bfdb with it, is down. That is the
-// one time a dashboard most needs to explain itself. The public site's
-// /status page reads the same file. With no notice written, the banner
-// still says what the probe sees: bfdb not answering, or the engine down.
+// Everything else a server has to say -- "back online", a degraded service, a
+// maintenance window coming up, a round won -- goes to the notification bell
+// (NotificationBell.tsx), so the pages stay clear. A banner is kept for the
+// one case where the page itself is wrong: the data on it is stale, because
+// the server behind it is down. That is:
+//   * an `outage` notice in status.json, or a maintenance window running now
+//   * bfdb not answering at all, or the selected server's DCS engine down.
+// A notice wins over a probe: a probe can only say "offline", a notice says why.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const STATUS_URL: string = import.meta.env.VITE_STATUS_URL ?? 'https://www.vectorstrike.org/status.json'
-const STATUS_PAGE = new URL('/status', STATUS_URL).href
-
-type Level = 'outage' | 'degraded' | 'maintenance' | 'info'
-
-interface Notice {
-  id: string
-  level: Level
-  title: string
-  message?: string
-  servers?: string[]
-  eta?: string
-}
-
-interface Maintenance {
-  title: string
-  servers?: string[]
-  start: string
-  end: string
-}
-
-interface StatusFile {
-  notices?: Notice[]
-  maintenance?: Maintenance[]
-}
-
-const RANK: Record<Level, number> = { outage: 0, maintenance: 1, degraded: 2, info: 3 }
 
 const TONE: Record<Level, { fg: string; bg: string }> = {
   outage:      { fg: 'var(--red)',    bg: 'var(--red-bg)' },
@@ -49,25 +24,9 @@ const TONE: Record<Level, { fg: string; bg: string }> = {
   info:        { fg: 'var(--accent)', bg: 'var(--accent-glow)' },
 }
 
-function fmtUtc(iso?: string): string | undefined {
-  if (!iso) return undefined
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return undefined
-  return d.toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
-}
-
 export default function StatusBanner() {
   const { current } = useInstance()
-  const file = useQuery({
-    queryKey: ['status-file'],
-    queryFn: async (): Promise<StatusFile> => {
-      const res = await fetch(STATUS_URL, { cache: 'no-store' })
-      if (!res.ok) throw new Error(`${res.status}`)
-      return res.json()
-    },
-    refetchInterval: 60_000,
-    retry: 1,
-  })
+  const file = useStatusFile()
   // Same key and options as the topbar's live badge, so this adds no request.
   const health = useQuery({
     queryKey: ['health'],
@@ -77,14 +36,13 @@ export default function StatusBanner() {
   })
 
   const id = current?.id
-  const applies = (servers?: string[]) => !servers?.length || !id || servers.includes(id)
   // The file is refetched every minute; its fetch time is "now" to within that.
   const now = file.dataUpdatedAt
   const running: Notice[] = (file.data?.maintenance ?? [])
     .filter(m => Date.parse(m.start) <= now && Date.parse(m.end) > now)
     .map(m => ({ id: m.start, level: 'maintenance', title: m.title, servers: m.servers, eta: m.end }))
-  const top = [...(file.data?.notices ?? []), ...running]
-    .filter(n => applies(n.servers))
+  const top = [...(file.data?.notices ?? []).filter(n => n.level === 'outage'), ...running]
+    .filter(n => appliesTo(n.servers, id))
     .sort((a, b) => RANK[a.level] - RANK[b.level])[0]
 
   let level: Level

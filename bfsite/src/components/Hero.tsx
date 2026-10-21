@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { ArrowRight, Support } from '@icons'
 import { campaign, links, wiki } from '../config/campaign'
 import { roundDay, useServerStates, useTheatreLive, type ServerRow } from '../live'
+import { roundNo } from '../api'
 import { StatusTag, TerritoryBar } from './Bits'
 import FlagBackdrop from './Flags'
 
@@ -20,7 +21,7 @@ function LiveCell({ row }: { row: ServerRow }) {
         <StatusTag state={row.state} />
       </div>
       <div className="live-meta">
-        {round ? `Round ${round.id}${day ? ` · day ${day}` : ''}`
+        {round ? `Round ${roundNo(round)}${day ? ` · day ${day}` : ''}`
           : up ? 'Between rounds'
           : why ?? (row.state === 'unknown' ? 'Checking…' : 'No live data')}
       </div>

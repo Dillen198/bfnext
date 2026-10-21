@@ -5,8 +5,11 @@
 // the engine config of whichever server the reader picks.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Flags blended into a theatre's backdrop: the blue side's, then the red side's. */
-export type FlagId = 'blufor' | 'redfor' | 'georgia' | 'russia'
+/**
+ * Flags blended into a theatre's backdrop: the blue side's, then the red side's.
+ * `rsii` is one picture of four: Russia, Syria, Iran and Iraq.
+ */
+export type FlagId = 'blufor' | 'redfor' | 'georgia' | 'russia' | 'nato' | 'rsii'
 
 export interface ServerProfile {
   /**
@@ -36,14 +39,14 @@ export const SERVERS: ServerProfile[] = [
     label: 'Modern · Syria',
     era: 'Modern day',
     summary:
-      'The long-running modern campaign: coalition airpower against a peer air ' +
-      'force, fought with current-generation jets across Syria.',
+      'The long-running modern campaign: NATO against RSII, the Russia, Syria, ' +
+      'Iran and Iraq coalition, fought with current-generation jets across Syria.',
     browserName: '[VS] Vector Strike | Dynamic Campaign PVP Modern',
     livesEnforced: false,
-    blueLabel: 'BLUFOR',
-    redLabel: 'REDFOR',
-    // Generic coalitions on this server, so coalition colours, not a country.
-    flags: ['blufor', 'redfor'],
+    blueLabel: 'NATO',
+    // Russia, Syria, Iran and Iraq: the 2015 four-nation coalition.
+    redLabel: 'RSII',
+    flags: ['nato', 'rsii'],
   },
   {
     instanceId: 'vs2',

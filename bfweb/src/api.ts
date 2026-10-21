@@ -188,9 +188,27 @@ export interface RoundSummaryPilot {
   hours: number
 }
 
+/** The best pilot in one line of work over a round, and their count. */
+export interface RoundLeader {
+  name: string
+  value: number
+}
+
 /** GET /api/rounds/{id}/summary: one round's totals and its top pilots. */
 export interface RoundSummary {
   id: number
+  /** The round's number on its server; see `Round.number`. */
+  number?: number | null
+  start?: string | null
+  end?: string | null
+  winner?: string | null
+  /** Who led each line of work; null where nobody did any of it. */
+  leaders?: {
+    air: RoundLeader | null
+    ground: RoundLeader | null
+    captures: RoundLeader | null
+    logistics: RoundLeader | null
+  }
   pilots: number
   air_kills: number
   ground_kills: number
@@ -229,7 +247,12 @@ export interface RoundReportBucket {
 }
 
 export interface Round {
+  /** A database key: sled's ids jump in blocks of a million, so it is no
+   *  name to show anyone. Use `roundNo`. */
   id: number
+  /** The round's number on its own server, 1 for the first. Missing from a
+   *  bfdb older than the field. */
+  number?: number | null
   /** Which DCS server instance ran this round. */
   instance?: string
   scenario: string
@@ -1058,7 +1081,7 @@ export interface Weather {
 export interface Stats {
   total_pilots: number
   total_rounds: number
-  active_round: { id: number; scenario: string; start: string } | null
+  active_round: { id: number; number?: number | null; scenario: string; start: string } | null
   objective_count: number
   total_kills: number
   restart_at: string | null
@@ -1390,7 +1413,7 @@ export interface Health {
     latency_ms: number | null
     error: string | null
   }
-  active_round: { id: number; start: string } | null
+  active_round: { id: number; number?: number | null; start: string } | null
   build: BuildInfo
 }
 
@@ -2062,6 +2085,23 @@ export interface CockpitContext {
   slot: CockpitSlot | null
 }
 
+/** An instance's most recently finished round and who won it. */
+export interface LastRound {
+  id: number
+  number: number | null
+  scenario: string
+  start: string
+  end: string
+  /** "Blue", "Red", or null: a draw, or a reset that named no winner. */
+  winner: string | null
+  /** The sides as the war diary names them. */
+  winner_name: string | null
+  loser_name: string | null
+}
+
+/** What to call a round: its number on its server, the raw id from an older bfdb. */
+export const roundNo = (r: { id: number; number?: number | null }) => r.number ?? r.id
+
 /** One DCS server instance this bfdb fronts. */
 export interface ServerInstance {
   id: string
@@ -2071,7 +2111,13 @@ export interface ServerInstance {
   live: boolean
   /** The mission currently publishing, or null when the server is down. */
   sortie: string | null
-  active_round: { id: number; scenario: string; start: string } | null
+  active_round: { id: number; number?: number | null; scenario: string; start: string } | null
+  /** The most recently finished round, for the "round over" notification. */
+  last_round?: LastRound | null
+  /** This server's own names for its sides; null where it has none, and
+   *  the campaign-wide labels apply. */
+  blue_label?: string | null
+  red_label?: string | null
   dcs_server_name: string | null
   /** false = a test/staging server. Only ever returned to an admin: it is
    *  filtered out of /api/instances for everyone else, and its rounds are

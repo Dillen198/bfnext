@@ -1,6 +1,7 @@
 import { ArrowRight } from '@icons'
-import { wiki } from '../config/campaign'
-import { roundDay, useTheatreLive, type ServerRow } from '../live'
+import { dashboard, wiki } from '../config/campaign'
+import { roundNo } from '../api'
+import { lastResult, roundDay, useTheatreLive, type ServerRow } from '../live'
 import { BrowserName, NoticeBox, StatusTag, TerritoryBar } from './Bits'
 import FlagBackdrop from './Flags'
 
@@ -12,6 +13,7 @@ export default function TheatreCard({ row }: { row: ServerRow }) {
   const up = row.state === 'live' || row.state === 'standby'
   const day = round ? roundDay(round.start) : undefined
   const p = t.profile
+  const won = lastResult(t)
   return (
     <article className="panel panel-bracket theatre">
       {p && <FlagBackdrop flags={p.flags} />}
@@ -30,7 +32,21 @@ export default function TheatreCard({ row }: { row: ServerRow }) {
             <span className="vs">vs</span>
             <span className="r">{t.redLabel}</span>
           </div>
-          {row.notices.map(n => <NoticeBox key={n.id} notice={n} />)}
+          {won && (
+            <div className={`theatre-result ${won.side === 'Blue' ? 'b' : 'r'}${won.recent ? ' is-recent' : ''}`}>
+              <span className="label">{won.recent ? 'Round over' : 'Last round'}</span>
+              <span className="theatre-result-line">
+                Round {won.n}: <strong>{won.winner} won</strong> after {won.lasted},{' '}
+                {new Date(won.end).toLocaleDateString([], { day: 'numeric', month: 'short', timeZone: 'UTC' })}
+              </span>
+              <a className="text-link" href={dashboard(`/rounds?round=${won.id}&instance=${encodeURIComponent(t.key)}`)}>
+                Full rundown <ArrowRight size={12} />
+              </a>
+            </div>
+          )}
+          {/* "Back online" and other news live in the bell; a card keeps
+              the notices that say what state the server is in. */}
+          {row.notices.filter(n => n.level !== 'info').map(n => <NoticeBox key={n.id} notice={n} />)}
           <div className="linkcard-links">
             <a className="text-link" href={wiki('reference/aircraft-roster')}>Aircraft roster <ArrowRight size={12} /></a>
             <a className="text-link" href={wiki('gameplay/points-and-lives')}>Points &amp; lives <ArrowRight size={12} /></a>
@@ -49,7 +65,7 @@ export default function TheatreCard({ row }: { row: ServerRow }) {
             </div>
             <div>
               <div className="label">Round</div>
-              <div className="v">{up && round ? <>#{round.id} <small>{day ? `day ${day}` : ''}</small></> : '—'}</div>
+              <div className="v">{up && round ? <>#{roundNo(round)} <small>{day ? `day ${day}` : ''}</small></> : '—'}</div>
             </div>
             <div>
               <div className="label">Lives</div>

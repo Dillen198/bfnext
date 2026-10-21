@@ -10,7 +10,8 @@ import { Link, useSearchParams } from 'react-router-dom'
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
 } from 'recharts'
-import { api, type Round, type RoundReport, type RoundReportBucket, type RoundSummary } from '../api'
+import { api, roundNo, type Round, type RoundReport, type RoundReportBucket, type RoundSummary } from '../api'
+import { campaign } from '../config/campaign'
 import QueryState from '../components/QueryState'
 import PageHeader from '../components/PageHeader'
 import { fmtHours } from '../lib/format'
@@ -34,6 +35,12 @@ function duration(r: Pick<Round, 'start' | 'end'>): string {
 }
 
 const sideColor = (w: string | null | undefined) => (w === 'Blue' ? BLUE : w === 'Red' ? RED : 'var(--text-dim)')
+/** "BLUFOR WON", in the campaign's own names for the sides. */
+const result = (r: Pick<Round, 'active' | 'winner'>, live = 'IN PROGRESS') =>
+  r.active ? live
+    : r.winner === 'Blue' ? `${campaign.blueLabel.toUpperCase()} WON`
+    : r.winner === 'Red' ? `${campaign.redLabel.toUpperCase()} WON`
+    : 'NO WINNER'
 const fmtDate = (iso: string) => new Date(iso).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })
 
 function bucketLabel(iso: string, secs: number): string {
@@ -256,15 +263,24 @@ function Report({ round }: { round: Round }) {
     ['Captures', s.captures],
     ['Supply runs', s.supply_runs],
   ] : []
+  // Who led each line of work, from a bfdb new enough to say.
+  const leaders = s?.leaders
+    ? ([
+        ['Top ace', s.leaders.air, 'air kills'],
+        ['Top striker', s.leaders.ground, 'ground kills'],
+        ['Top capturer', s.leaders.captures, 'captures'],
+        ['Top logistician', s.leaders.logistics, 'logistics jobs'],
+      ] as const).flatMap(([n, l, unit]) => (l ? [[n, l, unit] as const] : []))
+    : []
 
   return (
     <div className="space-y-4" style={{ minWidth: 0 }}>
       <div className="vs-card p-0" style={{ borderLeft: `3px solid ${round.active ? 'var(--accent)' : sideColor(round.winner)}` }}>
         <div className="flex flex-wrap items-center gap-3 px-4 py-3">
           <div style={{ minWidth: 0 }}>
-            <div style={label}>Round {round.id}{round.instance ? ` · ${round.instance}` : ''}</div>
+            <div style={label}>Round {roundNo(round)}{round.instance ? ` · ${round.instance}` : ''}</div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.6rem', letterSpacing: '0.06em', color: 'var(--text)', lineHeight: 1.1 }}>
-              {round.scenario || `Round ${round.id}`}
+              {round.scenario || `Round ${roundNo(round)}`}
             </div>
             <div className="font-mono" style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: 2 }}>
               {fmtDate(round.start)} → {round.end ? fmtDate(round.end) : 'now'} · {duration(round)}
@@ -273,7 +289,7 @@ function Report({ round }: { round: Round }) {
           <div className="ml-auto" style={{ textAlign: 'right' }}>
             <div style={label}>Result</div>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', letterSpacing: '0.08em', color: round.active ? 'var(--accent-bright)' : sideColor(round.winner) }}>
-              {round.active ? 'IN PROGRESS' : round.winner ? `${round.winner.toUpperCase()} WON` : 'NO WINNER'}
+              {result(round)}
             </div>
           </div>
         </div>
@@ -283,6 +299,17 @@ function Report({ round }: { round: Round }) {
               <div key={n} style={{ padding: '10px 16px', borderRight: '1px solid var(--border)' }}>
                 <div style={label}>{n}</div>
                 <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text)', marginTop: 2 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {leaders.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', borderTop: '1px solid var(--border)' }}>
+            {leaders.map(([n, l, unit]) => (
+              <div key={n} style={{ padding: '10px 16px', borderRight: '1px solid var(--border)', minWidth: 0 }}>
+                <div style={label}>{n}</div>
+                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.name}</div>
+                <div className="font-mono" style={{ fontSize: '0.62rem', color: 'var(--text-muted)' }}>{l.value} {unit}</div>
               </div>
             ))}
           </div>
@@ -343,9 +370,9 @@ export default function RoundsPage() {
                         background: on ? 'var(--bg-hover)' : undefined,
                       }}>
                       <div className="flex items-center gap-2">
-                        <span style={{ fontSize: '0.72rem', color: 'var(--text)', fontWeight: 600 }}>Round {r.id}</span>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text)', fontWeight: 600 }}>Round {roundNo(r)}</span>
                         <span className="ml-auto" style={{ fontSize: '0.58rem', letterSpacing: '0.1em', color: r.active ? 'var(--accent-bright)' : sideColor(r.winner) }}>
-                          {r.active ? 'LIVE' : r.winner ? `${r.winner.toUpperCase()} WON` : 'NO WINNER'}
+                          {result(r, 'LIVE')}
                         </span>
                       </div>
                       <div style={{ fontSize: '0.62rem', color: 'var(--text-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

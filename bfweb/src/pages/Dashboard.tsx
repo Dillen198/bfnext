@@ -387,9 +387,10 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const { selectedRound } = useRound()
   // The selected server's flags behind the KPI strip and the territory panel.
-  // Capped: on a phone the strip wraps to three rows, and full-height flags
-  // would grow wide enough to sit under every number.
-  const kpiFlags = useFlagBackground('var(--bg-chrome)', 'var(--bg-chrome-solid)', 'bold', 'min(100%, 80px)')
+  // The strip sets their height (index.css): full height on one row, capped
+  // on a phone, where it wraps to three rows and full-height flags would grow
+  // wide enough to sit under every number.
+  const kpiFlags = useFlagBackground('var(--bg-chrome)', 'var(--bg-chrome-solid)', 'bold', 'var(--kpi-flag-h)')
   const territoryFlags = useFlagBackground('var(--bg-card)', 'var(--bg-card-solid)', 'soft')
 
   const onlineQ = useQuery({ queryKey: ['online'], queryFn: api.online, refetchInterval: 10_000 })

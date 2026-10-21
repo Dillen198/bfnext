@@ -4,6 +4,8 @@ import { api, type Warehouse, type WarehouseItem } from '../api'
 import { campaign } from '../config/campaign'
 import { ago } from '../lib/format'
 import QueryState from './QueryState'
+import { useAuth } from '../context/AuthContext'
+import { Link } from 'react-router-dom'
 import { X, Alert, Supply, Logistics } from '@icons'
 
 /**
@@ -160,10 +162,14 @@ export default function ObjectiveDrawer({
   onClose: () => void
   onOpen: (name: string) => void
 }) {
+  // bfdb answers this for a pilot with a side this round, or an admin, and
+  // nobody else: asked anyway it is a 401 or 403, re-asked every minute.
+  const { user, loading: authLoading } = useAuth()
+  const canSeeStock = !!user?.side || !!user?.is_admin
   const q = useQuery({
     queryKey: ['warehouse', objective],
     queryFn: () => api.warehouse(objective!),
-    enabled: !!objective,
+    enabled: !!objective && canSeeStock,
     refetchInterval: 60_000,
     retry: false,
   })
@@ -222,10 +228,19 @@ export default function ObjectiveDrawer({
       </div>
 
       <div style={{ overflowY: 'auto', flex: 1 }}>
-        <QueryState
-          what="this objective" isLoading={q.isLoading} isError={q.isError}
-          error={q.error} onRetry={q.refetch}
-        />
+        {!canSeeStock && !authLoading ? (
+          <div style={{ padding: '16px 14px', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+            A base's condition, stock and supply lines are your coalition's intel.{' '}
+            {user
+              ? 'Register a side on the server this round to see them.'
+              : <><Link to="/login" style={{ color: 'var(--accent-bright)' }}>Sign in</Link> to see them.</>}
+          </div>
+        ) : (
+          <QueryState
+            what="this objective" isLoading={q.isLoading} isError={q.isError}
+            error={q.error} onRetry={q.refetch}
+          />
+        )}
 
         {w && (
           <>

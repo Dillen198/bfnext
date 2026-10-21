@@ -5,6 +5,7 @@ import { links } from '../config/campaign'
 import ThemeToggle from './ThemeToggle'
 import LogoMark from './LogoMark'
 import StatusBanner from './StatusBanner'
+import NotificationBell from './NotificationBell'
 
 const PAGES = [
   { to: '/servers', label: 'Servers' },
@@ -46,24 +47,29 @@ export default function Nav() {
           ))}
         </nav>
 
-        <div className="nav-actions">
-          <ThemeToggle />
-          <a href={links.wiki} className="vs-btn vs-btn-ghost vs-btn-sm"><Wiki size={13} />Wiki</a>
-          <a href={links.dashboard} className="vs-btn vs-btn-outline vs-btn-sm"><Sitrep size={13} />Dashboard</a>
-          <a href={links.discord} target="_blank" rel="noopener noreferrer" className="vs-btn vs-btn-sm">Join Discord</a>
-        </div>
+        <div className="nav-right">
+          {/* One bell for every screen size: two copies would keep two unread counts. */}
+          <NotificationBell />
 
-        <div className="nav-burger">
-          <ThemeToggle />
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label={open ? 'Close menu' : 'Open menu'}
-            aria-expanded={open}
-            onClick={() => setOpen(o => !o)}
-          >
-            {open ? <X size={18} /> : <Menu size={18} />}
-          </button>
+          <div className="nav-actions">
+            <ThemeToggle />
+            <a href={links.wiki} className="vs-btn vs-btn-ghost vs-btn-sm"><Wiki size={13} />Wiki</a>
+            <a href={links.dashboard} className="vs-btn vs-btn-outline vs-btn-sm"><Sitrep size={13} />Dashboard</a>
+            <a href={links.discord} target="_blank" rel="noopener noreferrer" className="vs-btn vs-btn-sm">Join Discord</a>
+          </div>
+
+          <div className="nav-burger">
+            <ThemeToggle />
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label={open ? 'Close menu' : 'Open menu'}
+              aria-expanded={open}
+              onClick={() => setOpen(o => !o)}
+            >
+              {open ? <X size={18} /> : <Menu size={18} />}
+            </button>
+          </div>
         </div>
       </div>
 

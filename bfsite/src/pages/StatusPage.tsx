@@ -1,6 +1,7 @@
 import { Alert, CheckCircle2, Clock, ExternalLink } from '@icons'
 import { links } from '../config/campaign'
 import { roundDay, useServerStates } from '../live'
+import { roundNo } from '../api'
 import { fmtUtc, stateTone } from '../status'
 import { NoticeBox, SectionHead, StatusTag } from '../components/Bits'
 
@@ -78,7 +79,7 @@ export default function StatusPage() {
                   <div>
                     <div className="sys-name">{r.theatre.label}</div>
                     <div className="sys-sub">
-                      {r.state === 'live' && round ? `Round ${round.id}${day ? `, day ${day}` : ''}` : r.state === 'standby' ? 'Up, between rounds' : r.notices[0]?.title ?? (r.state === 'engine-down' ? 'The DCS server isn’t answering' : r.state === 'offline' ? 'No answer from the host' : 'DCS server')}
+                      {r.state === 'live' && round ? `Round ${roundNo(round)}${day ? `, day ${day}` : ''}` : r.state === 'standby' ? 'Up, between rounds' : r.notices[0]?.title ?? (r.state === 'engine-down' ? 'The DCS server isn’t answering' : r.state === 'offline' ? 'No answer from the host' : 'DCS server')}
                       {latency != null && (r.state === 'live' || r.state === 'standby') ? ` · ${latency} ms` : ''}
                     </div>
                   </div>

@@ -225,10 +225,13 @@ export default function TacMapPage(): ReactElement {
   const selfPlayer = pic?.players.find((p) => p.is_self) ?? null
 
   // The selected base's stock and supply line, as the engine scopes it for us.
+  // bfdb answers it for a pilot with a side this round, or an admin: anyone
+  // else got a 401 or 403, asked again every minute and on every focus.
+  const canSeeStock = !!mock || !!user?.side || !!user?.is_admin
   const whQ = useQuery<Warehouse>({
     queryKey: ['warehouse', instance, sideParam ?? '', selObj?.name ?? '', mock ? 'mock' : ''],
     queryFn: () => (mock && pic ? Promise.resolve(mockWarehouse(pic, selObj!.name)) : api.warehouse(selObj!.name)),
-    enabled: !!selObj,
+    enabled: !!selObj && canSeeStock,
     refetchInterval: 60_000,
     // A busy engine misses one now and then; once more after a pause.
     retry: 1,
@@ -539,7 +542,13 @@ export default function TacMapPage(): ReactElement {
           pic={pic}
           assets={assets}
           captures={captures}
-          intel={{ w: whQ.data ?? null, loading: whQ.isLoading, error: whQ.error instanceof Error ? whQ.error.message : null }}
+          intel={{
+            w: whQ.data ?? null,
+            loading: whQ.isLoading,
+            error: !canSeeStock
+              ? (user ? 'they are your coalition’s intel. Register a side on the server to see them.' : 'they are your coalition’s intel. Sign in to see them.')
+              : whQ.error instanceof Error ? whQ.error.message : null,
+          }}
           onClose={clearAll}
           onPickBase={pickBaseByName}
           onPickFormation={(id) => {

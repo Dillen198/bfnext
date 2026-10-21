@@ -4,7 +4,7 @@ import QueryState from '../components/QueryState'
 import { AirframeUsage, PointsEconomy } from '../components/CampaignStats'
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api, type Pilot, type Squadron, type XpRow } from '../api'
+import { api, roundNo, type Pilot, type Squadron, type XpRow } from '../api'
 import { useRound } from '../context/RoundContext'
 import PageHeader from '../components/PageHeader'
 import {
@@ -177,6 +177,8 @@ export default function Leaderboard() {
   // "This round" is the round picked in the header's round selector, else
   // the one being played.
   const roundId = selectedRound ?? rounds.find(r => r.active)?.id ?? null
+  const roundRow = rounds.find(r => r.id === roundId)
+  const roundNum = roundRow ? roundNo(roundRow) : roundId
   const [period, setPeriod] = useState<Period>('all')
   const [sideF, setSideF] = useState<SideF>('All')
   const [view, setView] = useState<View>('pilots')
@@ -238,7 +240,7 @@ export default function Leaderboard() {
       <PageHeader
         icon={Rankings}
         title="RANKINGS"
-        sub={view === 'pilots' ? `${pilots.length} pilots${byRound ? ` · round ${roundId}` : ' · all time'}` : view === 'squadrons' ? 'Squadrons by XP' : 'Pilots by XP'}
+        sub={view === 'pilots' ? `${pilots.length} pilots${byRound ? ` · round ${roundNum}` : ' · all time'}` : view === 'squadrons' ? 'Squadrons by XP' : 'Pilots by XP'}
         right={
           <input type="text" placeholder="Search pilot…" value={search}
             onChange={e => setSearch(e.target.value)} className="vs-input lb-search"
@@ -293,7 +295,7 @@ export default function Leaderboard() {
           {view === 'pilots' && (
             <div className="flex items-center gap-2 ml-auto flex-wrap">
               <Seg name="Period" value={period} onChange={setPeriod}
-                options={[['all', 'All time'], ['round', roundId != null ? `Round ${roundId}` : 'This round']] as const} />
+                options={[['all', 'All time'], ['round', roundId != null ? `Round ${roundNum}` : 'This round']] as const} />
               <Seg name="Side" value={sideF} onChange={setSideF}
                 options={[['All', 'Both sides'], ['Blue', 'Blue'], ['Red', 'Red']] as const} />
             </div>

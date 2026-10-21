@@ -6,13 +6,17 @@ import { fmtUtc, type Notice } from '../status'
 const RANK: Record<Notice['level'], number> = { outage: 0, maintenance: 1, degraded: 2, info: 3 }
 
 /**
- * One line under the nav on every page while something is wrong: the worst
- * hand-written notice, or -- when nobody has written one -- what the probes
- * see. Silent when everything is up.
+ * One line under the nav on every page, only while a server is down: an
+ * outage notice or a maintenance window running now, or -- when nobody has
+ * written one -- what the probes see. Everything else ("back online", a
+ * window coming up, a round won) is in the notification bell instead, so
+ * the pages stay clear.
  */
 export default function StatusBanner() {
   const { notices, offline, rows } = useServerStates()
-  const top = [...notices].sort((a, b) => RANK[a.level] - RANK[b.level])[0]
+  const top = notices
+    .filter(n => n.level === 'outage' || n.level === 'maintenance')
+    .sort((a, b) => RANK[a.level] - RANK[b.level])[0]
   const engineDown = rows.filter(r => r.state === 'engine-down').map(r => r.theatre.label)
 
   let level: Notice['level']

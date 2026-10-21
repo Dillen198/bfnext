@@ -9,10 +9,23 @@ export const API_ROOT: string = import.meta.env.VITE_API_BASE ?? ''
 export type Side = 'Blue' | 'Red' | 'Neutral'
 
 export interface Round {
+  /** A database key, not a name: use `roundNo`. */
   id: number
+  /** The round's number on its own server, 1 for the first. */
+  number?: number | null
   scenario: string
   start: string
 }
+
+/** A server's most recently finished round and who won it. */
+export interface LastRound extends Round {
+  end: string
+  /** "Blue", "Red", or null: a draw, or a reset that named no winner. */
+  winner: Side | null
+}
+
+/** What to call a round: its number on its server, the raw id from an older bfdb. */
+export const roundNo = (r: { id: number; number?: number | null }) => r.number ?? r.id
 
 /** One DCS server instance fronted by this bfdb. */
 export interface ServerInstance {
@@ -22,6 +35,10 @@ export interface ServerInstance {
   live: boolean
   sortie: string | null
   active_round: Round | null
+  last_round?: LastRound | null
+  /** The server's own names for its sides, where bfdb has them. */
+  blue_label?: string | null
+  red_label?: string | null
   /** Always true here: bfdb only returns non-public (test) instances to an
    *  admin session, and the public site never has one. */
   public: boolean
@@ -52,7 +69,7 @@ export interface NewsDay {
 export interface Health {
   ok: boolean
   engine: { reachable: boolean; latency_ms: number | null; error: string | null }
-  active_round: { id: number; start: string } | null
+  active_round: { id: number; number?: number | null; start: string } | null
 }
 
 // bfdb's host can vanish outright (Cloudflare then holds the request open

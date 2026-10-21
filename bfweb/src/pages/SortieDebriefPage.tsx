@@ -16,6 +16,7 @@ import PageHeader from '../components/PageHeader'
 import QueryState from '../components/QueryState'
 import { fmtDuration, fmtTimeZ } from '../lib/format'
 import { OUTCOME, replayFor } from '../lib/sortie'
+import { useRoundNo } from '../lib/rounds'
 import SortieDetail from './SortieDetail'
 import {
   fetchMeta, fetchObjectTrack, sampleSeg, shotsOf, objLabel, M_TO_FT, MS_TO_KT,
@@ -300,6 +301,7 @@ export default function SortieDebriefPage() {
   const breakdown = useQuery({ queryKey: ['pilot-breakdown', ucid], queryFn: () => api.pilotBreakdown(ucid), enabled: !!ucid })
   const replays = useQuery({ queryKey: ['pilot-replays', ucid], queryFn: () => api.pilotReplays(ucid), enabled: !!ucid })
 
+  const roundNum = useRoundNo()
   const d = detail.data
   const replay = d ? replayFor(d, replays.data ?? []) : undefined
   const theater = d ? breakdown.data?.find(b => b.round_id === d.round_id)?.scenario : undefined
@@ -333,7 +335,7 @@ export default function SortieDebriefPage() {
               <div className="p-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 14 }}>
                 <Fact name="Date" value={new Date(d.takeoff).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })} />
                 <Fact name="Aircraft" value={d.aircraft.replace(/_/g, ' ')} />
-                <Fact name="Theater" value={theater ?? `Round ${d.round_id}`} />
+                <Fact name="Theater" value={theater ?? `Round ${roundNum(d.round_id)}`} />
                 <Fact name="Takeoff" value={fmtTimeZ(d.takeoff)} />
                 <Fact name="End" value={d.land ? fmtTimeZ(d.land) : d.death ? fmtTimeZ(d.death.time) : '—'} />
                 <Fact name="Duration" value={fmtDuration(d.duration_secs)} />

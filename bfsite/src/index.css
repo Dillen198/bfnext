@@ -214,6 +214,7 @@ a { color: inherit; }
 .nav-link:hover { color: var(--text); }
 .nav-link .n { font-family: var(--font-mono); font-size: 0.6rem; color: var(--accent); letter-spacing: 0; }
 .nav-actions { display: none; align-items: center; gap: 8px; }
+.nav-right { display: flex; align-items: center; gap: 8px; }
 .nav-burger { display: flex; align-items: center; gap: 8px; }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
@@ -430,6 +431,14 @@ a { color: inherit; }
 .theatre-sides .b { color: var(--blue); }
 .theatre-sides .r { color: var(--red); }
 .theatre-sides .vs { font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-dim); letter-spacing: 0.1em; }
+/* The last won round, loud for two days after it ends. */
+.theatre-result { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 10px 12px; border: 1px solid var(--border); border-left: 3px solid currentColor; background: var(--bg-alt); }
+.theatre-result.b { color: var(--blue); }
+.theatre-result.r { color: var(--red); }
+.theatre-result.is-recent { background: color-mix(in srgb, currentColor 12%, var(--bg-alt)); }
+.theatre-result .label { color: inherit; }
+.theatre-result-line { color: var(--text-muted); font-size: 0.88rem; }
+.theatre-result-line strong { color: var(--text); }
 
 /* ── flags blended into a theatre's background ── */
 .flag-backdrop { position: absolute; inset: 0; z-index: 0; pointer-events: none; opacity: 0.32; }
@@ -444,6 +453,17 @@ a { color: inherit; }
 .flag-backdrop .flag-cloth.flag-right { object-position: right center; -webkit-mask-image: linear-gradient(270deg, #000 40%, transparent 100%); mask-image: linear-gradient(270deg, #000 40%, transparent 100%); }
 .flag-left  { left: 0;  -webkit-mask-image: linear-gradient(100deg, #000 0%, rgba(0,0,0,0.4) 22%, transparent 48%); mask-image: linear-gradient(100deg, #000 0%, rgba(0,0,0,0.4) 22%, transparent 48%); }
 .flag-right { right: 0; -webkit-mask-image: linear-gradient(260deg, #000 0%, rgba(0,0,0,0.4) 22%, transparent 48%); mask-image: linear-gradient(260deg, #000 0%, rgba(0,0,0,0.4) 22%, transparent 48%); }
+/* Pictures fill their edge like the SVG flags do. */
+.flag-backdrop .flag-picture { object-fit: cover; }
+.flag-backdrop .flag-picture.flag-left  { object-position: left center; }
+.flag-backdrop .flag-picture.flag-right { object-position: right center; }
+/* NATO's field is a dark navy: dimmed like the others, it vanishes. */
+.flag-backdrop .flag.flag-picture.flag-nato { filter: saturate(0.9) brightness(1.15); }
+:root[data-theme="light"] .flag-backdrop .flag.flag-picture.flag-nato { filter: saturate(0.9); }
+/* Russia, Syria, Iran and Iraq in a block of four: it fades later, so its
+   inner column still shows, and sits darker, as four flags outweigh one. */
+.flag-backdrop .flag.flag-picture.flag-rsii.flag-right { filter: saturate(0.75) brightness(0.5); -webkit-mask-image: linear-gradient(270deg, #000 30%, transparent 95%); mask-image: linear-gradient(270deg, #000 30%, transparent 95%); }
+:root[data-theme="light"] .flag-backdrop .flag.flag-picture.flag-rsii { filter: saturate(0.75); }
 /* Soft folds, so the flags read as cloth rather than flat fills. */
 .flag-sheen {
   position: absolute; inset: 0;
@@ -585,6 +605,38 @@ a { color: inherit; }
 .banner.lvl-degraded,
 .banner.lvl-maintenance { background: color-mix(in srgb, var(--yellow) 18%, var(--bg)); color: var(--yellow); }
 .banner.lvl-info        { background: color-mix(in srgb, var(--accent) 14%, var(--bg)); color: var(--accent); }
+
+/* ── notification bell ── */
+.notif { position: relative; display: inline-flex; }
+.notif-btn { position: relative; }
+.notif-count {
+  position: absolute; top: -5px; right: -5px; min-width: 17px; height: 17px; padding: 0 4px; box-sizing: border-box;
+  border-radius: 9px; background: var(--accent); color: #000; font-family: var(--font-mono); font-size: 0.6rem;
+  font-weight: 700; line-height: 17px; text-align: center;
+}
+.notif-panel {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 60; width: min(360px, calc(100vw - 32px));
+  max-height: 70vh; overflow-y: auto; background: var(--bg-card-solid); border: 1px solid var(--border-light);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45); text-align: left;
+}
+/* A phone has no room to hang it off the bell: full width under the nav. */
+@media (max-width: 600px) {
+  .notif-panel { position: fixed; top: 64px; left: 16px; right: 16px; width: auto; }
+}
+.notif-head { padding: 9px 14px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 0.64rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-dim); }
+.notif-empty { padding: 18px 14px; font-size: 0.82rem; line-height: 1.6; color: var(--text-muted); }
+.notif-item { --tone: var(--accent); padding: 11px 14px; border-bottom: 1px solid var(--border); border-left: 3px solid var(--tone); }
+.notif-item:last-child { border-bottom: none; }
+.notif-item.tone-b { --tone: var(--blue); }
+.notif-item.tone-r, .notif-item.tone-outage { --tone: var(--red); }
+.notif-item.tone-maintenance, .notif-item.tone-degraded { --tone: var(--yellow); }
+.notif-item.is-new { background: color-mix(in srgb, var(--tone) 8%, transparent); }
+.notif-top { display: flex; align-items: baseline; gap: 8px; }
+.notif-title { flex: 1; min-width: 0; font-size: 0.86rem; font-weight: 700; color: var(--text); }
+.notif-when { flex-shrink: 0; font-family: var(--font-mono); font-size: 0.62rem; color: var(--text-dim); }
+.notif-item.is-new .notif-when { color: var(--tone); text-transform: uppercase; letter-spacing: 0.1em; }
+.notif-msg { margin-top: 3px; font-size: 0.8rem; line-height: 1.5; color: var(--text-muted); }
+.notif-link { display: inline-flex; align-items: center; gap: 3px; margin-top: 6px; font-family: var(--font-mono); font-size: 0.64rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; text-decoration: none; color: var(--tone); }
 
 /* ── notices (status.json) ── */
 .notice { border: 1px solid var(--border-light); border-left-width: 3px; padding: 12px 14px; background: var(--bg-card-solid); }

@@ -1,5 +1,5 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { api, type Health, type ServerInstance } from './api'
+import { api, roundNo, type Health, type ServerInstance } from './api'
 import { SERVERS, type ServerProfile } from './config/servers'
 import { useNotices, type Notice, type ServerState } from './status'
 
@@ -33,8 +33,8 @@ export function useTheatres() {
           profile,
           instance: i,
           label: profile?.label ?? i.label,
-          blueLabel: profile?.blueLabel ?? 'BLUFOR',
-          redLabel: profile?.redLabel ?? 'REDFOR',
+          blueLabel: profile?.blueLabel ?? i.blue_label ?? 'BLUFOR',
+          redLabel: profile?.redLabel ?? i.red_label ?? 'REDFOR',
         }
       })
     : SERVERS.map(p => ({
@@ -151,4 +151,38 @@ export function roundDay(start: string): number | undefined {
   const t = Date.parse(start)
   if (Number.isNaN(t)) return undefined
   return Math.max(1, Math.floor((Date.now() - t) / 86_400_000) + 1)
+}
+
+/** How long a won round is headline news on the cards. */
+const RESULT_NEWS_MS = 48 * 3_600_000
+
+/** A theatre's last won round, as the cards say it. */
+export interface RoundResult {
+  /** The round id, for linking to its rundown on the dashboard. */
+  id: number
+  /** Its number on the server. */
+  n: number
+  side: 'Blue' | 'Red'
+  /** The winner in this theatre's own names for the sides. */
+  winner: string
+  end: string
+  lasted: string
+  /** Won in the last two days: say it loudly. */
+  recent: boolean
+}
+
+export function lastResult(t: Theatre): RoundResult | undefined {
+  const r = t.instance?.last_round
+  if (!r?.end || (r.winner !== 'Blue' && r.winner !== 'Red')) return undefined
+  const end = Date.parse(r.end)
+  const hours = Math.max(0, (end - Date.parse(r.start)) / 3_600_000)
+  return {
+    id: r.id,
+    n: roundNo(r),
+    side: r.winner,
+    winner: r.winner === 'Blue' ? t.blueLabel : t.redLabel,
+    end: r.end,
+    lasted: hours < 48 ? `${hours.toFixed(1)} hours` : `${(hours / 24).toFixed(1)} days`,
+    recent: Date.now() - end < RESULT_NEWS_MS,
+  }
 }

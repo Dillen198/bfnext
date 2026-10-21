@@ -116,6 +116,13 @@ export const Alert = createIcon('Alert', <>
   <path d="M11.25 16.75h1.5v1.5h-1.5z" />
 </>)
 
+/** BELL -- notifications: a squared-off bell over its clapper. */
+export const Bell = createIcon('Bell', <>
+  <path d="M6 17v-6a6 6 0 0 1 12 0v6l2 2H4z" />
+  <path d="M10 21.5h4" />
+  <path d="M12 3V2" />
+</>)
+
 /** AWARD -- a medal. */
 export const Award = createIcon('Award', <>
   <path d="M16.5 9a4.5 4.5 0 1 1-9 0 4.5 4.5 0 1 1 9 0" />
