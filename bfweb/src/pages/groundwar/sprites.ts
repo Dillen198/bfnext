@@ -135,7 +135,9 @@ function spriteCanvas(role: GroundRole, side: Side, broken: boolean): HTMLCanvas
   const cv = document.createElement('canvas')
   cv.width = S * PX
   cv.height = S * PX
-  const c = cv.getContext('2d')
+  // Read back for the map, and again as a data URL for the legend: say so,
+  // or Chrome logs a willReadFrequently warning for every sprite.
+  const c = cv.getContext('2d', { willReadFrequently: true })
   if (c) {
     c.scale(PX, PX)
     c.shadowColor = 'rgba(0,0,0,0.75)'
@@ -149,15 +151,23 @@ function spriteCanvas(role: GroundRole, side: Side, broken: boolean): HTMLCanvas
 export const vehicleImageId = (role: GroundRole, side: Side, broken: boolean): string =>
   `gwv-${role}-${side}-${broken ? 'b' : 'n'}`
 
+/** Each sprite's pixels, read once: a style change re-adds every image. */
+const spritePixels: Record<string, ImageData> = {}
+
 function addVehicleImage(map: MlMap, id: string): boolean {
   const m = /^gwv-(\w+)-(Blue|Red)-(b|n)$/.exec(id)
   if (!m) return false
   const role = m[1] as GroundRole
   if (!ROLES.includes(role)) return false
-  const cv = spriteCanvas(role, m[2] as Side, m[3] === 'b')
-  const c = cv.getContext('2d')
-  if (!c || map.hasImage(id)) return true
-  map.addImage(id, c.getImageData(0, 0, cv.width, cv.height), { pixelRatio: PX })
+  if (map.hasImage(id)) return true
+  let px = spritePixels[id]
+  if (!px) {
+    const cv = spriteCanvas(role, m[2] as Side, m[3] === 'b')
+    const c = cv.getContext('2d', { willReadFrequently: true })
+    if (!c) return true
+    px = spritePixels[id] = c.getImageData(0, 0, cv.width, cv.height)
+  }
+  map.addImage(id, px, { pixelRatio: PX })
   return true
 }
 
