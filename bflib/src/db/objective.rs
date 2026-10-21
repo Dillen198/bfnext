@@ -22,7 +22,7 @@ use super::{
 use crate::{
     group, group_health, group_mut,
     landcache::LandCache,
-    maybe, objective, objective_mut,
+    maybe, msgq::MsgTyp, objective, objective_mut,
     spawnctx::{Despawn, SpawnCtx, SpawnLoc},
     unit, unit_mut,
 };
@@ -212,6 +212,22 @@ pub(super) fn countdown_announce_due(prev: Option<i64>, remaining: i64) -> bool 
     // or above `remaining`.
     let hour = (remaining.max(1) + 3599).div_euclid(3600) * 3600;
     MARKS.iter().any(|t| crossed(*t)) || crossed(hour)
+}
+
+/// The shortest a round-over announcement stays up before the server resets.
+/// With no `auto_reset` delay configured the reset used to follow on the very
+/// next tick, before a single panel had been drawn: the round ended and
+/// nobody in the game was told who won.
+const MIN_VICTORY_NOTICE_SECS: i64 = 30;
+
+/// The line that tells the server a round is over and who won it.
+pub(crate) fn round_over_text(side: Side) -> CompactString {
+    match side {
+        Side::Blue | Side::Red => format_compact!("ROUND OVER: {side:?} has won the war!"),
+        Side::Neutral => {
+            format_compact!("ROUND OVER: the round has run its full length and ends in a draw.")
+        }
+    }
 }
 
 /// "1h 05m", "12m 30s", "45s" -- for the countdown panels.
@@ -2336,8 +2352,10 @@ impl Db {
         // Use auto_reset delay if configured, otherwise trigger immediately.
         if let Some((vts, side)) = self.ephemeral.victory {
             let delay = self.ephemeral.cfg.auto_reset
-                .map(|vc| Duration::seconds(vc.delay as i64))
-                .unwrap_or(Duration::zero());
+                .map(|vc| vc.delay as i64)
+                .unwrap_or(0)
+                .max(MIN_VICTORY_NOTICE_SECS);
+            let delay = Duration::seconds(delay);
             let elapsed = now - vts;
             if elapsed >= delay {
                 return Some(side);
@@ -2347,18 +2365,19 @@ impl Db {
                 let remaining = (delay - elapsed).num_seconds();
                 let prev = self.ephemeral.victory_countdown_last.replace(remaining);
                 if countdown_announce_due(prev, remaining) {
-                    let msg = if side == Side::Neutral {
-                        format_compact!(
-                            "The round has run its full length and ends in a draw. The server will reset in {}",
-                            fmt_countdown(remaining)
-                        )
+                    let msg = format_compact!(
+                        "{} The server will reset in {}",
+                        round_over_text(side),
+                        fmt_countdown(remaining)
+                    );
+                    // The first one goes to chat as well, where it stays after
+                    // the panel has gone, and stays up longer.
+                    if prev.is_none() {
+                        self.ephemeral.msgs().send(MsgTyp::Chat(None), msg.clone());
+                        self.ephemeral.msgs().panel_to_all(30, true, msg);
                     } else {
-                        format_compact!(
-                            "{side} has won. The server will reset in {}",
-                            fmt_countdown(remaining)
-                        )
-                    };
-                    self.ephemeral.msgs().panel_to_all(10, true, msg);
+                        self.ephemeral.msgs().panel_to_all(10, true, msg);
+                    }
                 }
                 return None;
             }
@@ -2487,9 +2506,19 @@ impl Db {
         None
     }
 
+    /// Declare that `side` has won the round (`Neutral`: a draw). The next
+    /// ticks announce it and count down to the reset, as for a map win. Used
+    /// by the admin `reset <winner>` command, which used to shut the server
+    /// down on the spot without a word to anyone in it.
+    pub fn declare_victory(&mut self, now: DateTime<Utc>, side: Side) {
+        self.ephemeral.victory = Some((now, side));
+        self.ephemeral.victory_countdown_last = None;
+    }
+
     /// Trigger a victory for `winning_side`, used by the last stand timer expiry.
     pub fn trigger_last_stand_victory(&mut self, now: DateTime<Utc>, winning_side: Side) {
         self.ephemeral.victory = Some((now, winning_side));
+        self.ephemeral.victory_countdown_last = None;
         let losing_side = winning_side.opposite();
         self.ephemeral.msgs().panel_to_all(
             20,
@@ -4432,6 +4461,13 @@ mod tests {
         assert!(p.x - 1_200. > 2_000., "escort would be ashore at {p:?}");
         // Nothing but land: no departure point.
         assert!(sea_spot(Vector2::new(0., 0.), &formation, |_| false).is_none());
+    }
+
+    #[test]
+    fn round_over_names_the_winner() {
+        assert_eq!(round_over_text(Side::Blue), "ROUND OVER: Blue has won the war!");
+        assert_eq!(round_over_text(Side::Red), "ROUND OVER: Red has won the war!");
+        assert!(round_over_text(Side::Neutral).contains("draw"));
     }
 
     #[test]

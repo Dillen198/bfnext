@@ -450,7 +450,7 @@ impl AdminCommand {
             "whythreat <obj>: why <obj> isn't repairing -- threat units (live or ghost), capture timer, logi, supply, next pulse",
             "ghosts: list units alive in the campaign db that have no DCS object",
             "purge-ghosts: immediately mark dead / delete every unit the ghosts command lists",
-            "reset [winner]: shutdown the server and reset the campaign state",
+            "reset [winner]: reset the campaign state; naming a winner announces it and counts down first",
             "shutdown: shutdown the server",
             "blacklist <rule> <player>: deny <player> access to <rule> (actions|cargo|troops|jtac|ca)",
             "whitelist <rule> <player>: allow <player> access to <rule> (actions|cargo|troops|jtac|ca)",
@@ -3587,7 +3587,15 @@ fn run_admin_command(
                 let (groups, units) = ctx.db.admin_purge_ghosts(lua, Utc::now());
                 reply_ok!("purged {units} ghost unit(s) in {groups} group(s)")
             }
-            AdminCommand::Reset { winner } => match admin_shutdown(ctx, lua, Some(winner)) {
+            // Naming a winner ends the round the way a map win does: the
+            // server is told who won and counts down, then resets. Shutting
+            // down here instead left nothing said in-game -- anything queued
+            // now is never drawn, as the shutdown blocks the message drain.
+            AdminCommand::Reset { winner: Some(side) } => {
+                ctx.db.declare_victory(Utc::now(), side);
+                reply_ok!("{side:?} has been declared the winner; the server announces it and resets after the countdown")
+            }
+            AdminCommand::Reset { winner: None } => match admin_shutdown(ctx, lua, Some(None)) {
                 Ok(s) => {
                     result = s;
                     reply_ok!("the state has been reset");
