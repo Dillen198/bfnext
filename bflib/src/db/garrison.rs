@@ -22,6 +22,12 @@ details.
 //! garrison drives out to meet an intruder, calls a formation in as a quick
 //! reaction force if it stays, and moves about inside the base while it is
 //! quiet.
+//!
+//! A unit that fires on a base gives itself away: every group there is told
+//! where it is (`knowTarget`) and stands to, so DCS's own AI shoots back
+//! instead of waiting to be picked off by something it never saw. A shooter
+//! is an intruder even when it came from a base of its own -- a Combined
+//! Arms player can drive a tank straight out of a garrison.
 
 use super::{
     formation::{good_ground, ground_point, FormationId, FormationRt, Order, Posture},
@@ -30,7 +36,10 @@ use super::{
 };
 use bfprotocols::{
     cfg::{GarrisonCfg, UnitTag},
-    db::{group::GroupId, objective::ObjectiveId},
+    db::{
+        group::{GroupId, UnitId},
+        objective::ObjectiveId,
+    },
 };
 use chrono::{prelude::*, Duration};
 use compact_str::format_compact;
@@ -39,6 +48,8 @@ use dcso3::{
     controller::{AiOption, AlarmState, GroundOption, GroundRoe, Task, VehicleFormation},
     group::{Group, GroupCategory},
     land::Land,
+    object::{DcsObject, Object},
+    unit::Unit,
     MizLua, Vector2,
 };
 use fxhash::FxHashMap;
@@ -65,6 +76,20 @@ const PATROL_RADIUS: f64 = 0.6;
 const COVER_M: f64 = 3_000.;
 /// After a QRF call (answered or not), wait this long before another.
 const QRF_RETRY_SECS: i64 = 300;
+/// A unit that fired on a base stays an intruder this long after its last hit.
+const SHOOTER_SECS: i64 = 180;
+/// Tell a base where the same intruder is at most this often.
+const ALERT_SECS: i64 = 30;
+/// A base is told about at most this many intruders at once, nearest first.
+const ALERT_MAX: usize = 3;
+/// A garrison unit this far past its own base's edge, that its base didn't
+/// send, has been driven off by a player: it is an intruder like any other.
+const STRAY_M: f64 = 500.;
+/// How long a garrison sent home may take to get there.
+const HOMING_SECS: i64 = 600;
+/// Infantry only go out to an intruder this close to the base's edge: sent
+/// across open ground at a tank kilometres away, a squad is only a target.
+const INFANTRY_SORTIE_M: f64 = 800.;
 
 fn dist(a: Vector2, b: Vector2) -> f64 {
     (a - b).norm()
@@ -84,6 +109,9 @@ struct BaseState {
     qrf_at: Option<DateTime<Utc>>,
     qrf: Option<FormationId>,
     announced: bool,
+    /// Sent home after a fight: until then its units may still be on the
+    /// road back, and aren't taken for a player driving off with them.
+    home_until: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Default)]
@@ -94,6 +122,12 @@ pub struct GarrisonRt {
     sam_shot: FxHashMap<GroupId, DateTime<Utc>>,
     sam_moved: FxHashMap<GroupId, DateTime<Utc>>,
     sam_next: FxHashMap<GroupId, DateTime<Utc>>,
+    /// Enemy ground units that have hit a base's units, and when they last did.
+    shooters: FxHashMap<UnitId, DateTime<Utc>>,
+    /// When each base was last told where each shooter is.
+    alerted: FxHashMap<(ObjectiveId, UnitId), DateTime<Utc>>,
+    /// A base was hit since the last tick: run the next one without waiting.
+    urgent: bool,
 }
 
 impl GarrisonRt {
@@ -126,22 +160,69 @@ impl Db {
 
     /// Armed enemy ground units in DCS that aren't sitting in their own
     /// base's garrison: player and AI vehicles, deployed units, troops,
-    /// formations. (side, position).
-    fn ground_intruders(&self) -> Vec<(Side, Vector2)> {
+    /// formations, anything that has fired on a base, and garrison units a
+    /// player has driven away from their base. (unit, side, position).
+    fn ground_intruders(
+        &self,
+        lua: MizLua,
+        grt: &GarrisonRt,
+        now: DateTime<Utc>,
+    ) -> Vec<(UnitId, Side, Vector2)> {
         self.ephemeral
             .object_id_by_uid
             .keys()
-            .filter_map(|uid| self.persisted.units.get(uid))
-            .filter(|u| !u.dead && u.side != Side::Neutral && !u.tags.contains(UnitTag::Unarmed))
-            .filter(|u| self.persisted.objectives_by_group.get(&u.group).is_none())
-            .filter(|u| {
+            .filter_map(|uid| self.persisted.units.get(uid).map(|u| (*uid, u)))
+            .filter(|(_, u)| !u.dead && u.side != Side::Neutral && !u.tags.contains(UnitTag::Unarmed))
+            .filter(|(_, u)| {
                 self.persisted
                     .groups
                     .get(&u.group)
                     .map_or(false, |g| g.kind == Some(GroupCategory::Ground))
             })
-            .map(|u| (u.side, u.pos))
+            .filter(|(uid, u)| match self.persisted.objectives_by_group.get(&u.group) {
+                None => true,
+                Some(_) if grt.shooters.contains_key(uid) => true,
+                Some(home) => self.strayed(lua, grt, *home, uid, u.pos, now),
+            })
+            .map(|(uid, u)| (uid, u.side, u.pos))
             .collect()
+    }
+
+    /// Whether garrison unit `uid` of base `home`, at `pos`, has been taken
+    /// off by a player (Combined Arms): well outside its base when its base
+    /// didn't send it out, or with a player in it when it did.
+    fn strayed(
+        &self,
+        lua: MizLua,
+        grt: &GarrisonRt,
+        home: ObjectiveId,
+        uid: &UnitId,
+        pos: Vector2,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let Some(o) = self.persisted.objectives.get(&home) else { return false };
+        if dist(pos, o.zone.pos()) <= o.zone.radius() + STRAY_M {
+            return false;
+        }
+        let sent = grt
+            .bases
+            .get(&home)
+            .map_or(false, |b| b.first_seen.is_some() || b.home_until.map_or(false, |t| now < t));
+        if !sent {
+            return true;
+        }
+        self.ephemeral
+            .object_id_by_uid
+            .get(uid)
+            .and_then(|id| Unit::get_instance(lua, id).ok())
+            .and_then(|u| u.get_player_name().ok().flatten())
+            .is_some()
+    }
+
+    /// The DCS object of `uid`, to point a base's AI at.
+    fn unit_object<'lua>(&self, lua: MizLua<'lua>, uid: &UnitId) -> Option<Object<'lua>> {
+        let id = self.ephemeral.object_id_by_uid.get(uid)?;
+        Unit::get_instance(lua, id).ok()?.as_object().ok()
     }
 
     /// Drive each of `gids` to its own point; `alarm` red to fight.
@@ -191,6 +272,105 @@ impl Db {
                 }
                 Err(e) => warn!("garrison: routing {name}: {e:?}"),
             }
+        }
+    }
+
+    /// `target` was hit by `shooter`. If that is an enemy ground unit firing
+    /// on a base's own units, the base is told where it is, and the garrison
+    /// goes for it on the next tick.
+    pub fn garrison_hit(
+        &mut self,
+        grt: &mut GarrisonRt,
+        lua: MizLua,
+        target: &Unit,
+        shooter: &Unit,
+        now: DateTime<Utc>,
+    ) {
+        if !self.ephemeral.cfg.garrison.enabled {
+            return;
+        }
+        let uid_of = |u: &Unit| {
+            u.object_id().ok().and_then(|oid| self.ephemeral.get_uid_by_object_id(&oid).copied())
+        };
+        let (Some(tuid), Some(suid)) = (uid_of(target), uid_of(shooter)) else { return };
+        let (Some(tu), Some(su)) = (self.persisted.units.get(&tuid), self.persisted.units.get(&suid)) else {
+            return;
+        };
+        if su.side == tu.side || su.side == Side::Neutral {
+            return;
+        }
+        let ground = self
+            .persisted
+            .groups
+            .get(&su.group)
+            .map_or(false, |g| g.kind == Some(GroupCategory::Ground));
+        if !ground {
+            return;
+        }
+        let Some(oid) = self.persisted.objectives_by_group.get(&tu.group).copied() else { return };
+        if self.persisted.objectives.get(&oid).map_or(true, |o| o.owner != tu.side) {
+            return;
+        }
+        grt.shooters.insert(suid, now);
+        grt.urgent = true;
+        let due = grt
+            .alerted
+            .get(&(oid, suid))
+            .map_or(true, |t| now - *t >= Duration::seconds(ALERT_SECS));
+        if !due {
+            return;
+        }
+        grt.alerted.insert((oid, suid), now);
+        let shooter = match shooter.as_object() {
+            Ok(o) => o,
+            Err(e) => {
+                warn!("garrison: shooter object: {e:?}");
+                return;
+            }
+        };
+        self.alert_base(lua, oid, &[shooter], "under fire from the ground");
+    }
+
+    /// Every group at `oid` that can fight stands to -- AI on, alarm red,
+    /// weapons free, no scattering when hit -- and learns where each of
+    /// `targets` is, so it hunts them instead of waiting to be found. SAM
+    /// sites are left to the IADN's emission control.
+    fn alert_base(&self, lua: MizLua, oid: ObjectiveId, targets: &[Object], why: &str) {
+        let Some(o) = self.persisted.objectives.get(&oid) else { return };
+        let Some(gids) = o.groups.get(&o.owner) else { return };
+        let mut told = 0;
+        for gid in gids {
+            let Some(g) = self.persisted.groups.get(gid) else { continue };
+            if g.kind != Some(GroupCategory::Ground)
+                || g.class.is_services()
+                || g.class.is_logi()
+                || g.tags.contains(UnitTag::SAM)
+                || !g.units.into_iter().any(|u| self.ephemeral.object_id_by_uid.contains_key(u))
+            {
+                continue;
+            }
+            let res = Group::get_by_name(lua, g.name.as_str()).and_then(|group| {
+                let con = group.get_controller()?;
+                con.set_on_off(true)?;
+                con.set_option(AiOption::Ground(GroundOption::DisperseOnAttack(0)))?;
+                con.set_option(AiOption::Ground(GroundOption::Roe(GroundRoe::WeaponFree)))?;
+                con.set_option(AiOption::Ground(GroundOption::AlarmState(AlarmState::Red)))?;
+                for t in targets {
+                    con.know_target(t.clone(), true, true)?;
+                }
+                Ok(())
+            });
+            match res {
+                Ok(()) => told += 1,
+                Err(e) => warn!("garrison: alerting {}: {e:?}", g.name),
+            }
+        }
+        if told > 0 {
+            info!(
+                "garrison: {} {why}, {told} group(s) told where {} enemy unit(s) are",
+                o.name,
+                targets.len()
+            );
         }
     }
 
@@ -370,10 +550,13 @@ impl Db {
         if !cfg.enabled {
             return;
         }
-        if grt.last_tick.map_or(false, |t| now - t < Duration::seconds(TICK_SECS)) {
+        if !grt.urgent && grt.last_tick.map_or(false, |t| now - t < Duration::seconds(TICK_SECS)) {
             return;
         }
         grt.last_tick = Some(now);
+        grt.urgent = false;
+        grt.shooters.retain(|_, t| now - *t < Duration::seconds(SHOOTER_SECS));
+        grt.alerted.retain(|_, t| now - *t < Duration::seconds(SHOOTER_SECS));
         let land = match Land::singleton(lua) {
             Ok(l) => l,
             Err(e) => {
@@ -381,7 +564,7 @@ impl Db {
                 return;
             }
         };
-        let intruders = self.ground_intruders();
+        let intruders = self.ground_intruders(lua, grt, now);
         let live: SmallVec<[(ObjectiveId, Side, Vector2, f64, dcso3::String, bool); 32]> = self
             .objectives()
             .filter(|(_, o)| o.spawned && o.owner != Side::Neutral)
@@ -402,15 +585,40 @@ impl Db {
             if cfg.sam_relocate {
                 self.relocate_sams(grt, lua, &land, &cfg, oid, center, radius, now);
             }
+            // Enemies in reach of the base, nearest first. Every group there
+            // is told where they are, so the whole base hunts them, whether
+            // or not it has armour to send out.
+            let mut near: SmallVec<[(UnitId, Vector2); 8]> = intruders
+                .iter()
+                .filter(|(_, s, p)| *s != side && dist(*p, center) <= radius + cfg.react_m)
+                .map(|(uid, _, p)| (*uid, *p))
+                .collect();
+            near.sort_by(|a, b| dist(a.1, center).total_cmp(&dist(b.1, center)));
+            let due: SmallVec<[UnitId; ALERT_MAX]> = near
+                .iter()
+                .take(ALERT_MAX)
+                .map(|(uid, _)| *uid)
+                .filter(|uid| {
+                    grt.alerted
+                        .get(&(oid, *uid))
+                        .map_or(true, |t| now - *t >= Duration::seconds(ALERT_SECS))
+                })
+                .collect();
+            if !due.is_empty() {
+                let targets: SmallVec<[Object; ALERT_MAX]> =
+                    due.iter().filter_map(|uid| self.unit_object(lua, uid)).collect();
+                for uid in &due {
+                    grt.alerted.insert((oid, *uid), now);
+                }
+                if !targets.is_empty() {
+                    self.alert_base(lua, oid, &targets, "has enemy ground units in reach");
+                }
+            }
+            let threat = near.first().map(|(_, p)| *p);
             let groups = self.sortie_groups(&oid);
             if groups.is_empty() {
                 continue;
             }
-            let threat = intruders
-                .iter()
-                .filter(|(s, p)| *s != side && dist(*p, center) <= radius + cfg.react_m)
-                .map(|(_, p)| *p)
-                .min_by(|a, b| dist(*a, center).total_cmp(&dist(*b, center)));
             let qrf_count = qrfs_out(grt, side, self);
             let st = grt.bases.entry(oid).or_default();
             if let Some(t) = threat {
@@ -428,11 +636,20 @@ impl Db {
                     st.routed_at = Some(now);
                     st.out = true;
                     let across = Vector2::new(-dir.y, dir.x);
-                    let n = groups.len() as f64;
+                    // Infantry hold the base against anything farther out.
+                    let close = away <= radius + INFANTRY_SORTIE_M;
+                    let sent: SmallVec<[GroupId; 8]> = groups
+                        .iter()
+                        .copied()
+                        .filter(|g| {
+                            close || self.persisted.groups.get(g).map_or(false, |g| g.class != ObjGroupClass::Infantry)
+                        })
+                        .collect();
+                    let n = sent.len() as f64;
                     // Each group's spot, pushed out along the line of
                     // approach until it is clear of runways and taxiways; a
                     // group with no such spot within reach stays where it is.
-                    let legs: SmallVec<[(GroupId, Vector2); 8]> = groups
+                    let legs: SmallVec<[(GroupId, Vector2); 8]> = sent
                         .iter()
                         .enumerate()
                         .filter_map(|(i, g)| {
@@ -504,6 +721,7 @@ impl Db {
                 *st = BaseState { out: st.out, ..Default::default() };
                 if st.out {
                     st.out = false;
+                    st.home_until = Some(now + Duration::seconds(HOMING_SECS));
                     let legs: SmallVec<[(GroupId, Vector2); 8]> =
                         groups.iter().filter_map(|g| self.home_of(g).map(|h| (*g, h))).collect();
                     self.route_garrison(lua, &land, &legs, PATROL_MPS * 1.5, false);

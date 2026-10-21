@@ -1140,6 +1140,8 @@ fn on_hit(
             {
                 error!("error processing hit event {:?}", e)
             }
+            // A base under fire from the ground learns where the shooter is.
+            ctx.db.garrison_hit(&mut ctx.groundwar.garrison, lua, &target, &shooter, start_ts);
         }
         if dead {
             let dismount = try_capture_dismount_info(ctx, &target);
