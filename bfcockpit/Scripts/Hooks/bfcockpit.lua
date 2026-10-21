@@ -63,7 +63,7 @@
 -- copy it was built with to answer /api/cockpit/plugin/version, and the panel
 -- compares that with its own to tell the player when to update. Keep the
 -- format exactly as it is.
-local BFCOCKPIT_VERSION = "3.2.0"
+local BFCOCKPIT_VERSION = "3.3.0"
 
 local net = require('net')
 
@@ -352,8 +352,16 @@ local function compute_settings()
 
     local scale = p and tonumber(p.uiScale) or nil
     if not scale or scale <= 0 then scale = tonumber(cfg.scale) end
-    if not scale or scale <= 0 then scale = s.vr and 1.35 or 1.0 end
-    s.scale = math.max(0.75, math.min(2.5, scale))
+    if not scale or scale <= 0 then
+        -- Auto: larger in VR; smaller on a small screen, where 100% would
+        -- cover too much of it (a 1366x768 laptop, a 1280x800 Deck).
+        local ok, _, sh = pcall(function() return dxgui.GetScreenSize() end)
+        sh = ok and tonumber(sh) or 1080
+        scale = s.vr and 1.35 or (sh < 820 and 0.8) or (sh < 1000 and 0.9) or 1.0
+    end
+    s.scale = math.max(0.5, math.min(2.5, scale))
+    -- Text on its own: smaller or larger writing at the same layout.
+    s.text_scale = math.max(0.6, math.min(1.5, tonumber(opt("textScale", cfg.text_scale)) or 1.0))
     return s
 end
 
@@ -396,7 +404,9 @@ local function text_style(color, font, size, halign)
         blur = 0,
         color = color,
         font = font,
-        fontSize = size,
+        -- Every font in the panel and the wheel comes through here, so the
+        -- Text size setting is applied once, at this point.
+        fontSize = math.max(7, math.floor(size * (settings.text_scale or 1) + 0.5)),
         horzAlign = { type = halign or "min" },
         vertAlign = { type = "middle", offset = 0 },
         shadowOffset = { horz = 0, vert = 0 },
@@ -730,7 +740,7 @@ end
 -- wrap reliably, and how wide a line may be is a guess either way, so this
 -- errs short: DejaVu Sans Condensed averages a little over half its size.
 local function wrap(text, width_px, font_px)
-    local per_line = math.max(12, math.floor(width_px / ((font_px or px(FONT_PX)) * 0.55)))
+    local per_line = math.max(12, math.floor(width_px / ((font_px or px(FONT_PX)) * (settings.text_scale or 1) * 0.55)))
     local out = {}
     for para in (tostring(text or "") .. "\n"):gmatch("(.-)\r?\n") do
         if para == "" then
@@ -1082,8 +1092,14 @@ local function geometry()
     local dx, dy, dw, dh = default_geometry()
     local g = cfg.window or {}
     local sw, sh = screen_size()
-    local w = math.max(px(460), math.min(tonumber(g.w) or dw, sw))
-    local h = math.max(px(300), math.min(tonumber(g.h) or dh, sh))
+    -- A size remembered at another Panel size grows or shrinks with it, so
+    -- picking 70% makes the window smaller too, not just what is in it.
+    local gw, gh, gs = tonumber(g.w), tonumber(g.h), tonumber(g.scale)
+    if gw and gh and gs and gs > 0 and math.abs(gs - settings.scale) > 0.001 then
+        gw, gh = math.floor(gw * settings.scale / gs + 0.5), math.floor(gh * settings.scale / gs + 0.5)
+    end
+    local w = math.max(px(460), math.min(gw or dw, sw))
+    local h = math.max(px(300), math.min(gh or dh, sh))
     local x = math.max(0, math.min(tonumber(g.x) or dx, sw - w))
     local y = math.max(0, math.min(tonumber(g.y) or dy, sh - h))
     return x, y, w, h
@@ -1662,11 +1678,15 @@ end
 
 local show, hide, toggle
 
+-- The Panel size the current window was built at: its pixel size belongs to
+-- that, not to whatever the setting has just been changed to.
+local built_scale = nil
+
 local function remember_geometry()
     if not window or not visible then return end
     local ok, x, y, w, h = pcall(function() return window:getBounds() end)
     if not ok or type(h) ~= 'number' then return end
-    cfg.window = { x = x, y = y, w = w, h = h }
+    cfg.window = { x = x, y = y, w = w, h = h, scale = built_scale or settings.scale }
     geometry_dirty = true
 end
 
@@ -1764,6 +1784,7 @@ local function create()
     pool, pool_actions = { buttons = {}, texts = {}, pics = {} }, {}
     bound = {}
     local x, y, w, h = geometry()
+    built_scale = settings.scale
     window = Window.new(x, y, w, h, "Vector Strike")
     window:setSkin(skins.window)
     window:setDraggable(true)
@@ -3188,7 +3209,11 @@ local function recheck_settings()
     options_mtime = mtime
     local s = compute_settings()
     local scale_changed = math.abs(s.scale - settings.scale) > 0.001
+        or math.abs(s.text_scale - settings.text_scale) > 0.001
     local wheel_size_changed = math.abs(s.wheel_size - settings.wheel_size) > 0.001
+        or math.abs(s.text_scale - settings.text_scale) > 0.001
+    -- A size saved before 3.3 doesn't say which Panel size it was saved at.
+    if cfg.window and not cfg.window.scale then cfg.window.scale = settings.scale end
     settings = s
     maybe_auto_update()  -- in case it was just turned on
     if wheel_size_changed and not scale_changed and window and destroy_wheel and create_wheel then

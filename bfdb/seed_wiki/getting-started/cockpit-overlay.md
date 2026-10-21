@@ -263,16 +263,17 @@ within a few seconds, even in the middle of a mission.
 | 1 | **Show / hide key** | Ctrl+Alt+C | The key that opens and closes the panel from anywhere. Pick any letter, digit, F1–F12, numpad digit, Insert, Delete, Home, End or Pause, with any of Ctrl / Alt / Shift. Choose a combination none of your aircraft use. |
 | 2 | **Also open with the Comms key** | on | The panel also opens when you open the radio menu, so the key you already use for campaign things gets you there. |
 | 3 | **Update automatically** | on | When the server has a newer version, it downloads in the background and installs when you close DCS. Untick it to update by hand; the panel then tells you when there's a new version. |
-| 4 | **Panel size** | Auto | How big the panel's text and buttons are. Auto is 100% on a monitor and 135% in VR. |
-| 5 | **Wheel key** | Ctrl+Alt+W | The key that opens the wheel, and (tapped again) fires what you're pointing at. |
-| 6 | **Point with head tracking** | on | Turn off if you only want the mouse to point, e.g. if your head moves the pointer when you don't mean it to. |
-| 7 | **Head turn to reach an item** | Medium (10°) | How far you turn your head to reach the ring; the outer arc is twice that. Short suits TrackIR with high curves, Long suits VR or relaxed head movement. |
-| 8 | **Fire by looking at an item** | Off | Fire an item just by looking at it for 0.8–2 seconds — fully hands-free. Off by default so a glance never fires anything. |
-| 9 | **Wheel size** | 100% | How big the wheel is (80–150%). |
-| 10 | **Wheel colour** | Vector Strike green | Green, blue, amber, red or white. |
-| 11 | **Wheel opacity** | 90% | How see-through the wheel's segments are. |
-| 12 | **Open the wheel at** | Centre of the screen | Or **where the mouse is**. In VR it always opens where you're looking. |
-| 13 | **Wheel keys (while it is open)** | Arrow keys, Enter, Backspace | Drive the wheel with keys only — see [Keys only](#keys-only-no-mouse-no-head-tracking). Choose the arrows, the numpad, Ctrl+Alt + arrows, or Off. |
+| 4 | **Panel size** | Auto | How big the whole panel is: the window, its buttons and its text, from 60% to 200%. On a small screen or a laptop, try 70–80%. Auto picks 80% on screens under 820 pixels tall, 90% under 1000, 100% on anything bigger and 135% in VR. |
+| 5 | **Text size** | 100% | Just the writing, from 70% to 130%, without changing the layout. Make it smaller to fit more on a small panel, or bigger if it's hard to read. |
+| 6 | **Wheel key** | Ctrl+Alt+W | The key that opens the wheel, and (tapped again) fires what you're pointing at. |
+| 7 | **Point with head tracking** | on | Turn off if you only want the mouse to point, e.g. if your head moves the pointer when you don't mean it to. |
+| 8 | **Head turn to reach an item** | Medium (10°) | How far you turn your head to reach the ring; the outer arc is twice that. Short suits TrackIR with high curves, Long suits VR or relaxed head movement. |
+| 9 | **Fire by looking at an item** | Off | Fire an item just by looking at it for 0.8–2 seconds — fully hands-free. Off by default so a glance never fires anything. |
+| 10 | **Wheel size** | 100% | How big the wheel is (60–150%). On a small screen, try 60–70%. |
+| 11 | **Wheel colour** | Vector Strike green | Green, blue, amber, red or white. |
+| 12 | **Wheel opacity** | 90% | How see-through the wheel's segments are. |
+| 13 | **Open the wheel at** | Centre of the screen | Or **where the mouse is**. In VR it always opens where you're looking. |
+| 14 | **Wheel keys (while it is open)** | Arrow keys, Enter, Backspace | Drive the wheel with keys only — see [Keys only](#keys-only-no-mouse-no-head-tracking). Choose the arrows, the numpad, Ctrl+Alt + arrows, or Off. |
 
 **HOTAS buttons:** DCS doesn't let add-ons add their own entry to the
 **Controls** page, so to open the panel or wheel — or drive the wheel — from
