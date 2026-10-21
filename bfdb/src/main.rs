@@ -9589,7 +9589,6 @@ async fn main() -> Result<()> {
         .or(pilot_breakdown)
         .or(pilot_progression)
         .or(xp_leaderboard)
-        .or(squadron_routes)
         .or(pilot_kills_route)
         .or(pilot_deploys_route)
         .or(pilot)
@@ -9728,6 +9727,13 @@ async fn main() -> Result<()> {
         .or(range_routes)
         // Flight replay: also boxed, also ahead of the SPA catch-all.
         .or(replay_routes)
+        // Squadrons and GCI transmit: POSTs as well as GETs, so outside the
+        // `warp::get()` group below. Inside it every POST was refused with a
+        // 405 -- founding, joining, leaving or kicking from a squadron, and
+        // transmitting to GCI from the dashboard all failed (a cross-origin
+        // 405 carries no CORS header, so the browser reported a CORS block).
+        // Each route checks its own method.
+        .or(squadron_routes)
         .or(admin_ops_proxy)
         .or(warp::get()
         .and(

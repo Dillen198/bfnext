@@ -1,6 +1,20 @@
 # Changelog
 
-Current version: **v2.7**. Each update gets the next number; the newest is at the top.
+Current version: **v2.8**. Each update gets the next number; the newest is at the top.
+
+## v2.8 — October 21, 2026
+
+**Dashboard look** — wireframe art in place of the flags: a carrier along the
+top bar, an Su-27 behind the sign-in page, an F/A-18 over the stat row, and a
+jet, helicopter, tank or carrier on each page's header. Territory Control
+keeps the server's flags.
+
+**Fixes**
+- Squadrons work again: founding, joining, leaving and removing a member all
+  failed with an error (the browser called it a CORS block).
+- Transmitting to GCI from the dashboard works again; it failed the same way.
+- Rounds show their number even while a server is still on an older version.
+- The map no longer floods the browser console with canvas warnings.
 
 ## v2.7 — October 21, 2026
 
