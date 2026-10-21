@@ -2624,9 +2624,11 @@ impl Ephemeral {
                                     usable.len(),
                                     if helicopter && usable.is_empty() {
                                         "a helicopter starts from open ground instead"
-                                    } else if usable.is_empty()
-                                        && *ab_cat != dcso3::airbase::AirbaseCategory::Airdrome
-                                    {
+                                    } else if usable.is_empty() && launch_req.is_some() {
+                                        "the launch is refused"
+                                    } else if usable.is_empty() {
+                                        // DCS deletes a fixed-wing flight it has
+                                        // no spot for, so it never gets the field.
                                         "fixed wing air-starts over the field instead"
                                     } else {
                                         "the rest go on the field for DCS to assign"

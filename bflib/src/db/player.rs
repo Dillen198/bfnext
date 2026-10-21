@@ -51,6 +51,12 @@ struct VictimInfo {
 pub enum SlotAuth {
     Yes(Option<stats::Unit>),
     ObjectiveNotOwned(Side),
+    /// A slot of the other side, and the player can't change over to it:
+    /// sides are locked (`locked`), or they have no switches left. Their side
+    /// is `side`. This was `ObjectiveNotOwned(side)`, which told a Red pilot
+    /// in a Blue slot only "Red does not own the objective" -- read as the
+    /// server being broken, not as "you are Red".
+    WrongSide { side: Side, locked: bool },
     ObjectiveHasNoLogistics,
     NoLives(LifeType),
     NoPoints {
@@ -1272,10 +1278,10 @@ impl Db {
         // rejected slot doesn't cost a switch.
         let switched_from = if slot_side != player.side {
             if self.ephemeral.cfg.lock_sides {
-                return SlotAuth::ObjectiveNotOwned(player.side);
+                return SlotAuth::WrongSide { side: player.side, locked: true };
             }
             if let Some(0) = player.side_switches {
-                return SlotAuth::ObjectiveNotOwned(player.side);
+                return SlotAuth::WrongSide { side: player.side, locked: false };
             }
             let from = player.side;
             player.side = slot_side;

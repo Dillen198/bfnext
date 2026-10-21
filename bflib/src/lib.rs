@@ -710,6 +710,19 @@ fn process_slot_rejection(ctx: &mut Context, id: PlayerId, ucid: Ucid, rej: Slot
             ));
             ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg);
         }
+        SlotAuth::WrongSide { side, locked } => {
+            let why = if locked {
+                "sides are locked on this server"
+            } else {
+                "you have no side switches left"
+            };
+            ctx.db.ephemeral.msgs().send(
+                MsgTyp::Chat(Some(id)),
+                format_compact!(
+                    "You are on {side:?} in this campaign and {why} -- pick a {side:?} slot"
+                ),
+            );
+        }
         SlotAuth::NotRegistered(_) => warn!("unexpected NotRegistered"),
         SlotAuth::Yes(_) => warn!("slot was not rejected!"),
         SlotAuth::EraRestricted { vehicle, era } => {

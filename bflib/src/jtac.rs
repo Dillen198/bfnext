@@ -1693,7 +1693,19 @@ impl Jtac {
         if let Some(target) = &self.target {
             let (pos, velocity) = match &target.id {
                 EnId::Unit(uid) => {
-                    let unit = db.unit(uid)?;
+                    // Gone from the campaign with no dead event (its group
+                    // deleted, despawned): it is no target any more. Kept,
+                    // this failed every second for as long as the JTAC
+                    // lived and it never moved on to the next contact.
+                    let Ok(unit) = db.unit(uid) else {
+                        let id = target.id.clone();
+                        info!("jtac {} target {id} no longer exists, dropping it", self.gid);
+                        if !self.remove_contact(lua, db, &id).context("dropping a vanished target")? {
+                            self.remove_target(db, lua).context("dropping a vanished target")?;
+                            self.autoshift = None;
+                        }
+                        return Ok(());
+                    };
                     let v = db
                         .ephemeral
                         .get_object_id_by_uid(uid)

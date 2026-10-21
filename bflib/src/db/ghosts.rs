@@ -516,7 +516,10 @@ impl Db {
     }
 
     /// Record a live DCS object for `uid` exactly as `unit_born` would have.
-    fn remap_live_unit(&mut self, uid: UnitId, id: DcsOid<ClassUnit>) {
+    fn remap_live_unit(&mut self, lua: MizLua, uid: UnitId, id: DcsOid<ClassUnit>) {
+        if let Err(e) = self.stat_unit(lua, uid) {
+            warn!("[GHOST] announcing re-mapped unit {uid:?} to stats: {e:?}");
+        }
         self.ephemeral.uid_by_object_id.insert(id.clone(), uid);
         self.ephemeral.object_id_by_uid.insert(uid, id);
         self.ephemeral.units_potentially_close_to_enemies.insert(uid);
@@ -537,7 +540,7 @@ impl Db {
         for uid in ghosts {
             match self.dcs_live_unit(lua, &uid) {
                 Some(id) => {
-                    self.remap_live_unit(uid, id);
+                    self.remap_live_unit(lua, uid, id);
                     remapped += 1;
                 }
                 None => g.ghosts.push(uid),

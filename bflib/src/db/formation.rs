@@ -1916,6 +1916,9 @@ impl Db {
             self.ephemeral.uid_by_object_id.insert(oid.clone(), uid);
             self.ephemeral.object_id_by_uid.insert(uid, oid);
             self.ephemeral.units_potentially_close_to_enemies.insert(uid);
+            if let Err(e) = self.stat_unit(lua, uid) {
+                warn!("formation: announcing {name} to stats: {e:?}");
+            }
             if self.persisted.units.get(&uid).map_or(false, |u| u.tags.contains(UnitTag::Driveable)) {
                 self.ephemeral.units_able_to_move.insert(uid);
             }

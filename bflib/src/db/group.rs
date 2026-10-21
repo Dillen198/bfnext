@@ -1610,6 +1610,26 @@ impl Db {
         Ok(gid)
     }
 
+    /// Tell the stats db `uid` is in the world. Every later `Stat::Position`
+    /// for it updates that record, so anything that starts tracking a unit
+    /// -- not only its birth event -- has to send this first: a unit picked
+    /// up after a missed birth otherwise fails every position bfdb gets.
+    pub(super) fn stat_unit(&self, lua: MizLua, uid: UnitId) -> Result<()> {
+        let unit = unit!(self, uid)?;
+        self.ephemeral.stat(Stat::Unit {
+            id: EnId::Unit(uid),
+            gid: Some(unit.group),
+            owner: unit.side,
+            typ: stats::Unit { typ: unit.typ.clone(), tags: unit.tags },
+            pos: stats::Pos {
+                pos: Coord::singleton(lua)?
+                    .lo_to_ll(LuaVec3(Vector3::new(unit.pos.x, 0., unit.pos.y)))?,
+                velocity: unit.airborne_velocity.unwrap_or_default(),
+            },
+        });
+        Ok(())
+    }
+
     pub(crate) fn unit_born(
         &mut self,
         lua: MizLua,
@@ -1644,17 +1664,7 @@ impl Db {
             {
                 self.ephemeral.units_able_to_move.insert(uid);
             }
-            self.ephemeral.stat(Stat::Unit {
-                id: EnId::Unit(uid),
-                gid: Some(unit.group),
-                owner: unit.side,
-                typ: stats::Unit { typ: unit.typ.clone(), tags: unit.tags },
-                pos: stats::Pos {
-                    pos: Coord::singleton(lua)?
-                        .lo_to_ll(LuaVec3(Vector3::new(unit.pos.x, 0., unit.pos.y)))?,
-                    velocity: unit.airborne_velocity.unwrap_or_default(),
-                },
-            });
+            self.stat_unit(lua, uid)?;
             let gid = unit.group;
             if group_health!(self, gid)?.0 == 1 {
                 self.mark_group(&gid)?
@@ -1690,11 +1700,18 @@ impl Db {
             }
         };
         let name = unit.get_player_name()?;
-        let ifo = name.and_then(|name| connected.get_by_name(&name));
+        let ifo = name.as_ref().and_then(|name| connected.get_by_name(name));
         let ucid = match ifo {
             Some(ifo) => ifo.ucid,
             None => {
-                error!("slot {slot} born with no player in it");
+                // An empty seat DCS spawned with the group, or a player who
+                // left as the unit came in, read very differently: say which.
+                match &name {
+                    None => error!("slot {slot} born with no player in it (DCS gives no player name)"),
+                    Some(n) => error!(
+                        "slot {slot} born with no player in it ({n:?} is not a connected player)"
+                    ),
+                }
                 unit.clone().destroy()?;
                 return Ok(BirthRes::None);
             }
