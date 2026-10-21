@@ -1,6 +1,35 @@
 # Changelog
 
-Current version: **v2.6**. Each update gets the next number; the newest is at the top.
+Current version: **v2.7**. Each update gets the next number; the newest is at the top.
+
+## v2.7 — October 21, 2026
+
+**Round over, announced everywhere**
+- When a side wins a round, the game says so: a panel and a chat line naming
+  the winner, then a countdown to the reset (at least 30 seconds).
+- Discord posts a full rundown of the round: who won and how long it ran, the
+  final front line, kills and captures by side, the MVP and top five, the
+  best ace, striker, capturer and logistician, and the most fought-over
+  bases.
+- The dashboard and the website show the result too, with a link to the
+  round's full report on the Rounds page, which now also lists the round's
+  leaders.
+
+**Notifications** — round results, server notices and maintenance now go to a
+bell in the top bar of the dashboard and the website, instead of banners
+across every page. Only an outage still shows a banner.
+
+**Syria: NATO vs RSII** — the modern server is now NATO against RSII, the
+Russia, Syria, Iran and Iraq coalition, with their flags. Each server's
+dashboard uses its own side names, so the 2008 server still reads Georgia vs
+Russia.
+
+**Fixes**
+- Rounds are numbered 1, 2, 3 on each server. They used to show internal ids
+  like 108000656.
+- Opening a base on the dashboard while signed out, or without a side this
+  round, now says why its stock is hidden instead of failing every minute.
+- The flags behind the dashboard's stat row fill its full height.
 
 ## v2.6 — October 21, 2026
 
