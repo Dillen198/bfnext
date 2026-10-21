@@ -1,6 +1,17 @@
 # Changelog
 
-Current version: **v2.9**. Each update gets the next number; the newest is at the top.
+Current version: **v3.0**. Each update gets the next number; the newest is at the top.
+
+## v3.0 — October 21, 2026
+
+**A new look for the dashboard**
+- Military lettering throughout: stencilled headings, a condensed body face
+  and terminal-style figures.
+- The wireframe art is drawn from real 3D models now, the same ones the
+  flight replay uses: a carrier behind the sign-in page and along the top
+  bar, an F/A-18 over the stat row, and a Flanker, Hornet, Apache, Abrams or
+  carrier on each page's header. Lines facing you are drawn strong, the ones
+  behind faint, and the art is blended into the panels.
 
 ## v2.9 — October 21, 2026
 
