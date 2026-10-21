@@ -350,7 +350,7 @@ export default function RoundsPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="su27" title="ROUNDS" sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} on this server`} icon={Award} />
+      <PageHeader art="flanker" title="ROUNDS" sub={`${rounds.length} round${rounds.length === 1 ? '' : 's'} on this server`} icon={Award} />
       <div className="flex-1 overflow-auto p-4">
         <QueryState isLoading={q.isLoading} isError={q.isError} error={q.error} isEmpty={rounds.length === 0} what="rounds" onRetry={q.refetch} />
         {selected && (

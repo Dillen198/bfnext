@@ -564,7 +564,7 @@ export default function Backup({ state }: { state: AppState }) {
   return (
     <div className="p-5 space-y-4" style={{ maxWidth: 980 }}>
       <div>
-        <div style={{ fontSize: '1.1rem', letterSpacing: '0.1em', fontFamily: 'var(--font-display, "Bebas Neue")' }}>BACKUP &amp; RESTORE</div>
+        <div style={{ fontSize: '1.1rem', letterSpacing: '0.1em', fontFamily: 'var(--font-display)' }}>BACKUP &amp; RESTORE</div>
         <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.6 }}>
           Moving to a new PC or reinstalling Windows: back up here, copy the zip off the PC, then restore it with this app on the new Windows.
           The zip holds secrets (Discord token, passwords, API keys) -- <Pill color={AMBER}>keep it private</Pill>

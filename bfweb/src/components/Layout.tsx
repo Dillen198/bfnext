@@ -269,7 +269,7 @@ export default function Layout() {
   // A carrier under way along the top bar, starting just past the clocks
   // (which end about 530px in): on a wide screen that is open bar; on a
   // narrow one it passes behind the counters, soft enough to read over.
-  const topbarArt = useWireframe('carrier', { base: 'var(--bg-chrome)', strength: 'soft', position: 'left 540px center', size: 'auto 96%', fade: 'none' })
+  const topbarArt = useWireframe('carrier', { base: 'var(--bg-chrome)', strength: 'faint', position: 'left 540px center', size: 'auto 96%', fade: 'none' })
   const navigate = useNavigate()
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
@@ -411,7 +411,7 @@ export default function Layout() {
             <LogoMark size={46} alt={campaign.name} />
           )}
           <div>
-            <div className="topbar-brandname" style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '0.9rem', letterSpacing: '0.2em', color: 'var(--text)', lineHeight: 1 }}>
+            <div className="topbar-brandname" style={{ fontFamily: 'var(--font-display)', fontSize: '0.9rem', letterSpacing: '0.2em', color: 'var(--text)', lineHeight: 1 }}>
               {campaign.name}
             </div>
             <div style={{ marginTop: 2 }}>

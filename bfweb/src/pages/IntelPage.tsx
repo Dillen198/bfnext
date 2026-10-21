@@ -54,8 +54,8 @@ const REFRESH_MS = 20_000
 const COL_BLUE = '#4a8fd4'
 const COL_RED = '#cc4444'
 const COL_NEUTRAL = '#6a7a5a'
-const FONT_HEAD = "'Bebas Neue',sans-serif"
-const FONT_MONO = "'Share Tech Mono','Courier New',monospace"
+const FONT_HEAD = 'var(--font-display)'
+const FONT_MONO = 'var(--font-mono)'
 const DEFAULT_OPACITY = 0.9
 
 function sideColor(s: string) {

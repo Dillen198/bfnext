@@ -159,7 +159,7 @@ export default function AboutPage() {
                       background: 'var(--bg-elevated)',
                       border: `1px solid ${roleColor}`,
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontFamily: "'Bebas Neue', sans-serif",
+                      fontFamily: 'var(--font-display)',
                       fontSize: '1.1rem', letterSpacing: '0.06em', color: roleColor,
                     }}
                   >

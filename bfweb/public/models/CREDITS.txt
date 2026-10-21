@@ -200,3 +200,10 @@ Tu-160.glb
   Changes to all of the above: every mesh baked into one, re-oriented and
   scaled to real length, simplified to a few thousand triangles; materials,
   textures, normals and animations removed.
+
+Dashboard wireframe art (public/media/wire/*.json)
+  The line drawings behind the dashboard's top bar, login page, stat row and
+  page headers are made from CVN.glb, Su-35.glb, F-18.glb, AH-64.glb and
+  M1A2.glb above by bfweb/scripts/gen-wireframes.py (creases, silhouettes and
+  hidden-line removal). They are derivatives of those works and carry the
+  same credits and CC-BY-4.0 licence.

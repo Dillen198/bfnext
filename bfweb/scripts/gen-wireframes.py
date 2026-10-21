@@ -1,438 +1,373 @@
-"""Draw the dashboard's wireframe art: a carrier, an Su-27, an F/A-18, an
-AH-64 and an M1 tank, each a rough 3D model projected to SVG line work.
+"""Draw the dashboard's wireframe art from the replay's real 3D models.
 
-Writes src/lib/wireframes.gen.ts: per view, a viewBox and three path strings,
-near to far -- the far lines are drawn fainter, which is what makes a
-wireframe read as a solid. src/lib/wireframe.ts colours and fades them; the
-models stay simple on purpose, they are background art at low opacity.
+Each view takes one of public/models/*.glb (the flight replay's models; see
+public/models/CREDITS.txt) and keeps the lines a draughtsman would: the
+mesh's creases (faces meeting at a sharp angle), its open edges, and its
+silhouette from that view's camera. Not every triangle -- on a 6,000-face
+model that is a grey smear.
 
-Units are metres: x forward, y right (starboard), z up.
+Lines are sorted by what the camera can see: the model's depth is rendered
+with a small rasteriser and every edge tested against it. Visible lines are
+drawn strong (near brighter than far); lines behind the surface -- the far
+side, the cockpit interior, the internal structure a simplified mesh is full
+of -- are drawn faint. It keeps the see-through look of a wireframe while
+reading like a technical drawing.
 
-    python bfweb/scripts/gen-wireframes.py
+Writes public/media/wire/<view>.json: the viewBox size and three path
+strings: visible near, visible far, hidden. src/lib/wireframe.ts fetches one when a page
+shows it and paints it in the campaign's accent colour.
+
+    python bfweb/scripts/gen-wireframes.py                 # write the views
+    python bfweb/scripts/gen-wireframes.py --preview DIR   # and PNGs of them
+
+Needs numpy (and Pillow for --preview).
 """
 
+import json
 import math
+import struct
+import sys
 from pathlib import Path
 
 import numpy as np
 
-OUT = Path(__file__).resolve().parents[1] / "src" / "lib" / "wireframes.gen.ts"
+WEB = Path(__file__).resolve().parents[1]
+MODELS = WEB / "public" / "models"
+OUT = WEB / "public" / "media" / "wire"
 
-Line = list  # a polyline: a list of (x, y, z)
-
-
-# ── building blocks ─────────────────────────────────────────────────────────
-
-def ellipse(cy, cz, a, b, n, a0=0.0, a1=2 * math.pi, closed=True):
-    count = n if closed else n + 1
-    step = (a1 - a0) / n
-    return [(cy + a * math.cos(a0 + i * step), cz + b * math.sin(a0 + i * step)) for i in range(count)]
-
-
-def superellipse(cy, cz, a, b, p, n):
-    pts = []
-    for i in range(n):
-        t = 2 * math.pi * i / n
-        c, s = math.cos(t), math.sin(t)
-        pts.append((cy + a * math.copysign(abs(c) ** (2 / p), c), cz + b * math.copysign(abs(s) ** (2 / p), s)))
-    return pts
-
-
-def loft(stations, section, closed=True, rings=True, stringers=True, every=1):
-    """Rings at each station and stringers joining them. `section(x)` gives
-    the (y, z) points around the body at station x; a point section (the tip
-    of a nose) collapses the stringers onto it."""
-    secs = [[(x, y, z) for (y, z) in section(x)] for x in stations]
-    out: list[Line] = []
-    if rings:
-        for s in secs:
-            if len(set(s)) > 1:
-                out.append(s + [s[0]] if closed else s)
-    if stringers:
-        n = max(len(s) for s in secs)
-        for i in range(0, n, every):
-            out.append([s[i % len(s)] for s in secs])
-    return out
-
-
-def mirror(lines: list[Line]) -> list[Line]:
-    return lines + [[(x, -y, z) for (x, y, z) in l] for l in lines]
-
-
-def poly(pts, closed=True) -> Line:
-    pts = list(pts)
-    return pts + [pts[0]] if closed else pts
-
-
-def lerp(a, b, t):
-    return tuple(a[i] + (b[i] - a[i]) * t for i in range(len(a)))
-
-
-def circle_xz(cx, cy, cz, r, n=16) -> Line:
-    return poly([(cx + r * math.cos(2 * math.pi * i / n), cy, cz + r * math.sin(2 * math.pi * i / n)) for i in range(n)])
-
-
-def circle_xy(cx, cy, cz, r, n=24) -> Line:
-    return poly([(cx + r * math.cos(2 * math.pi * i / n), cy + r * math.sin(2 * math.pi * i / n), cz) for i in range(n)])
-
-
-def box(x0, x1, y0, y1, z0, z1) -> list[Line]:
-    b = [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0)]
-    t = [(x, y, z1) for (x, y, _) in b]
-    return [poly(b), poly(t)] + [[b[i], t[i]] for i in range(4)]
-
-
-def prism(foot, z0, z1, top_scale=1.0) -> list[Line]:
-    """A vertical prism over a footprint (x, y) list, its top shrunk toward the centre."""
-    cx = sum(p[0] for p in foot) / len(foot)
-    cy = sum(p[1] for p in foot) / len(foot)
-    b = [(x, y, z0) for (x, y) in foot]
-    t = [(cx + (x - cx) * top_scale, cy + (y - cy) * top_scale, z1) for (x, y) in foot]
-    return [poly(b), poly(t)] + [[b[i], t[i]] for i in range(len(foot))]
-
-
-def surface(edge_a, edge_b, ribs=4, spars=()) -> list[Line]:
-    """A flat panel between two edges (leading, trailing), with the outline,
-    `ribs` lines across and a line at each chord fraction in `spars`."""
-    out = [edge_a, edge_b, [edge_a[0], edge_b[0]], [edge_a[-1], edge_b[-1]]]
-
-    def at(edge, t):
-        # point a fraction t along a polyline, by index
-        f = t * (len(edge) - 1)
-        i = min(int(f), len(edge) - 2)
-        return lerp(edge[i], edge[i + 1], f - i)
-
-    for k in range(1, ribs + 1):
-        t = k / (ribs + 1)
-        out.append([at(edge_a, t), at(edge_b, t)])
-    for c in spars:
-        out.append([lerp(at(edge_a, i / 12), at(edge_b, i / 12), c) for i in range(13)])
-    return out
-
-
-# ── models ──────────────────────────────────────────────────────────────────
-
-def su27() -> list[Line]:
-    L: list[Line] = []
-    # Forward fuselage: a drooped cone into the cockpit section.
-    def fwd(x):
-        r = 0.88 * min(1.0, ((10.9 - x) / 5.2) ** 0.62)
-        cz = -0.18 * max(0.0, (x - 4.5) / 6.4)
-        return ellipse(0, cz, r, r * 1.04, 12)
-    L += loft([10.9, 10.3, 9.4, 8.3, 7.1, 5.8, 4.4, 3.0, 1.6], fwd, every=2)
-    # Canopy bubble.
-    def canopy(x):
-        t = (6.7 - x) / 3.6
-        h = 0.58 * math.sin(math.pi * min(max(t, 0), 1)) ** 0.7
-        return ellipse(0, 0.82, 0.42 * (0.4 + 0.6 * h / 0.58), max(h, 0.001), 6, 0, math.pi, closed=False)
-    L += loft([6.7, 6.2, 5.4, 4.6, 3.8, 3.1], canopy, closed=False)
-    # Centre body between the wings.
-    def centre(x):
-        t = (1.6 - x) / 9.6
-        a = 1.0 + 0.5 * math.sin(math.pi * min(t * 1.4, 1)) - 0.5 * max(0, t - 0.7) / 0.3
-        b = 0.62 - 0.22 * t
-        return ellipse(0, 0.1, a, b, 14)
-    L += loft([1.6, 0.0, -1.8, -3.6, -5.4, -7.0, -8.0], centre, every=2)
-    # Tail stinger.
-    L += loft([-8.0, -9.0, -10.0, -11.0], lambda x: ellipse(0, 0.05, 0.42 - 0.09 * (-8 - x), 0.4 - 0.09 * (-8 - x), 8))
-    # Engine nacelles: square intakes rounding into the nozzles.
-    def nacelle(x):
-        t = (1.8 - x) / 11.4
-        p = 4.5 - 2.5 * t
-        return superellipse(1.3, -0.78, 0.55 + 0.07 * t, 0.62 - 0.02 * t, p, 12)
-    nac = loft([1.8, 0.6, -1.5, -4.0, -6.5, -8.5, -9.6], nacelle, every=2)
-    nac += loft([-9.6, -10.2], lambda x: ellipse(1.3, -0.78, 0.56, 0.56, 12), stringers=True, every=3)
-    L += mirror(nac)
-    # Wings, with the LERX blending in.
-    lerx = [(4.8, 0.85, 0.05), (3.2, 1.25, 0.05), (1.5, 1.7, 0.03), (0.0, 2.2, 0.0)]
-    le = [(0.0, 2.2, 0.0), (-1.4, 3.8, 0.0), (-2.9, 5.45, 0.0), (-4.3, 7.0, 0.0)]
-    te = [(-7.2, 1.7, 0.0), (-6.9, 2.8, 0.0), (-6.6, 4.0, 0.0), (-6.1, 5.6, 0.0), (-5.6, 7.1, 0.0)]
-    wing = surface(le, te[:4] + [te[4]], ribs=3, spars=(0.62,))
-    wing += [lerx]
-    # Wingtip missile.
-    wing += loft([-2.6, -3.2, -5.6, -6.4], lambda x: ellipse(7.25, 0.0, 0.1, 0.1, 6), every=2)
-    L += mirror(wing)
-    # Horizontal stabilisers.
-    L += mirror(surface([(-7.3, 1.95, -0.35), (-9.4, 4.5, -0.35)], [(-10.7, 1.95, -0.35), (-10.3, 4.5, -0.35)], ribs=1))
-    # Twin vertical tails.
-    fin = [(-6.4, 1.75, 0.35), (-8.9, 1.75, 3.6), (-10.1, 1.75, 3.6), (-9.9, 1.75, 0.35)]
-    L += mirror([poly(fin), [(-9.2, 1.75, 0.35), (-9.6, 1.75, 3.55)], [(-7.6, 1.75, 1.95), (-9.95, 1.75, 1.95)]])
-    # Ventral fins.
-    L += mirror([poly([(-6.6, 1.7, -1.25), (-7.6, 1.7, -1.95), (-8.4, 1.7, -1.95), (-8.2, 1.7, -1.25)])])
-    return L
-
-
-def fa18() -> list[Line]:
-    L: list[Line] = []
-    def fwd(x):
-        r = 0.82 * min(1.0, ((8.6 - x) / 4.6) ** 0.6)
-        cz = -0.12 * max(0.0, (x - 3.5) / 5.1)
-        return ellipse(0, cz, r, r * 1.05, 12)
-    L += loft([8.6, 8.0, 7.1, 6.0, 4.8, 3.5, 2.2, 1.0], fwd)
-    def canopy(x):
-        t = (5.0 - x) / 2.9
-        h = 0.55 * math.sin(math.pi * min(max(t, 0), 1)) ** 0.7
-        return ellipse(0, 0.78, 0.4 * (0.4 + 0.6 * h / 0.55), max(h, 0.001), 6, 0, math.pi, closed=False)
-    L += loft([5.0, 4.5, 3.8, 3.0, 2.1], canopy, closed=False)
-    L += loft([1.0, -1.0, -3.0, -5.0, -6.6], lambda x: ellipse(0, 0.1, 1.2 - 0.05 * max(0, -x - 3), 0.62, 14), every=2)
-    nac = loft([0.8, -1.5, -4.0, -6.4, -7.4], lambda x: superellipse(0.72, -0.55, 0.5, 0.5, 3.5 - 1.5 * (0.8 - x) / 8.2, 12), every=2)
-    L += mirror(nac)
-    lex = [(5.2, 0.6, 0.1), (3.5, 0.95, 0.08), (1.5, 1.4, 0.04), (-0.2, 2.0, 0.0)]
-    le = [(-0.2, 2.0, 0.0), (-1.3, 4.1, 0.0), (-2.4, 6.15, 0.0)]
-    te = [(-4.9, 1.9, 0.0), (-4.5, 4.0, 0.0), (-4.0, 6.15, 0.0)]
-    wing = surface(le, te, ribs=2, spars=(0.6,)) + [lex]
-    wing += loft([-1.2, -1.8, -4.0, -4.6], lambda x: ellipse(6.25, 0.0, 0.09, 0.09, 6), every=2)
-    L += mirror(wing)
-    L += mirror(surface([(-5.3, 1.45, -0.3), (-7.3, 3.4, -0.3)], [(-8.2, 1.45, -0.3), (-8.0, 3.4, -0.3)], ribs=1))
-    cant = math.tan(math.radians(20))
-    root_z, h = 0.55, 2.7
-    tip_y = 1.1 + h * cant
-    fin = [(-3.6, 1.1, root_z), (-5.9, tip_y, root_z + h), (-7.2, tip_y, root_z + h), (-6.6, 1.1, root_z)]
-    L += mirror([poly(fin), [(-5.1, 1.1 + h / 2 * cant, root_z + h / 2), (-6.9, 1.1 + h / 2 * cant, root_z + h / 2)]])
-    return L
-
-
-def apache() -> list[Line]:
-    L: list[Line] = []
-    def body(x):
-        t = (6.2 - x) / 7.7
-        a = 0.35 + 0.55 * math.sin(math.pi * min(t * 1.2, 1)) ** 0.6
-        b = 0.55 + 0.45 * math.sin(math.pi * min(t * 1.3, 1)) ** 0.5
-        return superellipse(0, 0.15, a, b, 3.0, 12)
-    L += loft([6.2, 5.6, 4.6, 3.4, 2.0, 0.6, -0.8, -1.6], body, every=2)
-    # Tandem canopy: two faceted humps.
-    for x0, x1, h in ((4.9, 3.4, 0.55), (3.3, 1.6, 0.7)):
-        L += loft([x0, (x0 * 2 + x1) / 3, (x0 + x1 * 2) / 3, x1],
-                  lambda x, x0=x0, x1=x1, h=h: ellipse(0, 0.95, 0.45, max(h * max(math.sin(math.pi * (x0 - x) / (x0 - x1)), 0.0) ** 0.7, 0.001), 6, 0, math.pi, closed=False),
-                  closed=False)
-    # Tail boom, rising to the fin.
-    L += loft([-1.6, -3.5, -5.5, -7.5, -8.6], lambda x: ellipse(0, 0.35 + 0.06 * (-1.6 - x), 0.45 - 0.035 * (-1.6 - x), 0.42 - 0.03 * (-1.6 - x), 8), every=2)
-    L += [poly([(-7.9, 0, 0.75), (-8.9, 0, 2.9), (-9.5, 0, 2.9), (-9.0, 0, 0.7)])]
-    L += mirror([poly([(-8.4, 0.2, 0.55), (-8.6, 1.7, 0.55), (-9.2, 1.7, 0.55), (-9.1, 0.2, 0.55)])])
-    # Tail rotor on the left of the fin.
-    tr = (-9.1, -0.35, 2.35)
-    L += [circle_xz(tr[0], tr[1], tr[2], 1.4, 20)]
-    for a in (0, 90):
-        r = math.radians(a + 25)
-        L += [[(tr[0] - 1.4 * math.cos(r), tr[1], tr[2] - 1.4 * math.sin(r)), (tr[0] + 1.4 * math.cos(r), tr[1], tr[2] + 1.4 * math.sin(r))]]
-    # Engines high on the sides.
-    L += mirror(loft([0.9, 0.0, -1.2, -2.1], lambda x: ellipse(0.78, 1.05, 0.34, 0.34, 8), every=2))
-    # Stub wings, rocket pods and Hellfire rails.
-    L += mirror([poly([(0.7, 0.8, 0.25), (0.6, 2.6, 0.25), (-0.3, 2.6, 0.25), (-0.4, 0.8, 0.25)])])
-    for y in (1.45, 2.35):
-        L += mirror(loft([1.3, 0.9, -0.3, -0.7], lambda x, y=y: ellipse(y, -0.2, 0.22, 0.22, 8), every=2))
-    # Mast, hub and the main rotor: four blades and the disc they sweep.
-    L += [[(0.0, 0, 1.55), (0.0, 0, 2.35)], circle_xy(0.0, 0.0, 2.35, 7.3, 40)]
-    for a in (20, 110, 200, 290):
-        r = math.radians(a)
-        tip = (7.3 * math.cos(r), 7.3 * math.sin(r), 2.35)
-        side = (0.25 * -math.sin(r), 0.25 * math.cos(r), 0)
-        L += [poly([(side[0], side[1], 2.35), (tip[0] + side[0], tip[1] + side[1], 2.35),
-                    (tip[0] - side[0], tip[1] - side[1], 2.35), (-side[0], -side[1], 2.35)])]
-    # Chin gun and the gear.
-    L += [[(4.2, 0, -0.55), (5.3, 0, -0.6)]]
-    for y in (1.05, -1.05):
-        L += [[(1.6, y * 0.5, -0.4), (1.6, y, -1.25)], circle_xz(1.6, y, -1.35, 0.35, 12)]
-    L += [[(-7.6, 0, 0.2), (-7.7, 0, -0.45)], circle_xz(-7.7, 0, -0.55, 0.15, 10)]
-    return L
-
-
-def tank() -> list[Line]:
-    L: list[Line] = []
-    # Hull: a sloped glacis, flat deck, sides.
-    side = [(3.95, 0.75), (2.9, 1.25), (-3.85, 1.25), (-3.95, 0.7), (-3.5, 0.45), (3.4, 0.45)]
-    for y in (1.75, -1.75):
-        L += [poly([(x, y, z) for (x, z) in side])]
-    for (x, z) in side:
-        L += [[(x, 1.75, z), (x, -1.75, z)]]
-    # Tracks: idler, sprocket, the run along the ground and the road wheels.
-    for y in (1.55, -1.55):
-        L += [poly([(3.75, y, 0.8), (3.0, y, 0.02), (-3.2, y, 0.02), (-3.9, y, 0.8), (-3.5, y, 1.0), (3.4, y, 1.0)])]
-        for i in range(7):
-            L += [circle_xz(2.65 - i * 0.92, y, 0.38, 0.33, 10)]
-        L += [circle_xz(3.55, y, 0.78, 0.3, 10), circle_xz(-3.65, y, 0.78, 0.3, 10)]
-    # Side skirts.
-    L += mirror([poly([(3.7, 1.85, 0.6), (3.0, 1.85, 1.2), (-3.85, 1.85, 1.2), (-3.85, 1.85, 0.62)])])
-    # Turret: the angular wedge, with a bustle at the back.
-    foot = [(2.15, 0.0), (1.6, 1.25), (-2.2, 1.65), (-3.0, 1.4), (-3.0, -1.4), (-2.2, -1.65), (1.6, -1.25)]
-    L += prism(foot, 1.25, 2.3, top_scale=0.9)
-    # Gun, with its fume extractor.
-    L += loft([2.0, 4.2, 7.7], lambda x: ellipse(0, 1.85, 0.13, 0.13, 8), every=2)
-    L += loft([4.6, 5.4], lambda x: ellipse(0, 1.85, 0.19, 0.19, 8), every=2)
-    L += loft([2.0, 2.6], lambda x: ellipse(0, 1.85, 0.32, 0.3, 8), every=2)
-    # Commander's cupola and machine gun.
-    L += [circle_xy(-0.7, 0.7, 2.3, 0.4, 12), circle_xy(-0.7, 0.7, 2.55, 0.36, 12)]
-    L += [[(-0.7, 0.7, 2.62), (0.5, 0.7, 2.7)]]
-    return L
-
-
-def carrier() -> list[Line]:
-    L: list[Line] = []
-    deck_z, wl = 20.0, 0.0
-    # Hull: stations from bow to stern, flaring from the waterline to the deck.
-    def hull(x):
-        if x > 120:
-            t = (x - 120) / 48
-            hw_wl, hw_dk = 20 * (1 - t) ** 0.9, 26 * (1 - t) ** 0.6
-        elif x < -140:
-            t = (-140 - x) / 28
-            hw_wl, hw_dk = 20 - 8 * t, 24 - 4 * t
-        else:
-            hw_wl, hw_dk = 20.0, 25.0
-        return [(-hw_wl, wl), (-hw_dk, deck_z - 2), (hw_dk, deck_z - 2), (hw_wl, wl)]
-    st = [166, 150, 130, 100, 60, 20, -20, -60, -100, -140, -158, -166]
-    secs = [[(x, y, z) for (y, z) in hull(x)] for x in st]
-    for s in secs[1:]:
-        L += [[s[0], s[1]], [s[2], s[3]]]
-    for i in range(4):
-        L += [[s[i] for s in secs]]
-    L += [[secs[-1][1], secs[-1][0], secs[-1][3], secs[-1][2]]]
-    # Flight deck: the overhanging outline with the angled deck to port.
-    deck = [(168, 0), (150, 17), (100, 26), (40, 30), (-30, 33), (-120, 30), (-160, 22), (-168, 12),
-            (-168, -14), (-140, -24), (-40, -38), (20, -42), (55, -40), (80, -28), (120, -22), (150, -16)]
-    top = [(x, y, deck_z) for (x, y) in deck]
-    L += [poly(top)]
-    # Angled landing area, its centreline and the bow and waist catapults.
-    L += [[(-166, -4, deck_z), (45, -38, deck_z)], [(-166, 8, deck_z), (60, -26, deck_z)], [(-150, -16, deck_z), (30, -44, deck_z)]]
-    L += [[(160, 5, deck_z), (85, 12, deck_z)], [(160, -5, deck_z), (85, -11, deck_z)],
-          [(60, -30, deck_z), (-10, -20, deck_z)], [(50, -38, deck_z), (-20, -30, deck_z)]]
-    # Arresting wires.
-    for i in range(4):
-        x = -120 + i * 12
-        y = -4 - (x + 166) * 34 / 211
-        L += [[(x, y - 10, deck_z), (x + 2, y + 10, deck_z)]]
-    # Elevators.
-    for (x0, x1, y0, y1) in ((45, 25, 30, 44), (5, -15, 33, 47), (-70, -90, 30, 44), (-110, -130, -27, -40)):
-        L += [poly([(x0, y0, deck_z), (x1, y0, deck_z), (x1, y1, deck_z), (x0, y1, deck_z)])]
-    # Island, its upper decks, the mast and a radar.
-    L += box(-40, -12, 24, 32, deck_z, deck_z + 18)
-    L += box(-36, -18, 25, 31, deck_z + 18, deck_z + 26)
-    L += [[(-27, 28, deck_z + 26), (-27, 28, deck_z + 48)], [(-27, 22, deck_z + 40), (-27, 34, deck_z + 40)],
-          [(-30, 28, deck_z + 44), (-24, 28, deck_z + 44)]]
-    L += [circle_xy(-27, 28, deck_z + 33, 4.5, 14)]
-    for k in (deck_z + 6, deck_z + 12):
-        L += [poly([(-40, 24, k), (-12, 24, k), (-12, 32, k), (-40, 32, k)])]
-    # A few jets parked on deck: deltas with a tail.
-    def jet(x, y, hdg):
-        r = math.radians(hdg)
-        c, s = math.cos(r), math.sin(r)
-        pts = [(9, 0), (-3, 6), (-7, 6), (-5, 1.5), (-8, 3), (-9, 2.5), (-9, -2.5), (-8, -3), (-5, -1.5), (-7, -6), (-3, -6)]
-        return poly([(x + px * c - py * s, y + px * s + py * c, deck_z + 0.6) for (px, py) in pts])
-    for (x, y, h) in ((120, 14, 200), (105, 16, 200), (90, 18, 200), (-60, 22, 150), (-75, 22, 150),
-                      (-95, 20, 150), (130, -10, 180), (-150, 14, 120)):
-        L += [jet(x, y, h)]
-    # The bow wave and the wake, as a few lines on the water.
-    L += [[(168, 0, 0), (150, 36, 0), (120, 60, 0)], [(168, 0, 0), (150, -36, 0), (120, -60, 0)],
-          [(-166, 10, 0), (-240, 30, 0)], [(-166, -10, 0), (-240, -30, 0)], [(-166, 0, 0), (-260, 0, 0)]]
-    return L
-
-
-MODELS = {"carrier": carrier, "su27": su27, "fa18": fa18, "apache": apache, "tank": tank}
-
-# name: (model, azimuth deg (eye bearing from the model, 0 = dead ahead,
-# 90 = starboard), elevation deg, field of view deg)
+# view: (model, azimuth deg (the eye's bearing from the model: 0 dead ahead,
+# 90 starboard), elevation deg, field of view deg, crease angle deg)
 VIEWS = {
-    "carrier": ("carrier", 62, 16, 10),
-    "carrier-quarter": ("carrier", -140, 20, 12),
-    "su27": ("su27", 38, 24, 20),
-    "su27-rear": ("su27", 215, 14, 20),
-    "fa18": ("fa18", -32, 16, 20),
-    "fa18-top": ("fa18", 60, 62, 20),
-    "apache": ("apache", 30, 12, 20),
-    "tank": ("tank", 36, 18, 20),
+    # The top bar's: drawn on every page and too small to show hidden lines,
+    # so it ships without them (HIDDEN_OFF) -- half the download.
+    "carrier": ("CVN", 62, 16, 10, 40),
+    "carrier-quarter": ("CVN", -140, 22, 12, 40),
+    "flanker": ("Su-35", 38, 24, 18, 32),
+    "flanker-rear": ("Su-35", 215, 14, 18, 32),
+    "hornet": ("F-18", -32, 16, 18, 32),
+    "hornet-top": ("F-18", 60, 62, 18, 32),
+    "apache": ("AH-64", 30, 12, 20, 36),
+    "abrams": ("M1A2", 36, 18, 20, 36),
 }
+
+HIDDEN_OFF = {"carrier"}
 
 VIEW_H = 200.0
 PAD = 4.0
 
 
-def project(lines: list[Line], az: float, el: float, fov: float):
-    # The models are drawn with y to starboard, which is left-handed with x
-    # forward and z up: flip y into a right-handed world, eye included, or
-    # every picture comes out mirrored (the carrier's island to port).
-    lines = [[(x, -y, z) for (x, y, z) in l] for l in lines]
-    pts = np.array([p for l in lines for p in l], dtype=float)
-    lo, hi = pts.min(axis=0), pts.max(axis=0)
+# ── glTF ────────────────────────────────────────────────────────────────────
+
+_COMP = {5120: "b", 5121: "B", 5122: "h", 5123: "H", 5125: "I", 5126: "f"}
+_SIZE = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4, "MAT4": 16}
+
+
+def _accessor(gltf, binchunk, idx):
+    a = gltf["accessors"][idx]
+    bv = gltf["bufferViews"][a["bufferView"]]
+    n, comps = a["count"], _SIZE[a["type"]]
+    fmt = _COMP[a["componentType"]]
+    item = struct.calcsize(fmt)
+    stride = bv.get("byteStride") or item * comps
+    base = bv.get("byteOffset", 0) + a.get("byteOffset", 0)
+    dt = np.dtype("<" + fmt)
+    if stride == item * comps:
+        arr = np.frombuffer(binchunk, dtype=dt, count=n * comps, offset=base)
+        return arr.reshape(n, comps) if comps > 1 else arr
+    rows = [np.frombuffer(binchunk, dtype=dt, count=comps, offset=base + i * stride) for i in range(n)]
+    return np.array(rows)
+
+
+def _matrix(node):
+    if "matrix" in node:
+        return np.array(node["matrix"], dtype=float).reshape(4, 4).T
+    t = np.array(node.get("translation", [0, 0, 0]), dtype=float)
+    x, y, z, w = node.get("rotation", [0, 0, 0, 1])
+    s = np.array(node.get("scale", [1, 1, 1]), dtype=float)
+    r = np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ])
+    m = np.eye(4)
+    m[:3, :3] = r * s
+    m[:3, 3] = t
+    return m
+
+
+def load_glb(path: Path) -> np.ndarray:
+    """Every triangle of the model's default scene, (n, 3, 3), in world space."""
+    b = path.read_bytes()
+    jl = struct.unpack_from("<I", b, 12)[0]
+    gltf = json.loads(b[20:20 + jl])
+    bl = struct.unpack_from("<I", b, 20 + jl)[0]
+    binchunk = b[28 + jl:28 + jl + bl]
+    tris = []
+
+    def walk(i, parent):
+        node = gltf["nodes"][i]
+        m = parent @ _matrix(node)
+        if "mesh" in node:
+            for prim in gltf["meshes"][node["mesh"]]["primitives"]:
+                if prim.get("mode", 4) != 4:
+                    continue
+                pos = _accessor(gltf, binchunk, prim["attributes"]["POSITION"]).astype(float)
+                pos = (np.c_[pos, np.ones(len(pos))] @ m.T)[:, :3]
+                idx = (_accessor(gltf, binchunk, prim["indices"]).astype(np.int64)
+                       if "indices" in prim else np.arange(len(pos)))
+                tris.append(pos[idx.reshape(-1, 3)])
+        for c in node.get("children", []):
+            walk(c, m)
+
+    scene = gltf["scenes"][gltf.get("scene", 0)]
+    for i in scene["nodes"]:
+        walk(i, np.eye(4))
+    return np.concatenate(tris)
+
+
+# ── edges ───────────────────────────────────────────────────────────────────
+
+def edge_table(tris: np.ndarray):
+    """Welded vertices, the unique edges, and for each edge its faces."""
+    size = float(np.ptp(tris.reshape(-1, 3), axis=0).max())
+    q = np.round(tris.reshape(-1, 3) / (size * 2e-4)).astype(np.int64)
+    _, inv = np.unique(q, axis=0, return_inverse=True)
+    inv = inv.reshape(-1, 3)
+    verts = np.zeros((inv.max() + 1, 3))
+    verts[inv.reshape(-1)] = tris.reshape(-1, 3)
+    n = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    ln = np.linalg.norm(n, axis=1)
+    ok = ln > size * size * 1e-10
+    normals = np.zeros_like(n)
+    normals[ok] = n[ok] / ln[ok, None]
+    centres = tris.mean(axis=1)
+    # Shape quality, 1 for an equilateral triangle, near 0 for a sliver. The
+    # replay's simplifier leaves slivers whose sharp angles read as creases:
+    # long stray lines across a fuselage.
+    sq = (np.linalg.norm(tris[:, 1] - tris[:, 0], axis=1) ** 2 + np.linalg.norm(tris[:, 2] - tris[:, 1], axis=1) ** 2
+          + np.linalg.norm(tris[:, 0] - tris[:, 2], axis=1) ** 2)
+    quality = np.where(sq > 0, 2 * math.sqrt(3) * ln / np.maximum(sq, 1e-30), 0)
+    faces_of: dict[tuple[int, int], list[int]] = {}
+    for f, (a, b, c) in enumerate(inv):
+        if not ok[f]:
+            continue
+        for u, v in ((a, b), (b, c), (c, a)):
+            if u != v:
+                faces_of.setdefault((min(u, v), max(u, v)), []).append(f)
+    return verts, faces_of, normals, centres, quality, inv[ok]
+
+
+SLIVER = 0.15     # face quality below this is a sliver
+LONG_CREASE = 0.1  # a crease this long (share of the model's size) beside a sliver is dropped
+LONG_OPEN = 0.3    # an open edge this long is a seam the simplifier tore, not an outline
+
+
+def view_edges(verts, faces_of, normals, centres, quality, eye, crease_deg):
+    """Creases, open edges and the silhouette from `eye`."""
+    cos_c = math.cos(math.radians(crease_deg))
+    size = float(np.ptp(verts, axis=0).max())
+    out = []
+    for (u, v), fs in faces_of.items():
+        length = float(np.linalg.norm(verts[u] - verts[v])) / size
+        if len(fs) != 2:
+            if len(fs) > 2 or length < LONG_OPEN:
+                out.append((u, v))  # open or non-manifold
+            continue
+        n1, n2 = normals[fs[0]], normals[fs[1]]
+        if float(n1 @ n2) < cos_c:
+            if not (length > LONG_CREASE and min(quality[fs[0]], quality[fs[1]]) < SLIVER):
+                out.append((u, v))
+            continue
+        s1 = float(n1 @ (eye - centres[fs[0]]))
+        s2 = float(n2 @ (eye - centres[fs[1]]))
+        if (s1 > 0) != (s2 > 0):
+            out.append((u, v))  # silhouette
+    return out
+
+
+def chains(edges):
+    """Join edges that meet end to end into polylines, so the SVG repeats
+    far fewer coordinates."""
+    adj: dict[int, list[int]] = {}
+    for u, v in edges:
+        adj.setdefault(u, []).append(v)
+        adj.setdefault(v, []).append(u)
+    used = set()
+    lines = []
+    order = sorted(adj, key=lambda k: len(adj[k]) != 2)  # start at ends first
+    for start in reversed(order):
+        for nxt in adj[start]:
+            if (min(start, nxt), max(start, nxt)) in used:
+                continue
+            line = [start]
+            cur, prev = nxt, start
+            used.add((min(prev, cur), max(prev, cur)))
+            line.append(cur)
+            while len(adj[cur]) == 2:
+                a, b = adj[cur]
+                step = b if a == prev else a
+                key = (min(cur, step), max(cur, step))
+                if key in used:
+                    break
+                used.add(key)
+                prev, cur = cur, step
+                line.append(cur)
+            lines.append(line)
+    return lines
+
+
+# ── camera ──────────────────────────────────────────────────────────────────
+
+def camera(verts, az, el, fov):
+    lo, hi = verts.min(axis=0), verts.max(axis=0)
     target = (lo + hi) / 2
     size = float(np.linalg.norm(hi - lo))
     dist = size / 2 / math.tan(math.radians(fov) / 2)
     a, e = math.radians(az), math.radians(el)
-    eye = target + dist * np.array([math.cos(e) * math.cos(a), -math.cos(e) * math.sin(a), math.sin(e)])
+    # Model axes: x to starboard, y the nose, z up (right-handed). Bearing 0
+    # is dead ahead (+y), 90 to starboard (+x).
+    eye = target + dist * np.array([math.cos(e) * math.sin(a), math.cos(e) * math.cos(a), math.sin(e)])
     f = target - eye
     f /= np.linalg.norm(f)
     r = np.cross(f, [0, 0, 1.0])
     r /= np.linalg.norm(r)
     u = np.cross(r, f)
+    return eye, f, r, u
 
-    def to2d(p):
-        d = np.asarray(p) - eye
-        z = float(d @ f)
-        return (float(d @ r) / z, -float(d @ u) / z, z)
 
-    proj = [[to2d(p) for p in l] for l in lines]
-    xs = [p[0] for l in proj for p in l]
-    ys = [p[1] for l in proj for p in l]
-    zs = [p[2] for l in proj for p in l]
-    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+def zbuffer(px, py, z, faces, width, height, k):
+    """Depth of the nearest surface per pixel, at k pixels per view unit."""
+    W, H = int(math.ceil(width * k)) + 2, int(math.ceil(height * k)) + 2
+    zb = np.full((H, W), np.inf)
+    X, Y = px * k, py * k
+    for a, b, c in faces:
+        xs = np.array([X[a], X[b], X[c]])
+        ys = np.array([Y[a], Y[b], Y[c]])
+        x0, x1 = max(int(xs.min()), 0), min(int(xs.max()) + 1, W - 1)
+        y0, y1 = max(int(ys.min()), 0), min(int(ys.max()) + 1, H - 1)
+        if x1 < x0 or y1 < y0:
+            continue
+        gx, gy = np.meshgrid(np.arange(x0, x1 + 1) + 0.5, np.arange(y0, y1 + 1) + 0.5)
+        d = (ys[1] - ys[2]) * (xs[0] - xs[2]) + (xs[2] - xs[1]) * (ys[0] - ys[2])
+        if abs(d) < 1e-12:
+            continue
+        l0 = ((ys[1] - ys[2]) * (gx - xs[2]) + (xs[2] - xs[1]) * (gy - ys[2])) / d
+        l1 = ((ys[2] - ys[0]) * (gx - xs[2]) + (xs[0] - xs[2]) * (gy - ys[2])) / d
+        l2 = 1 - l0 - l1
+        inside = (l0 >= -1e-6) & (l1 >= -1e-6) & (l2 >= -1e-6)
+        if not inside.any():
+            continue
+        depth = 1 / (l0 / z[a] + l1 / z[b] + l2 / z[c])  # perspective-correct
+        sub = zb[y0:y1 + 1, x0:x1 + 1]
+        np.minimum(sub, np.where(inside, depth, np.inf), out=sub)
+    # The farthest of each pixel's neighbours: an edge lies on its own faces,
+    # and on a silhouette half its pixels are the surface it outlines -- it
+    # counts as seen if any pixel beside it shows it.
+    far = zb.copy()
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            np.maximum(far, np.roll(np.roll(zb, dy, 0), dx, 1), out=far)
+    return far
+
+
+def visibility(a, b, px, py, z, zb, k, eps):
+    """Visible (True) / hidden (False) runs along edge a-b, as (t0, t1, vis)."""
+    L = math.hypot(px[b] - px[a], py[b] - py[a]) * k
+    n = max(2, int(L) + 1)
+    t = np.linspace(0, 1, n)
+    x = (px[a] + (px[b] - px[a]) * t) * k
+    y = (py[a] + (py[b] - py[a]) * t) * k
+    depth = 1 / ((1 - t) / z[a] + t / z[b])
+    xi = np.clip(x.astype(int), 0, zb.shape[1] - 1)
+    yi = np.clip(y.astype(int), 0, zb.shape[0] - 1)
+    vis = depth <= zb[yi, xi] + eps
+    runs, start = [], 0
+    for i in range(1, n + 1):
+        if i == n or vis[i] != vis[start]:
+            runs.append((t[start], t[i - 1], bool(vis[start])))
+            start = i
+    return runs
+
+
+def render(name):
+    model, az, el, fov, crease = VIEWS[name]
+    tris = load_glb(MODELS / f"{model}.glb")
+    verts, faces_of, normals, centres, quality, faces = edge_table(tris)
+    eye, f, r, u = camera(verts, az, el, fov)
+    edges = view_edges(verts, faces_of, normals, centres, quality, eye, crease)
+    d = verts - eye
+    z = d @ f
+    sx, sy = (d @ r) / z, -(d @ u) / z
+    used = np.unique(np.array(edges).reshape(-1))
+    x0, x1, y0, y1 = sx[used].min(), sx[used].max(), sy[used].min(), sy[used].max()
     scale = (VIEW_H - 2 * PAD) / (y1 - y0)
+    px, py = (sx - x0) * scale + PAD, (sy - y0) * scale + PAD
     width = (x1 - x0) * scale + 2 * PAD
-    z_near, z_far = min(zs), max(zs)
-    buckets = ["", "", ""]
-    for l in proj:
-        depth = (sum(p[2] for p in l) / len(l) - z_near) / max(z_far - z_near, 1e-9)
-        b = 0 if depth < 0.4 else 1 if depth < 0.7 else 2
-        pts2 = [((p[0] - x0) * scale + PAD, (p[1] - y0) * scale + PAD) for p in l]
-        seg = "M" + "L".join(f"{x:.1f} {y:.1f}" for (x, y) in pts2)
-        buckets[b] += seg
-    return width, VIEW_H, buckets
+    # Sub-pixel detail (antenna farms, cockpit switches) is noise at banner
+    # size and most of the file: drop segments shorter than half a unit.
+    edges = [(a, b) for (a, b) in edges if math.hypot(px[a] - px[b], py[a] - py[b]) >= 0.5]
+    zn, zf = z[used].min(), z[used].max()
+    k = 4  # depth-buffer pixels per view unit
+    zb = zbuffer(px, py, z, faces, width, VIEW_H, k)
+    eps = 0.01 * (zf - zn)
+    near_cut = zn + 0.45 * (zf - zn)
+    whole = [[], [], []]   # edges entirely in one class: chained
+    parts = [[], [], []]   # pieces of edges that change class part-way
+    for (a, b) in edges:
+        runs = visibility(a, b, px, py, z, zb, k, eps)
+        mid_z = (z[a] + z[b]) / 2
+
+        def cls(vis):
+            return (0 if mid_z < near_cut else 1) if vis else 2
+        if len(runs) == 1:
+            whole[cls(runs[0][2])].append((a, b))
+            continue
+        for t0, t1, vis in runs:
+            if t1 <= t0:
+                continue
+            parts[cls(vis)].append(((px[a] + (px[b] - px[a]) * t0, py[a] + (py[b] - py[a]) * t0),
+                                    (px[a] + (px[b] - px[a]) * t1, py[a] + (py[b] - py[a]) * t1)))
+    paths = []
+    for i in range(3):
+        s_ = []
+        for line in chains(whole[i]):
+            s_.append("M" + "L".join(f"{px[j]:.1f} {py[j]:.1f}" for j in line))
+        for (x0_, y0_), (x1_, y1_) in parts[i]:
+            s_.append(f"M{x0_:.1f} {y0_:.1f}L{x1_:.1f} {y1_:.1f}")
+        paths.append("".join(s_))
+    if name in HIDDEN_OFF:
+        paths[2] = ""
+    return {"w": round(width), "h": round(VIEW_H), "paths": paths}, len(edges)
 
 
-def preview(directory: str):
-    """PNGs of every view, for looking at the models without the dashboard."""
+def preview(directory: str, views):
     from PIL import Image, ImageDraw
-    import re
     d = Path(directory)
     d.mkdir(parents=True, exist_ok=True)
-    for name, (model, az, el, fov) in VIEWS.items():
-        w, h, paths = project(MODELS[model](), az, el, fov)
+    for name, art in views.items():
         k = 3
-        img = Image.new("RGB", (int(w * k), int(h * k)), (12, 16, 10))
+        img = Image.new("RGB", (int(art["w"] * k), int(art["h"] * k)), (12, 16, 10))
         dr = ImageDraw.Draw(img)
-        for path, col in zip(paths, ((150, 220, 80), (95, 150, 55), (55, 90, 35))):
+        for path, col in zip(art["paths"], ((150, 220, 80), (100, 150, 58), (34, 48, 24))):
             for seg in path.split("M")[1:]:
                 pts = [tuple(float(v) * k for v in pt.split()) for pt in seg.split("L")]
                 if len(pts) > 1:
-                    dr.line(pts, fill=col, width=2)
+                    dr.line(pts, fill=col, width=1)
         img.save(d / f"{name}.png")
     print(f"previews in {d}")
 
 
 def main():
-    import sys
+    OUT.mkdir(parents=True, exist_ok=True)
+    views = {}
+    for name in VIEWS:
+        art, n = render(name)
+        views[name] = art
+        (OUT / f"{name}.json").write_text(json.dumps(art, separators=(",", ":")), encoding="utf-8")
+        size = (OUT / f"{name}.json").stat().st_size
+        print(f"{name}: {art['w']}x{art['h']}, {n} edges, {size // 1024} KiB")
     if len(sys.argv) > 2 and sys.argv[1] == "--preview":
-        return preview(sys.argv[2])
-    out = [
-        "// Generated by scripts/gen-wireframes.py -- edit the models there, not here.",
-        "// Per view: the viewBox size and three path strings, near to far.",
-        "",
-        "export interface WireframeArt {",
-        "  w: number",
-        "  h: number",
-        "  paths: [string, string, string]",
-        "}",
-        "",
-        "export const WIREFRAMES = {",
-    ]
-    for name, (model, az, el, fov) in VIEWS.items():
-        w, h, paths = project(MODELS[model](), az, el, fov)
-        out.append(f"  '{name}': {{ w: {w:.0f}, h: {h:.0f}, paths: [")
-        for p in paths:
-            out.append(f"    '{p}',")
-        out.append("  ] },")
-        print(f"{name}: {w:.0f}x{h:.0f}, {sum(len(p) for p in paths) // 1024} KiB")
-    out += ["} satisfies Record<string, WireframeArt>", "", "export type WireframeName = keyof typeof WIREFRAMES", ""]
-    OUT.write_text("\n".join(out), encoding="utf-8", newline="\n")
-    print(f"wrote {OUT}")
+        preview(sys.argv[2], views)
 
 
 if __name__ == "__main__":

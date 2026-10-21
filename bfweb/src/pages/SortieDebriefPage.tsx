@@ -310,7 +310,7 @@ export default function SortieDebriefPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="fa18" icon={Aircraft} title="SORTIE DEBRIEF"
+      <PageHeader art="hornet" icon={Aircraft} title="SORTIE DEBRIEF"
         sub={d ? `${name} · ${d.aircraft.replace(/_/g, ' ')}${theater ? ` · ${theater}` : ''}` : name}
         right={
           <RouterLink to={back} className="flex items-center gap-1"

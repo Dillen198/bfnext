@@ -86,7 +86,7 @@ function NewBoxForm({ st }: { st: NewBoxState }) {
   return (
     <div className="p-5 space-y-4" style={{ maxWidth: 980 }}>
       <div>
-        <div style={{ fontSize: '1.1rem', letterSpacing: '0.1em', fontFamily: 'var(--font-display, "Bebas Neue")' }}>NEW BOX · TRAINING RANGE</div>
+        <div style={{ fontSize: '1.1rem', letterSpacing: '0.1em', fontFamily: 'var(--font-display)' }}>NEW BOX · TRAINING RANGE</div>
         <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.6 }}>
           Turns this PC into the training range, on its own: Python, PostgreSQL, DCSServerBot {st.bot_version} with its own Discord bot,
           DCS World Server (Caucasus + Supercarrier), SRS, the range mission and engine, its own bfdb, and the FowlEngine service.

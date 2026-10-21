@@ -389,7 +389,7 @@ export default function Dashboard() {
   const { selectedRound } = useRound()
   // A Hornet in wireframe over the stat row. The territory panel keeps the
   // selected server's flags: it is the one place they say whose ground is whose.
-  const kpiArt = useWireframe('fa18', { base: 'var(--bg-chrome)', strength: 'soft' })
+  const kpiArt = useWireframe('hornet', { base: 'var(--bg-chrome)', strength: 'faint' })
   const territoryFlags = useFlagBackground('var(--bg-card)', 'var(--bg-card-solid)', 'soft')
 
   const onlineQ = useQuery({ queryKey: ['online'], queryFn: api.online, refetchInterval: 10_000 })

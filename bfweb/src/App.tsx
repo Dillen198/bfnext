@@ -78,7 +78,7 @@ function RequireCoalition({ what, children }: { what: string; children: ReactNod
         justifyContent: 'center', height: '100%', padding: 24, textAlign: 'center',
         color: 'var(--text-muted)', fontSize: '0.85rem',
       }}>
-        <div style={{ fontFamily: "'Bebas Neue',sans-serif", fontSize: '1.4rem', letterSpacing: '0.12em', color: 'var(--text)' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', letterSpacing: '0.12em', color: 'var(--text)' }}>
           NO COALITION
         </div>
         <div style={{ maxWidth: 400, lineHeight: 1.6 }}>

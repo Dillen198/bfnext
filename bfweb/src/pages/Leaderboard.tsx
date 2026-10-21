@@ -237,7 +237,7 @@ export default function Leaderboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-      <PageHeader art="fa18"
+      <PageHeader art="hornet"
         icon={Rankings}
         title="RANKINGS"
         sub={view === 'pilots' ? `${pilots.length} pilots${byRound ? ` · round ${roundNum}` : ' · all time'}` : view === 'squadrons' ? 'Squadrons by XP' : 'Pilots by XP'}

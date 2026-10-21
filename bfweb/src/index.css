@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Saira+Stencil+One&family=Saira+Semi+Condensed:wght@400;500;600;700;800&family=Share+Tech+Mono&display=swap');
 @import "tailwindcss";
 @import "leaflet/dist/leaflet.css";
 /* daisyUI — used only by the peace-eye-ported /scope page (src/scope/*) */
@@ -60,9 +60,11 @@
   --scrollbar-h:   rgba(106,171,31,0.35);
 
   /* Font vars */
-  --font-mono:     'JetBrains Mono', 'Share Tech Mono', monospace;
-  --font-display:  'Bebas Neue', sans-serif;
-  --font-body:     'Inter', system-ui, sans-serif;
+  /* Stencil Command: a stencilled display face, a semi-condensed body and a
+     terminal mono for the numbers. */
+  --font-mono:     'Share Tech Mono', 'Consolas', monospace;
+  --font-display:  'Saira Stencil One', 'Saira Semi Condensed', sans-serif;
+  --font-body:     'Saira Semi Condensed', system-ui, sans-serif;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -172,7 +174,12 @@ body {
 ::-webkit-scrollbar-thumb:hover{ background: var(--scrollbar-h); }
 
 /* ── Font helpers ── */
-.font-display   { font-family: var(--font-display); letter-spacing: 0.08em; }
+.font-display   { font-family: var(--font-display); letter-spacing: 0.08em; text-transform: uppercase; }
+/* The display face used to be Bebas Neue, which has capitals only, so text
+   set in it was written in any case and still read as capitals. The stencil
+   face has lower case: keep every display-set line in capitals, the ones
+   styled inline included. */
+[style*="--font-display"] { text-transform: uppercase; }
 .font-mono-vs   { font-family: var(--font-mono); }
 .tabular-nums   { font-variant-numeric: tabular-nums; }
 
@@ -464,6 +471,7 @@ body {
 
 .vs-section-title {
   font-family: var(--font-display);
+  text-transform: uppercase;
   font-size: 0.95rem;
   letter-spacing: 0.14em;
   color: var(--text);
@@ -538,6 +546,7 @@ body {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   font-family: var(--font-display);
+  text-transform: uppercase;
   border: none;
   border-radius: 1px;
   cursor: pointer;
@@ -977,6 +986,7 @@ body {
 }
 .page-header-title {
   font-family: var(--font-display);
+  text-transform: uppercase;
   font-size: 1.4rem;
   letter-spacing: 0.28em;
   color: var(--text);

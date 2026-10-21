@@ -754,7 +754,7 @@ export default function Pilots() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="fa18-top" icon={PilotIcon} title="PILOTS" sub={`${pilots.length} registered pilots`} />
+      <PageHeader art="hornet-top" icon={PilotIcon} title="PILOTS" sub={`${pilots.length} registered pilots`} />
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {/* ── Search ── */}
@@ -825,7 +825,7 @@ export default function Pilots() {
             </div>
             <button
               onClick={() => queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })}
-              style={{ fontSize: '0.65rem', color: '#5865F2', background: 'none', border: '1px solid #5865F2', padding: '2px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em', fontFamily: "'Bebas Neue', sans-serif" }}
+              style={{ fontSize: '0.65rem', color: '#5865F2', background: 'none', border: '1px solid #5865F2', padding: '2px 10px', borderRadius: 2, cursor: 'pointer', letterSpacing: '0.08em', fontFamily: 'var(--font-display)' }}
             >
               CHECK AGAIN
             </button>

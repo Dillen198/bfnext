@@ -214,7 +214,7 @@ export default function Objectives() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="tank"
+      <PageHeader art="abrams"
         icon={Objective}
         title="OBJECTIVES"
         sub={`${total} total · ${counts.Red} red · ${counts.Blue} blue · ${counts.Neutral} neutral`}
@@ -342,7 +342,7 @@ export default function Objectives() {
                 className="vs-pill"
                 onClick={() => setFilter(f)}
                 style={{
-                  fontFamily: "'Bebas Neue', sans-serif",
+                  fontFamily: 'var(--font-display)',
                   fontSize: '0.75rem',
                   letterSpacing: '0.1em',
                   padding: '0.3rem 0.75rem',

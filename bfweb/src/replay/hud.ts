@@ -83,7 +83,7 @@ export const BANK_TICKS = [0, 10, 20, 30, 45, 60]
 
 const INK = '#41ff7e'
 const SHADOW = 'rgba(0, 0, 0, 0.55)'
-const MONO = "'JetBrains Mono', Consolas, 'Courier New', monospace"
+const MONO = "'Share Tech Mono', Consolas, 'Courier New', monospace"
 
 export function drawHud(ctx: CanvasRenderingContext2D, w: number, h: number, d: HudData, project: Project, targetAt: [number, number] | null) {
   ctx.clearRect(0, 0, w, h)

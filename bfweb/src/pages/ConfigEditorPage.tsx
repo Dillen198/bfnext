@@ -108,7 +108,7 @@ export default function ConfigEditorPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="tank"
+      <PageHeader art="abrams"
         icon={Config}
         title="CONFIG EDITOR"
         sub="Campaign engine configuration — restricted access"

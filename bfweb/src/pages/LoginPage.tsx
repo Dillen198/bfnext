@@ -18,15 +18,21 @@ import { useWireframe } from '../lib/wireframe'
  * relay and binary swaps. It is deliberately not offered in this UI.
  */
 export default function LoginPage() {
-  // An Su-27 behind the sign-in card, over the animated backdrop.
-  const art = useWireframe('su27', { strength: 'bold', position: 'center', size: 'min(1100px, 94%) auto', fade: 'none' })
+  // A carrier behind the sign-in card, over the animated backdrop.
+  const art = useWireframe('carrier-quarter', { strength: 'soft', position: 'center', size: 'auto min(78%, 620px)', fade: 'none' })
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       height: '100%', position: 'relative',
     }}>
       <Backdrop />
-      <div aria-hidden="true" style={{ ...art, position: 'absolute', inset: 0, pointerEvents: 'none' }} />
+      {/* Faded out toward the edges, so the drawing sinks into the backdrop
+          instead of sitting on it as a picture. */}
+      <div aria-hidden="true" style={{
+        ...art, position: 'absolute', inset: 0, pointerEvents: 'none',
+        WebkitMaskImage: 'radial-gradient(ellipse 60% 58% at 50% 50%, #000 35%, transparent 100%)',
+        maskImage: 'radial-gradient(ellipse 60% 58% at 50% 50%, #000 35%, transparent 100%)',
+      }} />
       <ThemeToggle style={{ position: 'absolute', top: 16, right: 16 }} />
       <div style={{
         position: 'relative',
@@ -46,7 +52,7 @@ export default function LoginPage() {
             <LogoMark size={110} alt={campaign.name} style={{ margin: '0 auto 0.75rem', display: 'block' }} />
           )}
           <div style={{
-            fontFamily: "'Bebas Neue', sans-serif",
+            fontFamily: 'var(--font-display)',
             fontSize: '1.8rem', letterSpacing: '0.15em', color: 'var(--text)',
           }}>
             {campaign.name}
@@ -68,7 +74,7 @@ export default function LoginPage() {
               background: '#5865F2', color: '#fff',
               padding: '0.65rem 1.5rem', borderRadius: '3px',
               textDecoration: 'none', fontSize: '0.78rem',
-              letterSpacing: '0.1em', fontFamily: "'Bebas Neue', sans-serif",
+              letterSpacing: '0.1em', fontFamily: 'var(--font-display)',
             }}
           >
             <DiscordIcon />

@@ -302,7 +302,7 @@ export default function KillFeed() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader art="su27-rear"
+      <PageHeader art="flanker-rear"
         icon={KillFeedIcon}
         title="KILL FEED"
         sub={`${kills.length >= FEED_LIMIT ? `latest ${FEED_LIMIT}` : kills.length} events · refreshes every 15s`}

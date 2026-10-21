@@ -68,7 +68,7 @@ export default function Setup({ state: s, onDone, onRestore, onNewBox }: {
   return (
     <div className="p-5 space-y-4" style={{ maxWidth: 980 }}>
       <div>
-        <div style={{ fontSize: '1.1rem', letterSpacing: '0.1em', fontFamily: 'var(--font-display, "Bebas Neue")' }}>SET UP THIS SERVER BOX</div>
+        <div style={{ fontSize: '1.1rem', letterSpacing: '0.1em', fontFamily: 'var(--font-display)' }}>SET UP THIS SERVER BOX</div>
         <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.6 }}>
           Four steps. Afterwards the box runs itself: after a reboot, a blue screen or a power cut Windows signs the server's
           user in, the service starts DCSServerBot on that desktop, restarts it if it dies, keeps the Fowl Engine plugin current and updates this app.

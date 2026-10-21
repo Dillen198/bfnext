@@ -60,7 +60,7 @@ export default function ManagerApp() {
           <div className="flex items-center gap-2">
             <img src={logo} alt="" style={{ width: 30, height: 30, objectFit: 'contain' }} />
             <div>
-              <div style={{ fontFamily: 'var(--font-display, "Bebas Neue")', fontSize: '1.05rem', letterSpacing: '0.12em', lineHeight: 1 }}>FOWL ENGINE</div>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.05rem', letterSpacing: '0.12em', lineHeight: 1 }}>FOWL ENGINE</div>
               <div style={{ ...DIM, fontSize: '0.55rem', marginTop: 3 }}>MANAGER {state ? `v${state.version}` : ''}</div>
             </div>
           </div>
