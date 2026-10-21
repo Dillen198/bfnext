@@ -1262,6 +1262,56 @@ async fn call_engine_rpc_str(
     }
 }
 
+/// The engine's own objective list for `inst` (`query-objectives`, JSON),
+/// or `Err` when it can't be had right now.
+///
+/// Public routes polled by every dashboard and the Discord bot need it, and
+/// each call is an RPC answered inside the DCS frame. One call per instance
+/// per few seconds serves all of them (single-flight: callers arriving
+/// mid-refresh wait for it rather than firing their own).
+async fn engine_objectives(db: &StatsDb, inst: &Inst) -> Arc<std::result::Result<std::string::String, ()>> {
+    static LIVE_OBJECTIVES: std::sync::LazyLock<
+        websec::CacheMap<InstanceId, Arc<std::result::Result<std::string::String, ()>>>,
+    > = std::sync::LazyLock::new(websec::CacheMap::new);
+    LIVE_OBJECTIVES
+        .entry(&inst.id)
+        .get_or_refresh(std::time::Duration::from_secs(5), || async {
+            let r = match tokio::time::timeout(
+                // netidx RPC round-trips under a populated mission routinely run
+                // past 3s even though the engine frame time is fine (batch commit
+                // + poll contention with the tacmap/gci pollers). 8s matches the
+                // gci client and stops the every-30s "timed out" spam; we still
+                // fall back to persisted flags if it really is unreachable.
+                std::time::Duration::from_secs(8),
+                call_engine_rpc_str(db, inst, "query-objectives", vec![]),
+            )
+            .await
+            {
+                Ok(Ok(json)) => Ok(json),
+                Ok(Err(e)) => {
+                    log::warn!("api_objectives: query-objectives RPC failed: {}", e.0);
+                    Err(())
+                }
+                Err(_) => {
+                    log::warn!("api_objectives: query-objectives RPC timed out after 8s, engine may be unreachable");
+                    Err(())
+                }
+            };
+            Ok::<_, std::convert::Infallible>(Arc::new(r))
+        })
+        .await
+        .unwrap_or_else(|e| match e {})
+}
+
+/// Names of the objectives the running engine has, for the active round's
+/// maps; `None` when it isn't answering (then nothing can be ruled out).
+async fn engine_objective_names(db: &StatsDb, inst: &Inst) -> Option<std::collections::HashSet<std::string::String>> {
+    let live = engine_objectives(db, inst).await;
+    let json = live.as_ref().as_ref().ok()?;
+    let list = serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(json).ok()?;
+    Some(list.into_iter().map(|o| o.name.to_string()).collect())
+}
+
 async fn api_objectives(
     db: StatsDb,
     round_id: Option<u64>,
@@ -1337,41 +1387,7 @@ async fn api_objectives(
     // the Discord bot's poller, which has its own 10s client timeout).
     let mut live_ok = false;
     if is_active {
-        // Public, and polled by every dashboard and the Discord bot -- and
-        // each call is an RPC answered inside the DCS frame. One call per
-        // instance per few seconds serves all of them (single-flight: callers
-        // arriving mid-refresh wait for it rather than firing their own).
-        static LIVE_OBJECTIVES: std::sync::LazyLock<
-            websec::CacheMap<InstanceId, Arc<std::result::Result<std::string::String, ()>>>,
-        > = std::sync::LazyLock::new(websec::CacheMap::new);
-        let live = LIVE_OBJECTIVES
-            .entry(&inst.id)
-            .get_or_refresh(std::time::Duration::from_secs(5), || async {
-                let r = match tokio::time::timeout(
-                    // netidx RPC round-trips under a populated mission routinely run
-                    // past 3s even though the engine frame time is fine (batch commit
-                    // + poll contention with the tacmap/gci pollers). 8s matches the
-                    // gci client and stops the every-30s "timed out" spam; we still
-                    // fall back to persisted flags if it really is unreachable.
-                    std::time::Duration::from_secs(8),
-                    call_engine_rpc_str(&db, &inst, "query-objectives", vec![]),
-                )
-                .await
-                {
-                    Ok(Ok(json)) => Ok(json),
-                    Ok(Err(e)) => {
-                        log::warn!("api_objectives: query-objectives RPC failed: {}", e.0);
-                        Err(())
-                    }
-                    Err(_) => {
-                        log::warn!("api_objectives: query-objectives RPC timed out after 8s, engine may be unreachable");
-                        Err(())
-                    }
-                };
-                Ok::<_, std::convert::Infallible>(Arc::new(r))
-            })
-            .await
-            .unwrap_or_else(|e| match e {});
+        let live = engine_objectives(&db, &inst).await;
         match &*live {
             Ok(json) => {
                 if let Ok(live) = serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(&json) {
@@ -1398,6 +1414,12 @@ async fn api_objectives(
                         }
                     }
                     live_ok = true;
+                    // What the engine doesn't have is not in this campaign.
+                    // A round store can hold another scenario's objectives --
+                    // vs2's 2008 round kept 16 Syria ones from an ODF run --
+                    // and every map drew them: the Discord snapshot of the
+                    // Caucasus war zoomed out to take in Lebanon.
+                    entries.retain(|e| e["live"] == serde_json::Value::Bool(true));
                 }
             }
             // Already logged when the (cached) call was made.
@@ -1425,20 +1447,28 @@ async fn api_frontline(
     round_id: Option<u64>,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
+    // Only the live map can be checked against the engine; see api_objectives
+    // for why objectives it doesn't have are left out.
+    let in_engine = match round_id {
+        None => engine_objective_names(&db, &inst).await,
+        Some(_) => None,
+    };
     let data = task::block_in_place(|| -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
+        let active = rounds.iter().find(|(_, _, r)| r.end.is_none()).map(|(_, rid, _)| *rid);
         let rid = match round_id {
             // Another instance's round is not this instance's to show.
             Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => return Ok("[]".to_string()),
             Some(id) => db::RoundId(id),
-            None => match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
-                Some((_, rid, _)) => *rid,
+            None => match active {
+                Some(rid) => rid,
                 None => match rounds.first() {
                     Some((_, rid, _)) => *rid,
                     None => return Ok("[]".to_string()),
                 },
             },
         };
+        let in_engine = in_engine.as_ref().filter(|_| active == Some(rid));
         let objs = db.objectives_for_round(rid)?;
 
         // Owned, on-the-ground objectives (SAM sites included, carriers not) —
@@ -1447,6 +1477,7 @@ async fn api_frontline(
             .iter()
             .filter(|(_, o)| matches!(o.owner, dcso3::coalition::Side::Blue | dcso3::coalition::Side::Red))
             .filter(|(_, o)| !o.kind.is_carrier_group())
+            .filter(|(_, o)| in_engine.map_or(true, |n| n.contains(o.name.as_str())))
             .map(|(_, o)| (o.pos.latitude, o.pos.longitude, o.owner))
             .collect();
         if ll.len() < 4 {
