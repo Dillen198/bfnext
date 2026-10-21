@@ -95,10 +95,14 @@ export default function SquadronsPage() {
           ) : (
             <>
               <span>Found a squadron:</span>
-              <input className="vs-input" placeholder="TAG" maxLength={5} value={tag} onChange={e => setTag(e.target.value)} style={{ width: 80 }} />
+              <input className="vs-input" placeholder="TAG" maxLength={5} value={tag} onChange={e => setTag(e.target.value)} style={{ width: 80 }}
+                title="2 to 5 letters (A-Z) or digits; № counts as NO" />
               <input className="vs-input" placeholder="Squadron name" maxLength={40} value={name} onChange={e => setName(e.target.value)} />
               <button type="button" className="vs-btn" disabled={!tag || !name} onClick={() => run(api.createSquadron(tag, name))}>Create</button>
               <span style={{ color: 'var(--text-dim)' }}>or join one below.</span>
+              <span style={{ color: 'var(--text-dim)', fontSize: '0.7rem', width: '100%' }}>
+                The tag is 2 to 5 letters (A-Z) or digits, no spaces or symbols. № counts as NO.
+              </span>
             </>
           )}
           {error && <span style={{ color: '#f87171', width: '100%' }}>{error}</span>}

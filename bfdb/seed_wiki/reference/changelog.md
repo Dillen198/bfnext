@@ -1,6 +1,13 @@
 # Changelog
 
-Current version: **v2.8**. Each update gets the next number; the newest is at the top.
+Current version: **v2.9**. Each update gets the next number; the newest is at the top.
+
+## v2.9 — October 21, 2026
+
+**Fixes**
+- A squadron tag can start with the numero sign: "№15" becomes the tag NO15
+  instead of an error. The squadron form now says what a tag can be (2 to 5
+  letters or digits) before you press Create.
 
 ## v2.8 — October 21, 2026
 

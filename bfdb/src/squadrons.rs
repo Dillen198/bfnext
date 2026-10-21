@@ -41,11 +41,14 @@ pub(crate) struct Squadrons {
     of_pilot: Tree<Ucid, String>,
 }
 
-/// Tags are case-insensitive and stored upper case.
+/// Tags are case-insensitive and stored upper case, A-Z and 0-9 only: they
+/// go in URLs, on the rendered pilot cards and in chat, where anything else
+/// breaks or draws as a box. The numero sign is read as the "No" it stands
+/// for, so a "№15" squadron is NO15 rather than an error.
 pub(crate) fn norm_tag(tag: &str) -> Result<String> {
-    let t = tag.trim().to_uppercase();
+    let t = tag.trim().replace('№', "NO").to_uppercase();
     if !(2..=5).contains(&t.chars().count()) || !t.chars().all(|c| c.is_ascii_alphanumeric()) {
-        bail!("a squadron tag is 2 to 5 letters or digits")
+        bail!("a squadron tag is 2 to 5 letters (A-Z) or digits, no spaces or symbols")
     }
     Ok(t)
 }
@@ -206,6 +209,8 @@ mod tests {
         assert!(norm_tag("A").is_err());
         assert!(norm_tag("TOOLONG").is_err());
         assert!(norm_tag("A-B").is_err());
+        assert_eq!(norm_tag("№15").unwrap(), "NO15");
+        assert!(norm_tag("№1234").is_err());
     }
 
     #[test]
