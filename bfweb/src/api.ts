@@ -2099,8 +2099,29 @@ export interface LastRound {
   loser_name: string | null
 }
 
-/** What to call a round: its number on its server, the raw id from an older bfdb. */
+/** What to call a round: its number on its server (see `numberRounds`). */
 export const roundNo = (r: { id: number; number?: number | null }) => r.number ?? r.id
+
+/**
+ * Fill in `number` where bfdb did not send it -- a bfdb from before v2.7,
+ * which a server keeps running until its auto-update applies the new one.
+ * Same rule as bfdb's `round_numbers`: 1, 2, 3 per server in start order.
+ * Without this an older bfdb's rounds read as their database ids (0, then
+ * 108000656).
+ */
+export function numberRounds<T extends { id: number; number?: number | null; instance?: string; start: string }>(rounds: T[]): T[] {
+  if (rounds.every(r => r.number != null)) return rounds
+  const byServer = new Map<string, T[]>()
+  for (const r of rounds) {
+    const k = r.instance ?? ''
+    byServer.set(k, [...(byServer.get(k) ?? []), r])
+  }
+  const n = new Map<number, number>()
+  for (const list of byServer.values()) {
+    [...list].sort((a, b) => a.start.localeCompare(b.start)).forEach((r, i) => n.set(r.id, i + 1))
+  }
+  return rounds.map(r => (r.number != null ? r : { ...r, number: n.get(r.id) ?? null }))
+}
 
 /** One DCS server instance this bfdb fronts. */
 export interface ServerInstance {
@@ -2257,7 +2278,7 @@ export const api = {
   gciTranscript: () => get<GciCall[]>('/gci/transcript'),
   /** Round history for the selected instance, or every instance's when
    *  `all` is set (each row carries its own `instance` id either way). */
-  rounds: (all = false) => get<Round[]>(all ? '/rounds?instance=all' : '/rounds'),
+  rounds: (all = false) => get<Round[]>(all ? '/rounds?instance=all' : '/rounds').then(numberRounds),
   roundSummary: (id: number) => get<RoundSummary | null>(`/rounds/${id}/summary`),
   roundReport: (id: number) => get<RoundReport | null>(`/rounds/${id}/report`),
   leaderboard: () => get<Pilot[]>('/leaderboard'),

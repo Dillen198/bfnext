@@ -24,8 +24,39 @@ export interface LastRound extends Round {
   winner: Side | null
 }
 
-/** What to call a round: its number on its server, the raw id from an older bfdb. */
+/** What to call a round: its number on its server (see `withRoundNumbers`). */
 export const roundNo = (r: { id: number; number?: number | null }) => r.number ?? r.id
+
+interface RoundRow {
+  id: number
+  instance: string
+  start: string
+}
+
+/**
+ * Fill in the rounds' `number` where bfdb did not send it -- a bfdb from
+ * before v2.7, which a server keeps running until its auto-update applies
+ * the new one. Same rule as bfdb: 1, 2, 3 per server in start order, from
+ * the round list. Without it an older bfdb's rounds read as their database
+ * ids (0, then 108000656).
+ */
+async function withRoundNumbers(data: { default: string; instances: ServerInstance[] }) {
+  const rounds = data.instances.flatMap(i => [i.active_round, i.last_round]).filter((r): r is Round => !!r)
+  if (rounds.every(r => r.number != null)) return data
+  try {
+    const all = await get<RoundRow[]>('/api/rounds?instance=all')
+    const n = new Map<number, number>()
+    const byServer = new Map<string, RoundRow[]>()
+    for (const r of all) byServer.set(r.instance, [...(byServer.get(r.instance) ?? []), r])
+    for (const list of byServer.values()) {
+      [...list].sort((a, b) => a.start.localeCompare(b.start)).forEach((r, i) => n.set(r.id, i + 1))
+    }
+    for (const r of rounds) r.number ??= n.get(r.id) ?? null
+  } catch {
+    // The list is a nicety: without it the ids show, as before.
+  }
+  return data
+}
 
 /** One DCS server instance fronted by this bfdb. */
 export interface ServerInstance {
@@ -90,7 +121,7 @@ function scoped(path: string, instance?: string): string {
 
 export const api = {
   /** The DCS servers this bfdb fronts. A single-server bfdb returns one. */
-  instances: () => get<{ default: string; instances: ServerInstance[] }>('/api/instances'),
+  instances: () => get<{ default: string; instances: ServerInstance[] }>('/api/instances').then(withRoundNumbers),
   objectives: (instance?: string) => get<Objective[]>(scoped('/api/objectives', instance)),
   online: (instance?: string) => get<OnlinePilot[]>(scoped('/api/online', instance)),
   health: (instance?: string) => get<Health>(scoped('/api/health', instance)),
