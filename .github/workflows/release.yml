@@ -61,10 +61,28 @@ jobs:
           RELEASE_NOTES: ${{ inputs.notes }}
           RELEASE_CHANNEL: ${{ inputs.channel }}
           RELEASE_BOT_PLUGIN: ${{ inputs.bot_plugin }}
+          # The manifest signing key (the contents of fowl-engine.key) and its
+          # password. Servers refuse an unsigned release, so without the key
+          # secret the run stops before building anything.
+          FOWL_ENGINE_SIGNING_KEY: ${{ secrets.FOWL_ENGINE_SIGNING_KEY }}
+          FOWL_ENGINE_SIGNING_PASSWORD: ${{ secrets.FOWL_ENGINE_SIGNING_PASSWORD }}
         run: |
-          $a = @('-WorkingTree', '-Channel', $env:RELEASE_CHANNEL,
-                 '-Repo', $env:GITHUB_REPOSITORY,
-                 '-TargetDir', (Join-Path $env:RUNNER_TEMP 'fowl-target'))
-          if ($env:RELEASE_NOTES) { $a += @('-Notes', $env:RELEASE_NOTES) }
-          if ($env:RELEASE_BOT_PLUGIN -eq 'true') { $a += '-BotPlugin' }
-          ./deploy/publish-release.ps1 @a
+          if (-not $env:FOWL_ENGINE_SIGNING_KEY) {
+            throw "no FOWL_ENGINE_SIGNING_KEY secret -- add the contents of fowl-engine.key as a repository secret (see deploy/auto-update.md, 'Signing releases')"
+          }
+          $key = Join-Path $env:RUNNER_TEMP 'fowl-engine.key'
+          Set-Content -Path $key -Value $env:FOWL_ENGINE_SIGNING_KEY -NoNewline
+          # A hashtable, not an array: an array splat hands '-Channel' and the
+          # rest to the script as positional values, so -WorkingTree became
+          # -Ref, -Channel the tag, and the run failed its tag check.
+          $a = @{
+            WorkingTree = $true
+            Channel     = $env:RELEASE_CHANNEL
+            Repo        = $env:GITHUB_REPOSITORY
+            TargetDir   = (Join-Path $env:RUNNER_TEMP 'fowl-target')
+            SigningKey  = $key
+          }
+          if ($env:RELEASE_NOTES) { $a.Notes = $env:RELEASE_NOTES }
+          if ($env:RELEASE_BOT_PLUGIN -eq 'true') { $a.BotPlugin = $true }
+          try { ./deploy/publish-release.ps1 @a }
+          finally { Remove-Item $key -ErrorAction SilentlyContinue }
