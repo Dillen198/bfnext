@@ -97,11 +97,12 @@ dialog = {
 				["toggleShiftCheckbox"] = checkbox("$BFC_SHIFT", ctrlX + 330, 145, 160),
 				["toggleKeyHelp"]       = static("$BFC_KEY_INFO", left, 175, 850, 36, HelpSkin),
 
-				["openOnCommsCheckbox"] = checkbox("$BFC_COMMS", left, 230, 700),
+				["openOnCommsCheckbox"] = checkbox("$BFC_COMMS", left, 225, 700),
+				["autoUpdateCheckbox"]  = checkbox("$BFC_AUTO_UPDATE", left, 252, 800),
 
-				["uiScaleLabel"]        = static("$BFC_SCALE", left, 280, labelW, rowH, LabelSkin),
-				["uiScaleComboList"]    = combo(ctrlX, 280),
-				["uiScaleHelp"]         = static("$BFC_SCALE_INFO", left, 312, 850, 20, HelpSkin),
+				["uiScaleLabel"]        = static("$BFC_SCALE", left, 288, labelW, rowH, LabelSkin),
+				["uiScaleComboList"]    = combo(ctrlX, 288),
+				["uiScaleHelp"]         = static("$BFC_SCALE_INFO", left, 318, 850, 20, HelpSkin),
 
 				["wheelSectionLabel"]   = static("$BFC_WHEEL_SECTION", left, 360, 850, 24, LabelSkin),
 				["wheelKeyLabel"]       = static("$BFC_WHEEL_KEY", left, 395, labelW, rowH, LabelSkin),

@@ -7,6 +7,7 @@ cdata = {
 	BFC_SHIFT        = _("with Shift"),
 	BFC_KEY_INFO     = _("Pressed anywhere in DCS, it shows or hides the panel. Pick a combination none of your aircraft use. Changes apply within a few seconds."),
 	BFC_COMMS        = _("Also open the panel with the Comms (radio menu) key"),
+	BFC_AUTO_UPDATE  = _("Update automatically -- a new version downloads by itself and installs when you close DCS"),
 	BFC_SCALE        = _("Panel size"),
 	BFC_SCALE_INFO   = _("Auto uses 100% on a monitor and 135% in VR."),
 	BFC_WHEEL_SECTION = _("Wheel"),

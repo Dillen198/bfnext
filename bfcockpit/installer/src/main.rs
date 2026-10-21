@@ -24,6 +24,25 @@ const H: i32 = 520;
 const PAD: i32 = 14;
 
 fn main() {
+    // Started hidden by the plugin itself to update in the background (see
+    // `installer::auto_update`): no window, nothing to click.
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args.iter().any(|a| a == "--auto-update") {
+        let profile = args
+            .iter()
+            .position(|a| a == "--write-dir")
+            .and_then(|i| args.get(i + 1))
+            .map(PathBuf::from);
+        let code = match profile {
+            Some(p) => match installer::auto_update(&p, std::time::Duration::from_secs(24 * 3600)) {
+                Ok(_) => 0,
+                Err(_) => 1,
+            },
+            None => 2,
+        };
+        std::process::exit(code);
+    }
+
     if let Err(e) = nwg::init() {
         fatal(&format!("Could not start the installer window: {e}"));
         return;

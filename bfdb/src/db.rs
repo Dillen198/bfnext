@@ -3946,7 +3946,7 @@ impl StatsDb {
             ("cb4d087b-8805-487e-a4ff-e1a95386dc24", include_bytes!("../seed_wiki/images/cockpit-wheel-arc.jpeg")),
             ("9d90d6b9-13b8-4052-8684-12d5c5605742", include_bytes!("../seed_wiki/images/cockpit-wheel-info.jpeg")),
             ("f7e01aaf-8460-48c5-a6dc-81ab6f36fb17", include_bytes!("../seed_wiki/images/cockpit-wheel-blue.jpeg")),
-            ("f5215d94-4653-4aa6-aab7-f6dcec4fca6b", include_bytes!("../seed_wiki/images/cockpit-settings.jpeg")),
+            ("e6ad2b68-688a-4002-8be6-02f83031c5fb", include_bytes!("../seed_wiki/images/cockpit-settings.jpeg")),
             ("da866270-2d36-4ebb-8582-49420aaa561a", include_bytes!("../seed_wiki/images/cockpit-icons.jpeg")),
         ];
         let mut added = 0usize;

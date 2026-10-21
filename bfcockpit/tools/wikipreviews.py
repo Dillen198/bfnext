@@ -436,6 +436,7 @@ def settings_page(out):
     lab(X, y, "Key"); combo(CX, y, "C"); y += 32
     check(CX, y, "with Ctrl"); check(CX + 165, y, "with Alt"); check(CX + 330, y, "with Shift", False); y += 44
     check(X, y, "Also open the panel with the Comms (radio menu) key"); items.append(y); y += 44
+    check(X, y, "Update automatically -- a new version downloads by itself and installs when you close DCS"); items.append(y); y += 44
     lab(X, y, "Panel size"); combo(CX, y, "Auto (larger in VR)"); items.append(y); y += 52
     lab(X, y, "Wheel", 13, (142, 200, 63), True); y += 36
     lab(X, y, "Wheel key"); combo(CX, y, "W"); items.append(y); y += 32

@@ -29,6 +29,7 @@ return {
 	toggleAlt   = DbOption.new():setValue(true):checkbox(),
 	toggleShift = DbOption.new():setValue(false):checkbox(),
 	openOnComms = DbOption.new():setValue(true):checkbox(),
+	autoUpdate  = DbOption.new():setValue(true):checkbox(),
 	wheelKey    = DbOption.new():setValue("w"):combo(keys),
 	wheelCtrl   = DbOption.new():setValue(true):checkbox(),
 	wheelAlt    = DbOption.new():setValue(true):checkbox(),

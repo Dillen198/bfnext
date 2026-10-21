@@ -427,6 +427,96 @@ pub fn install_one(profile: &Path, url: &str) -> Result<Option<String>> {
     Ok(Some(format!("installed{note}")))
 }
 
+/// `a` is a later version than `b` ("3.10.0" > "3.9.2"). Anything that isn't
+/// a number counts as 0, so a garbled version never looks newer.
+pub fn is_newer(a: &str, b: &str) -> bool {
+    let parts = |v: &str| -> Vec<u64> { v.split('.').map(|p| p.trim().parse().unwrap_or(0)).collect() };
+    let (x, y) = (parts(a), parts(b));
+    for i in 0..x.len().max(y.len()) {
+        let (p, q) = (x.get(i).copied().unwrap_or(0), y.get(i).copied().unwrap_or(0));
+        if p != q {
+            return p > q;
+        }
+    }
+    false
+}
+
+/// Whether DCS still has this profile's `bfcockpit_net.dll` loaded. A loaded
+/// DLL can't be opened for writing, and DCS lets go of it only when it exits.
+fn dll_in_use(profile: &Path) -> bool {
+    let dll = net_dll_path(profile);
+    dll.is_file() && fs::OpenOptions::new().write(true).open(&dll).is_err()
+}
+
+/// One line in `<profile>\Logs\bfcockpit-update.log`, for "did it update?"
+fn update_log(profile: &Path, msg: &str) {
+    use std::io::Write;
+    let path = profile.join("Logs").join("bfcockpit-update.log");
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "[{secs}] {} {msg}", plugin_version());
+    }
+}
+
+/// The plugin's auto-update: started hidden by the running plugin (through
+/// `bfcockpit_net.dll`) with this installer freshly downloaded. It waits for
+/// the player to close DCS, installs into that one profile and exits.
+///
+/// Several can be waiting at once (an older one from an earlier session, say):
+/// they take turns on a lock file, and each checks right before installing
+/// that it is still newer than what is there -- so whichever order they run
+/// in, the newest version is what ends up installed, never an older one.
+pub fn auto_update(profile: &Path, max_wait: std::time::Duration) -> Result<String> {
+    use std::{thread::sleep, time::{Duration, Instant}};
+    let deadline = Instant::now() + max_wait;
+    let lock_dir = std::env::temp_dir().join("VectorStrikeCockpit");
+    fs::create_dir_all(&lock_dir).ok();
+    let lock_path = lock_dir.join("update.lock");
+    let result = (|| -> Result<String> {
+        loop {
+            let installed = installed_version(profile)
+                .context("the plugin isn't installed in this profile any more")?;
+            if !is_newer(plugin_version(), &installed) {
+                return Ok(format!("nothing to do, {installed} is installed"));
+            }
+            if !dll_in_use(profile) {
+                // Exclusive while installing; released when it is dropped.
+                #[cfg(windows)]
+                let lock = {
+                    use std::os::windows::fs::OpenOptionsExt;
+                    fs::OpenOptions::new().create(true).write(true).share_mode(0).open(&lock_path)
+                };
+                #[cfg(not(windows))]
+                let lock = fs::OpenOptions::new().create(true).write(true).open(&lock_path);
+                if let Ok(_lock) = lock {
+                    let installed = installed_version(profile).unwrap_or_default();
+                    if !is_newer(plugin_version(), &installed) {
+                        return Ok(format!("nothing to do, {installed} is installed"));
+                    }
+                    match install_one(profile, DEFAULT_URL) {
+                        Ok(_) => return Ok(format!("updated from {installed}")),
+                        // DCS started again between the check and the write.
+                        Err(e) if Instant::now() < deadline => update_log(profile, &format!("retrying: {e:#}")),
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                anyhow::bail!("gave up waiting for DCS to close");
+            }
+            sleep(Duration::from_secs(5));
+        }
+    })();
+    match &result {
+        Ok(msg) => update_log(profile, msg),
+        Err(e) => update_log(profile, &format!("failed: {e:#}")),
+    }
+    result
+}
+
 pub fn uninstall_one(profile: &Path) -> Result<Option<String>> {
     let dest = profile.join("Scripts").join("Hooks").join(HOOK_NAME);
     let dirs = [plugin_dir(profile), join_all(profile, &LEGACY_NET_DIR)];
@@ -446,7 +536,17 @@ pub fn uninstall_one(profile: &Path) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::api_origin;
+    use super::{api_origin, is_newer};
+
+    #[test]
+    fn versions() {
+        assert!(is_newer("3.2.0", "3.1.0"));
+        assert!(is_newer("3.10.0", "3.9.9"));
+        assert!(is_newer("3.1.1", "3.1"));
+        assert!(!is_newer("3.1.0", "3.1.0"));
+        assert!(!is_newer("3.1.0", "3.2.0"));
+        assert!(!is_newer("garbage", "3.1.0"));
+    }
 
     #[test]
     fn origin() {

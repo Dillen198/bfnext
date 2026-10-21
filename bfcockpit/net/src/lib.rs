@@ -14,6 +14,10 @@
 //! end
 //! ```
 //!
+//! `update(version, write_dir)` fetches the installer for a newer plugin
+//! version and starts it hidden; it waits for DCS to close before installing
+//! (see `update` below). Its result comes back through `poll()` like a request.
+//!
 //! Requests run on a few background threads; results queue up until the next
 //! `poll()`. Nothing here touches Lua outside those two calls, so no Lua state
 //! is ever used from another thread. Neither call ever raises a Lua error (see
@@ -21,6 +25,7 @@
 use mlua::prelude::*;
 use std::{
     io::Read,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc, Arc, Mutex, OnceLock,
@@ -35,12 +40,22 @@ const WORKERS: usize = 3;
 const MAX_BODY: u64 = 4 * 1024 * 1024;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Where every plugin version's installer is published (a GitHub release per
+/// version, `cockpit-v<version>`). Fixed here rather than taken from the
+/// server, so nothing a server says can make a player run anything else.
+const RELEASES: &str = "https://github.com/Dillen198/bfnext/releases/download";
+const INSTALLER: &str = "VectorStrike-Cockpit-Install.exe";
+/// The installer is ~6 MB; anything far bigger is not it.
+const MAX_INSTALLER: u64 = 64 * 1024 * 1024;
+
+enum Work {
+    Http { method: String, url: String, body: Option<String>, timeout: Duration },
+    Update { version: String, write_dir: PathBuf },
+}
+
 struct Job {
     id: u64,
-    method: String,
-    url: String,
-    body: Option<String>,
-    timeout: Duration,
+    work: Work,
 }
 
 struct Done {
@@ -103,11 +118,21 @@ fn read_body(resp: ureq::Response) -> Result<String, String> {
 }
 
 fn run(agent: &ureq::Agent, job: Job) -> Done {
+    match job.work {
+        Work::Http { method, url, body, timeout } => http(agent, job.id, &method, &url, body, timeout),
+        Work::Update { version, write_dir } => match update_now(agent, &version, &write_dir) {
+            Ok(msg) => Done { id: job.id, status: 200, body: msg, error: None },
+            Err(e) => Done { id: job.id, status: 0, body: String::new(), error: Some(e) },
+        },
+    }
+}
+
+fn http(agent: &ureq::Agent, id: u64, method: &str, url: &str, body: Option<String>, timeout: Duration) -> Done {
     let req = agent
-        .request(&job.method, &job.url)
-        .timeout(job.timeout)
+        .request(method, url)
+        .timeout(timeout)
         .set("Accept", "application/json");
-    let res = match &job.body {
+    let res = match &body {
         Some(body) => req.set("Content-Type", "application/json").send_string(body),
         None => req.call(),
     };
@@ -116,14 +141,82 @@ fn run(agent: &ureq::Agent, job: Job) -> Done {
     let resp = match res {
         Ok(resp) | Err(ureq::Error::Status(_, resp)) => resp,
         Err(ureq::Error::Transport(t)) => {
-            return Done { id: job.id, status: 0, body: String::new(), error: Some(t.to_string()) }
+            return Done { id, status: 0, body: String::new(), error: Some(t.to_string()) }
         }
     };
     let status = resp.status();
     match read_body(resp) {
-        Ok(body) => Done { id: job.id, status, body, error: None },
-        Err(e) => Done { id: job.id, status, body: String::new(), error: Some(e) },
+        Ok(body) => Done { id, status, body, error: None },
+        Err(e) => Done { id, status, body: String::new(), error: Some(e) },
     }
+}
+
+/// Download the installer for `version` and start it hidden with
+/// `--auto-update --write-dir <profile>`. It installs once DCS has let go of
+/// this DLL -- that is, after the player closes DCS -- and then exits.
+fn update_now(agent: &ureq::Agent, version: &str, write_dir: &Path) -> Result<String, String> {
+    let dir = std::env::temp_dir().join("VectorStrikeCockpit");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
+    let exe = dir.join(format!("VectorStrike-Cockpit-Install-{version}.exe"));
+    let part = dir.join(format!("VectorStrike-Cockpit-Install-{version}.part"));
+
+    let url = format!("{RELEASES}/cockpit-v{version}/{INSTALLER}");
+    let resp = agent
+        .get(&url)
+        .timeout(Duration::from_secs(300))
+        .call()
+        .map_err(|e| format!("downloading {url}: {e}"))?;
+    let mut bytes = Vec::new();
+    resp.into_reader()
+        .take(MAX_INSTALLER + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("downloading {url}: {e}"))?;
+    if bytes.len() as u64 > MAX_INSTALLER || !bytes.starts_with(b"MZ") {
+        return Err(format!("{url} is not the installer ({} bytes)", bytes.len()));
+    }
+    std::fs::write(&part, &bytes).map_err(|e| format!("saving {}: {e}", part.display()))?;
+    // An installer for this version may already be waiting from an earlier
+    // session. It is running, so it can't be replaced -- and it will do the job.
+    let _ = std::fs::remove_file(&exe);
+    if let Err(e) = std::fs::rename(&part, &exe) {
+        let _ = std::fs::remove_file(&part);
+        if exe.is_file() {
+            return Ok("already waiting".into());
+        }
+        return Err(format!("saving {}: {e}", exe.display()));
+    }
+    spawn_detached(&exe, write_dir).map_err(|e| format!("starting {}: {e}", exe.display()))?;
+    Ok("waiting for DCS to close".into())
+}
+
+#[cfg(windows)]
+fn spawn_detached(exe: &Path, write_dir: &Path) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
+    let start = |extra: u32| {
+        Command::new(exe)
+            .arg("--auto-update")
+            .arg("--write-dir")
+            .arg(write_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(flags | extra)
+            .spawn()
+    };
+    // Out of DCS's job object if it is in one, so closing DCS doesn't take the
+    // installer with it; a job that forbids that still lets it start inside.
+    start(CREATE_BREAKAWAY_FROM_JOB).or_else(|_| start(0)).map(|_| ())
+}
+
+#[cfg(not(windows))]
+fn spawn_detached(_: &Path, _: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "Windows only"))
 }
 
 fn lua_str(v: &LuaValue) -> Option<String> {
@@ -151,9 +244,13 @@ fn queue(method: &LuaValue, url: &LuaValue, body: &LuaValue, timeout: &LuaValue)
     .filter(|t| t.is_finite() && *t > 0.)
     .map(|t| Duration::from_secs_f64(t.min(120.)))
     .unwrap_or(DEFAULT_TIMEOUT);
+    send(Work::Http { method: method.to_ascii_uppercase(), url, body, timeout })
+}
+
+fn send(work: Work) -> Result<u64, String> {
     let pool = pool();
     let id = pool.next_id.fetch_add(1, Ordering::Relaxed);
-    let job = Job { id, method: method.to_ascii_uppercase(), url, body, timeout };
+    let job = Job { id, work };
     pool.tx
         .lock()
         .map_err(|_| "worker queue poisoned")?
@@ -174,6 +271,38 @@ fn request<'lua>(
     (method, url, body, timeout): (LuaValue<'lua>, LuaValue<'lua>, LuaValue<'lua>, LuaValue<'lua>),
 ) -> LuaResult<(Option<u64>, Option<String>)> {
     Ok(match queue(&method, &url, &body, &timeout) {
+        Ok(id) => (Some(id), None),
+        Err(e) => (None, Some(e)),
+    })
+}
+
+/// A version is digits and dots only -- it goes into a URL and a file name.
+fn valid_version(v: &str) -> bool {
+    let parts: Vec<&str> = v.split('.').collect();
+    (2..=4).contains(&parts.len())
+        && parts.iter().all(|p| !p.is_empty() && p.len() <= 5 && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// `update(version, write_dir) -> id | nil, err`
+///
+/// The result arrives through `poll()`: status 200 with a short note in
+/// `body`, or status 0 with `error`. Never raises (see `request`).
+fn update<'lua>(
+    _: &'lua Lua,
+    (version, write_dir): (LuaValue<'lua>, LuaValue<'lua>),
+) -> LuaResult<(Option<u64>, Option<String>)> {
+    let queued = (|| {
+        let version = lua_str(&version).ok_or("version must be a string")?;
+        if !valid_version(&version) {
+            return Err(format!("not a version: {version:?}"));
+        }
+        let dir = PathBuf::from(lua_str(&write_dir).ok_or("write_dir must be a string")?);
+        if !dir.is_absolute() || !dir.is_dir() {
+            return Err(format!("not a folder: {}", dir.display()));
+        }
+        send(Work::Update { version, write_dir: dir })
+    })();
+    Ok(match queued {
         Ok(id) => (Some(id), None),
         Err(e) => (None, Some(e)),
     })
@@ -206,6 +335,7 @@ fn bfcockpit_net(lua: &Lua) -> LuaResult<LuaTable<'_>> {
     let m = lua.create_table()?;
     m.set("request", lua.create_function(request)?)?;
     m.set("poll", lua.create_function(poll)?)?;
+    m.set("update", lua.create_function(update)?)?;
     m.set("version", env!("CARGO_PKG_VERSION"))?;
     Ok(m)
 }

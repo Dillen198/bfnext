@@ -20,6 +20,10 @@
 --   EWR     threat / friendly picture, ground intel, EWR on/off and units
 --   LOG     every message the server sent you, newest first
 --
+-- UPDATES: when the server has a newer version this downloads its installer
+-- (from the project's GitHub release for that version) and starts it hidden;
+-- it installs when you close DCS. Turn it off on the Special page.
+--
 -- THE WHEEL: a Flow-style radial menu for doing things without reading a
 -- panel. Tap its key (Ctrl+Alt+W unless changed), point at an item with your
 -- head (TrackIR / VR) or the mouse, then click it or tap the key again. F10
@@ -59,7 +63,7 @@
 -- copy it was built with to answer /api/cockpit/plugin/version, and the panel
 -- compares that with its own to tell the player when to update. Keep the
 -- format exactly as it is.
-local BFCOCKPIT_VERSION = "3.1.0"
+local BFCOCKPIT_VERSION = "3.2.0"
 
 local net = require('net')
 
@@ -336,6 +340,7 @@ local function compute_settings()
         s.wheel_key = nil
     end
     s.open_on_comms = opt("openOnComms", cfg.open_on_radio_menu) ~= false
+    s.auto_update = opt("autoUpdate", cfg.auto_update) ~= false
     s.wheel_head = opt("wheelHead", cfg.wheel_head) ~= false
     s.wheel_reach = math.max(3, tonumber(opt("wheelReach", cfg.wheel_reach)) or 10)
     s.wheel_dwell = math.max(0, tonumber(opt("wheelDwell", cfg.wheel_dwell)) or 0)
@@ -601,6 +606,7 @@ local function urlencode(s)
 end
 
 local pending = {}  -- request id -> callback(data, err, status)
+local pending_raw = {}  -- id -> callback(result), for http.update
 
 local function api_url(path, params, authed)
     local parts = { (tostring(cfg.api):gsub("/+$", "")), path }
@@ -645,6 +651,12 @@ local function api_call(method, path, params, body, authed, cb)
 end
 
 local function deliver(r)
+    local raw = pending_raw[r.id]
+    if raw then
+        pending_raw[r.id] = nil
+        raw(r)
+        return
+    end
     local cb = pending[r.id]
     pending[r.id] = nil
     if not cb then return end
@@ -823,6 +835,9 @@ local NOTE_SECS = 8
 local function paint_note()
     if w_status then
         local t = state.note and state.note.text
+            or (state.update and state.updating == "downloading" and ("Downloading version " .. state.update .. "..."))
+            or (state.update and state.updating == "waiting" and ("Version " .. state.update .. " is downloaded -- it installs when you close DCS"))
+            or (state.update and not settings.auto_update and ("Version " .. state.update .. " is available -- turn on auto-update in Options > Special, or re-run the installer"))
             or (state.update and ("Version " .. state.update .. " is available -- re-run the Vector Strike installer"))
             or ("Vector Strike " .. BFCOCKPIT_VERSION .. (bound.toggle and ("  ·  " .. bound.toggle:upper() .. " panel") or "")
                 .. (bound.wheel and ("  ·  " .. bound.wheel:upper() .. " wheel") or ""))
@@ -950,6 +965,34 @@ local function refresh_now()
     state.next_fetch = 0
 end
 
+-- Auto-update (on unless turned off in Options -> Special): fetch the
+-- installer for the version the server has and start it hidden. It waits
+-- for DCS to close, installs into this profile and exits, so the next start
+-- is the new version. Once per session; a failure leaves the manual notice.
+local function maybe_auto_update()
+    if not state.update or state.updating or not settings.auto_update then return end
+    if not (http and http.update) then return end
+    local id, err = http.update(state.update, lfs.writedir())
+    if not id then
+        logmsg("auto-update not started: " .. tostring(err))
+        state.updating = "failed"
+        return
+    end
+    state.updating = "downloading"
+    logmsg("auto-update: fetching " .. state.update)
+    pending_raw[id] = function(r)
+        if r.status == 200 then
+            state.updating = "waiting"
+            logmsg("auto-update: " .. state.update .. " " .. tostring(r.body))
+        else
+            state.updating = "failed"
+            logmsg("auto-update failed: " .. tostring(r.error))
+        end
+        paint_note()
+    end
+    paint_note()
+end
+
 local function check_version()
     if state.checked_version then return end
     state.checked_version = true
@@ -957,6 +1000,7 @@ local function check_version()
         if type(data) == 'table' and data.version and is_newer(data.version, BFCOCKPIT_VERSION) then
             state.update = tostring(data.version)
             logmsg("server has plugin " .. state.update .. ", this is " .. BFCOCKPIT_VERSION)
+            maybe_auto_update()
             paint_note()
         end
     end)
@@ -3146,6 +3190,7 @@ local function recheck_settings()
     local scale_changed = math.abs(s.scale - settings.scale) > 0.001
     local wheel_size_changed = math.abs(s.wheel_size - settings.wheel_size) > 0.001
     settings = s
+    maybe_auto_update()  -- in case it was just turned on
     if wheel_size_changed and not scale_changed and window and destroy_wheel and create_wheel then
         destroy_wheel()
         create_wheel()

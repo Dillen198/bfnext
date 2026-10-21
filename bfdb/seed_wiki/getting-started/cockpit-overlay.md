@@ -35,6 +35,14 @@ another drive or into OneDrive is still found; if yours is somewhere stranger,
 **Add profile...** lets you point at it. **Uninstall** is next to it and keeps
 your settings.
 
+**Updates install themselves** (from version 3.2). When the server has a
+newer version, the panel says *"Version … is downloaded — it installs when you
+close DCS"*: it has fetched the installer in the background, and the next time
+you start DCS you're on the new version. Nothing to click. If you'd rather
+update by hand, untick **Update automatically** in the
+[settings](#settings); the panel then tells you when there's a new version.
+If you're on 3.1, run the installer once more to get this.
+
 There is **no login, no pairing code and no account linking** — it knows who you
 are from the connection you're already flying on. You do **not** need to edit
 `MissionScripting.lua`, and nothing in your DCS installation folder is touched.
@@ -245,7 +253,7 @@ objectives and so on. Change any of them with **ICON** in the WHEEL tab.
 
 ## Settings
 
-![Options, Special, Vector Strike: every setting numbered](/api/wiki/images/f5215d94-4653-4aa6-aab7-f6dcec4fca6b)
+![Options, Special, Vector Strike: every setting numbered](/api/wiki/images/e6ad2b68-688a-4002-8be6-02f83031c5fb)
 
 Everything is in **Options → Special → Vector Strike**, and changes apply
 within a few seconds, even in the middle of a mission.
@@ -254,16 +262,17 @@ within a few seconds, even in the middle of a mission.
 | --- | --- | --- | --- |
 | 1 | **Show / hide key** | Ctrl+Alt+C | The key that opens and closes the panel from anywhere. Pick any letter, digit, F1–F12, numpad digit, Insert, Delete, Home, End or Pause, with any of Ctrl / Alt / Shift. Choose a combination none of your aircraft use. |
 | 2 | **Also open with the Comms key** | on | The panel also opens when you open the radio menu, so the key you already use for campaign things gets you there. |
-| 3 | **Panel size** | Auto | How big the panel's text and buttons are. Auto is 100% on a monitor and 135% in VR. |
-| 4 | **Wheel key** | Ctrl+Alt+W | The key that opens the wheel, and (tapped again) fires what you're pointing at. |
-| 5 | **Point with head tracking** | on | Turn off if you only want the mouse to point, e.g. if your head moves the pointer when you don't mean it to. |
-| 6 | **Head turn to reach an item** | Medium (10°) | How far you turn your head to reach the ring; the outer arc is twice that. Short suits TrackIR with high curves, Long suits VR or relaxed head movement. |
-| 7 | **Fire by looking at an item** | Off | Fire an item just by looking at it for 0.8–2 seconds — fully hands-free. Off by default so a glance never fires anything. |
-| 8 | **Wheel size** | 100% | How big the wheel is (80–150%). |
-| 9 | **Wheel colour** | Vector Strike green | Green, blue, amber, red or white. |
-| 10 | **Wheel opacity** | 90% | How see-through the wheel's segments are. |
-| 11 | **Open the wheel at** | Centre of the screen | Or **where the mouse is**. In VR it always opens where you're looking. |
-| 12 | **Wheel keys (while it is open)** | Arrow keys, Enter, Backspace | Drive the wheel with keys only — see [Keys only](#keys-only-no-mouse-no-head-tracking). Choose the arrows, the numpad, Ctrl+Alt + arrows, or Off. |
+| 3 | **Update automatically** | on | When the server has a newer version, it downloads in the background and installs when you close DCS. Untick it to update by hand; the panel then tells you when there's a new version. |
+| 4 | **Panel size** | Auto | How big the panel's text and buttons are. Auto is 100% on a monitor and 135% in VR. |
+| 5 | **Wheel key** | Ctrl+Alt+W | The key that opens the wheel, and (tapped again) fires what you're pointing at. |
+| 6 | **Point with head tracking** | on | Turn off if you only want the mouse to point, e.g. if your head moves the pointer when you don't mean it to. |
+| 7 | **Head turn to reach an item** | Medium (10°) | How far you turn your head to reach the ring; the outer arc is twice that. Short suits TrackIR with high curves, Long suits VR or relaxed head movement. |
+| 8 | **Fire by looking at an item** | Off | Fire an item just by looking at it for 0.8–2 seconds — fully hands-free. Off by default so a glance never fires anything. |
+| 9 | **Wheel size** | 100% | How big the wheel is (80–150%). |
+| 10 | **Wheel colour** | Vector Strike green | Green, blue, amber, red or white. |
+| 11 | **Wheel opacity** | 90% | How see-through the wheel's segments are. |
+| 12 | **Open the wheel at** | Centre of the screen | Or **where the mouse is**. In VR it always opens where you're looking. |
+| 13 | **Wheel keys (while it is open)** | Arrow keys, Enter, Backspace | Drive the wheel with keys only — see [Keys only](#keys-only-no-mouse-no-head-tracking). Choose the arrows, the numpad, Ctrl+Alt + arrows, or Off. |
 
 **HOTAS buttons:** DCS doesn't let add-ons add their own entry to the
 **Controls** page, so to open the panel or wheel — or drive the wheel — from

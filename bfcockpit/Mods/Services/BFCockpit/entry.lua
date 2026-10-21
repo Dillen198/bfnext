@@ -12,7 +12,7 @@ declare_plugin("BFCockpit", {
 	developerName = _("Vector Strike"),
 	developerLink = _("https://vectorstrike.org"),
 	displayName   = _("Vector Strike"),
-	version       = "3.1.0",
+	version       = "3.2.0",
 	state         = "installed",
 	info          = _("Vector Strike in-game panel and wheel: the F10 menu, cargo with crate counts, status, EWR and every message the server sends you.\n\nSet the panel and wheel keys, head-tracking and sizes under Options -> Special -> Vector Strike."),
 	Skins = {

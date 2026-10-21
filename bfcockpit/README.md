@@ -46,6 +46,19 @@ reinstalling keeps your window position, opacity and key.
 Everything is embedded in the exe: nothing to unzip, nothing to keep next to
 it, no runtime to install, and no DCS game file touched.
 
+### Updates
+
+From 3.2 the plugin updates itself (**Update automatically** on the Special
+page, on by default). When the server's bfdb ships a newer version
+(`/api/cockpit/plugin/version`), `bfcockpit_net.dll` downloads that version's
+installer from its GitHub release (`cockpit-v<version>`; the address is fixed
+in the DLL, the server only supplies the version number) into
+`%TEMP%\VectorStrikeCockpit\` and starts it hidden with
+`--auto-update --write-dir <profile>`. It waits until DCS has let go of the
+DLL, i.e. until DCS is closed, installs into that one profile, logs to
+`Logs\bfcockpit-update.log` and exits. It never installs an older version
+over a newer one.
+
 ### Scripted installs
 
 `bfcockpit-install-cli.exe` is the same thing without the window — for rolling
