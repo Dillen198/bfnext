@@ -28,6 +28,7 @@ import { ResponsiveContainer, AreaChart, Area, YAxis } from 'recharts'
 import { classifyTargetClass, TARGET_CLASS_COLOR, fmtTimeZ, windDir, visStr, cloudStr } from '../lib/format'
 import { useRound } from '../context/RoundContext'
 import { useFlagBackground } from '../lib/flags'
+import { useWireframe } from '../lib/wireframe'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -386,11 +387,9 @@ function TerritoryTrend({ roundId }: { roundId: number | null }) {
 export default function Dashboard() {
   const navigate = useNavigate()
   const { selectedRound } = useRound()
-  // The selected server's flags behind the KPI strip and the territory panel.
-  // The strip sets their height (index.css): full height on one row, capped
-  // on a phone, where it wraps to three rows and full-height flags would grow
-  // wide enough to sit under every number.
-  const kpiFlags = useFlagBackground('var(--bg-chrome)', 'var(--bg-chrome-solid)', 'bold', 'var(--kpi-flag-h)')
+  // A Hornet in wireframe over the stat row. The territory panel keeps the
+  // selected server's flags: it is the one place they say whose ground is whose.
+  const kpiArt = useWireframe('fa18', { base: 'var(--bg-chrome)', strength: 'soft' })
   const territoryFlags = useFlagBackground('var(--bg-card)', 'var(--bg-card-solid)', 'soft')
 
   const onlineQ = useQuery({ queryKey: ['online'], queryFn: api.online, refetchInterval: 10_000 })
@@ -477,7 +476,7 @@ export default function Dashboard() {
       )}
 
       {/* ── KPI strip ── */}
-      <div className="kpi-strip" style={kpiFlags}>
+      <div className="kpi-strip" style={kpiArt}>
         <KpiCell label="ONLINE" value={online.length} icon={PilotIcon}
           sub={`${blue.length} blu · ${red.length} red`} />
         <KpiCell label="AIRBORNE" value={inAir} icon={Aircraft} color="var(--accent)"

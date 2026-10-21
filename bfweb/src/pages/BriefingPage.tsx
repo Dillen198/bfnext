@@ -89,7 +89,7 @@ export default function BriefingPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
-      <PageHeader
+      <PageHeader art="apache"
         icon={BriefingIcon}
         title="BRIEFING"
         sub={

@@ -5,7 +5,7 @@ import { campaign } from '../config/campaign'
 import ThemeToggle from '../components/ThemeToggle'
 import LogoMark from '../components/LogoMark'
 import Backdrop from '../components/Backdrop'
-import { useFlagBackground } from '../lib/flags'
+import { useWireframe } from '../lib/wireframe'
 
 /**
  * Sign-in. Discord is the only way a person gets into the dashboard: a pilot's
@@ -18,16 +18,15 @@ import { useFlagBackground } from '../lib/flags'
  * relay and binary swaps. It is deliberately not offered in this UI.
  */
 export default function LoginPage() {
-  // Over the animated backdrop, so no panel colour to veil with: the layer's
-  // own opacity sets the strength instead.
-  const flags = useFlagBackground('transparent', 'transparent', 'soft', '60%')
+  // An Su-27 behind the sign-in card, over the animated backdrop.
+  const art = useWireframe('su27', { strength: 'bold', position: 'center', size: 'min(1100px, 94%) auto', fade: 'none' })
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       height: '100%', position: 'relative',
     }}>
       <Backdrop />
-      <div aria-hidden="true" style={{ ...flags, position: 'absolute', inset: 0, opacity: 0.22, pointerEvents: 'none' }} />
+      <div aria-hidden="true" style={{ ...art, position: 'absolute', inset: 0, pointerEvents: 'none' }} />
       <ThemeToggle style={{ position: 'absolute', top: 16, right: 16 }} />
       <div style={{
         position: 'relative',

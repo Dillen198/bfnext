@@ -84,7 +84,7 @@ export default function SquadronsPage() {
   const squadrons: Squadron[] = list.data ?? []
   return (
     <div className="page">
-      <PageHeader title="SQUADRONS" sub="Ranked by XP members earned while flying for them" icon={PilotIcon} />
+      <PageHeader art="su27" title="SQUADRONS" sub="Ranked by XP members earned while flying for them" icon={PilotIcon} />
       {user?.ucid ? (
         <div className="card" style={{ padding: 12, marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           {myTag ? (

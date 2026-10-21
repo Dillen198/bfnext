@@ -840,7 +840,7 @@ export default function AdminPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader icon={Admin} title="ADMIN PANEL" sub="Server management — restricted access" />
+      <PageHeader art="apache" icon={Admin} title="ADMIN PANEL" sub="Server management — restricted access" />
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
 

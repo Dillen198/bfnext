@@ -1,25 +1,21 @@
 """Draw the Modern server's flags: NATO, and Russia, Syria, Iran and Iraq.
 
-Writes two sets:
-  bfweb/public/media/flag-nato-l.png, flag-rsii-r.png
-      the dashboard's backdrop layers: cloth folds baked in, faded toward
-      the middle of the panel, like the Georgia and Russia ones
-  bfsite/public/media/flag-nato.png, flag-rsii.png
-      flat, the site masks them and lays its own sheen on top
+Writes bfsite/public/media/flag-nato.png and flag-rsii.png, flat: the
+public site masks them and lays its own sheen on top. (The dashboard used to
+fly flags too; it has wireframe art now -- scripts/gen-wireframes.py.)
 
 The red side is a coalition of four, so its picture is a 2x2 block:
 Russia and Iran on the inside, where the fade eats most of the detail (their
 colours say who they are), Syria and Iraq on the outside, where their
 emblems -- the only thing telling the two apart -- stay readable.
 
-Needs Pillow and numpy, and Windows' Arial and Segoe UI Symbol fonts.
+Needs Pillow, and Windows' Arial and Segoe UI Symbol fonts.
     python bfweb/scripts/gen-flags.py
 """
 
 import math
 from pathlib import Path
 
-import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -130,30 +126,11 @@ def rsii_flag(d, w, h):
     iraq(d, cw + gap, ch + gap, cw, ch)
 
 
-def backdrop(img, side, fade):
-    """Fold shading and a fade toward the panel's middle, as the other dashboard flags have."""
-    a = np.asarray(img).astype(np.float32)
-    ys, xs = np.mgrid[0:H, 0:W].astype(np.float32)
-    # Measured from the edge toward the panel's middle, so both sides mirror.
-    e = xs if side == "r" else (W - 1) - xs
-    d = (e - 1.2 * ys - 96) % 560
-    d = np.minimum(d, 560 - d)
-    shade = 1 - 0.19 * np.exp(-((d / 70) ** 2))
-    a[..., :3] *= shade[..., None]
-    t = np.clip(e / fade, 0, 1)
-    a[..., 3] *= (t * t * (3 - 2 * t)) ** 1.4
-    return Image.fromarray(np.clip(a, 0, 255).astype(np.uint8))
-
-
 def main():
-    web = ROOT / "bfweb/public/media"
     site = ROOT / "bfsite/public/media"
-    # The block of four fades over a shorter run, or its inner column is lost.
-    for name, paint, side, fade in [("nato", nato_flag, "l", 480), ("rsii", rsii_flag, "r", 360)]:
-        flat = draw(paint)
-        flat.save(site / f"flag-{name}.png", optimize=True)
-        backdrop(flat, side, fade).save(web / f"flag-{name}-{side}.png", optimize=True)
-        print(f"flag-{name}: {site} and {web}")
+    for name, paint in [("nato", nato_flag), ("rsii", rsii_flag)]:
+        draw(paint).save(site / f"flag-{name}.png", optimize=True)
+        print(f"flag-{name}: {site}")
 
 
 if __name__ == "__main__":

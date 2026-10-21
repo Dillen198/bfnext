@@ -754,7 +754,7 @@ export default function Pilots() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader icon={PilotIcon} title="PILOTS" sub={`${pilots.length} registered pilots`} />
+      <PageHeader art="fa18-top" icon={PilotIcon} title="PILOTS" sub={`${pilots.length} registered pilots`} />
 
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {/* ── Search ── */}

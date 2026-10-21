@@ -3,8 +3,9 @@ import { useInstance } from '../context/InstanceContext'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Each server's two flags, blended into a panel's background: the blue side's
-// from the left edge, the red side's from the right. The public site's
-// /servers cards do the same.
+// from the left edge, the red side's from the right. Only the dashboard's
+// territory panel flies them now -- the other panels carry wireframe art
+// (wireframe.ts). The public site's /servers cards do the same.
 //
 // The flags are CSS background layers, not elements. The topbar and the KPI
 // strip are plain flex/grid rows; an absolutely positioned overlay would

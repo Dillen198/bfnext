@@ -896,9 +896,6 @@ body {
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--bg-chrome);
-  /* The server's flags fill the strip, which is one row of 84-116px
-     depending on how far the cell text wraps. */
-  --kpi-flag-h: 100%;
 }
 .kpi-cell {
   padding: 10px 18px;
@@ -919,8 +916,6 @@ body {
        and left it looking like a mistake. auto-fill keeps the track, so it
        stays one column wide and lines up under the one above it. */
     grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-    /* Wrapped to rows: about one row tall, not the whole strip. */
-    --kpi-flag-h: 80px;
   }
   .kpi-cell {
     padding: 8px 12px;

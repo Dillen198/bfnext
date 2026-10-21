@@ -11,7 +11,7 @@ import LogoMark from './LogoMark'
 import Backdrop from './Backdrop'
 import StatusBanner from './StatusBanner'
 import NotificationBell from './NotificationBell'
-import { useFlagBackground } from '../lib/flags'
+import { useWireframe } from '../lib/wireframe'
 import { getDevUser } from '../lib/devAuth'
 import {
   Sitrep,
@@ -266,7 +266,10 @@ function CampaignSelect({
 export default function Layout() {
   const { user, logout } = useAuth()
   // The selected server's flags behind the top bar, on every page.
-  const topbarFlags = useFlagBackground('var(--bg-chrome)', 'var(--bg-chrome-solid)', 'bold')
+  // A carrier under way along the top bar, starting just past the clocks
+  // (which end about 530px in): on a wide screen that is open bar; on a
+  // narrow one it passes behind the counters, soft enough to read over.
+  const topbarArt = useWireframe('carrier', { base: 'var(--bg-chrome)', strength: 'soft', position: 'left 540px center', size: 'auto 96%', fade: 'none' })
   const navigate = useNavigate()
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
@@ -387,7 +390,7 @@ export default function Layout() {
       {/* ══════════════════════════════════════════════════════════
           TOP BAR
           ══════════════════════════════════════════════════════════ */}
-      <header className="topbar" style={topbarFlags}>
+      <header className="topbar" style={topbarArt}>
 
         {/* Mobile nav toggle */}
         <button

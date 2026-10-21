@@ -214,7 +214,7 @@ export default function Objectives() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader
+      <PageHeader art="tank"
         icon={Objective}
         title="OBJECTIVES"
         sub={`${total} total · ${counts.Red} red · ${counts.Blue} blue · ${counts.Neutral} neutral`}

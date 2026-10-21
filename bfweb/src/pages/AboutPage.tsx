@@ -30,7 +30,7 @@ export default function AboutPage() {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <PageHeader
+      <PageHeader art="carrier-quarter"
         icon={Info}
         title="ABOUT"
         sub="Campaign system & credits"

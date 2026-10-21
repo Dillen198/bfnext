@@ -1123,7 +1123,7 @@ export default function OpsPage() {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <PageHeader icon={Server} title="OPS" sub="Server box, processes, engine updates and bot config" />
+      <PageHeader art="carrier-quarter" icon={Server} title="OPS" sub="Server box, processes, engine updates and bot config" />
       <div className="flex-1 overflow-auto p-4 space-y-4">
         {error && (
           <div className="vs-card flex items-start gap-2" style={{ padding: '0.75rem 1rem', borderColor: 'rgba(239,68,68,0.4)' }}>
