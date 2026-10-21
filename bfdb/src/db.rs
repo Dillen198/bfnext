@@ -1702,6 +1702,33 @@ impl StatsDb {
         }
     }
 
+    /// Each round's number on its own server, counted from 1 in start order:
+    /// the number players see. A `RoundId` comes from sled's id generator,
+    /// shared with everything else in the database and advanced in blocks of
+    /// a million across restarts, so the ids read 0, then 108000656. They
+    /// stay the key for every query; this is only what they are called.
+    pub(crate) fn round_numbers(&self) -> Result<std::collections::HashMap<RoundId, u32>> {
+        let mut by_inst: std::collections::HashMap<InstanceId, Vec<(DateTime<Utc>, RoundId)>> =
+            std::collections::HashMap::new();
+        for r in self.round.iter() {
+            let ((_, rid), round) = r?;
+            by_inst.entry(self.round_instance_of(rid)).or_default().push((round.start, rid));
+        }
+        let mut out = std::collections::HashMap::new();
+        for (_, mut rounds) in by_inst {
+            rounds.sort();
+            for (n, (_, rid)) in rounds.into_iter().enumerate() {
+                out.insert(rid, n as u32 + 1);
+            }
+        }
+        Ok(out)
+    }
+
+    /// One round's number on its server; see `round_numbers`.
+    pub(crate) fn round_number(&self, round: RoundId) -> Option<u32> {
+        self.round_numbers().ok()?.get(&round).copied()
+    }
+
     /// The rounds that count towards the public, all-time picture: those
     /// belonging to an instance with `public: true`.
     ///
@@ -6276,6 +6303,32 @@ impl StatsDb {
             "id": crate::instance::DEFAULT_INSTANCE,
         }))?;
         Self::new(&HashMap::new(), path, Registry::single(cfg), include, exclude)
+    }
+}
+
+#[cfg(test)]
+mod round_number_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rounds_are_numbered_per_server_in_start_order() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-number-test-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let t0 = Utc::now();
+        // Ids as sled hands them out: nothing like 1, 2, 3, and not in order.
+        let rounds = [(RoundId(108_000_656), 120i64), (RoundId(0), 0), (RoundId(54_000_002), 60)];
+        for (rid, mins) in rounds {
+            let start = t0 + chrono::Duration::minutes(mins);
+            db.round
+                .insert(&(Scenario::from("campaign"), rid), &Round { start, end: None, winner: None })
+                .unwrap();
+        }
+        let n = db.round_numbers().unwrap();
+        assert_eq!(n.get(&RoundId(0)), Some(&1));
+        assert_eq!(n.get(&RoundId(54_000_002)), Some(&2));
+        assert_eq!(n.get(&RoundId(108_000_656)), Some(&3));
+        assert_eq!(db.round_number(RoundId(108_000_656)), Some(3));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 

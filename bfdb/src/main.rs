@@ -950,6 +950,7 @@ async fn api_rounds(
     let all = q.get("instance").map(|s| s == "all").unwrap_or(false);
     let data = task::block_in_place(|| -> Result<String> {
         let rounds = db.all_rounds()?;
+        let numbers = db.round_numbers()?;
         let entries: Vec<_> = rounds
             .iter()
             .filter_map(|(scenario, rid, round)| {
@@ -959,6 +960,8 @@ async fn api_rounds(
                 }
                 Some(serde_json::json!({
                     "id": rid.0,
+                    // What to call it: the id is a database key.
+                    "number": numbers.get(rid),
                     "instance": owner.to_string(),
                     "scenario": scenario.to_string(),
                     "start": round.start.to_rfc3339(),
@@ -988,6 +991,23 @@ async fn api_round_summary(
             return Ok("null".into());
         }
         let mut pilots = db.pilot_leaderboard(Some(rid))?;
+        // The best pilot in each line of work, for the round-over rundown.
+        // None where nobody did any of it.
+        let leader = |f: &dyn Fn(&db::Aggregates) -> u32| {
+            pilots
+                .iter()
+                .map(|(_, name, a)| (name, f(a)))
+                .filter(|(_, v)| *v > 0)
+                .max_by_key(|(_, v)| *v)
+                .map(|(name, v)| serde_json::json!({ "name": name, "value": v }))
+        };
+        let leaders = serde_json::json!({
+            "air": leader(&|a| a.air_kills),
+            "ground": leader(&|a| a.ground_kills),
+            "captures": leader(&|a| a.captures),
+            "logistics": leader(&|a| a.supply_transfers + a.repairs + a.troops + a.farps + a.deploys),
+        });
+        let round = db.all_rounds()?.into_iter().find(|(_, r, _)| *r == rid).map(|(_, _, r)| r);
         let (mut air, mut ground, mut captures, mut supply, mut hours) = (0u32, 0u32, 0u32, 0u32, 0f32);
         for (_, _, a) in &pilots {
             air += a.air_kills;
@@ -1021,6 +1041,11 @@ async fn api_round_summary(
             .collect();
         Ok(serde_json::to_string(&serde_json::json!({
             "id": id,
+            "number": db.round_number(rid),
+            "start": round.as_ref().map(|r| r.start),
+            "end": round.as_ref().and_then(|r| r.end),
+            "winner": round.as_ref().and_then(|r| r.winner).map(|s| format!("{s:?}")),
+            "leaders": leaders,
             "pilots": pilots.len(),
             "air_kills": air,
             "ground_kills": ground,
@@ -2409,7 +2434,11 @@ async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::R
         Ok(rounds
             .iter()
             .find(|(_, _, r)| r.end.is_none())
-            .map(|(_, rid, r)| serde_json::json!({ "id": rid.0, "start": r.start.to_rfc3339() })))
+            .map(|(_, rid, r)| serde_json::json!({
+                "id": rid.0,
+                "number": db.round_number(*rid),
+                "start": r.start.to_rfc3339(),
+            })))
     })?;
 
     let body = serde_json::json!({
@@ -2643,6 +2672,7 @@ fn stats_summary(db: &StatsDb, inst: &Inst) -> Result<serde_json::Value> {
             "total_rounds": total_rounds,
             "active_round": active_round.map(|(s, rid, r)| serde_json::json!({
                 "id": rid.0,
+                "number": db.round_number(*rid),
                 "scenario": s.to_string(),
                 "start": r.start.to_rfc3339(),
             })),
@@ -7650,11 +7680,13 @@ async fn api_instances(
                         .map(|(scenario, rid, r)| {
                             serde_json::json!({
                                 "id": rid.0,
+                                "number": db.round_number(rid),
                                 "scenario": scenario.to_string(),
                                 "start": r.start,
                             })
                         })
                 });
+            let last_round = task::block_in_place(|| last_round(&db, cfg));
             serde_json::json!({
                 "id": cfg.id,
                 "label": cfg.label(),
@@ -7666,6 +7698,13 @@ async fn api_instances(
                 // greys out a selector entry whose server is down.
                 "sortie": st.live_sortie_public(),
                 "active_round": active,
+                "last_round": last_round,
+                // The sides by this server's own names ("NATO", "Georgia"),
+                // as configured -- null where they are not, so the dashboard
+                // keeps its campaign-wide BLUFOR/REDFOR rather than a name
+                // the war diary guessed from the map.
+                "blue_label": cfg.blue_faction.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                "red_label": cfg.red_faction.as_deref().map(str::trim).filter(|s| !s.is_empty()),
                 "dcs_server_name": cfg.dcs_server_name,
                 // false only ever reaches an admin (see the filter above) --
                 // the dashboard uses it to mark the entry as internal.
@@ -7686,6 +7725,51 @@ async fn api_instances(
         "default": default,
         "instances": rows,
     })))
+}
+
+/// The instance's most recently finished round and who won it, for the
+/// "round over" announcements: the dashboard banner, the site's server cards
+/// and the Discord bot all read it from here, so they agree.
+///
+/// Every round is scanned, not `latest_rounds_for`, which keeps one round per
+/// scenario and so drops a finished round as soon as a new round of the same
+/// scenario opens. `winner` is "Blue", "Red" or null (a draw, or an admin
+/// reset that named nobody); `winner_name` is that side as the war diary
+/// calls it, from the round's own last dispatch where there is one.
+fn last_round(db: &StatsDb, cfg: &InstanceCfg) -> Option<serde_json::Value> {
+    let id: InstanceId = Arc::from(cfg.id.as_str());
+    let (scenario, rid, round) = db
+        .all_rounds()
+        .ok()?
+        .into_iter()
+        .filter(|(_, rid, r)| r.end.is_some() && db.round_instance_of(*rid) == id)
+        .max_by_key(|(_, _, r)| r.end)?;
+    let winner = round.winner.map(|s| format!("{s:?}"));
+    let factions = db
+        .news_history(rid, 1)
+        .ok()
+        .and_then(|mut d| d.pop())
+        .map(|d| d.factions)
+        .unwrap_or_else(|| {
+            news::Factions::new(
+                cfg.blue_faction.as_deref(),
+                cfg.red_faction.as_deref(),
+                cfg.blue_adjective.as_deref(),
+                cfg.red_adjective.as_deref(),
+            )
+        });
+    Some(serde_json::json!({
+        "id": rid.0,
+        "number": db.round_number(rid),
+        "scenario": scenario.to_string(),
+        "start": round.start,
+        "end": round.end,
+        "winner": winner,
+        "winner_name": winner.as_deref().map(|w| factions.name(w).to_string()),
+        "loser_name": winner.as_deref().map(|w| {
+            factions.name(if w == "Blue" { "Red" } else { "Blue" }).to_string()
+        }),
+    }))
 }
 
 /// Build the instance registry from the CLI: either `--instances <file>`, or
