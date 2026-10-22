@@ -430,6 +430,10 @@ pub struct Ephemeral {
     /// after that, fixed wing don't ground-start there (`ramp_blocked`); a
     /// flight seen leaving it opens it again.
     pub(super) ramp_blocked: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// Bases that just became threatened, and when: a minute later
+    /// `Db::check_threatened_garrisons` makes sure their garrison is really
+    /// in DCS (see there).
+    pub(super) threat_spawn_check: FxHashMap<ObjectiveId, DateTime<Utc>>,
     /// Station orders (AWACS/tanker/drone/fighter waypoints) given to a
     /// flight still on the ground: the new orbit point and who ordered it.
     /// Applied once the flight is airborne (`Db::flush_pending_air_stations`)
@@ -659,6 +663,7 @@ impl Default for Ephemeral {
             launch_requests: FxHashMap::default(),
             ramp_watch: FxHashMap::default(),
             ramp_blocked: FxHashMap::default(),
+            threat_spawn_check: FxHashMap::default(),
             pending_air_station: FxHashMap::default(),
             contributions: Default::default(),
             ramp_rejected: FxHashSet::default(),

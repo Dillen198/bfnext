@@ -1893,6 +1893,7 @@ impl Db {
             if is_threatened {
                 if !obj.threatened {
                     became_threatened.push(*oid);
+                    self.ephemeral.threat_spawn_check.insert(*oid, now);
                 }
                 obj.threatened = true;
                 obj.last_threatened_ts = now;
@@ -2019,7 +2020,91 @@ impl Db {
         for oid in scenery_dirty {
             self.sync_scenery_markers(oid);
         }
+        self.check_threatened_garrisons(now);
         Ok((became_threatened, became_clear))
+    }
+
+    /// A threatened base fights with its own garrison, so that garrison has
+    /// to be in the world. Players kept finding bases under threat with
+    /// none of their template units there, and nothing in the log said why.
+    /// A minute after a base becomes threatened, every garrison group with
+    /// living units of which DCS has none (and none queued) is reported with
+    /// the base's state -- that line is the evidence for whatever left it
+    /// empty -- and spawned. A base in its capture hold keeps its garrison
+    /// down on purpose (see `check_capture_hold`), so it is only reported.
+    fn check_threatened_garrisons(&mut self, now: DateTime<Utc>) {
+        const AFTER_SECS: i64 = 60;
+        let due: SmallVec<[ObjectiveId; 8]> = self
+            .ephemeral
+            .threat_spawn_check
+            .iter()
+            .filter(|(_, t)| now - **t >= Duration::seconds(AFTER_SECS))
+            .map(|(oid, _)| *oid)
+            .collect();
+        if due.is_empty() {
+            return;
+        }
+        let pending = self.ephemeral.spawn_pending_gids();
+        for oid in due {
+            self.ephemeral.threat_spawn_check.remove(&oid);
+            let Some(obj) = self.persisted.objectives.get(&oid) else { continue };
+            if !obj.threatened || obj.kind.is_carrier_group() || obj.kind.is_farp() {
+                continue;
+            }
+            let mut missing: SmallVec<[GroupId; 8]> = smallvec![];
+            let mut live = 0;
+            for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
+                let Some(group) = self.persisted.groups.get(gid) else { continue };
+                if group.class.is_services() || group.kind.is_none() {
+                    continue;
+                }
+                let alive: SmallVec<[UnitId; 16]> = group
+                    .units
+                    .into_iter()
+                    .filter(|uid| self.persisted.units.get(*uid).is_some_and(|u| !u.dead))
+                    .copied()
+                    .collect();
+                if alive.is_empty() {
+                    continue;
+                }
+                live += 1;
+                let in_dcs = alive.iter().any(|uid| self.ephemeral.object_id_by_uid.contains_key(uid));
+                if !in_dcs && !pending.contains(gid) {
+                    missing.push(*gid);
+                }
+            }
+            if missing.is_empty() {
+                continue;
+            }
+            let names: Vec<std::string::String> = missing
+                .iter()
+                .filter_map(|g| self.persisted.groups.get(g).map(|g| g.name.to_string()))
+                .collect();
+            let (name, spawned, enabled, hold) =
+                (obj.name.clone(), obj.spawned, obj.enabled, !obj.capture_hold.is_empty());
+            if hold {
+                info!(
+                    "[THREAT] {name} is threatened with {} of its {live} live garrison group(s) not in \
+                     DCS, but it is in its capture hold, which keeps them down: {names:?}",
+                    missing.len()
+                );
+                continue;
+            }
+            warn!(
+                "[THREAT] {name} has been threatened for {AFTER_SECS}s but {} of its {live} live garrison \
+                 group(s) are not in DCS (spawned={spawned}, enabled={enabled}) -- spawning them: {names:?}",
+                missing.len()
+            );
+            if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
+                // Awake now, so the cull takes them down again once it's quiet.
+                obj.spawned = true;
+                obj.last_activate = now;
+            }
+            for gid in missing {
+                self.ephemeral.push_spawn(gid);
+            }
+            self.ephemeral.dirty();
+        }
     }
 
     /// On an ownership change, sweep out everything the *previous* occupant (or
