@@ -266,7 +266,7 @@
   },
   "logistics_exclusion": 10000,
   "unit_cull_distance": 37040,
-  "ground_vehicle_cull_distance": 10000,
+  "ground_vehicle_cull_distance": 20000,
   "cull_after": 1800,
   "capture_consolidation_secs": 300,
   "consolidation_zone_grace_secs": 15,

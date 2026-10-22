@@ -1718,18 +1718,12 @@ impl Db {
                         *spawn = true;
                         if unarmed {
                         } else if air {
-                            // Fall back to a conservative range for types not in
-                            // the config table -- indexing panicked, which killed
-                            // threat detection (and culling) for the whole tick.
-                            let threat_dist = (cfg
-                                .threatened_distance
-                                .get(unit.typ.as_str())
-                                .copied()
-                                .unwrap_or(14400) as f64)
-                                .powi(2);
-                            if dist <= threat_dist {
-                                *threat = true
-                            }
+                            // AI aircraft wake a base but don't threaten it:
+                            // threatened locks its slots and stops its repairs,
+                            // and with AI flights tracked every enemy CAP
+                            // orbiting near the front would hold bases there
+                            // threatened for good. Players still do both
+                            // (`check_close_players`).
                         } else {
                             *threat = true;
                         }

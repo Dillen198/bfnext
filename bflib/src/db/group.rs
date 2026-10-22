@@ -1656,9 +1656,14 @@ impl Db {
             // Troops and dismounts are on foot, so not Driveable, but they
             // walk -- under Combined Arms or their own DCS orders -- and
             // check_capture reads their cached position. Without tracking
-            // them a squad that walked into a zone never counted.
+            // them a squad that walked into a zone never counted. AI aircraft
+            // too: an enemy base wakes when they come within the cull
+            // distance (`cull_or_respawn_objectives`), and untracked they only
+            // ever counted from where they were born.
             if unit.tags.contains(UnitTag::Driveable)
                 || unit.tags.contains(UnitTag::Boat)
+                || unit.tags.contains(UnitTag::Aircraft)
+                || unit.tags.contains(UnitTag::Helicopter)
                 || self.persisted.troops.contains(&unit.group)
                 || self.persisted.dismounts.contains(&unit.group)
             {
@@ -2211,7 +2216,10 @@ impl Db {
             let pos = instance.get_position()?;
             let spunit = unit_mut!(self, uid)?;
             if (spunit.position.p.0 - pos.p.0).magnitude_squared() > 1.0 {
-                moved.push(spunit.group);
+                // A flight's map pin would be redrawn on nearly every read.
+                if !spunit.tags.contains(UnitTag::Aircraft) && !spunit.tags.contains(UnitTag::Helicopter) {
+                    moved.push(spunit.group);
+                }
                 spunit.moved = Some(now);
                 spunit.position = pos;
                 spunit.pos = Vector2::new(pos.p.x, pos.p.z);
