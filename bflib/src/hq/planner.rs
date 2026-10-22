@@ -753,11 +753,17 @@ impl<'a> Gen<'a> {
             }
         }
         for o in bases {
+            // A base under attack can't take reinforcements (see
+            // `Db::reinforce`); it used to score *higher* for it, so a besieged
+            // FOB got convoy after convoy and its garrison rose from the dead.
+            if o.threatened {
+                continue;
+            }
             let n = ctx.db.reinforce_candidates(&o.id).map(|v| v.len()).unwrap_or(0);
             if n == 0 {
                 continue;
             }
-            let value = 28. + 8. * n.min(4) as f64 + if o.threatened { 15. } else { 0. };
+            let value = 28. + 8. * n.min(4) as f64;
             self.push(OpKind::Reinforce, Some(o), o.pos, o.name.clone(), value, format_compact!("{n} garrison group(s) to rebuild"));
         }
     }

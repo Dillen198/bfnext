@@ -173,6 +173,12 @@ impl Db {
         if matches!(target.kind, ObjectiveKind::CarrierGroup { .. }) {
             bail!("a carrier group can't be reinforced by road")
         }
+        // Same rule as repairs: a base under attack doesn't rebuild. A
+        // besieged FOB used to get its destroyed garrison back in one go each
+        // time a convoy reached it, in front of the attackers.
+        if target.threatened {
+            bail!("{tname} is under attack -- reinforcements can go in once it is clear")
+        }
         if self.reinforcements_bound_for(tpos).is_some() {
             bail!("reinforcements are already on the road to {tname}")
         }
@@ -360,6 +366,18 @@ impl Db {
         Ok(())
     }
 
+    /// Whether the objective convoy `gid` is bound for is under attack.
+    fn reinforce_target_threatened(&self, gid: GroupId) -> bool {
+        let Some(DeployKind::Action { destination: Some(dest), .. }) =
+            self.persisted.groups.get(&gid).map(|g| &g.origin)
+        else {
+            return false;
+        };
+        Self::objective_near_point(&self.persisted.objectives, *dest, |_| true)
+            .filter(|(d, _, _)| *d < 2_000.)
+            .is_some_and(|(_, _, o)| o.threatened)
+    }
+
     fn reinforce_outcome(&self, gid: GroupId, now: DateTime<Utc>) -> Result<Outcome> {
         let group = group!(self, gid)?;
         let DeployKind::Action {
@@ -425,6 +443,11 @@ impl Db {
                 }
             };
             if matches!(outcome, Outcome::Driving) {
+                continue;
+            }
+            // Arrived at a base that has come under attack since the convoy
+            // set off: it waits there and rebuilds once the threat clears.
+            if matches!(outcome, Outcome::Arrived { .. }) && self.reinforce_target_threatened(*gid) {
                 continue;
             }
             if let Err(e) = self.settle_reinforcements(*gid, outcome, now) {
