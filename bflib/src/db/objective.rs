@@ -1686,7 +1686,7 @@ impl Db {
                     .current_slot
                     .as_ref()
                     .and_then(|(_, inst)| inst.as_ref())
-                    .map(|inst| (side, inst.position.p, inst.velocity, inst.typ.clone()))
+                    .map(|inst| (side, inst.position.p, inst.velocity, inst.typ.clone(), *ucid))
             })
             .collect::<SmallVec<[_; 64]>>();
         let cfg = Arc::clone(&self.ephemeral.cfg);
@@ -1699,7 +1699,8 @@ impl Db {
                                      obj: &Objective,
                                      air_cull_dist: f64,
                                      spawn: &mut bool,
-                                     threat: &mut bool| {
+                                     threat: &mut bool,
+                                     why: &mut Option<CompactString>| {
             for uid in close_units {
                 let unit = units
                     .get(uid)
@@ -1716,6 +1717,14 @@ impl Db {
                     let dist = na::distance_squared(&obj.zone.pos().into(), &unit.pos.into());
                     if dist <= cull_dist {
                         *spawn = true;
+                        if why.is_none() {
+                            *why = Some(format_compact!(
+                                "{:?} {} {uid} at {:.1} km",
+                                unit.side,
+                                unit.typ,
+                                dist.sqrt() / 1000.
+                            ));
+                        }
                         if unarmed {
                         } else if air {
                             // AI aircraft wake a base but don't threaten it:
@@ -1737,8 +1746,9 @@ impl Db {
                                        pos3: Vector3,
                                        air_cull_dist: f64,
                                        spawn: &mut bool,
-                                       threat: &mut bool| {
-            for (side, pos, v, typ) in &players {
+                                       threat: &mut bool,
+                                       why: &mut Option<CompactString>| {
+            for (side, pos, v, typ, ucid) in &players {
                 if obj.owner != *side {
                     let threat_dist = (cfg
                         .threatened_distance
@@ -1762,6 +1772,12 @@ impl Db {
                     if dist <= air_cull_dist || fdist30 <= air_cull_dist || fdist60 <= air_cull_dist
                     {
                         *spawn = true;
+                        if why.is_none() {
+                            *why = Some(format_compact!(
+                                "player {ucid} ({typ}) at {:.1} km",
+                                dist.sqrt() / 1000.
+                            ));
+                        }
                     }
                     if dist <= threat_dist {
                         if landcache.is_visible(&land, dist.sqrt(), pos3, pos.0)? {
@@ -1807,6 +1823,8 @@ impl Db {
         for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
             let mut spawn = false;
             let mut is_threatened = false;
+            // What woke it, for the [WAKE] line.
+            let mut why: Option<CompactString> = None;
             let pos3 = obj.threat_pos3;
             // Special SAM sites wake from farther away if they contain a
             // long-range component, e.g. an SA-10/S-300 or Patriot battery,
@@ -1842,7 +1860,7 @@ impl Db {
                 cull_distance
             };
             if let Err(e) =
-                check_close_players(obj, pos3, air_cull_dist, &mut spawn, &mut is_threatened)
+                check_close_players(obj, pos3, air_cull_dist, &mut spawn, &mut is_threatened, &mut why)
             {
                 error!("failed to check for close players {} {e}", obj.id)
             }
@@ -1853,6 +1871,7 @@ impl Db {
                 air_cull_dist,
                 &mut spawn,
                 &mut is_threatened,
+                &mut why,
             ) {
                 error!("failed to check close units {} {e}", obj.id)
             }
@@ -1861,6 +1880,7 @@ impl Db {
             if let Some(t) = self.ephemeral.artillery_targeted.get(oid) {
                 if now - *t <= Duration::seconds(ARTY_WAKE_SECS) {
                     spawn = true;
+                    why.get_or_insert_with(|| CompactString::from("enemy artillery targeting it"));
                 }
             }
             // If any enemy-side player-deployed unit (troop, vehicle, or dismount) is
@@ -1876,6 +1896,10 @@ impl Db {
                         let d = na::distance_squared(&obj_pos, &(*pos).into());
                         if d <= DEPLOY_WAKE_DIST_SQ {
                             spawn = true;
+                            why = Some(format_compact!(
+                                "{side:?} player-deployed unit at {:.1} km",
+                                d.sqrt() / 1000.
+                            ));
                             break;
                         }
                     }
@@ -1904,6 +1928,24 @@ impl Db {
             if !obj.spawned && spawn && obj.capture_hold.is_empty() {
                 obj.spawned = true;
                 scenery_dirty.push(*oid);
+                let queued = obj
+                    .groups
+                    .get(&obj.owner)
+                    .unwrap_or(&Set::new())
+                    .into_iter()
+                    .filter(|gid| {
+                        self.persisted
+                            .groups
+                            .get(gid)
+                            .is_some_and(|g| !obj.kind.is_farp() && !g.class.is_services())
+                    })
+                    .count();
+                info!(
+                    "[WAKE] {} ({:?}) woke, {queued} template group(s) queued -- {}",
+                    obj.name,
+                    obj.owner,
+                    why.as_deref().unwrap_or("?")
+                );
                 let is_mobile = obj.kind.is_carrier_group();
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {
                     let group = group!(self, gid)?;
@@ -1932,6 +1974,12 @@ impl Db {
                 if obj.kind.is_carrier_group() {
                     continue;
                 }
+                info!(
+                    "[CULL] {} ({:?}) culled, nothing near it for {}s",
+                    obj.name,
+                    obj.owner,
+                    (now - obj.last_activate).num_seconds()
+                );
                 obj.spawned = false;
                 scenery_dirty.push(*oid);
                 for gid in obj.groups.get(&obj.owner).unwrap_or(&Set::new()) {

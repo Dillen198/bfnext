@@ -1855,6 +1855,17 @@ impl Db {
         ));
         player.changing_slots = false;
         player.provisional_points = 0;
+        // The world now has this player in it: from here on their position
+        // wakes enemy bases (`cull_or_respawn_objectives`). Logged so a base
+        // that didn't wake can be told apart from a player who never spawned.
+        info!(
+            "[SLOT] {ucid} ({player_side:?}) spawned a {} at {} ({:.0},{:.0}), {}",
+            unit.get_type_name().map(|t| t.to_string()).unwrap_or_default(),
+            self.persisted.objectives.get(&oid).map(|o| o.name.to_string()).unwrap_or_default(),
+            point.x,
+            point.y,
+            if in_air { "in the air" } else { "on the ground" }
+        );
         // Slot-entry GCI radio briefing ("GCI: Magic on 251.0 AM (SRS)").
         let gci_brief = self
             .ephemeral
