@@ -325,8 +325,12 @@ impl FromStr for Ucid {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        if s.len() != 32 {
-            bail!("expected a 32 character string got \"{s}\"")
+        // Check the bytes are hex first: len() counts bytes, so a 32 byte
+        // string holding a multibyte char would pass the length check and
+        // then panic slicing mid-char below (reachable from bfdb HTTP
+        // bodies). It also stops from_str_radix accepting a "+f" pair.
+        if s.len() != 32 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+            bail!("expected a 32 character hex string got \"{s}\"")
         }
         let mut a = [0; 16];
         for i in 0..16 {
@@ -374,7 +378,7 @@ impl<'lua> PlayerInfo<'lua> {
         Ok(self.t.raw_get("id")?)
     }
 
-    pub fn name(&self) -> Result<String> {
+    pub fn name(&self) -> Result<Option<String>> {
         Ok(self.t.raw_get("name")?)
     }
 
@@ -487,7 +491,12 @@ impl<'lua> Net<'lua> {
         Ok(self.t.call_function("json2lua", v)?)
     }
 
-    pub fn dostring_in(&self, state: DcsLuaEnvironment, dostring: String) -> Result<String> {
+    /// Returns whatever the chunk returns, which is nil for a statement.
+    pub fn dostring_in(
+        &self,
+        state: DcsLuaEnvironment,
+        dostring: String,
+    ) -> Result<Option<String>> {
         Ok(self.t.call_function("dostring_in", (state, dostring))?)
     }
 

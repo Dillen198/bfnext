@@ -27,11 +27,22 @@ enum ToLogger {
     Close(oneshot::Sender<()>),
 }
 
+/// How much of the log a new subscriber is sent. It used to be the whole
+/// file -- days of engine log on a long-running server -- replayed inside this
+/// loop, so every dashboard that opened the log view stalled live logging for
+/// as long as that took. The tail is what anyone subscribing actually reads.
+const REPLAY_TAIL_BYTES: u64 = 256 * 1024;
+
+/// Lines per batch commit during the replay.
+const REPLAY_BATCH_LINES: usize = 250;
+
+/// Returns Ok when the logger was closed on purpose (or its publisher went
+/// away), Err on an I/O failure worth restarting over.
 async fn logger_loop(
-    publisher: Publisher,
+    publisher: &Publisher,
     file_path: &PathBuf,
-    netidx_path: Path,
-    mut input: UnboundedReceiver<ToLogger>,
+    netidx_path: &Path,
+    input: &mut UnboundedReceiver<ToLogger>,
 ) -> Result<()> {
     let mut file = OpenOptions::new()
         .append(true)
@@ -41,11 +52,11 @@ async fn logger_loop(
         .open(&file_path)
         .await?;
     let (tx, mut events) = mpsc::unbounded();
-    let contents = publisher.publish(netidx_path, Value::Null)?;
+    let contents = publisher.publish(netidx_path.clone(), Value::Null)?;
     publisher.events_for_id(contents.id(), tx);
     let mut subs = FxHashSet::default();
     let mut batch = publisher.start_batch();
-    let mut buf = String::new();
+    let mut line: Vec<u8> = Vec::new();
     let mut bytes = BytesMut::new();
     loop {
         select_biased! {
@@ -56,20 +67,31 @@ async fn logger_loop(
                 }
                 Event::Subscribe(_, cl) => {
                     subs.insert(cl);
-                    file.seek(SeekFrom::Start(0)).await?;
+                    let len = file.seek(SeekFrom::End(0)).await?;
+                    let start = len.saturating_sub(REPLAY_TAIL_BYTES);
+                    file.seek(SeekFrom::Start(start)).await?;
                     let mut bufreader = BufReader::new(file);
-                    buf.clear();
+                    if start > 0 {
+                        // landed mid-line, skip to the next whole one
+                        line.clear();
+                        bufreader.read_until(b'\n', &mut line).await?;
+                    }
                     let mut n = 0;
                     loop {
-                        if bufreader.read_line(&mut buf).await? == 0 {
+                        line.clear();
+                        if bufreader.read_until(b'\n', &mut line).await? == 0 {
                             break
                         }
-                        bytes.extend_from_slice(buf.trim().as_bytes());
-                        buf.clear();
-                        let chars = Chars::from_bytes(bytes.split().freeze()).unwrap();
+                        // Lossy: one invalid byte anywhere in the file used to
+                        // fail read_line, and that ended the logger for good.
+                        let s = std::string::String::from_utf8_lossy(&line);
+                        bytes.extend_from_slice(s.trim().as_bytes());
+                        let Ok(chars) = Chars::from_bytes(bytes.split().freeze()) else {
+                            continue
+                        };
                         contents.update_subscriber(&mut batch, cl, Value::String(chars));
                         n += 1;
-                        if n >= 99 {
+                        if n >= REPLAY_BATCH_LINES {
                             n = 0;
                             batch.commit(Some(Duration::from_secs(10))).await;
                             batch = publisher.start_batch();
@@ -84,9 +106,10 @@ async fn logger_loop(
                 ToLogger::Log(b) => {
                     file.write_all_buf(&mut b.as_bytes()).await?;
                     bytes.extend_from_slice(b.trim().as_bytes());
-                    let c = Chars::from_bytes(bytes.split().freeze()).unwrap();
-                    for cl in &subs {
-                        contents.update_subscriber(&mut batch, *cl, Value::String(c.clone()))
+                    if let Ok(c) = Chars::from_bytes(bytes.split().freeze()) {
+                        for cl in &subs {
+                            contents.update_subscriber(&mut batch, *cl, Value::String(c.clone()))
+                        }
                     }
                     batch.commit(Some(Duration::from_secs(10))).await;
                     batch = publisher.start_batch();
@@ -108,12 +131,21 @@ pub struct LogPublisher(UnboundedSender<ToLogger>);
 
 impl LogPublisher {
     pub fn new(publisher: Publisher, file_path: &PathBuf, netidx_path: Path) -> Result<Self> {
-        let (tx, rx) = mpsc::unbounded();
+        let (tx, mut rx) = mpsc::unbounded();
         let file_path = file_path.clone();
         task::spawn(async move {
-            match logger_loop(publisher, &file_path, netidx_path, rx).await {
-                Ok(()) => (),
-                Err(e) => error!("{file_path:?} logger failed {e:?}"),
+            // Any I/O error in here used to end the logger permanently: every
+            // log line after it failed to send and the engine log just
+            // stopped. Start it again instead; lines that arrive meanwhile
+            // wait in the channel.
+            loop {
+                match logger_loop(&publisher, &file_path, &netidx_path, &mut rx).await {
+                    Ok(()) => break,
+                    Err(e) => {
+                        error!("{file_path:?} logger failed, restarting in 5s {e:?}");
+                        tokio::time::sleep(Duration::from_secs(5)).await;
+                    }
+                }
             }
         });
         Ok(Self(tx))

@@ -1,0 +1,511 @@
+import React from 'react'
+import { useQuery, type UseQueryResult } from '@tanstack/react-query'
+import QueryState from '../components/QueryState'
+import { AirframeUsage, PointsEconomy } from '../components/CampaignStats'
+import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { api, roundNo, type Pilot, type Squadron, type XpRow } from '../api'
+import { useRound } from '../context/RoundContext'
+import PageHeader from '../components/PageHeader'
+import {
+  Rankings,
+  Award,
+  Aircraft,
+  ChevronUp,
+  ChevronDown,
+  Intercept,
+  Cas,
+  Logistics,
+  RANK_ICON,
+  type IconComponent,
+} from '@icons'
+import { rankFor, nextRankAt } from '../ranks'
+
+type SortKey = keyof Omit<Pilot, 'ucid' | 'name'> | 'kd' | 'score' | 'logistics'
+
+const COLS: { key: SortKey; label: string; color?: string; title?: string; width?: number }[] = [
+  { key: 'air_kills',        label: 'A/A',     color: '#60a5fa',  title: 'Air-to-air kills',    width: 52 },
+  { key: 'ground_kills',     label: 'A/G',     color: '#fb923c',  title: 'Air-to-ground kills', width: 60 },
+  { key: 'logistics',        label: 'Logi',    color: '#34d399',  title: 'Logistics (repairs + supply transfers + troops + FARPs + deployments)', width: 56 },
+  { key: 'kd',               label: 'K/D',     color: '#4ade80',  title: 'Kill / Death ratio', width: 52 },
+  { key: 'deaths',           label: 'Deaths',  color: '#f87171',  title: 'Deaths',             width: 56 },
+  { key: 'captures',         label: 'Cap',     color: '#fbbf24',  title: 'Objective captures', width: 44 },
+  { key: 'hours',            label: 'Hours',   color: '#a78bfa',  title: 'Flight hours',       width: 56 },
+  { key: 'score',            label: 'Score',   color: '#22d3ee',  title: 'Combined efficiency score', width: 60 },
+  { key: 'repairs',          label: 'Rep',     title: 'Repairs',                               width: 40 },
+  { key: 'supply_transfers', label: 'Sup',     title: 'Supply transfers',                      width: 40 },
+  { key: 'deploys',          label: 'Dep',     title: 'Deployments',                           width: 40 },
+  { key: 'donated_points',   label: 'Pts',     color: '#22d3ee',  title: 'Points donated',     width: 44 },
+]
+
+function computeKd(p: Pilot): number {
+  const k = p.air_kills + p.ground_kills
+  return p.deaths > 0 ? k / p.deaths : k > 0 ? 999 : 0
+}
+function computeLogistics(p: Pilot): number {
+  return p.repairs + p.supply_transfers + p.troops + p.farps + p.deploys
+}
+function computeScore(p: Pilot): number {
+  return (p.air_kills * 3) + (p.ground_kills * 2) + (p.captures * 5) +
+    p.repairs + p.supply_transfers + (p.troops * 0.5) + (p.farps * 4) +
+    (p.deploys * 2) + p.actions - (p.deaths * 2)
+}
+function fmtKd(p: Pilot): string {
+  const k = p.air_kills + p.ground_kills
+  return p.deaths > 0 ? (k / p.deaths).toFixed(2) : k > 0 ? '∞' : '0.00'
+}
+function fmtVal(col: SortKey, p: Pilot): string {
+  if (col === 'kd')         return fmtKd(p)
+  if (col === 'score')      return Math.round(computeScore(p)).toLocaleString()
+  if (col === 'logistics')  return computeLogistics(p).toLocaleString()
+  if (col === 'hours')      return `${p.hours.toFixed(1)}h`
+  const v = p[col as keyof Pilot]
+  return typeof v === 'number' ? v.toLocaleString() : String(v ?? 0)
+}
+
+const MEDAL_COLOR = ['#fbbf24', '#94a3b8', '#d97706']
+
+/** Podium badge for a 0-indexed placing: three stripes for first, one for third. */
+function RankBadge({ rank, size }: { rank: number; size: number }) {
+  const Icon = RANK_ICON[rank]
+  if (!Icon) return null
+  return <Icon size={size} strokeWidth={1.7} style={{ color: MEDAL_COLOR[rank], flexShrink: 0 }} />
+}
+const MEDAL_CLASS = ['rank-gold', 'rank-silver', 'rank-bronze']
+
+// Four leaderboard views: Overall (score), Air-to-Air, Air-to-Ground, Logistics.
+// Selecting a tab drives both the podium ranking and the table's default sort.
+const TABS: { key: SortKey; label: string; color: string; icon: IconComponent }[] = [
+  { key: 'score',       label: 'Overall',     color: '#22d3ee', icon: Rankings },
+  { key: 'air_kills',   label: 'A/A',         color: '#60a5fa', icon: Intercept },
+  { key: 'ground_kills',label: 'A/G',         color: '#fb923c', icon: Cas },
+  { key: 'logistics',   label: 'Logistics',   color: '#34d399', icon: Logistics },
+]
+
+function Seg<T extends string>({ name, value, options, onChange }: {
+  name: string; value: T; options: readonly (readonly [T, string])[]; onChange: (v: T) => void
+}) {
+  return (
+    <div role="group" aria-label={name} className="flex overflow-hidden" style={{ border: '1px solid var(--border)', borderRadius: 2 }}>
+      {options.map(([v, label]) => (
+        <button key={v} type="button" aria-pressed={value === v} onClick={() => onChange(v)}
+          style={{
+            fontFamily: 'var(--font-display)', fontSize: '0.75rem', letterSpacing: '0.1em', padding: '0.3rem 0.7rem',
+            background: value === v ? 'var(--accent-glow)' : 'transparent', color: value === v ? 'var(--accent-bright)' : 'var(--text-muted)',
+            border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
+          }}>
+          {label.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+const thS: React.CSSProperties = { padding: '10px 14px', textAlign: 'left', fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700, borderBottom: '1px solid var(--border)' }
+const tdS: React.CSSProperties = { padding: '9px 14px', fontSize: '0.75rem', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }
+
+function SquadronTable({ q, onOpen }: { q: UseQueryResult<Squadron[]>; onOpen: (tag: string) => void }) {
+  const rows = [...(q.data ?? [])].sort((a, b) => b.xp - a.xp)
+  return (
+    <div className="vs-card overflow-hidden">
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead><tr>
+          <th style={{ ...thS, width: 40 }}>#</th><th style={thS}>Squadron</th>
+          <th style={{ ...thS, textAlign: 'right' }}>Members</th><th style={{ ...thS, textAlign: 'right' }}>XP</th>
+          <th style={{ ...thS, textAlign: 'right' }}>XP / member</th>
+        </tr></thead>
+        <tbody>
+          <QueryState colSpan={5} what="squadrons" isLoading={q.isLoading} isError={q.isError} error={q.error} onRetry={q.refetch}
+            isEmpty={!q.isLoading && rows.length === 0} emptyText="No squadrons yet" />
+          {rows.map((sq, i) => (
+            <tr key={sq.tag} onClick={() => onOpen(sq.tag)} style={{ cursor: 'pointer' }} className="kill-row">
+              <td style={{ ...tdS, color: 'var(--text-dim)' }}>{i + 1}</td>
+              <td style={tdS}><span style={{ color: 'var(--accent-bright)', fontWeight: 700 }}>[{sq.tag}]</span> <span style={{ color: 'var(--text)' }}>{sq.name}</span></td>
+              <td style={{ ...tdS, textAlign: 'right' }}>{sq.member_count}</td>
+              <td style={{ ...tdS, textAlign: 'right', color: 'var(--text)', fontWeight: 700 }}>{sq.xp.toLocaleString()}</td>
+              <td style={{ ...tdS, textAlign: 'right' }}>{sq.member_count ? Math.round(sq.xp / sq.member_count).toLocaleString() : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function XpTable({ q, onOpen }: { q: UseQueryResult<XpRow[]>; onOpen: (ucid: string) => void }) {
+  const rows = q.data ?? []
+  const max = Math.max(1, ...rows.map(r => r.xp))
+  return (
+    <div className="vs-card overflow-hidden">
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead><tr>
+          <th style={{ ...thS, width: 40 }}>#</th><th style={thS}>Pilot</th>
+          <th style={{ ...thS, textAlign: 'right', width: 70 }}>Level</th><th style={{ ...thS, width: '40%' }}>XP</th>
+        </tr></thead>
+        <tbody>
+          <QueryState colSpan={4} what="XP leaderboard" isLoading={q.isLoading} isError={q.isError} error={q.error} onRetry={q.refetch}
+            isEmpty={!q.isLoading && rows.length === 0} emptyText="Nobody has earned XP yet" />
+          {rows.map((r, i) => (
+            <tr key={r.ucid} onClick={() => onOpen(r.ucid)} style={{ cursor: 'pointer' }} className="kill-row">
+              <td style={{ ...tdS, color: 'var(--text-dim)' }}>{i + 1}</td>
+              <td style={{ ...tdS, color: 'var(--text)', fontWeight: 600 }}>{r.name || r.ucid}</td>
+              <td style={{ ...tdS, textAlign: 'right' }}>{r.level}</td>
+              <td style={tdS}>
+                <div className="flex items-center gap-2">
+                  <div style={{ flex: 1, height: 8, background: 'rgba(148,163,184,0.1)', borderRadius: 2 }}>
+                    <div style={{ width: `${(r.xp / max) * 100}%`, height: '100%', background: 'var(--accent)', borderRadius: '0 4px 4px 0' }} />
+                  </div>
+                  <span className="font-mono-vs" style={{ minWidth: 64, textAlign: 'right' }}>{r.xp.toLocaleString()}</span>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+type Period = 'all' | 'round'
+type SideF = 'All' | 'Blue' | 'Red'
+type View = 'pilots' | 'squadrons' | 'xp'
+
+export default function Leaderboard() {
+  const navigate = useNavigate()
+  const { selectedRound } = useRound()
+  const { data: rounds = [] } = useQuery({ queryKey: ['rounds'], queryFn: () => api.rounds() })
+  // "This round" is the round picked in the header's round selector, else
+  // the one being played.
+  const roundId = selectedRound ?? rounds.find(r => r.active)?.id ?? null
+  const roundRow = rounds.find(r => r.id === roundId)
+  const roundNum = roundRow ? roundNo(roundRow) : roundId
+  const [period, setPeriod] = useState<Period>('all')
+  const [sideF, setSideF] = useState<SideF>('All')
+  const [view, setView] = useState<View>('pilots')
+  const byRound = period === 'round' && roundId != null
+  const { data: allPilots = [], isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['leaderboard', byRound ? roundId : 'all'],
+    queryFn: () => (byRound ? api.leaderboardRound(roundId!) : api.leaderboard()),
+    refetchInterval: 30_000,
+  })
+  // An older bfdb ignores ?round= and answers all-time; side comes only from
+  // the all-time roster, so fill it in for round rows.
+  const { data: allTime = [] } = useQuery({ queryKey: ['leaderboard', 'all'], queryFn: () => api.leaderboard(), enabled: byRound })
+  const sideOf = useMemo(() => new Map(allTime.map(p => [p.ucid, p.side])), [allTime])
+  const pilots = useMemo(() => allPilots
+    .map(p => (p.side || !byRound ? p : { ...p, side: sideOf.get(p.ucid) ?? null }))
+    .filter(p => sideF === 'All' || p.side === sideF), [allPilots, byRound, sideOf, sideF])
+  const squadrons = useQuery({ queryKey: ['squadrons'], queryFn: () => api.squadrons(), enabled: view === 'squadrons' })
+  const xp = useQuery({ queryKey: ['xp-top'], queryFn: () => api.xpTop(), enabled: view === 'xp' })
+  const [tab,    setTab]    = useState<SortKey>('score')
+  const [sort, setSort] = useState<SortKey>('score')
+  const [asc,  setAsc]  = useState(false)
+  const [search, setSearch] = useState('')
+
+  function getSortVal(p: Pilot, key: SortKey): number {
+    if (key === 'kd')         return computeKd(p)
+    if (key === 'score')      return computeScore(p)
+    if (key === 'logistics')  return computeLogistics(p)
+    const v = p[key as keyof Pilot]
+    return typeof v === 'number' ? v : 0
+  }
+
+  const sorted = useMemo(() => {
+    const filtered = pilots.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()))
+    return [...filtered].sort((a, b) => {
+      const d = getSortVal(a, sort) - getSortVal(b, sort)
+      return asc ? d : -d
+    })
+  }, [pilots, sort, asc, search])
+
+  function handleSort(key: SortKey) {
+    if (sort === key) setAsc(a => !a)
+    else { setSort(key); setAsc(false) }
+  }
+
+  function selectTab(key: SortKey) {
+    setView('pilots')
+    setTab(key)
+    setSort(key)
+    setAsc(false)
+  }
+
+  const top3 = useMemo(() =>
+    [...pilots].sort((a, b) => getSortVal(b, tab) - getSortVal(a, tab)).slice(0, 3),
+    [pilots, tab]
+  )
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+      <PageHeader art="hornet"
+        icon={Rankings}
+        title="RANKINGS"
+        sub={view === 'pilots' ? `${pilots.length} pilots${byRound ? ` · round ${roundNum}` : ' · all time'}` : view === 'squadrons' ? 'Squadrons by XP' : 'Pilots by XP'}
+        right={
+          <input type="text" placeholder="Search pilot…" value={search}
+            onChange={e => setSearch(e.target.value)} className="vs-input lb-search"
+            style={{ width: 180 }} />
+        }
+      />
+
+      <div className="flex-1 overflow-auto vs-page">
+
+        {/* ── Leaderboard tabs ── */}
+        <div className="lb-tabs" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {TABS.map(t => {
+            const active = view === 'pilots' && tab === t.key
+            return (
+              <button key={t.key} className="vs-tab" onClick={() => selectTab(t.key)}
+                style={{
+                  padding: '6px 16px', borderRadius: 6, cursor: 'pointer',
+                  fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em',
+                  textTransform: 'uppercase', transition: 'all 0.12s',
+                  // Solid accent when selected, matching .vs-btn and the
+                  // Situation/Kneeboard tabs on the briefing -- this strip was
+                  // the only place tinting itself per category (cyan here,
+                  // orange there), which read as a different app. The per-tab
+                  // colour still keys the stat columns below, where it is
+                  // doing real work telling the metrics apart.
+                  background: active ? 'var(--accent)' : 'var(--bg-card)',
+                  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                  color: active ? '#0a0d07' : 'var(--text-dim)',
+                  display: 'flex', alignItems: 'center', gap: 7,
+                }}
+              >
+                <t.icon size={13} strokeWidth={1.75} />
+                {t.label}
+              </button>
+            )
+          })}
+          {([['squadrons', 'Squadrons', Award], ['xp', 'XP', Rankings]] as const).map(([v, label, Icon]) => {
+            const active = view === v
+            return (
+              <button key={v} className="vs-tab" onClick={() => setView(v)}
+                style={{
+                  padding: '6px 16px', borderRadius: 6, cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700,
+                  letterSpacing: '0.05em', textTransform: 'uppercase', transition: 'all 0.12s',
+                  background: active ? 'var(--accent)' : 'var(--bg-card)',
+                  border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
+                  color: active ? '#0a0d07' : 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 7,
+                }}>
+                <Icon size={13} strokeWidth={1.75} />{label}
+              </button>
+            )
+          })}
+          {view === 'pilots' && (
+            <div className="flex items-center gap-2 ml-auto flex-wrap">
+              <Seg name="Period" value={period} onChange={setPeriod}
+                options={[['all', 'All time'], ['round', roundId != null ? `Round ${roundNum}` : 'This round']] as const} />
+              <Seg name="Side" value={sideF} onChange={setSideF}
+                options={[['All', 'Both sides'], ['Blue', 'Blue'], ['Red', 'Red']] as const} />
+            </div>
+          )}
+        </div>
+
+        {view === 'squadrons' && <SquadronTable q={squadrons} onOpen={tag => navigate(`/squadrons?tag=${encodeURIComponent(tag)}`)} />}
+        {view === 'xp' && <XpTable q={xp} onOpen={ucid => navigate(`/pilots?ucid=${encodeURIComponent(ucid)}`)} />}
+        {view === 'pilots' && <>
+
+        {/* ── Podium ── */}
+        {top3.length >= 3 && (
+          <div className="podium-grid" style={{ display: 'grid', gap: 12 }}>
+            {top3.map((p, i) => {
+              const score = Math.round(computeScore(p))
+              const mc = MEDAL_COLOR[i]
+              const prank = rankFor(score, p.side)
+              const PRankIcon = prank.icon
+              return (
+                <div key={p.ucid}
+                  onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)}
+                  style={{
+                    background: 'var(--bg-card)', border: `1px solid ${mc}22`,
+                    borderTop: `3px solid ${mc}`, borderRadius: 8, padding: '16px 20px',
+                    cursor: 'pointer', transition: 'box-shadow 0.15s',
+                    display: 'flex', flexDirection: 'column', gap: 8, position: 'relative',
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.boxShadow = `0 4px 24px ${mc}18`)}
+                  onMouseLeave={e => (e.currentTarget.style.boxShadow = 'none')}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <RankBadge rank={i} size={26} />
+                    <div>
+                      <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', color: mc }}
+                        className={MEDAL_CLASS[i]}>
+                        RANK #{i + 1}
+                      </div>
+                      <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text)', lineHeight: 1.2, marginTop: 2 }}>
+                        {p.name}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 4 }}>
+                        <PRankIcon size={13} strokeWidth={1.5} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', letterSpacing: '0.08em' }}>
+                          {prank.title}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="podium-stats" style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                    {[
+                      { label: 'A2A',   value: p.air_kills,              color: '#60a5fa' },
+                      { label: 'A2G',   value: p.ground_kills,           color: '#fb923c' },
+                      { label: 'Logi',  value: computeLogistics(p),      color: '#34d399' },
+                      { label: 'K/D',   value: fmtKd(p),                 color: '#4ade80' },
+                      { label: 'Hours', value: `${p.hours.toFixed(1)}h`, color: '#a78bfa' },
+                      { label: 'Score', value: score,                    color: '#22d3ee' },
+                    ].map(s => (
+                      <div key={s.label}>
+                        <div className="font-mono-vs" style={{ fontSize: '0.95rem', fontWeight: 700, color: s.color, lineHeight: 1 }}>
+                          {s.value}
+                        </div>
+                        <div style={{ fontSize: '0.58rem', color: 'var(--text-dim)', marginTop: 2, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                          {s.label}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* ── Score formula ── */}
+        <div style={{
+          background: 'var(--bg-card)', border: '1px solid var(--border)',
+          borderRadius: 6, padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        }}>
+          <Award size={13} style={{ color: '#22d3ee', flexShrink: 0 }} />
+          <span style={{ fontSize: '0.65rem', color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.1em', fontWeight: 600 }}>Score:</span>
+          <span className="font-mono-vs" style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
+            Air×3 + Ground×2 + Cap×5 + FARP×4 + Deploy×2 + Repair + Supply + Troop×0.5 + Action − Death×2
+          </span>
+        </div>
+
+        {/* ── Main table (scrolls internally, not the whole page) ── */}
+        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 'none' }}>
+          {/* Its own scroll, tall enough for a page of pilots: squeezed into
+              what the podium left over it showed three rows. */}
+          <div style={{ overflow: 'auto', maxHeight: 'max(440px, calc(100vh - 260px))' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 1 }}>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', width: 36, fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700 }}>#</th>
+                  <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.1em', textTransform: 'uppercase', fontWeight: 700 }}>Pilot</th>
+                  {COLS.map(c => (
+                    <th key={c.key} title={c.title} onClick={() => handleSort(c.key)}
+                      style={{
+                        padding: '10px 10px', textAlign: 'right', whiteSpace: 'nowrap',
+                        width: c.width, fontSize: '0.62rem', fontWeight: 700,
+                        letterSpacing: '0.1em', textTransform: 'uppercase',
+                        cursor: 'pointer', userSelect: 'none', transition: 'color 0.12s',
+                        color: sort === c.key ? (c.color ?? 'var(--accent)') : 'var(--text-dim)',
+                      }}
+                    >
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                        {c.label}
+                        {sort === c.key
+                          ? asc ? <ChevronUp size={10} /> : <ChevronDown size={10} />
+                          : <ChevronDown size={10} style={{ opacity: 0.2 }} />}
+                      </span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <QueryState
+                  colSpan={COLS.length + 2} what="pilots" isLoading={isLoading}
+                  isError={isError} error={error} onRetry={refetch}
+                />
+                {sorted.map((p, i) => {
+                  const rank      = rankFor(computeScore(p), p.side)
+                  const RankIcon  = rank.icon
+                  const nextAt    = nextRankAt(computeScore(p))
+                  const medalIdx = top3.findIndex(x => x.ucid === p.ucid)
+                  const isTop3   = medalIdx >= 0
+
+                  return (
+                    <tr key={p.ucid}
+                      onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)}
+                      style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', transition: 'background 0.1s' }}
+                      className="kill-row"
+                    >
+                      <td style={{ padding: '9px 14px', width: 36 }}>
+                        {isTop3 ? (
+                          <RankBadge rank={medalIdx} size={16} />
+                        ) : (
+                          <span className="font-mono-vs" style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{i + 1}</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '9px 14px', minWidth: 180 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{
+                            width: 30, height: 30, borderRadius: 6, flexShrink: 0,
+                            background: isTop3 ? `${MEDAL_COLOR[medalIdx]}18` : 'var(--bg-elevated)',
+                            border: `1px solid ${isTop3 ? MEDAL_COLOR[medalIdx] + '33' : 'var(--border)'}`,
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            color: isTop3 ? MEDAL_COLOR[medalIdx] : 'var(--text-dim)',
+                          }}
+                          title={`${rank.title}${nextAt !== null ? ` — ${nextAt - Math.round(computeScore(p))} score to next rank` : ' — top of the ladder'}`}>
+                            <RankIcon size={18} strokeWidth={1.5} />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text)', lineHeight: 1 }}>{p.name}</div>
+                            <div style={{ fontSize: '0.58rem', color: 'var(--text-muted)', letterSpacing: '0.08em', marginTop: 3 }}>
+                              {rank.title}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                              <Aircraft size={9} style={{ color: 'var(--text-dim)', opacity: 0.7 }} />
+                              <span className="font-mono-vs" style={{ fontSize: '0.6rem', color: 'var(--text-dim)' }}>
+                                {p.air_kills}a·{p.ground_kills}g · {p.hours.toFixed(1)}h
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      {COLS.map(c => (
+                        <td key={c.key} style={{ padding: '9px 10px', textAlign: 'right' }}>
+                          <span className="font-mono-vs" style={{
+                            fontSize: '0.78rem', fontWeight: 600,
+                            color: sort === c.key ? (c.color ?? 'var(--accent)') : (c.color ?? 'var(--text-muted)'),
+                            opacity: sort === c.key ? 1 : 0.65,
+                          }}>
+                            {fmtVal(c.key, p)}
+                          </span>
+                        </td>
+                      ))}
+                    </tr>
+                  )
+                })}
+                <QueryState
+                  colSpan={COLS.length + 2} what="pilots" isLoading={false}
+                  isEmpty={!isLoading && !isError && sorted.length === 0}
+                  emptyText={search.trim()
+                    ? `No pilots match "${search.trim()}"`
+                    : 'No pilots on the leaderboard yet'}
+                />
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        </>}
+
+        {/* Campaign-wide readouts bfdb has always served and nothing showed:
+            which airframes are actually being flown, and where the points
+            economy sits per side. */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start" style={{ marginTop: 16 }}>
+          <div className="vs-card">
+            <div className="lb-card-head">Airframe usage</div>
+            <AirframeUsage />
+          </div>
+          <div className="vs-card">
+            <div className="lb-card-head">Points economy</div>
+            <PointsEconomy />
+          </div>
+        </div>
+
+      </div>
+    </div>
+  )
+}

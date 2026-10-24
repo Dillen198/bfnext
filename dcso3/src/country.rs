@@ -11,11 +11,11 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use crate::{cvt_err, simple_enum};
+use crate::simple_enum_unknown;
 use mlua::{prelude::*, Value};
 use serde_derive::{Serialize, Deserialize};
 
-simple_enum!(Country, u8, [
+simple_enum_unknown!(Country, u8, [
     ABKHAZIA => 18,
     AGGRESSORS => 7,
     ALGERIA => 70,

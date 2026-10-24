@@ -135,15 +135,15 @@ impl_transactional!(
 #[test]
 fn test_multiple_tree_transaction() {
     let db = sled::Config::new().temporary(true).open().unwrap();
-    let tree0 = Tree::<u32, i32>::open(&db, "tree0");
-    let tree1 = Tree::<u16, i16>::open(&db, "tree1");
-    let tree2 = Tree::<u8, i8>::open(&db, "tree2");
+    let tree0 = Tree::<u32, i32>::open(&db, "tree0").unwrap();
+    let tree1 = Tree::<u16, i16>::open(&db, "tree1").unwrap();
+    let tree2 = Tree::<u8, i8>::open(&db, "tree2").unwrap();
     (&tree0, &tree1, &tree2)
         .transaction(|(t0, t1, t2)| {
             t0.insert(&0, &0)?;
             t1.insert(&0, &0)?;
             t2.insert(&0, &0)?;
-            Ok(())
+            Ok::<(), ConflictableTransactionError<anyhow::Error>>(())
         })
         .unwrap();
     assert_eq!(tree0.get(&0).unwrap(), Some(0));

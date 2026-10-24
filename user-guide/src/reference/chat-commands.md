@@ -8,8 +8,6 @@ Quick reference for all Fowl Engine chat commands.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `blue` | Register for Blue team | `blue` |
-| `red` | Register for Red team | `red` |
 | `-switch blue` | Switch to Blue team | `-switch blue` |
 | `-switch red` | Switch to Red team | `-switch red` |
 | `-lives` | Check lives, points, status | `-lives` |
@@ -21,7 +19,7 @@ Quick reference for all Fowl Engine chat commands.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `-bind <id>` | Bind troop for control | `-bind 12345` |
+| `-bind <uuid>` | Link your pilot to the web dashboard (**not** for groups) | `-bind 3f2a91c4-…` |
 | `-delete <id>` | Delete deployed group | `-delete 12345` |
 
 ### JTAC Commands

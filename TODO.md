@@ -1,30 +1,15 @@
-# JTAC Stuff
-
-- add a default laser code for red and blue
-- save the jtac settings when loading/unloading troops
-
 # Carriers
 
 - investigate issues with spawning aircraft on carriers
 
-# Ground Forces
-
-- Troop carriers
-
-# Logistics
-
-- C130 internal crates should not block spawning more crates
-
 # Interface
 
-- Client side plugin for richer ui
-- Don't show the points message when the change is 0
+- Client side plugin for richer ui (in progress: Vector Strike cockpit 3.1 is native dxgui + bfcockpit_net.dll with MENU/CARGO/STATUS/EWR/LOG/WHEEL tabs, a radial wheel (head, mouse or keys) and an Options -> Special page; installer on GitHub releases as cockpit-v<version>; F10 answers reach it through the msgq feed (/api/cockpit/messages); needs the new bflib/bfdb deployed and a final in-game pass)
 
-# Lua APU
+# Lua API
 
-- lua api for use by e.g. special k bot
-- server functions, replicate netidx rpc interface
-- spawning deployables
-- ai orders/missions
-- actions
-- info extraction, stats, etc
+- ai orders/missions beyond `move_group`
+- actions (tanker, AWACS, CAP, ...) callable from the API
+- replicate the rest of the netidx rpc interface (queries, spawn_deployable/spawn_troop, move_group, add_points already exist in `bflib/src/api.rs`)
+
+See ROADMAP.md for feature status, and its "Audit Sept 2026" section for new ideas.

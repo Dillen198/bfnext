@@ -30,6 +30,30 @@ impl<'lua> Dcs<'lua> {
         Ok(self.t.call_function("getMissionName", ())?)
     }
 
+    /// The running DCS build, e.g. "2.9.29.27468". Only available in the hooks
+    /// environment; the mission scripting sandbox has no equivalent.
+    ///
+    /// `DCS.getVersion` is not present in every build -- on 2.9.29 it is nil,
+    /// and the call fails with "error converting Lua nil to function". The
+    /// hooks state also carries the build as the `__DCS_VERSION__` global, so
+    /// fall back to that before giving up. Callers must still handle failure:
+    /// neither source is guaranteed.
+    pub fn get_version(&self) -> Result<String> {
+        match self.t.call_function::<_, String>("getVersion", ()) {
+            Ok(v) => Ok(v),
+            Err(e) => match self
+                .lua
+                .globals()
+                .raw_get::<_, Option<String>>("__DCS_VERSION__")
+            {
+                Ok(Some(v)) => Ok(v),
+                // Report the original failure -- the fallback being absent too
+                // is not the interesting half.
+                _ => Err(e.into()),
+            },
+        }
+    }
+
     pub fn get_mission_filename(&self) -> Result<String> {
         Ok(self.t.call_function("getMissionFilename", ())?)
     }
@@ -38,8 +62,10 @@ impl<'lua> Dcs<'lua> {
         Ok(self.t.call_function("getMissionResult", side)?)
     }
 
-    pub fn get_unit_property(&self, name: String) -> Result<Value<'lua>> {
-        Ok(self.t.call_function("getUnitProperty", name)?)
+    /// `DCS.getUnitProperty(missionId, propertyId)` -- the unit's mission
+    /// id and a `DCS.UNIT_*` property id.
+    pub fn get_unit_property(&self, mission_id: String, property: i64) -> Result<Value<'lua>> {
+        Ok(self.t.call_function("getUnitProperty", (mission_id, property))?)
     }
 
     pub fn set_pause(&self, pause: bool) -> Result<()> {

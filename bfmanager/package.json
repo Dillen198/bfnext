@@ -1,0 +1,12 @@
+{
+  "name": "bfmanager",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Fowl Engine Manager: installer, Windows service and auto-updater for a Vector Strike server box",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.5"
+  }
+}

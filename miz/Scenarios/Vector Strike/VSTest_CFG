@@ -1,0 +1,2577 @@
+{
+  "netidx_base": null,
+  "admins": {
+    "43009af9ad72caf2a3ff31396bed074f": "[.ID] EagleEye",
+    "eba008f7ec70d3629065a7ae0ebb8f67": "№15 | KillerDog"
+  },
+  "banned": {},
+  "rules": {
+    "actions": "AlwaysAllowed",
+    "cargo": "AlwaysAllowed",
+    "troops": "AlwaysAllowed",
+    "jtac": "AlwaysAllowed",
+    "ca": "AlwaysAllowed"
+  },
+  "name_filter": ".*",
+  "max_msgs_per_second": 3,
+  "shutdown": 10,
+  "points": {
+    "new_player_join": 25,
+    "air_kill": 25,
+    "ground_kill": 2,
+    "lr_sam_bonus": 5,
+    "logistics_repair": 25,
+    "logistics_transfer": 15,
+    "capture": 15,
+    "tk_window": 5,
+    "provisional": false,
+    "strict": false,
+    "airframe_cost": {},
+    "weapon_cost": {},
+    "periodic_point_gain": [
+      0,
+      0
+    ],
+    "award_kill_points": true
+  },
+  "weapon_target_exclusions": [],
+  "repair_time": 1800,
+  "repair_crate": {
+    "Red": {
+      "name": "Logistics Repair",
+      "weight": 2000,
+      "required": 1,
+      "pos_unit": null,
+      "max_drop_height_agl": 10,
+      "max_drop_speed": 13
+    },
+    "Blue": {
+      "name": "Logistics Repair",
+      "weight": 1500,
+      "required": 1,
+      "pos_unit": null,
+      "max_drop_height_agl": 10,
+      "max_drop_speed": 13
+    }
+  },
+  "warehouse": {
+    "hub_max": 25,
+    "airbase_max": 5,
+    "tick": 10,
+    "ticks_per_delivery": 6,
+    "supply_transfer_size": 25,
+    "supply_transfer_fuel_crate": {
+      "Red": {
+        "name": "Fuel Transfer",
+        "weight": 2000,
+        "required": 1,
+        "pos_unit": null,
+        "max_drop_height_agl": 10,
+        "max_drop_speed": 13
+      },
+      "Blue": {
+        "name": "Fuel Transfer",
+        "weight": 1200,
+        "required": 1,
+        "pos_unit": null,
+        "max_drop_height_agl": 10,
+        "max_drop_speed": 13
+      }
+    },
+    "supply_transfer_weapons_crate": {
+      "Red": {
+        "name": "Weapons Transfer",
+        "weight": 1500,
+        "required": 1,
+        "pos_unit": null,
+        "max_drop_height_agl": 10,
+        "max_drop_speed": 13
+      },
+      "Blue": {
+        "name": "Weapons Transfer",
+        "weight": 800,
+        "required": 1,
+        "pos_unit": null,
+        "max_drop_height_agl": 10,
+        "max_drop_speed": 13
+      }
+    },
+    "convoy": {
+      "enabled": true,
+      "truck_template": {
+        "Red": "Ural-375",
+        "Blue": "M939"
+      },
+      "trucks_per_convoy": 5,
+      "speed_kph": 60.0,
+      "spawn_interval_ticks": 2,
+      "max_concurrent_convoys": 10,
+      "delivery_distance": 500.0,
+      "check_interval_secs": 10
+    },
+    "carrier_repair_crate": {
+      "Red": {
+        "name": "Carrier Repair",
+        "weight": 2000,
+        "required": 1,
+        "pos_unit": null,
+        "max_drop_height_agl": 10,
+        "max_drop_speed": 13
+      },
+      "Blue": {
+        "name": "Carrier Repair",
+        "weight": 1200,
+        "required": 1,
+        "pos_unit": null,
+        "max_drop_height_agl": 10,
+        "max_drop_speed": 13
+      }
+    },
+    "supply_source": {
+      "Red": "RINVENTORY",
+      "Blue": "BINVENTORY"
+    },
+    "exempt_airframes": [
+      "Su-30SM"
+    ]
+  },
+  "logistics_exclusion": 10000,
+  "unit_cull_distance": 37040,
+  "ground_vehicle_cull_distance": 10000,
+  "cull_after": 1800,
+  "slow_timed_events_freq": 10,
+  "threatened_distance": {
+    "Mirage-F1EE": 14400,
+    "Mirage-F1C": 14400,
+    "C-101CC": 9000,
+    "MiG-29A": 21600,
+    "MiG-29 Fulcrum": 21600,
+    "E-3A": 0,
+    "MiG-29S": 21600,
+    "F-14A-135-GR": 21600,
+    "F-14A-135-GR-Early": 21600,
+    "L-39C": 9000,
+    "TF-51D": 0,
+    "MiG-21Bis": 14400,
+    "F-16C_50": 36000,
+    "MiG-19P": 9000,
+    "M-2000C": 21600,
+    "Mi-8MT": 9000,
+    "Tu-22M3": 36000,
+    "KC130": 0,
+    "Ka-50_3": 14400,
+    "F-15C": 36000,
+    "F-4E-45MC": 36000,
+    "KC-135": 0,
+    "Ka-50": 14400,
+    "FA-18C_hornet": 36000,
+    "A-10C": 21600,
+    "SA342M": 9000,
+    "B-1B": 36000,
+    "A-10A": 21600,
+    "AJS37": 36000,
+    "IL-78M": 0,
+    "Mirage-F1CE": 14400,
+    "A-50": 0,
+    "MQ-9 Reaper": 0,
+    "WingLoong-I": 0,
+    "Su-27": 21600,
+    "J-11A": 21600,
+    "F-14B": 21600,
+    "Su-25T": 21600,
+    "A-10C_2": 14400,
+    "SA342L": 9000,
+    "C-130J-30": 9000,
+    "AH-64D_BLK_II": 14400,
+    "UH-1H": 9000,
+    "CH-47Fbl1": 9000,
+    "OH58D": 9000,
+    "L-39ZA": 9000,
+    "F-5E-3": 14400,
+    "Yak-52": 0,
+    "Mi-24P": 14400,
+    "JF-17": 36000,
+    "IL-78": 0,
+    "F-15ESE": 36000,
+    "Su-25": 21600,
+    "AV8BNA": 36000,
+    "MB-339A": 9000
+  },
+  "threatened_cooldown": 300,
+  "crate_load_distance": 50,
+  "crate_spread": 250,
+  "artillery_mission_range": 15000,
+  "alcm_mission_range": 600000,
+  "lock_sides": true,
+  "side_switches": 1,
+  "max_crates": 4,
+  "life_types": {
+    "Mirage-F1EE": "Intercept",
+    "C-101CC": "Recon",
+    "MiG-29A": "Standard",
+    "MiG-29S": "Standard",
+    "MiG-29 Fulcrum": "Standard",
+    "F-14A-135-GR": "Standard",
+    "F-14A-135-GR-Early": "Standard",
+    "L-39C": "Recon",
+    "TF-51D": "Recon",
+    "MiG-21Bis": "Intercept",
+    "F-16C_50": "Standard",
+    "MiG-19P": "Intercept",
+    "M-2000C": "Standard",
+    "Mi-8MT": "Logistics",
+    "Ka-50_3": "Attack",
+    "F-15C": "Standard",
+    "Ka-50": "Attack",
+    "FA-18C_hornet": "Standard",
+    "A-10C": "Attack",
+    "SA342M": "Logistics",
+    "A-10A": "Attack",
+    "AJS37": "Attack",
+    "Mirage-F1CE": "Intercept",
+    "Su-27": "Standard",
+    "F-14B": "Standard",
+    "F-4E-45MC": "Standard",
+    "Su-25T": "Attack",
+    "A-10C_2": "Attack",
+    "SA342L": "Logistics",
+    "AH-64D_BLK_II": "Attack",
+    "UH-1H": "Logistics",
+    "C-130J-30": "Logistics",
+    "CH-47Fbl1": "Logistics",
+    "L-39ZA": "Recon",
+    "F-5E-3": "Intercept",
+    "Mirage-F1C": "Intercept",
+    "Yak-52": "Recon",
+    "Mi-24P": "Attack",
+    "OH-58D": "Attack",
+    "OH58D": "Attack",
+    "JF-17": "Attack",
+    "F-15ESE": "Standard",
+    "J-11A": "Standard",
+    "Su-25": "Attack",
+    "AV8BNA": "Attack",
+    "MB-339A": "Recon"
+  },
+  "default_lives": {
+    "Standard": [
+      3,
+      21600
+    ],
+    "Logistics": [
+      6,
+      21600
+    ],
+    "Recon": [
+      6,
+      21600
+    ],
+    "Intercept": [
+      4,
+      21600
+    ],
+    "Attack": [
+      4,
+      21600
+    ]
+  },
+  "limited_lives": true,
+  "actions": {
+    "Red": {
+      "awacs": {
+        "kind": {
+          "Awacs": {
+            "ewr": {
+              "range": 400000
+            },
+            "plane": {
+              "kind": "FixedWing",
+              "duration": 8,
+              "template": "RAWACS",
+              "altitude": 11000.0,
+              "altitude_typ": "BARO",
+              "speed": 200.0,
+              "freq": 125000000
+            }
+          }
+        },
+        "cost": 100,
+        "penalty": 100,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "awacs-waypoint": {
+        "kind": "AwacsWaypoint",
+        "cost": 10,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "tanker": {
+        "kind": {
+          "Tanker": {
+            "kind": "FixedWing",
+            "duration": 8,
+            "template": "RTANKER",
+            "altitude": 10000.0,
+            "altitude_typ": "BARO",
+            "speed": 180.0,
+            "freq": 125000000
+          }
+        },
+        "cost": 50,
+        "penalty": 50,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "tanker-waypoint": {
+        "kind": "TankerWaypoint",
+        "cost": 10,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "drone": {
+        "kind": {
+          "Drone": {
+            "jtac": {
+              "range": 16000,
+              "nolos": true
+            },
+            "plane": {
+              "kind": "FixedWing",
+              "duration": 12,
+              "template": "RDRONE",
+              "altitude": 7000.0,
+              "altitude_typ": "BARO",
+              "speed": 90.0,
+              "freq": null
+            }
+          }
+        },
+        "cost": 25,
+        "penalty": 25,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "drone-waypoint": {
+        "kind": "DroneWaypoint",
+        "cost": 5,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "bomber": {
+        "kind": {
+          "Bomber": {
+            "targets": 15,
+            "power": 1000,
+            "accuracy": 15,
+            "plane": {
+              "kind": "FixedWing",
+              "duration": null,
+              "template": "RBOMBER",
+              "altitude": 12000.0,
+              "altitude_typ": "BARO",
+              "speed": 500.0,
+              "freq": null
+            }
+          }
+        },
+        "cost": 100,
+        "penalty": 100,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "move": {
+        "kind": {
+          "Move": {
+            "troop": 1000,
+            "deployable": 1000
+          }
+        },
+        "cost": 10,
+        "penalty": 25,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "carrier-waypoint": {
+        "kind": "CarrierWaypoint",
+        "cost": 0,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      }
+    },
+    "Blue": {
+      "awacs": {
+        "kind": {
+          "Awacs": {
+            "ewr": {
+              "range": 400000
+            },
+            "plane": {
+              "kind": "FixedWing",
+              "duration": 8,
+              "template": "BAWACS",
+              "altitude": 11000.0,
+              "altitude_typ": "BARO",
+              "speed": 200.0,
+              "freq": 264000000
+            }
+          }
+        },
+        "cost": 100,
+        "penalty": 100,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "awacs-waypoint": {
+        "kind": "AwacsWaypoint",
+        "cost": 10,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "basket-tanker": {
+        "kind": {
+          "Tanker": {
+            "kind": "FixedWing",
+            "duration": 8,
+            "template": "BBASKETTANKER",
+            "altitude": 10000.0,
+            "altitude_typ": "BARO",
+            "speed": 180.0,
+            "freq": 264000000
+          }
+        },
+        "cost": 50,
+        "penalty": 50,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "boom-tanker": {
+        "kind": {
+          "Tanker": {
+            "kind": "FixedWing",
+            "duration": 8,
+            "template": "BBOOMTANKER",
+            "altitude": 10000.0,
+            "altitude_typ": "BARO",
+            "speed": 180.0,
+            "freq": 264000000
+          }
+        },
+        "cost": 50,
+        "penalty": 50,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "tanker-waypoint": {
+        "kind": "TankerWaypoint",
+        "cost": 10,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "drone": {
+        "kind": {
+          "Drone": {
+            "jtac": {
+              "range": 16000,
+              "nolos": true
+            },
+            "plane": {
+              "kind": "FixedWing",
+              "duration": 12,
+              "template": "BDRONE",
+              "altitude": 7000.0,
+              "altitude_typ": "BARO",
+              "speed": 90.0,
+              "freq": null
+            }
+          }
+        },
+        "cost": 25,
+        "penalty": 25,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "drone-waypoint": {
+        "kind": "DroneWaypoint",
+        "cost": 5,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "bomber": {
+        "kind": {
+          "Bomber": {
+            "targets": 15,
+            "power": 1000,
+            "accuracy": 15,
+            "plane": {
+              "kind": "FixedWing",
+              "duration": null,
+              "template": "BBOMBER",
+              "altitude": 12000.0,
+              "altitude_typ": "BARO",
+              "speed": 300.0,
+              "freq": null
+            }
+          }
+        },
+        "cost": 100,
+        "penalty": 100,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "move": {
+        "kind": {
+          "Move": {
+            "troop": 1000,
+            "deployable": 1000
+          }
+        },
+        "cost": 10,
+        "penalty": 25,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      },
+      "carrier-waypoint": {
+        "kind": "CarrierWaypoint",
+        "cost": 0,
+        "penalty": null,
+        "limit": null,
+        "geo_limit": "Unlimited"
+      }
+    }
+  },
+  "cargo": {
+    "SA342L": {
+      "troop_slots": 1,
+      "crate_slots": 1,
+      "total_slots": 1
+    },
+    "SA342M": {
+      "troop_slots": 1,
+      "crate_slots": 1,
+      "total_slots": 1
+    },
+    "Mi-24P": {
+      "troop_slots": 1,
+      "crate_slots": 1,
+      "total_slots": 1
+    },
+    "UH-1H": {
+      "troop_slots": 3,
+      "crate_slots": 2,
+      "total_slots": 2
+    },
+    "Mi-8MT": {
+      "troop_slots": 6,
+      "crate_slots": 3,
+      "total_slots": 4
+    },
+    "CH-47Fbl1": {
+      "troop_slots": 10,
+      "crate_slots": 6,
+      "total_slots": 7
+    }
+  },
+  "crate_template": {
+    "Red": "RCRATE",
+    "Blue": "BCRATE"
+  },
+    "c130_cargo_template": {
+    "Red": "RCRATE_C130",
+    "Blue": "BCRATE_C130"
+  },
+  "c130_cargo": {
+    "enabled_vehicles": [
+      "C-130J-30"
+    ],
+    "spawn_delay": 1,
+    "max_spawn_all": 50
+  },
+  "deployables": {
+    "Red": [
+      {
+        "path": [
+          "Radar SAMs",
+          "SA 6 Kub"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPSA6"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Kub Launcher",
+            "weight": 2000,
+            "required": 2,
+            "pos_unit": "Kub 2P25 ln",
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          },
+          {
+            "name": "Kub Radar",
+            "weight": 2000,
+            "required": 1,
+            "pos_unit": "Kub 1S91 str",
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": {
+          "name": "Kub Repair",
+          "weight": 2000,
+          "required": 1,
+          "pos_unit": null,
+          "max_drop_height_agl": 10,
+          "max_drop_speed": 13
+        },
+        "repair_cost": 0,
+        "cost": 25,
+        "ewr": {
+          "range": 30000
+        },
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Radar SAMs",
+          "SA 11 Buk"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPSA11"
+          }
+        },
+        "persist": "Forever",
+        "limit": 2,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "SA11 Launcher",
+            "weight": 2000,
+            "required": 2,
+            "pos_unit": "SA-11 Buk LN 9A310M1",
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          },
+          {
+            "name": "SA11 Search Radar",
+            "weight": 2000,
+            "required": 1,
+            "pos_unit": "SA-11 Buk SR 9S18M1",
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          },
+          {
+            "name": "SA11 CC",
+            "weight": 2000,
+            "required": 1,
+            "pos_unit": "SA-11 Buk CC 9S470M1",
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": {
+          "name": "Buk Repair",
+          "weight": 2000,
+          "required": 1,
+          "pos_unit": null,
+          "max_drop_height_agl": 10,
+          "max_drop_speed": 13
+        },
+        "repair_cost": 0,
+        "cost": 50,
+        "ewr": {
+          "range": 60000
+        },
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Radar SAMs",
+          "SA15 Tor"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPSA15"
+          }
+        },
+        "persist": "Forever",
+        "limit": 2,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "SA15 Tor",
+            "weight": 2000,
+            "required": 4,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 50,
+        "ewr": {
+          "range": 20000
+        },
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Radar SAMs",
+          "SA8 Osa"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPSA8"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "SA8 Osa",
+            "weight": 2000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 15,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "AAA",
+          "ZU23 Emplacement"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPZU23"
+          }
+        },
+        "persist": "Forever",
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "ZU23 Emplacement",
+            "weight": 1000,
+            "required": 1,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 5,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "AAA",
+          "Shilka"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPSHILKA"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Shilka Crate",
+            "weight": 2000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 10,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "AAA",
+          "Tunguska"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPTUNGUSKA"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Tunguska Crate",
+            "weight": 2000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 15,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "IR SAMs",
+          "SA13 Strela"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPSA13"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "SA13 Strela Crate",
+            "weight": 2000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 15,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Ground Units",
+          "SPH 2S19 Msta 152MM"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPMSTA"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "MSTA Crate",
+            "weight": 2000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 15,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Ground Units",
+          "T72"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPT72"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "T72 Crate",
+            "weight": 2000,
+            "required": 4,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 50,
+        "ewr": null,
+        "jtac": {
+          "range": 8000,
+          "nolos": false
+        },
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Ground Units",
+          "BMP3"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPBMP3"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "BMP3 Crate",
+            "weight": 2000,
+            "required": 4,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 25,
+        "ewr": null,
+        "jtac": {
+          "range": 8000,
+          "nolos": false
+        },
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Ground Units",
+          "Ammo Truck"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPRAMMO"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Ammo Truck Crate",
+            "weight": 2000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 5,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "EWRs",
+          "1L13"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEP1L13"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "1L13 Crate",
+            "weight": 2000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 5,
+        "ewr": {
+          "range": 500000
+        },
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      }
+    ],
+    "Blue": [
+      {
+        "path": [
+          "Radar SAMs",
+          "Roland ADS"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPROLAND"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Roland",
+            "weight": 1000,
+            "required": 4,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 35,
+        "ewr": {
+          "range": 20000
+        },
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Radar SAMs",
+          "Hawk System"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPHAWK"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Hawk Launcher",
+            "weight": 1000,
+            "required": 1,
+            "pos_unit": "Hawk ln",
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          },
+          {
+            "name": "Hawk Search Radar",
+            "weight": 1000,
+            "required": 1,
+            "pos_unit": "Hawk sr",
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          },
+          {
+            "name": "Hawk Track Radar",
+            "weight": 1000,
+            "required": 1,
+            "pos_unit": "Hawk tr",
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          },
+          {
+            "name": "Hawk CC",
+            "weight": 1000,
+            "required": 1,
+            "pos_unit": "Hawk pcp",
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": {
+          "name": "Hawk Repair",
+          "weight": 1000,
+          "required": 1,
+          "pos_unit": null,
+          "max_drop_height_agl": 10,
+          "max_drop_speed": 13
+        },
+        "repair_cost": 0,
+        "cost": 35,
+        "ewr": {
+          "range": 60000
+        },
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "IR SAMs",
+          "Avenger"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPAVENGER"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Avenger Crate",
+            "weight": 1000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 15,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "IR SAMs",
+          "Linebacker"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPLINEBACKER"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Linebacker Crate",
+            "weight": 1000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 25,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "AAA",
+          "Flakpanzergepard"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPGEPARD"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Flakpanzergepard Crate",
+            "weight": 1000,
+            "required": 4,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 25,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "AAA",
+          "Vulkan"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPVULKAN"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Vulkan Crate",
+            "weight": 1000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 15,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Ground Units",
+          "Firtina 155MM"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPFIRTINA"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Firtina Crate",
+            "weight": 1000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 15,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Ground Units",
+          "M2A2 Bradley"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPBRADLEY"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Bradley Crate",
+            "weight": 1000,
+            "required": 4,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 25,
+        "ewr": null,
+        "jtac": {
+          "range": 8000,
+          "nolos": false
+        },
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Ground Units",
+          "2A6M Leopard"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPLEOPARD"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Leopard Crate",
+            "weight": 1000,
+            "required": 4,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 50,
+        "ewr": null,
+        "jtac": {
+          "range": 8000,
+          "nolos": false
+        },
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "Ground Units",
+          "Ammo Truck"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPBAMMO"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "Ammo Truck Crate",
+            "weight": 2000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 5,
+        "ewr": null,
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      },
+      {
+        "path": [
+          "EWRs",
+          "AN/FPS-117"
+        ],
+        "kind": {
+          "Group": {
+            "template": "DEPFPS117"
+          }
+        },
+        "persist": "Forever",
+        "limit": 4,
+        "limit_enforce": "DeleteOldest",
+        "crates": [
+          {
+            "name": "FPS-117 Crate",
+            "weight": 1000,
+            "required": 2,
+            "pos_unit": null,
+            "max_drop_height_agl": 10,
+            "max_drop_speed": 13
+          }
+        ],
+        "repair_crate": null,
+        "repair_cost": 0,
+        "cost": 5,
+        "ewr": {
+          "range": 500000
+        },
+        "jtac": null,
+        "template": null,
+        "logistics": null
+      }
+    ]
+  },
+  "troops": {
+    "Red": [
+      {
+        "name": "Standard",
+        "template": "RSTANDARDTROOP",
+        "persist": "Forever",
+        "can_capture": true,
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "weight": 800,
+        "cost": 0,
+        "jtac": {
+          "range": 8000,
+          "nolos": false
+        }
+      },
+      {
+        "name": "Anti Tank",
+        "template": "RATTROOP",
+        "persist": "Forever",
+        "can_capture": true,
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "weight": 1000,
+        "cost": 1,
+        "jtac": {
+          "range": 8000,
+          "nolos": false
+        }
+      },
+      {
+        "name": "Mortar",
+        "template": "RMORTARTROOP",
+        "persist": "Forever",
+        "can_capture": true,
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "weight": 1200,
+        "cost": 5,
+        "jtac": {
+          "range": 8000,
+          "nolos": false
+        }
+      },
+      {
+        "name": "Igla",
+        "template": "RIGLATROOP",
+        "persist": "Forever",
+        "can_capture": false,
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "weight": 500,
+        "cost": 5,
+        "jtac": null
+      }
+    ],
+    "Blue": [
+      {
+        "name": "Standard",
+        "template": "BSTANDARDTROOP",
+        "persist": "Forever",
+        "can_capture": true,
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "weight": 800,
+        "cost": 0,
+        "jtac": {
+          "range": 8000,
+          "nolos": false
+        }
+      },
+      {
+        "name": "Anti Tank",
+        "template": "BATTROOP",
+        "persist": "Forever",
+        "can_capture": true,
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "weight": 1000,
+        "cost": 1,
+        "jtac": {
+          "range": 8000,
+          "nolos": false
+        }
+      },
+      {
+        "name": "Mortar",
+        "template": "BMORTARTROOP",
+        "persist": "Forever",
+        "can_capture": true,
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "weight": 1200,
+        "cost": 5,
+        "jtac": {
+          "range": 8000,
+          "nolos": false
+        }
+      },
+      {
+        "name": "Stinger",
+        "template": "BSTINGERTROOP",
+        "persist": "Forever",
+        "can_capture": false,
+        "limit": 10,
+        "limit_enforce": "DeleteOldest",
+        "weight": 500,
+        "cost": 5,
+        "jtac": {
+          "range": 8000,
+          "nolos": false
+        }
+      }
+    ]
+  },
+  "unit_classification": {
+    "TICONDEROG": [
+      "Boat"
+    ],
+    "CVN_73": [
+      "Boat"
+    ],
+    "PERRY": [
+      "Boat"
+    ],
+    "ELNYA": [
+      "Boat"
+    ],
+    "PIOTR": [
+      "Boat"
+    ],
+    "MOSCOW": [
+      "Boat"
+    ],
+    "CV_1143_5": [
+      "Boat"
+    ],
+    "Ship_Tilde_Supply": [
+      "Boat"
+    ],
+    "MosquitoFBMkVI": [
+      "Aircraft"
+    ],
+    "ATZ-10": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "Ural-4320 APA-5D": [
+      "Logistics",
+      "Unarmed"
+    ],    
+    "J-11A": [
+      "Aircraft"
+    ],
+    "F-4E-45MC": [
+      "Aircraft"
+    ],
+    "TV tower": [
+      "Unarmed"
+    ],
+    "C-101CC": [
+      "Aircraft"
+    ],
+    "AV8BNA": [
+      "Aircraft"
+    ],
+    "L-39C": [
+      "Aircraft"
+    ],
+    "F-14A-135-GR": [
+      "Aircraft"
+    ],
+    "Hawk sr": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "SearchRadar"
+    ],
+    "Soldier M4": [
+      "Infantry",
+      "SR",
+      "SmallArms"
+    ],
+    "ZSU_57_2": [
+      "AAA",
+      "LR",
+      "Driveable"
+    ],
+    "HEMTT_C-RAM_Phalanx": [
+      "AAA",
+      "MR",
+      "RadarGuided",
+      "Driveable",
+      "EngagesWeapons"
+    ],
+    "Hawk ln": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "Launcher"
+    ],
+    "SA-11 Buk CC 9S470M1": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "ControlUnit"
+    ],
+    "SNR_75V": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "TrackRadar"
+    ],
+    "M-2000C": [
+      "Aircraft"
+    ],
+    "Tor 9A331": [
+      "SAM",
+      "MR",
+      "RadarGuided",
+      "EngagesWeapons",
+      "TrackRadar",
+      "SearchRadar",
+      "Launcher",
+      "Driveable"
+    ],
+    ".Ammunition depot": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "Ka-50_3": [
+      "Aircraft",
+      "Helicopter"
+    ],
+    "OH58D": [
+      "Aircraft",
+      "Helicopter"
+    ],
+    "FARP Ammo Dump Coating": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "FARP": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "FARP_SINGLE_01": [
+      "Logistics",
+      "Unarmed"
+    ],    
+    "M6 Linebacker": [
+      "SAM",
+      "APC",
+      "SR",
+      "IRGuided",
+      "Launcher",
+      "LightCannon",
+      "Driveable"
+    ],
+    "TF-51D": [
+      "Aircraft"
+    ],
+    "SA-11 Buk LN 9A310M1": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "TrackRadar",
+      "Launcher"
+    ],
+    "T-80UD": [
+      "Armor",
+      "MR",
+      "ATGM",
+      "HeavyCannon",
+      "SmallArms",
+      "Driveable"
+    ],
+    "T-90": [
+      "Armor",
+      "MR",
+      "ATGM",
+      "HeavyCannon",
+      "SmallArms",
+      "Driveable"
+    ],
+    "A-10A": [
+      "Aircraft"
+    ],
+    "T-55": [
+      "Armor",
+      "MR",
+      "HeavyCannon",
+      "SmallArms",
+      "Driveable"
+    ],
+    "AJS37": [
+      "Aircraft"
+    ],
+    "ZU-23 Emplacement": [
+      "AAA",
+      "SR"
+    ],
+    "Vulcan": [
+      "AAA",
+      "MR",
+      "RadarGuided",
+      "Driveable"
+    ],
+    "FPS-117": [
+      "EWR",
+      "Unarmed"
+    ],
+    "S_75M_Volhov": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "Launcher"
+    ],
+    "T155_Firtina": [
+      "Armor",
+      "LR",
+      "Artillery",
+      "SmallArms",
+      "Driveable"
+    ],
+    "Roland ADS": [
+      "SAM",
+      "MR",
+      "RadarGuided",
+      "EngagesWeapons",
+      "TrackRadar",
+      "SearchRadar",
+      "Launcher",
+      "Driveable"
+    ],
+    "2B11 mortar": [
+      "Infantry",
+      "LR",
+      "Artillery"
+    ],
+    "SA-11 Buk SR 9S18M1": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "SearchRadar"
+    ],
+    "Su-25T": [
+      "Aircraft"
+    ],
+    "M978 HEMTT Tanker": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "AH-64D_BLK_II": [
+      "Aircraft",
+      "Helicopter"
+    ],
+    "55G6 EWR": [
+      "EWR",
+      "Unarmed"
+    ],
+    "M-109": [
+      "Armor",
+      "Artillery",
+      "Driveable"
+    ],
+    "M1134 Stryker ATGM": [
+      "APC",
+      "MR",
+      "ATGM",
+      "SmallArms",
+      "Driveable"
+    ],
+	  "M1045 HMMWV TOW": [
+      "APC",
+      "MR",
+      "ATGM",
+      "LightCannon",
+      "Driveable"
+    ],
+	  "Cobra": [
+      "APC",
+      "MR",
+      "LightCannon",
+      "Driveable"
+    ],
+    "CHAP_MATV": [
+      "APC",
+      "MR",
+      "LightCannon",
+      "Driveable"
+    ],    
+    "M1128 Stryker MGS": [
+      "APC",
+      "MR",
+      "ATGM",
+      "SmallArms",
+      "Driveable"
+    ],
+    "Marder": [
+      "APC",
+      "MR",
+      "ATGM",
+      "SmallArms",
+      "Driveable"
+    ],
+    "BMP-2": [
+      "APC",
+      "MR",
+      "ATGM",
+      "SmallArms",
+      "Driveable"
+    ],
+    "BTR-82A": [
+      "APC",
+      "MR",
+      "ATGM",
+      "SmallArms",
+      "Driveable"
+    ],
+    "VAB_Mephisto": [
+      "APC",
+      "MR",
+      "ATGM",
+      "SmallArms",
+      "Driveable"
+    ],
+    "Soldier stinger": [
+      "SAM",
+      "Infantry",
+      "SR",
+      "IRGuided",
+      "Launcher",
+      "Driveable"
+    ],
+    "Paratrooper RPG-16": [
+      "Infantry",
+      "MR",
+      "RPG"
+    ],
+    "Osa 9A33 ln": [
+      "SAM",
+      "SR",
+      "RadarGuided",
+      "TrackRadar",
+      "SearchRadar",
+      "Launcher",
+      "Driveable"
+    ],
+    "Infantry AK": [
+      "Infantry",
+      "SR",
+      "SmallArms"
+    ],
+    "Hawk pcp": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "ControlUnit"
+    ],
+    "ZU-23 Emplacement Closed": [
+      "AAA",
+      "SR"
+    ],
+    "Ural-375": [
+      "Logistics",
+      "Unarmed",
+      "Driveable"
+    ],
+    "Mi-24P": [
+      "Aircraft",
+      "Helicopter"
+    ],
+    "GeneratorF": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "cds_crate": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "houseA_arm": [
+      "Logistics",
+      "SmallArms"
+    ],
+    "Su-25": [
+      "Aircraft"
+    ],
+    "MB-339A": [
+      "Aircraft"
+    ],
+    "BMP-1": [
+      "APC",
+      "MR",
+      "ATGM",
+      "LightCannon",
+      "Driveable"
+    ],
+    "p-19 s-125 sr": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "SearchRadar"
+    ],
+    "Soldier M249": [
+      "Infantry",
+      "SR",
+      "SmallArms"
+    ],
+    "Soldier M4 GRG": [
+      "Infantry",
+      "SR",
+      "SmallArms"
+    ],    
+    "FARP Tent": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "af_hq": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "Tank": [
+      "Logistics",
+      "Unarmed"
+    ],        
+    ".Command Center": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "ZSU-23-4 Shilka": [
+      "AAA",
+      "MR",
+      "RadarGuided",
+      "Driveable"
+    ],
+    "Stinger comm": [
+      "SAM",
+      "Infantry",
+      "ControlUnit",
+      "Unarmed"
+    ],
+    "MiG-29A": [
+      "Aircraft"
+    ],
+    "MiG-21Bis": [
+      "Aircraft"
+    ],
+    "tt_ZU-23": [
+      "AAA",
+      "SR",
+      "Driveable"
+    ],
+    "MiG-29S": [
+      "Aircraft"
+    ],
+    "M1097 Avenger": [
+      "SAM",
+      "SR",
+      "IRGuided",
+      "Launcher",
+      "SmallArms",
+      "Driveable"
+    ],
+    "F-16C_50": [
+      "Aircraft"
+    ],
+    "Kub 1S91 str": [
+      "SAM",
+      "MR",
+      "RadarGuided",
+      "TrackRadar",
+      "SearchRadar"
+    ],
+    "Mi-8MT": [
+      "Aircraft",
+      "Helicopter"
+    ],
+    "CH-47Fbl1": [
+      "Aircraft",
+      "Helicopter"
+    ],
+    "SA-18 Igla-S manpad": [
+      "SAM",
+      "SR",
+      "IRGuided",
+      "Launcher",
+      "Driveable"
+    ],
+    "Ural-4320-31": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "Kub 2P25 ln": [
+      "SAM",
+      "MR",
+      "RadarGuided",
+      "Launcher"
+    ],
+    "1L13 EWR": [
+      "EWR",
+      "Unarmed"
+    ],
+    "FPS-117 Dome": [
+      "EWR",
+      "Unarmed"
+    ],    
+    "M-1 Abrams": [
+      "Armor",
+      "MR",
+      "HeavyCannon",
+      "SmallArms",
+      "Driveable"
+    ],
+    "M1A2C_SEP_V3": [
+      "Armor",
+      "MR",
+      "HeavyCannon",
+      "SmallArms",
+      "Driveable"
+    ],
+    "M 818": [
+      "Logistics",
+      "Unarmed",
+      "Driveable"
+    ],
+    "outpost": [
+      "Logistics",
+      "SR",
+      "SmallArms"
+    ],
+    "Infantry AK ver2": [
+      "Infantry",
+      "SR",
+      "SmallArms"
+    ],
+    "BMD-1": [
+      "APC",
+      "MR",
+      "ATGM",
+      "LightCannon",
+      "Driveable"
+    ],
+    "BTR_D": [
+      "APC",
+      "MR",
+      "ATGM",
+      "LightCannon",
+      "Driveable"
+    ],
+    "Ka-50": [
+      "Aircraft",
+      "Helicopter"
+    ],
+    "SA-18 Igla comm": [
+      "SAM",
+      "SR",
+      "IRGuided",
+      "ControlUnit"
+    ],
+    "S-60_Type59_Artillery": [
+      "AAA",
+      "LR"
+    ],
+    "KS-19": [
+      "AAA",
+      "LR"
+    ],
+    "Strela-10M3": [
+      "SAM",
+      "SR",
+      "IRGuided",
+      "Launcher",
+      "Driveable"
+    ],
+    "Strela-1 9P31": [
+      "SAM",
+      "SR",
+      "IRGuided",
+      "Launcher",
+      "Driveable"
+    ],
+    "Cow": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "bofors40": [
+      "AAA",
+      "LR"
+    ],
+    "FPS-117 ECS": [
+      "EWR",
+      "Unarmed"
+    ],
+    "RD_75": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "AuxRadarUnit"
+    ],
+    "SA-18 Igla-S comm": [
+      "SAM",
+      "SR",
+      "IRGuided",
+      "ControlUnit"
+    ],
+    "Patriot cp": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "AuxRadarUnit"
+    ],
+    "NASAMS_Radar_MPQ64F1": [
+      "SAM",
+      "MR",
+      "RadarGuided",
+      "EngagesWeapons",
+      "SearchRadar"
+    ],
+    "S-300PS 54K6 cp": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "AuxRadarUnit"
+    ],
+    "Patriot AMG": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "AuxRadarUnit"
+    ],
+    "Patriot EPP": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "AuxRadarUnit"
+    ],
+    "Patriot ECS": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "AuxRadarUnit"
+    ],
+    "NASAMS_Command_Post": [
+      "SAM",
+      "MR",
+      "RadarGuided",
+      "AuxRadarUnit"
+    ],
+    "S-300PS 40B6M tr": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "TrackRadar"
+    ],
+    "S-300PS 5H63C 30H6_tr": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "TrackRadar",
+      "EngagesWeapons"
+    ],
+    "S-300PS 40B6MD sr": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "SearchRadar"
+    ],
+    "S-300PS 64H6E sr": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "SearchRadar"
+    ],
+    "Patriot str": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "SearchRadar",
+      "TrackRadar",
+      "EngagesWeapons"
+    ],
+    "SON_9": [
+      "RadarGuided",
+      "SearchRadar",
+      "TrackRadar",
+      "EngagesWeapons"
+    ],
+    "NASAMS_LN_C": [
+      "SAM",
+      "MR",
+      "RadarGuided",
+      "Launcher",
+      "EngagesWeapons"
+    ],
+    "NASAMS_LN_B": [
+      "SAM",
+      "MR",
+      "RadarGuided",
+      "Launcher",
+      "EngagesWeapons"
+    ],
+    "Patriot ln": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "Launcher",
+      "EngagesWeapons"
+    ],
+    "S-300PS 5P85C ln": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "Launcher",
+      "EngagesWeapons"
+    ],
+    "S-300PS 5P85D ln": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "Launcher",
+      "EngagesWeapons"
+    ],
+    "F-15C": [
+      "Aircraft"
+    ],
+    "SA342M": [
+      "Aircraft",
+      "Helicopter"
+    ],
+    "Su-27": [
+      "Aircraft"
+    ],
+    "Hawk tr": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "TrackRadar"
+    ],
+    "Soldier RPG": [
+      "Infantry",
+      "MR",
+      "RPG"
+    ],
+    "Infantry AK ver3": [
+      "Infantry",
+      "SR",
+      "SmallArms"
+    ],
+    "SA342L": [
+      "Aircraft",
+      "Helicopter"
+    ],
+    "Su-33": [
+      "Aircraft"
+    ],
+    "Invisible FARP": [
+      "Logistics",
+      "Unarmed",
+      "Invincible"
+    ],
+    "2S6 Tunguska": [
+      "SAM",
+      "AAA",
+      "SR",
+      "OpticallyGuided",
+      "Launcher",
+      "Driveable"
+    ],
+    "Gepard": [
+      "AAA",
+      "LR",
+      "RadarGuided",
+      "Driveable"
+    ],
+    "UH-1H": [
+      "Aircraft",
+      "Helicopter"
+    ],
+    "FARP Fuel Depot": [
+      "Logistics",
+      "Unarmed"
+    ],
+    "A-10C_2": [
+      "Aircraft"
+    ],
+    "A-10C": [
+      "Aircraft"
+    ],
+    "F-14B": [
+      "Aircraft"
+    ],
+    "FA-18C_hornet": [
+      "Aircraft"
+    ],
+    "L-39ZA": [
+      "Aircraft"
+    ],
+    "F-5E-3": [
+      "Aircraft"
+    ],
+    "HL_ZU-23": [
+      "AAA",
+      "SR",
+      "Driveable"
+    ],
+    "M-2 Bradley": [
+      "APC",
+      "MR",
+      "ATGM",
+      "LightCannon",
+      "Driveable"
+    ],
+    "Hawk cwar": [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "AuxRadarUnit"
+    ],
+    "JF-17": [
+      "Aircraft"
+    ],
+    "BMP-3": [
+      "APC",
+      "MR",
+      "ATGM",
+      "LightCannon",
+      "Driveable"
+    ],
+    "Leopard-2": [
+      "Armor",
+      "MR",
+      "HeavyCannon",
+      "SmallArms",
+      "Driveable"
+    ],
+    "T-72B": [
+      "Armor",
+      "MR",
+      "HeavyCannon",
+      "SmallArms",
+      "Driveable"
+    ],
+    "Mirage-F1EE": [
+      "Aircraft"
+    ],
+    "SAU Msta": [
+      "Armor",
+      "Artillery",
+      "SmallArms",
+      "Driveable"
+    ],
+	  "HL_B8M1": [
+      "Armor",
+      "Artillery",
+      "SmallArms",
+      "Driveable"
+    ],
+    "CHAP_PantsirS1": [
+      "SAM",
+      "AAA",
+      "SR",
+      "OpticallyGuided",
+      "Launcher",
+      "Driveable"
+    ], 
+    "CHAP_IRISTSLM_LN": [
+      "SAM",
+      "AAA",
+      "SR",
+      "OpticallyGuided",
+      "Launcher",
+      "Driveable"
+    ],  
+    "CHAP_IRISTSLM_STR": [
+      "SAM",
+      "AAA",
+      "SR",
+      "OpticallyGuided",
+      "TrackRadar",
+      "SearchRadar",
+      "Launcher",
+      "Driveable"
+    ],          
+    "CHAP_IRISTSLM_CP": [
+      "SAM",
+      "AAA",
+      "SR",
+      "OpticallyGuided",
+      "Launcher",
+      "Driveable"
+    ],       
+    "CHAP_TOS1A": [
+      "Armor",
+      "LR",
+      "Artillery",
+      "SmallArms",
+      "Driveable"
+    ],
+    "CHAP_M142_GMLRS_M31": [
+      "Armor",
+      "LR",
+      "Artillery",
+      "SmallArms",
+      "Driveable"
+    ],            
+    "F-15ESE": [
+      "Aircraft"
+    ],
+    "B-1B": [
+      "Aircraft"
+    ],
+    "A-50": [
+      "Aircraft",
+      "AWACS",
+      "Link16"
+    ],
+    "MQ-9 Reaper": [
+      "Aircraft"
+    ],
+    "WingLoong-I": [
+      "Aircraft"
+    ],
+    "E-3A": [
+      "Aircraft",
+      "AWACS",
+      "Link16"
+    ],
+    "IL-78M": [
+      "Aircraft"
+    ],
+    "Tu-22M3": [
+      "Aircraft"
+    ],
+    "KC130": [
+      "Aircraft"
+    ],
+    "KC-135": [
+      "Aircraft"
+    ]
+  },
+  "airborne_jtacs": {
+    "MB-339A": {
+      "range": 16000,
+      "nolos": true
+    },
+    "C-101CC": {
+      "range": 16000,
+      "nolos": true
+    },
+    "L-39ZA": {
+      "range": 16000,
+      "nolos": true
+    }
+  },
+  "jtac_priority": [
+    [
+      "SAM",
+      "LR",
+      "RadarGuided",
+      "TrackRadar"
+    ],
+    [
+      "SAM",
+      "MR",
+      "RadarGuided",
+      "TrackRadar"
+    ],
+        [
+      "SAM",
+      "SR",
+      "RadarGuided",
+      "TrackRadar"
+    ],
+    [
+      "SAM",
+      "OpticallyGuided"
+    ],
+    [
+      "SAM",
+      "IRGuided"
+    ],
+    [
+      "AAA",
+      "LR"
+    ],
+    [
+      "APC",
+      "ATGM"
+    ],
+    [
+      "AAA"
+    ],
+    [
+      "Logistics"
+    ],
+    [
+      "Infantry"
+    ],
+    [
+      "Armor"
+    ],
+    [
+      "Artillery"
+    ]
+  ],
+  "extra_fixed_wing_objectives": [],
+  "ewr_mode": "Delayed",
+  "ewr_delay": 60,
+  "frontline": {
+    "enabled": true,
+    "update_on_objective_change_only": true,
+    "samples_per_boundary": 100,
+    "territory_zone_alpha": 0.15
+  },
+  "carrier": {
+    "repair_cost": 5000,
+    "respawn_cost": 15000,
+    "movement_speed": 14.4,
+    "repair_time": 600,
+    "groups": [
+      {
+        "template": "BCARRIER",
+        "display_name": "CVN-73 Washington"
+      },
+      {
+        "template": "RCARRIER",
+        "display_name": "Admiral Kuznetsov"
+      }
+    ]
+  },
+  "factory": {
+    "production_rate": 100,
+    "production_interval": 600
+  }
+}

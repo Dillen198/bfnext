@@ -104,7 +104,7 @@ impl<'lua> FromLua<'lua> for MarkPanel<'lua> {
         Ok(Self {
             id: tbl.raw_get("idx")?,
             time: tbl.raw_get("time")?,
-            initiator: tbl.raw_get("initiator")?,
+            initiator: crate::event::opt_unit(&tbl, "initiator", lua)?,
             side: match tbl.raw_get::<_, i64>("coalition")? {
                 -1 | 255 => SideFilter::All,
                 0 => SideFilter::Neutral,
@@ -116,7 +116,10 @@ impl<'lua> FromLua<'lua> for MarkPanel<'lua> {
                 -1 => None,
                 n => Some(GroupId::from(n)),
             },
-            text: tbl.raw_get("text")?,
+            // DCS can leave `text` nil on a mark nobody has typed into yet.
+            // For a mark, no text and empty text mean the same thing, so it
+            // reads as "" rather than making every key matcher unwrap it.
+            text: tbl.raw_get::<_, Option<String>>("text")?.unwrap_or_default(),
             pos: tbl.raw_get("pos")?,
         })
     }

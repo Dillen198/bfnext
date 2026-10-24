@@ -1,34 +1,71 @@
-name: Build BFNext
+name: CI
 
-on: 
-  workflow_dispatch: 
-    inputs:
-      branch:
-        type: string
-        default: master
-      
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
-  LUA_LIB: $GITHUB_WORKSPACE
-  LUA_LINK: "dylib"
-  LUA_LIB_NAME: "lua"
+  # DCS embeds Lua 5.1 and we must link the exact same runtime, so mlua is
+  # pointed at the lua.lib/lua.dll committed at the repo root (see
+  # setup-build.ps1). `$GITHUB_WORKSPACE` is not expanded inside `env:`
+  # values, hence the expression syntax.
+  LUA_LIB: ${{ github.workspace }}
+  LUA_LINK: dylib
+  LUA_LIB_NAME: lua
 
 jobs:
-  build:
-
-    runs-on: ubuntu-latest
-
+  check:
+    # Windows only: the engine is a DCS (Windows) DLL, the cockpit installer
+    # uses native Win32 GUI bindings, and the committed Lua import library is
+    # a Windows .lib.
+    runs-on: windows-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Build
-      run: cargo build --verbose --release --package=bflib
-      
-    - name: Show Build Folder
-      run: ls -R $GITHUB_WORKSPACE
-    
-    - name: Upload Build Artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: BuddybotBuild
-        path: $GITHUB_WORKSPACE/target/release/bflib.dll
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch, 2026-09-03
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            .
+            bftools
+
+      # dcso3/bflib/bfrange/bfdb link lua.dll dynamically, so every test
+      # binary needs it on PATH at run time.
+      - name: Put lua.dll on PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value $env:GITHUB_WORKSPACE
+
+      # bfdb embeds the dashboard build (bfweb/dist, gitignored) with
+      # RustEmbed, which refuses to compile if the folder is missing. CI only
+      # checks the Rust side, so an empty folder stands in for the npm build.
+      - name: Stub dashboard build output
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force bfweb/dist | Out-Null
+
+      - name: cargo check (workspace)
+        run: cargo check --workspace --locked
+
+      # No crate is excluded: the tests need no DCS, no netidx resolver and no
+      # network (dcso3's tests spin up a plain Lua state via lua.dll; bfdb's
+      # DB tests use throwaway sled dirs under the temp dir), and
+      # bfcockpit/installer has no tests and builds fine on a Windows runner
+      # (it only embeds a committed Lua script, no frontend build step).
+      - name: cargo test (workspace)
+        run: cargo test --workspace --locked
+
+      # bftools is excluded from the workspace (own Cargo.lock, vendored Lua),
+      # so it is checked on its own.
+      - name: cargo check (bftools)
+        run: cargo check --locked --manifest-path bftools/Cargo.toml

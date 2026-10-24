@@ -710,6 +710,21 @@ Some units (SA-6, SA-2) support repair/rearm crates:
 - Delivered to deployed unit
 - Repairs damage and restocks ammunition
 
+### Fat Cow (heavy-lift FARP)
+
+Only on servers whose campaign config defines a deployable with a `fat_cow`
+block. Both coalitions can have one. Mission makers need nothing in the
+mission editor: bflib generates the pads and layout itself.
+
+- **Airframes**: CH-47 or Mi-8 (anything in `helo_cargo.enabled_vehicles` that can lift the kit)
+- **Crates Required** (default kit): 1x "Fat Cow Fuel Bladder" (1500kg) + 1x "Fat Cow Ammo Pallet" (1000kg)
+- **How**: spawn the crates from the F10 helo cargo menu, load them through F8 → Ground Crew → Cargo, fly to the site, land and unload them through the same menu. Stay on the ground and use F10 → Cargo → **Unpack Nearby Crate(s)**. The Fat Cow is laid out around your helicopter, so land facing the way you want it. Pick a clear area about 300 × 300 m.
+- **What you get**: the same layout as the CG Fat Cow script. The pad is 100 m behind your helicopter and has ground crew straight away. A minute later the rest appears: a fuel point 35 m aft (FARP fuel depot plus APFC fuel), a hose and generator 50 m aft, a fire point with two crew 70 m aft, and a guard detail of six soldiers around the helicopter plus a MANPAD 50 m ahead of it. Land close to the pad to rearm and refuel. If the ground crew does not answer, you are too far from it.
+- **Finite stock**: no logistics hub supplies a Fat Cow. It holds only the fuel and weapons it was built with (default 9000kg of jet fuel, plus Hellfires and Hydras for blue, or Shturms and S-8s for red). When those run out it's dry, unless someone hauls a supply transfer crate to it.
+- **Packing up**: land inside the Fat Cow's zone and pick F10 → Cargo → **Pack Up Fat Cow**. The FARP closes and its crates are put down next to your helicopter, carrying whatever fuel and weapons it had left. Load them, fly to the new site and use **Unpack Nearby Crate(s)**. It comes back with that leftover stock, and you aren't charged points again. Packed crates don't survive a server restart, so set it back up before one.
+- **Destroying it**: destroy both fuel points and the Fat Cow closes.
+- **Restrictions**: the same exclusion distance from friendly objectives as a FARP; limit 2 per side.
+
 ---
 
 ## See Also
