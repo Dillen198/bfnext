@@ -330,6 +330,23 @@ impl LoadState {
     }
 }
 
+/// A Takeoff event held until the aircraft proves it is flying, see
+/// `Context::pending_takeoffs`.
+#[derive(Debug, Clone)]
+struct PendingTakeoff {
+    /// Where it lifted off (the latest Takeoff event's position).
+    pos: Vector2,
+    /// The airbase the Takeoff event named, for the taxiway check.
+    place: Option<String>,
+    /// When it was first seen in the air without touching down since.
+    air_since: Option<DateTime<Utc>>,
+}
+
+/// A held takeoff counts once the aircraft is this high above the ground...
+const TAKEOFF_CONFIRM_AGL_M: f64 = 30.;
+/// ...or has stayed in the air this long (a helicopter departing low).
+const TAKEOFF_CONFIRM_SECS: i64 = 30;
+
 #[derive(Debug, Default)]
 struct JtacSlotIfo {
     subscribed_objectives: FxHashSet<ObjectiveId>,
@@ -366,6 +383,16 @@ struct Context {
     recently_landed: FxHashMap<DcsOid<ClassUnit>, DateTime<Utc>>,
     recently_born: FxHashMap<DcsOid<ClassUnit>, DateTime<Utc>>,
     airborne: FxHashSet<DcsOid<ClassUnit>>,
+    /// Aircraft whose landing has been settled (`return_lives`) and that have
+    /// not really taken off since. A Takeoff event for one of these is held in
+    /// `pending_takeoffs` instead of being acted on.
+    landed: FxHashSet<DcsOid<ClassUnit>>,
+    /// Takeoff events after a settled landing, waiting for the aircraft to
+    /// actually climb away (`confirm_takeoffs`). DCS fires Takeoff when a fast
+    /// rollout skips over a bump in the runway, often with no Land after it;
+    /// acted on at once, that undid the landing the pilot had just been told
+    /// was registered (Discord, Oct 24).
+    pending_takeoffs: FxHashMap<DcsOid<ClassUnit>, PendingTakeoff>,
     captureable: FxHashMap<ObjectiveId, usize>,
     shots_out: ShotDb,
     menu_init_queue: IndexSet<SlotId, FxBuildHasher>,
@@ -938,6 +965,8 @@ fn unit_killed(
     ctx.recently_landed.remove(&id);
     // a dead unit never lands, so nothing else would ever take it out
     ctx.airborne.remove(&id);
+    ctx.landed.remove(&id);
+    ctx.pending_takeoffs.remove(&id);
     ctx.shots_out.dead(id.clone(), now);
     if let Err(e) = ctx.jtac.unit_dead(lua, &mut ctx.db, &id) {
         error!("jtac unit dead failed for {:?} {:?}", id, e)
@@ -1247,6 +1276,20 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         }
         Event::PlayerLeaveUnit(e) => {
             if let Some(initiator) = e.initiator {
+                // Landing and leaving the slot inside the ten seconds
+                // `return_lives` waits lost the landing with the unit: no
+                // airframe and stores credit, no "landed" on the dashboard.
+                // Still on the ground, it is a landing -- settle it now.
+                if ctx.recently_landed.remove(&initiator).is_some()
+                    && let Ok(unit) = Unit::get_instance(lua, &initiator)
+                    && unit.in_air().ok() == Some(false)
+                    && let (Ok(pos), Ok(slot)) = (unit.get_ground_position(), unit.slot())
+                {
+                    ctx.db.land(slot, pos.0, &unit);
+                }
+                ctx.airborne.remove(&initiator);
+                ctx.landed.remove(&initiator);
+                ctx.pending_takeoffs.remove(&initiator);
                 // Snapshot what we need before the deslot invalidates it.
                 let leave_info = ctx.db.player_in_unit(false, &initiator).and_then(|ucid| {
                     ctx.db.player(&ucid).and_then(|p| {
@@ -1517,69 +1560,56 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         Event::Takeoff(e) => {
             if let Some(unit) = e.initiator.as_ref().and_then(|o| o.as_unit().ok()) {
                 let id = unit.object_id()?;
-                if !ctx.recently_born.contains_key(&id)
-                    && ctx.airborne.insert(id.clone())
-                    && ctx.recently_landed.remove(&id).is_none()
-                {
-                    let slot = unit.slot()?;
+                let place = e.place.as_ref().and_then(|p| p.get_name().ok());
+                if ctx.recently_born.contains_key(&id) {
+                    // spawned in the air
+                } else if let Some(p) = ctx.pending_takeoffs.get_mut(&id) {
+                    // Another takeoff before the held one was confirmed: this
+                    // lift-off point is the newer, so the likelier real one.
+                    p.pos = unit.get_ground_position()?.0;
+                    p.place = place;
+                } else if ctx.recently_landed.contains_key(&id) {
+                    // Touchdown not settled yet. `return_lives` tells a
+                    // touch-and-go from a bounce on the rollout by whether the
+                    // aircraft is still in the air; either way it is the same
+                    // flight, so nothing is charged here.
+                    ctx.airborne.insert(id);
+                } else if ctx.landed.contains(&id) {
+                    // Back off the ground after a settled landing. Hold it
+                    // until the aircraft climbs away: a fast rollout over a
+                    // bumpy runway fires this too, and acting on it at once
+                    // took the registered landing (and with it the airframe
+                    // and stores credit and the dashboard's "landed") away.
+                    let pos = unit.get_ground_position()?.0;
+                    ctx.airborne.insert(id.clone());
+                    info!(
+                        "[LANDING] {} takeoff event after its landing at ({:.0},{:.0}), holding until it climbs away",
+                        unit.get_player_name().ok().flatten().map(|n| n.to_string()).unwrap_or_default(),
+                        pos.x,
+                        pos.y
+                    );
+                    ctx.pending_takeoffs.insert(id, PendingTakeoff { pos, place, air_since: None });
+                } else if ctx.airborne.insert(id.clone()) {
                     let position = unit.get_ground_position()?.0;
-                    warn_taxiway_takeoff(lua, ctx, &unit, e.place.as_ref(), position, &slot);
-                    check_banned_loadout(ctx, &unit, &slot, start_ts);
-                    match ctx.db.takeoff(Utc::now(), slot, &unit, position) {
-                        Err(e) => error!("could not process takeoff, {:?}", e),
-                        Ok(TakeoffRes::NoLifeTaken | TakeoffRes::NotPlayerSlot) => (),
-                        Ok(TakeoffRes::TookLife(typ)) => {
-                            if let Err(e) =
-                                message_life(ctx, &slot, Some(typ), "life taken\n")
-                            {
-                                error!("could not display life taken message {:?}", e)
-                            }
-                            let _ = menu::cargo::list_cargo_for_slot(ctx, &slot);
-                        }
-                        Ok(r @ (TakeoffRes::OutOfLives | TakeoffRes::OutOfPoints)) => {
-                            // Say why -- the aircraft just vanished before.
-                            if let Some(uid) = slot.as_unit_id() {
-                                let why = match r {
-                                    TakeoffRes::OutOfPoints => {
-                                        "Not enough points to pay for this flight (see the FLIGHT COST panel from taxi) -- aircraft removed."
-                                    }
-                                    _ => "No lives left for this aircraft type -- aircraft removed.",
-                                };
-                                ctx.db.ephemeral.msgs().panel_to_unit(15, true, uid, why);
-                            }
-                            if let Err(e) = unit.destroy() {
-                                error!(
-                                    "failed to destroy unit that took off without lives or points {e:?}"
-                                )
-                            }
-                        }
-                        Ok(TakeoffRes::TooEarly(remaining)) => {
-                            let ucid = ctx.db.ephemeral.player_in_slot(&slot).cloned();
-                            if let Some(uid) = slot.as_unit_id() {
-                                ctx.db.ephemeral.msgs().panel_to_unit(
-                                    15,
-                                    true,
-                                    uid,
-                                    format_compact!(
-                                        "You took off {remaining}s before your ground hold expired -- returning to spectators."
-                                    ),
-                                );
-                            }
-                            if let Err(e) = unit.destroy() {
-                                error!("failed to destroy unit that took off during the hold {e:?}")
-                            }
-                            if let Some(ucid) = ucid {
-                                ctx.db.ephemeral.force_player_to_spectators(&ucid);
-                            }
-                        }
-                    }
+                    process_takeoff(lua, ctx, &unit, place.as_ref(), position, start_ts)?;
                 }
             }
         }
         Event::Land(e) => {
             if let Some(unit) = e.initiator.as_ref().and_then(|o| o.as_unit().ok()) {
                 let id = unit.object_id()?;
-                if !ctx.recently_born.contains_key(&id) && ctx.airborne.remove(&id) {
+                if ctx.recently_born.contains_key(&id) {
+                    // spawned on the ground
+                } else if ctx.pending_takeoffs.remove(&id).is_some() {
+                    // Down again before the held takeoff was confirmed: it was
+                    // the rollout, not a departure. The landing already
+                    // settled stands as it is.
+                    ctx.airborne.remove(&id);
+                    info!(
+                        "[LANDING] {} touched down again, held takeoff dropped, landing stands",
+                        unit.get_player_name().ok().flatten().map(|n| n.to_string()).unwrap_or_default()
+                    );
+                } else if ctx.airborne.remove(&id) {
                     ctx.recently_landed.insert(id, Utc::now());
                 }
             }
@@ -1664,6 +1694,115 @@ pub(crate) fn lives(db: &mut Db, ucid: &Ucid, typfilter: Option<LifeType>) -> Re
         }
     }
     Ok(msg)
+}
+
+/// Act on a takeoff: charge the flight, take a life, and enforce the ground
+/// hold, lives and points. `position` is where the wheels left the ground.
+fn process_takeoff(
+    lua: MizLua,
+    ctx: &mut Context,
+    unit: &Unit,
+    place: Option<&String>,
+    position: Vector2,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let slot = unit.slot()?;
+    warn_taxiway_takeoff(lua, ctx, unit, place, position, &slot);
+    check_banned_loadout(ctx, unit, &slot, now);
+    match ctx.db.takeoff(Utc::now(), slot, unit, position) {
+        Err(e) => error!("could not process takeoff, {:?}", e),
+        Ok(TakeoffRes::NoLifeTaken | TakeoffRes::NotPlayerSlot) => (),
+        Ok(TakeoffRes::TookLife(typ)) => {
+            if let Err(e) =
+                message_life(ctx, &slot, Some(typ), "life taken\n")
+            {
+                error!("could not display life taken message {:?}", e)
+            }
+            let _ = menu::cargo::list_cargo_for_slot(ctx, &slot);
+        }
+        Ok(r @ (TakeoffRes::OutOfLives | TakeoffRes::OutOfPoints)) => {
+            // Say why -- the aircraft just vanished before.
+            if let Some(uid) = slot.as_unit_id() {
+                let why = match r {
+                    TakeoffRes::OutOfPoints => {
+                        "Not enough points to pay for this flight (see the FLIGHT COST panel from taxi) -- aircraft removed."
+                    }
+                    _ => "No lives left for this aircraft type -- aircraft removed.",
+                };
+                ctx.db.ephemeral.msgs().panel_to_unit(15, true, uid, why);
+            }
+            if let Err(e) = unit.clone().destroy() {
+                error!(
+                    "failed to destroy unit that took off without lives or points {e:?}"
+                )
+            }
+        }
+        Ok(TakeoffRes::TooEarly(remaining)) => {
+            let ucid = ctx.db.ephemeral.player_in_slot(&slot).cloned();
+            if let Some(uid) = slot.as_unit_id() {
+                ctx.db.ephemeral.msgs().panel_to_unit(
+                    15,
+                    true,
+                    uid,
+                    format_compact!(
+                        "You took off {remaining}s before your ground hold expired -- returning to spectators."
+                    ),
+                );
+            }
+            if let Err(e) = unit.clone().destroy() {
+                error!("failed to destroy unit that took off during the hold {e:?}")
+            }
+            if let Some(ucid) = ucid {
+                ctx.db.ephemeral.force_player_to_spectators(&ucid);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Act on the takeoffs held after a landing (`Context::pending_takeoffs`) once
+/// the aircraft is plainly flying: high enough above the ground, or in the
+/// air long enough. Until then the landing it made stands, and leaving the
+/// slot settles it as a landing. One that never climbs away is never charged.
+fn confirm_takeoffs(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
+    if ctx.pending_takeoffs.is_empty() {
+        return;
+    }
+    let land = dcso3::land::Land::singleton(lua).ok();
+    let mut confirmed: SmallVec<[(DcsOid<ClassUnit>, PendingTakeoff); 2]> = smallvec![];
+    ctx.pending_takeoffs.retain(|id, p| {
+        let Ok(unit) = Unit::get_instance(lua, id) else { return false };
+        if !unit.in_air().unwrap_or(false) {
+            p.air_since = None;
+            return true;
+        }
+        let since = *p.air_since.get_or_insert(now);
+        let agl = unit
+            .get_point()
+            .ok()
+            .and_then(|pt| {
+                let ground = land.as_ref()?.get_height(LuaVec2(Vector2::new(pt.0.x, pt.0.z))).ok()?;
+                Some(pt.0.y - ground)
+            })
+            .unwrap_or(0.);
+        if agl >= TAKEOFF_CONFIRM_AGL_M || now - since >= Duration::seconds(TAKEOFF_CONFIRM_SECS) {
+            confirmed.push((id.clone(), p.clone()));
+            false
+        } else {
+            true
+        }
+    });
+    for (id, p) in confirmed {
+        ctx.landed.remove(&id);
+        let Ok(unit) = Unit::get_instance(lua, &id) else { continue };
+        info!(
+            "[LANDING] {} climbed away, takeoff confirmed",
+            unit.get_player_name().ok().flatten().map(|n| n.to_string()).unwrap_or_default()
+        );
+        if let Err(e) = process_takeoff(lua, ctx, &unit, p.place.as_ref(), p.pos, now) {
+            error!("could not process confirmed takeoff {e:?}")
+        }
+    }
 }
 
 /// Did this departure break ground somewhere other than a runway of
@@ -1757,8 +1896,8 @@ fn took_off_off_runway(lua: MizLua, airbase_name: &str, pos: Vector2) -> Option<
 /// Warn a fixed-wing player who got airborne from a taxiway or apron instead of
 /// the runway. Helicopters and the AV-8B are exempt -- a pad departure is normal
 /// for them.
-fn warn_taxiway_takeoff(lua: MizLua, ctx: &mut Context, unit: &Unit, place: Option<&dcso3::object::Object>, pos: Vector2, slot: &SlotId) {
-    let Some(place) = place else { return };
+fn warn_taxiway_takeoff(lua: MizLua, ctx: &mut Context, unit: &Unit, place: Option<&String>, pos: Vector2, slot: &SlotId) {
+    let Some(airbase_name) = place else { return };
     let Some(sifo) = ctx.db.ephemeral.get_slot_info(slot) else { return };
     let is_helo = ctx
         .db
@@ -1771,7 +1910,6 @@ fn warn_taxiway_takeoff(lua: MizLua, ctx: &mut Context, unit: &Unit, place: Opti
     if is_helo || sifo.typ.as_str() == "AV8BNA" {
         return;
     }
-    let Ok(airbase_name) = place.get_name() else { return };
     if took_off_off_runway(lua, airbase_name.as_str(), pos) == Some(true) {
         if let Some(uid) = slot.as_unit_id() {
             ctx.db.ephemeral.msgs().panel_to_unit(
@@ -2147,15 +2285,26 @@ fn return_lives(lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
         };
     }
     let db = &mut ctx.db;
+    let airborne = &mut ctx.airborne;
+    let landed = &mut ctx.landed;
     let mut reports: SmallVec<[(SlotId, crate::db::player::LandReport); 4]> = smallvec![];
     ctx.recently_landed.retain(|id, landed_ts| {
         if ts - *landed_ts < Duration::seconds(10) {
             return true;
         }
         let unit = or_false!(Unit::get_instance(lua, id));
+        // Still in the air ten seconds on: a touch-and-go, the flight goes
+        // on. On the ground, any Takeoff in between was a bounce on the
+        // rollout -- it used to cancel the landing outright.
+        if or_false!(unit.in_air()) {
+            airborne.insert(id.clone());
+            return false;
+        }
+        airborne.remove(id);
         let pos = or_false!(unit.get_ground_position());
         let slot = or_false!(unit.slot());
         if let Some(report) = db.land(slot.clone(), pos.0, &unit) {
+            landed.insert(id.clone());
             reports.push((slot, report));
         }
         // The landing is processed either way, so always drop the entry.
@@ -5224,6 +5373,7 @@ fn run_timed_events(
     });
 
     step(lua, ctx, "takeoff holds", |ctx| announce_takeoff_holds(lua, ctx, ts));
+    step(lua, ctx, "confirm takeoffs", |ctx| confirm_takeoffs(lua, ctx, ts));
     step(lua, ctx, "rear bases", |ctx| enforce_rear_bases(lua, ctx, ts));
     step(lua, ctx, "banned loadouts", |ctx| enforce_banned_loadouts(lua, ctx, ts));
 
