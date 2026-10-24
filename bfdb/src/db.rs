@@ -415,6 +415,19 @@ pub(crate) struct Objective {
     pub(crate) fuel: u8,
 }
 
+/// The `aggregates` vehicle key for a pilot who has no aircraft of their own
+/// when they score: a Combined Arms slot, or (for deployed-AI kills and the
+/// like) spectators, no slot at all, or a slot not yet born.
+fn off_slot_vehicle(slot: Option<SlotId>) -> Vehicle {
+    match slot {
+        Some(SlotId::ArtilleryCommander(..) | SlotId::ForwardObserver(..) | SlotId::Observer(..)) => {
+            Vehicle::from("Combined Arms")
+        }
+        Some(SlotId::Instructor(..)) => Vehicle::from("Game Master"),
+        _ => Vehicle::from("Off slot"),
+    }
+}
+
 #[derive(Clone)]
 struct Pilots {
     pilots: Tree<Ucid, Pilot>,
@@ -473,11 +486,17 @@ impl Pilots {
     /// is left alone, which is what keeps the public leaderboard and pilot
     /// profiles free of test-server activity.
     ///
-    /// Note the asymmetry this preserves: `Pilot.total` is written on every
-    /// call, but the aggregate row only when the pilot is in a slot with a
-    /// known vehicle. That is why the public total cannot be re-derived by
-    /// summing `aggregates` -- it would silently under-count. `Pilot.total`
-    /// IS the public total, by construction.
+    /// The aggregate row is keyed by the vehicle the pilot is slotted in. A
+    /// pilot with no aircraft -- a Combined Arms commander, whose kills come
+    /// from the ground units they drive or command, or anyone whose deployed
+    /// AI scores while they are in spectators or between slots -- goes under
+    /// a stand-in vehicle (`off_slot_vehicle`). Those used to be dropped from
+    /// the round entirely: the kill counted on the all-time leaderboard
+    /// (`Pilot.total`) but never in that round's rankings or rundown.
+    ///
+    /// Rounds ingested before that fix still lack those rows, which is why
+    /// the purge path subtracts rather than re-sums (see
+    /// `subtract_rounds_from_totals`). `Pilot.total` IS the public total.
     fn with_pilot_and_aggregates<F, G>(
         &self,
         ucid: Ucid,
@@ -490,17 +509,15 @@ impl Pilots {
         F: FnMut(&mut Pilot),
         G: FnMut(&mut Aggregates),
     {
-        let vehicle = self
-            .round_info
-            .get(&(ucid, round))?
-            .and_then(|ri| ri.slot.and_then(|s| s.vehicle));
+        let slot = self.round_info.get(&(ucid, round))?.and_then(|ri| ri.slot);
+        let vehicle = match slot {
+            Some(Slot { vehicle: Some(v), .. }) => v,
+            slot => off_slot_vehicle(slot.map(|s| s.id)),
+        };
         if lifetime {
             self.with_pilot(ucid, f)?;
         }
-        if let Some(vehicle) = vehicle {
-            self.with_aggregates((ucid, vehicle, round), g)?
-        }
-        Ok(())
+        self.with_aggregates((ucid, vehicle, round), g)
     }
 
     fn with_pilot_round_info<F>(&self, ucid: Ucid, round: RoundId, mut f: F) -> Result<()>
@@ -5636,9 +5653,10 @@ impl StatsDb {
     /// Deduct the purged rounds' contribution from each pilot's lifetime
     /// total, after a partial (per-instance) purge.
     ///
-    /// Deliberately a subtraction and not a recompute-from-scratch: an
-    /// `aggregates` row only exists for stats earned while the pilot was in a
-    /// slot with a known vehicle, so re-summing the survivors would silently
+    /// Deliberately a subtraction and not a recompute-from-scratch: in rounds
+    /// ingested before `off_slot_vehicle` existed, an `aggregates` row only
+    /// exists for stats earned while the pilot was in a slot with a known
+    /// vehicle, so re-summing the survivors would silently
     /// shrink every pilot's record by whatever was earned outside one. All
     /// counters saturate at zero, so an under-recorded round can leave a small
     /// residual -- much the better failure than deleting real history.
@@ -6500,6 +6518,59 @@ mod intel_storage_tests {
         assert_eq!(row.data.as_deref(), Some(&[1, 2, 3][..]));
         let (ct, got) = db.intel_get_image(&id).unwrap().unwrap();
         assert_eq!((ct.as_str(), got), ("image/jpeg", vec![1, 2, 3]));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod off_slot_credit_tests {
+    use super::*;
+
+    /// A Combined Arms commander's kill counts in the round, not only all-time.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn combined_arms_kill_counts_in_round() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-ca-test-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let ucid = Ucid::default();
+        let rid = RoundId(7);
+        db.pilots.saw_pilot(ucid, String::from("blueshack")).unwrap();
+        let slot = |id, vehicle: Option<&'static str>| {
+            move |ri: &mut PilotRoundInfo| {
+                ri.slot = Some(Slot {
+                    id,
+                    time: Utc::now(),
+                    vehicle: vehicle.map(Vehicle::from),
+                    sortie: None,
+                })
+            }
+        };
+        let kill = || {
+            db.pilots
+                .with_pilot_and_aggregates(ucid, rid, true, |p| p.total.ground_kills += 1, |a| a.ground_kills += 1)
+                .unwrap()
+        };
+        // Two kills from the Tactical Commander slot, one from a jet.
+        db.pilots
+            .with_pilot_round_info(ucid, rid, slot(SlotId::ArtilleryCommander(Side::Blue, 1), None))
+            .unwrap();
+        kill();
+        kill();
+        db.pilots
+            .with_pilot_round_info(ucid, rid, slot(SlotId::Unit(42), Some("F-16C_50")))
+            .unwrap();
+        kill();
+
+        let round = db.pilot_leaderboard(Some(rid)).unwrap();
+        let all = db.pilot_leaderboard(None).unwrap();
+        assert_eq!(round.len(), 1);
+        assert_eq!(round[0].2.ground_kills, 3);
+        assert_eq!(all[0].2.ground_kills, 3, "round and all-time agree, nothing doubled");
+        assert!(db
+            .pilots
+            .aggregates
+            .get(&(ucid, Vehicle::from("Combined Arms"), rid))
+            .unwrap()
+            .is_some_and(|a| a.ground_kills == 2));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
