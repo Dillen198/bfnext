@@ -440,9 +440,9 @@ const ROE_OPTS: [Roe, string, string][] = [
   ['hold', 'HOLD', 'Hold fire'],
 ]
 const PACE_OPTS: [Pace, string, string][] = [
-  ['slow', 'SLOW', 'Half speed: quieter, keeps together'],
-  ['normal', 'NORMAL', 'Normal pace'],
-  ['fast', 'FAST', 'Flat out'],
+  ['slow', 'SLOW', 'About 19 km/h (12 mph) by road: quieter, keeps together'],
+  ['normal', 'NORMAL', 'About 35 km/h (22 mph) by road'],
+  ['fast', 'FAST', 'Flat out: about 58 km/h (36 mph) by road, as fast as its slowest vehicle'],
 ]
 
 export function Drawer({ f, side, pic, lockMins, onClose, canOrder = false, onPosture }: {

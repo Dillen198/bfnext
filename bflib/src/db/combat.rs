@@ -213,7 +213,8 @@ pub fn raw_power<'a>(cfg: &GroundCombatCfg, roles: impl IntoIterator<Item = &'a 
 
 /// March speed of a set of roles, (road, cross country) km/h: the slowest
 /// vehicle's, or the infantry's on foot when there is nothing to ride in.
-/// `cap` is the server's `speed_kph`, a ceiling on the road speed.
+/// `cap` is the server's `speed_kph` at the ordered pace, a ceiling on the
+/// road speed (0.6 of it across country).
 pub fn speed_of<'a>(roles: impl IntoIterator<Item = &'a Role> + Clone, cap: f64) -> (f64, f64) {
     let vehicles = roles.clone().into_iter().filter(|r| r.is_vehicle());
     let slowest = vehicles.fold(None::<(f64, f64)>, |acc, r| {

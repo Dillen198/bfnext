@@ -15896,7 +15896,7 @@
     "groups_per_formation": 3,
     "keep_home_combat_groups": 1,
     "take_aaa": true,
-    "speed_kph": 30,
+    "speed_kph": 35,
     "player_bubble_m": 30000,
     "contact_m": 10000,
     "despawn_grace_secs": 300,
