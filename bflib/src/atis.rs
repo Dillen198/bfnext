@@ -95,6 +95,9 @@ pub struct AltitudeWind {
 
 // Standard levels reported in a winds-aloft brief, feet MSL.
 const WINDS_ALOFT_LEVELS_FT: [u32; 6] = [3000, 6000, 9000, 12000, 18000, 24000];
+// Heights above the field for the one-line winds-aloft summary, feet: the
+// pattern and approach levels, then DCS's 2000 m and 8000 m weather layers.
+const WINDS_ALOFT_AGL_FT: [u32; 4] = [1000, 2000, 6600, 26000];
 const M_TO_FT: f64 = 3.28084;
 const MS_TO_KTS: f64 = 1.94384;
 const HPA_TO_INHG: f64 = 0.0295300586467;
@@ -115,19 +118,14 @@ const AIRDROME_MATCH_M: f64 = 10_000.0;
 
 /// Wind at a world point: (meteorological FROM bearing, true; speed m/s).
 pub(crate) fn wind_at(lua: MizLua, x: f64, y: f64, z: f64) -> Result<(f64, f64)> {
-    let globals = lua.inner().globals();
-    let atmosphere: LuaTable = globals.raw_get("atmosphere")?;
-    let pt = lua.inner().create_table()?;
-    pt.set("x", x)?;
-    pt.set("y", y)?;
-    pt.set("z", z)?;
-    let wind: LuaTable = atmosphere.call_function("getWind", pt)?;
+    let wind = dcso3::atmosphere::Atmosphere::singleton(lua)?
+        .get_wind(dcso3::LuaVec3(dcso3::Vector3::new(x, y, z)))?;
     // DCS world frame: X = North, Z = East. getWind returns the velocity vector,
     // i.e. the direction the air is moving TOWARD. Meteorological wind direction
     // is the compass bearing it comes FROM: atan2(East, North) of the reversed
     // vector.
-    let wind_x: f64 = wind.get("x")?; // north component
-    let wind_z: f64 = wind.get("z")?; // east component
+    let wind_x = wind.x; // north component
+    let wind_z = wind.z; // east component
     let wind_speed_ms = (wind_x * wind_x + wind_z * wind_z).sqrt();
     let wind_from_deg = (-wind_z).atan2(-wind_x).to_degrees().rem_euclid(360.0);
     Ok((wind_from_deg, wind_speed_ms))
@@ -928,6 +926,44 @@ fn format_winds_aloft(winds: &[AltitudeWind]) -> compact_str::CompactString {
     s
 }
 
+/// One line of winds aloft at fixed heights above the ground at `(x, z)`,
+/// live from DCS: "Winds aloft AGL (°T/kt): 1000ft 270/12, 2000ft 280/18, ...".
+/// True, like the leading figure of the surface wind. Empty when DCS gives no
+/// wind at any of the heights.
+pub(crate) fn winds_aloft_agl_line(lua: MizLua, x: f64, z: f64) -> compact_str::CompactString {
+    let ground_elev_m = dcso3::land::Land::singleton(lua)
+        .and_then(|land| land.get_height(dcso3::LuaVec2(dcso3::Vector2::new(x, z))))
+        .unwrap_or(0.0);
+    let mut s = compact_str::CompactString::from("\nWinds aloft AGL (°T/kt):");
+    let mut sep = " ";
+    for alt_ft in WINDS_ALOFT_AGL_FT {
+        let y = ground_elev_m + alt_ft as f64 / M_TO_FT;
+        match wind_at(lua, x, y, z) {
+            Ok((dir, spd_ms)) => {
+                let kts = (spd_ms * MS_TO_KTS).round() as u32;
+                if kts == 0 {
+                    let _ = write!(s, "{sep}{alt_ft}ft calm");
+                } else {
+                    let _ = write!(s, "{sep}{alt_ft}ft {:03}/{kts}", heading_deg(dir));
+                }
+                sep = ", ";
+            }
+            Err(e) => log::debug!("[ATIS] getWind at {alt_ft}ft AGL failed: {e:?}"),
+        }
+    }
+    if sep == " " { Default::default() } else { s }
+}
+
+/// Where a slot's field weather is sampled, `(x, z)`: the terrain airdrome's
+/// reference point for an airbase (as the ATIS does), the objective otherwise.
+pub(crate) fn slot_field_point(db: &Db, slot: &SlotId) -> Option<(f64, f64)> {
+    let oid = db.ephemeral.get_slot_info(slot)?.objective;
+    let obj = db.persisted.objectives.get(&oid)?;
+    let pos = obj.pos();
+    let ad = if obj.kind().is_airbase() { nearest_airdrome(pos.x, pos.y) } else { None };
+    Some(ad.map(|a| (a.x, a.z)).unwrap_or((pos.x, pos.y)))
+}
+
 /// The shared surface-weather block: temperature, wind, visibility, clouds,
 /// precipitation, QFE and QNH.
 fn surface_block(wx: &WeatherData, with_qfe: bool) -> compact_str::CompactString {
@@ -1152,6 +1188,7 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<bool> {
         );
         m.push_str(&surface_block(&wx, false));
         if full {
+            m.push_str(&winds_aloft_agl_line(lua, pos.x, pos.y));
             m.push_str(&format_winds_aloft(&wx.winds_aloft));
         }
         m
@@ -1181,6 +1218,7 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<bool> {
         let ab_id = ctx.db.ephemeral.get_airbase_by_oid(&oid);
         let mut m = bot_layout_atis(lua, &obj_name, ad.as_ref(), ab_id, &wx, px, pz);
         if full {
+            m.push_str(&winds_aloft_agl_line(lua, px, pz));
             m.push_str(&format_winds_aloft(&wx.winds_aloft));
         }
         m
@@ -1204,6 +1242,7 @@ pub fn send_weather_brief(lua: MizLua, gid: GroupId, pos: Vector2) -> Result<()>
         wx.ground_elev_m.round() as i64
     );
     msg.push_str(&surface_block(&wx, true));
+    msg.push_str(&winds_aloft_agl_line(lua, pos.x, pos.y));
     ctx.db.ephemeral.msgs().panel_to_group(30, false, gid, msg);
     Ok(())
 }

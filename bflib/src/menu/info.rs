@@ -302,7 +302,7 @@ fn weather(lua: MizLua, arg: ArgTuple<GroupId, SlotId>) -> Result<()> {
         } else {
             CompactString::from("clear")
         };
-        let msg = format_compact!(
+        let mut msg = format_compact!(
             "SERVER WEATHER\n\
              Temp: {c:.0}°C / {f:.0}°F\n\
              Surface wind: {wdir:03}° at {wkt:.0} kt\n\
@@ -320,6 +320,13 @@ fn weather(lua: MizLua, arg: ArgTuple<GroupId, SlotId>) -> Result<()> {
             hpa = bw.qnh_hpa,
             inhg = bw.qnh_hpa / 33.8639,
         );
+        // The bot only knows the surface wind; aloft comes live from DCS at
+        // the player's field, or wherever they are without one.
+        let at = atis::slot_field_point(&ctx.db, &arg.snd)
+            .or_else(|| from_pos(ctx, lua, &arg.fst).map(|p| (p.x, p.y)));
+        if let Some((x, z)) = at {
+            msg.push_str(&atis::winds_aloft_agl_line(lua, x, z));
+        }
         ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, msg);
         return Ok(());
     }
