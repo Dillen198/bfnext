@@ -2074,6 +2074,11 @@ impl Db {
     /// the base's state -- that line is the evidence for whatever left it
     /// empty -- and spawned. A base in its capture hold keeps its garrison
     /// down on purpose (see `check_capture_hold`), so it is only reported.
+    /// Flash the F10 icon of every base under attack or being captured.
+    pub fn flash_contested_objectives(&mut self, now: DateTime<Utc>) {
+        self.ephemeral.flash_objective_markup(&self.persisted, now);
+    }
+
     fn check_threatened_garrisons(&mut self, now: DateTime<Utc>) {
         const AFTER_SECS: i64 = 60;
         let due: SmallVec<[ObjectiveId; 8]> = self

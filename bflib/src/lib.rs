@@ -5224,6 +5224,8 @@ fn run_timed_events(
         Some(Err(e)) => error!("error running slow timed events {:?}", e),
     }
     step(lua, ctx, "menu init", |ctx| menu::process_init_queue(ctx, lua));
+    // Contested bases flash on the F10 map (once a second, see the pass).
+    step(lua, ctx, "flash contested bases", |ctx| ctx.db.flash_contested_objectives(ts));
     // F10 wingman requests, answered within a second of the click.
     step(lua, ctx, "air life requests", |ctx| airlife::process_requests(lua, ctx, perf, ts));
     step(lua, ctx, "spawn queue", |ctx| {

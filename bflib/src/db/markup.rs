@@ -364,6 +364,9 @@ pub(super) struct ObjectiveMarkup {
     pos: Vector2,
     supply_connections: FxHashMap<ObjectiveId, MarkId>,
     kind_symbol: KindSymbol,
+    /// `Some(lit)` while the base is flashing (under attack or being
+    /// captured, see `Ephemeral::flash_objective_markup`).
+    flash: Option<bool>,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -749,6 +752,7 @@ impl ObjectiveMarkup {
             supply_connections,
             label,
             kind_symbol,
+            flash: _,
         } = self;
         msgq.delete_mark(owner_ring);
         msgq.delete_mark(threatened_ring);
@@ -758,6 +762,32 @@ impl ObjectiveMarkup {
         kind_symbol.remove(msgq);
         for (_, id) in supply_connections {
             msgq.delete_mark(id)
+        }
+    }
+
+    /// Flash the base's owner ring and type icon (once per call: lit, dim,
+    /// lit, ...) while `flashing`, and put them back to normal when it stops.
+    /// Two marks per base, so a handful of contested bases stay well inside
+    /// the message queue's budget.
+    pub(super) fn set_flash(&mut self, obj: &Objective, flashing: bool, msgq: &mut MsgQ) {
+        const DIM: f32 = 0.15;
+        let lit = match (flashing, self.flash) {
+            (false, None) => return,
+            (false, Some(_)) => {
+                self.flash = None;
+                true
+            }
+            (true, prev) => {
+                let lit = !prev.unwrap_or(false);
+                self.flash = Some(lit);
+                lit
+            }
+        };
+        msgq.set_markup_color(self.owner_ring, ring_color(obj, if lit { 1. } else { DIM }));
+        if let KindSymbol::Single(ids) = &self.kind_symbol {
+            for id in ids {
+                msgq.set_markup_color(*id, text_color(obj.owner, if lit { 0.85 } else { DIM }));
+            }
         }
     }
 
