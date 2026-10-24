@@ -77,7 +77,8 @@ base with full supply and full fuel still works — you are killing health.
 
 Warehouses, fuel tanks, the infrastructure that makes the base a base. Kill
 these and it stops repairing itself **and** stops feeding its neighbours down
-the supply chain. Hitting logi is how you make a whole region wither instead of
+the supply chain. [Buildings at an Objective](./objective-buildings.md) shows
+what they look like. Hitting logi is how you make a whole region wither instead of
 one airfield. A base whose logi is red will not come back on its own.
 
 **3. Supply — munitions.**

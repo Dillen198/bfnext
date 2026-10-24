@@ -18,7 +18,7 @@ Automated ground convoys run between logistics hubs and forward objectives — n
 
 ## Strategic Infrastructure
 
-Real map buildings near objectives — warehouses, fuel depots, industrial complexes — are marked with **orange boxes** on the F10 map. Destroy them and that objective's logistics rating drops **permanently**, on top of anything convoy interdiction achieves. This is a second, independent way to attack enemy supply beyond hitting convoys.
+Real map buildings near objectives — warehouses, fuel depots, industrial complexes — are marked with **`logi:` pins** on the F10 map. Destroy them and that objective's logistics rating drops, and it stays down until a Logistics Repair Kit or a capture brings it back. This works on top of anything convoy interdiction achieves, as a second way to attack enemy supply. [Buildings at an Objective](./objective-buildings.md) shows what to look for.
 
 ## Factories
 
@@ -220,7 +220,7 @@ Logi represents the physical infrastructure:
 - **50-74%**: Moderate damage
 - **25-49%**: Heavy damage
 - **1-24%**: Critical damage
-- **0%**: Destroyed (objective capturable!)
+- **0%**: Destroyed (no repairs, no crates or troops from here)
 
 ### Logi Effects
 
@@ -240,7 +240,6 @@ Logi represents the physical infrastructure:
 - Minimal functionality
 
 **Zero Logi (0%)**:
-- **OBJECTIVE CAN BE CAPTURED**
 - No supply processing
 - No repairs possible
 - Critical vulnerability
