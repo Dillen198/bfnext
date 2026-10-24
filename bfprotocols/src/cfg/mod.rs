@@ -42,7 +42,7 @@ mod example;
 mod ground_war;
 pub use ground_war::{GarrisonCfg, GroundAiCfg, GroundCombatCfg, GroundWarCfg, PurchasedFormationCfg};
 mod hq;
-pub use hq::{EscortPolicy, HqAirCfg, HqAirTemplate, HqCfg, HqCostsCfg, HqPackagesCfg, HqGapFillCfg, HqLimitsCfg, HqRequestsCfg, HqStrategistCfg};
+pub use hq::{EscortPolicy, HqAirCfg, HqAirTemplate, HqCfg, HqCostsCfg, HqPackagesCfg, HqGapFillCfg, HqLimitsCfg, HqRequestsCfg, HqStrategistCfg, HqSupportCfg};
 
 pub use balance::{fmt_mult, EmergencyRepairCfg, PopulationScalingCfg};
 pub use economy::{split_by_weight, EconomyCfg};

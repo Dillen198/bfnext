@@ -51,6 +51,7 @@ mod picture;
 pub(crate) mod planner;
 mod requests;
 mod strategy;
+mod support;
 mod view;
 
 pub(crate) use chat::{chat, run_chat};
@@ -66,7 +67,7 @@ use bfprotocols::{
 use chrono::{prelude::*, Duration};
 use compact_str::{format_compact, CompactString};
 use dcso3::{coalition::Side, net::Ucid, MizLua, Vector2};
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use log::{info, warn};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -276,6 +277,18 @@ pub(crate) struct SideRt {
     /// When a command map last asked for the menu: it is only kept fresh
     /// while someone is looking.
     pub(crate) menu_wanted: Option<DateTime<Utc>>,
+    /// AWACS / tankers low on fuel with no tanker to take it from: their
+    /// relief is due (`support::fuel_watch`).
+    pub(crate) low_fuel: FxHashSet<GroupId>,
+    /// AI flights sent to a tanker, and when.
+    pub(crate) refuel_sent: FxHashMap<GroupId, DateTime<Utc>>,
+    /// Low flights with no tanker to send them to, and when that was said.
+    pub(crate) refuel_none: FxHashMap<GroupId, DateTime<Utc>>,
+    pub(crate) last_fuel_check: Option<DateTime<Utc>>,
+    /// AWACS / tankers the HQ moved to a new station, and when.
+    pub(crate) restationed: FxHashMap<GroupId, DateTime<Utc>>,
+    /// Pairs of players' AWACS / tankers on one station, already logged.
+    pub(crate) shared_noted: FxHashSet<(GroupId, GroupId)>,
 }
 
 impl SideRt {
@@ -301,6 +314,9 @@ pub(crate) struct Hq {
     /// Dark over the theatre right now (mission time of day), for picking
     /// aircraft that can fly at night.
     pub(crate) night: bool,
+    /// The front line as segments, and the ownership it was traced from
+    /// (`support::refresh_front`).
+    pub(crate) front: Option<(u64, Vec<(Vector2, Vector2)>)>,
 }
 
 impl Hq {
@@ -352,6 +368,7 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Da
     };
     ctx.hq.night = crate::groundwar::daylight_now(lua) < 0.5;
     track(lua, ctx, now);
+    support::refresh_front(ctx);
     let empty = ctx.connected.info_by_player_id.is_empty();
     for side in cfg.sides.iter().copied().filter(|s| *s != Side::Neutral) {
         expire_orders(ctx, &cfg, side, now);
@@ -375,6 +392,9 @@ pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: Da
         }
         ctx.hq.side(side).last_think = Some(now);
         think(lua, ctx, perf, &sc, &cfg, side, empty, now);
+    }
+    for side in cfg.sides.iter().copied().filter(|s| *s != Side::Neutral) {
+        support::fuel_watch(lua, ctx, &cfg, side, now);
     }
     // At most one side's command-map menu per tick, and only while a map is
     // open: it is a full planning pass.
@@ -421,6 +441,9 @@ fn think(
     if empty && !cfg.run_when_empty {
         return;
     }
+    // One AWACS (and tanker) per station: spares stood down, orbits the
+    // front has moved up to pulled back.
+    support::manage(lua, ctx, cfg, side, &pic, now);
     // A request for something already under way is answered by it.
     let covered: Vec<u64> = ctx
         .hq
@@ -428,7 +451,13 @@ fn think(
         .requests
         .iter()
         .filter(|r| r.status == requests::RequestStatus::Open)
-        .filter(|r| r.kind.answered_by().iter().any(|k| pic.busy(*k, Some(r.target))))
+        .filter(|r| {
+            r.kind.answered_by().iter().any(|k| {
+                pic.busy(*k, Some(r.target))
+                    // One AWACS / tanker serves the whole side.
+                    || (matches!(k, OpKind::Awacs | OpKind::Tanker) && pic.support_of(*k).next().is_some())
+            })
+        })
         .map(|r| r.id)
         .collect();
     for rid in covered {

@@ -3960,6 +3960,28 @@ impl Db {
         Ok(())
     }
 
+    /// Move one of the side's AI flights (an AWACS or tanker the HQ keeps) to
+    /// a new orbit at `station`, as a Station order would: now if it is in
+    /// the air, once it is airborne if it is still starting up. It stays
+    /// whoever's it was.
+    pub(crate) fn restation_air<'lua>(
+        &mut self,
+        spctx: &SpawnCtx<'lua>,
+        gid: GroupId,
+        station: Vector2,
+    ) -> Result<()> {
+        let group = group!(self, gid)?;
+        let (side, name) = (group.side, group.name.clone());
+        let ucid = match &group.origin {
+            DeployKind::Action { player, .. } => *player,
+            _ => bail!("{name} is not an AI flight"),
+        };
+        let pos = group_position(spctx.lua(), &name)?;
+        let args = WithPosAndGroup { cfg: (), pos: station, group: gid };
+        let mission = self.station_mission(side, ucid, pos, args)?;
+        self.set_station_mission(spctx, gid, station, ucid, mission)
+    }
+
     /// The station mission for whichever kind of AI flight `args.group` is.
     fn station_mission<'lua>(
         &mut self,
