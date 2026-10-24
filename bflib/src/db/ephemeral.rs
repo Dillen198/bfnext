@@ -304,6 +304,11 @@ pub struct Ephemeral {
     pub(super) uid_by_object_id: FxHashMap<DcsOid<ClassUnit>, UnitId>,
     pub(super) object_id_by_slot: FxHashMap<SlotId, DcsOid<ClassUnit>>,
     pub(super) slot_by_object_id: FxHashMap<DcsOid<ClassUnit>, SlotId>,
+    /// Combined Arms: the player driving one of our ground units, and the
+    /// commander slot they drive it from. Set by `Db::player_entered_unit`,
+    /// dropped when they leave it, it dies or they disconnect. The shot
+    /// tracker credits what the unit kills to the driver.
+    pub(super) ca_drivers: FxHashMap<DcsOid<ClassUnit>, (Ucid, SlotId)>,
     pub(super) object_id_by_gid: FxHashMap<GroupId, DcsOid<ClassObject>>,
     pub(super) gid_by_object_id: FxHashMap<DcsOid<ClassObject>, GroupId>,
     pub(super) uid_by_static: FxHashMap<DcsOid<ClassStatic>, UnitId>,
@@ -603,6 +608,7 @@ impl Default for Ephemeral {
             uid_by_object_id: FxHashMap::default(),
             object_id_by_slot: FxHashMap::default(),
             slot_by_object_id: FxHashMap::default(),
+            ca_drivers: FxHashMap::default(),
             slot_by_miz_gid: FxHashMap::default(),
             object_id_by_gid: FxHashMap::default(),
             gid_by_object_id: FxHashMap::default(),
@@ -1451,6 +1457,11 @@ impl Ephemeral {
         self.slot_by_object_id.get(id)
     }
 
+    /// The Combined Arms player driving `id`, and their commander slot.
+    pub fn ca_driver(&self, id: &DcsOid<ClassUnit>) -> Option<&(Ucid, SlotId)> {
+        self.ca_drivers.get(id)
+    }
+
     pub fn get_object_id_by_slot(&self, id: &SlotId) -> Option<&DcsOid<ClassUnit>> {
         self.object_id_by_slot.get(id)
     }
@@ -1719,6 +1730,7 @@ impl Ephemeral {
         per: &Persisted,
         id: &DcsOid<ClassUnit>,
     ) -> Option<(UnitId, Option<Ucid>)> {
+        self.ca_drivers.remove(id);
         let (uid, ucid) = match self.slot_by_object_id.remove(id) {
             Some(slot) => match self.player_deslot(per, &slot, None) {
                 Some((uid, ucid)) => (uid, Some(ucid)),

@@ -1214,13 +1214,28 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         },
         Event::PlayerEnterUnit(e) => {
             // Combined Arms: a commander jumping into one of our vehicles.
-            if let Some(id) = e
-                .initiator
-                .as_ref()
-                .and_then(|o| o.as_unit().ok())
-                .and_then(|u| u.object_id().ok())
+            if let Some(unit) = e.initiator.as_ref().and_then(|o| o.as_unit().ok())
+                && let Ok(id) = unit.object_id()
             {
-                ctx.db.player_entered_unit(&id);
+                // Who is driving, and from which commander slot -- so what the
+                // vehicle kills is theirs.
+                let driver = unit
+                    .get_player_name()
+                    .ok()
+                    .flatten()
+                    .and_then(|name| ctx.connected.get_by_name(&name))
+                    .map(|ifo| ifo.ucid)
+                    .and_then(|ucid| {
+                        let pid = *ctx.connected.id_by_ucid.get(&ucid)?;
+                        match Net::singleton(lua).and_then(|net| net.get_slot(pid)) {
+                            Ok((_, slot)) => Some((ucid, slot)),
+                            Err(e) => {
+                                warn!("no slot for CA driver {ucid}: {e:?}");
+                                None
+                            }
+                        }
+                    });
+                ctx.db.player_entered_unit(&id, driver);
             }
         }
         Event::PlayerLeaveUnit(e) => {

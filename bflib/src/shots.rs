@@ -93,6 +93,25 @@ fn who(db: &Db, id: DcsOid<ClassUnit>) -> Option<Who> {
     }
 }
 
+/// `who` for the unit that fired. A ground unit a Combined Arms player is
+/// driving is that player's: a `Who::Player` in their commander slot, so the
+/// kill pays them in full, never the group's deployer (`ucid` of `Who::AI`,
+/// who wasn't the one shooting). As a target it stays `Who::AI` -- losing it
+/// costs the driver no life, and whoever kills it is paid for the unit it is.
+fn shooter(db: &Db, id: DcsOid<ClassUnit>) -> Option<Who> {
+    if let Some((ucid, slot)) = db.ephemeral.ca_driver(&id)
+        && let Some(p) = db.player(ucid)
+    {
+        return Some(Who::Player {
+            side: p.side,
+            slot: *slot,
+            ucid: *ucid,
+            unit: id,
+        });
+    }
+    who(db, id)
+}
+
 /// Land-attack cruise missiles: aimed at a map point, never at a unit, so
 /// `weapon.get_target()` on one crashes DCS (see `ShotDb::shot`).
 fn is_cruise_missile(name: &str) -> bool {
@@ -253,7 +272,7 @@ impl ShotDb {
         if self.dead.contains_key(&target_oid) || self.recently_dead.contains_key(&target_oid) {
             return Ok(());
         }
-        let shooter = some!(who(db, initiator.object_id()?));
+        let shooter = some!(shooter(db, initiator.object_id()?));
         let shooter_typ = initiator.get_type_name().ok().map(|s| dcso3::String::from(s.as_str()));
         let target_typ = target.get_type_name()?;
         let target = some!(who(db, target_oid.clone()));
@@ -285,7 +304,7 @@ impl ShotDb {
         }
         let target_typ = target.get_type_name()?;
         let shooter_typ = shooter.get_type_name().ok().map(|s| dcso3::String::from(s.as_str()));
-        let shooter = some!(who(db, shooter.object_id()?));
+        let shooter = some!(self::shooter(db, shooter.object_id()?));
         let target = some!(who(db, target_oid.clone()));
         self.by_target
             .entry(target_oid.clone())
