@@ -113,6 +113,9 @@ pub type FormationId = u32;
 
 /// Spacing between vehicles when the engine lays a formation out on the map.
 const COLUMN_GAP_M: f64 = 30.;
+/// A marching formation going into DCS is put on the nearest road if one is
+/// this close (see `Db::lay_on_road`).
+const ROAD_SNAP_M: f64 = 2_000.;
 /// A live formation that has moved less than this...
 const STALL_MOVE_M: f64 = 150.;
 /// ...in this long, with no enemy close, is stuck on the terrain.
@@ -1786,6 +1789,82 @@ impl Db {
         Ok(())
     }
 
+    /// Put a marching formation's units in column on the nearest road before
+    /// it goes into DCS: the lead on the road point nearest the formation,
+    /// the rest following the road back, away from where it is going.
+    ///
+    /// `place_units` lays a formation out in a straight line or column from
+    /// its centre without looking at the ground, and on the map that is
+    /// where its units are when DCS spawns them. On the Caucasus that line
+    /// runs through forest, villages, the base's own statics and valley
+    /// sides; a DCS vehicle spawned in a forest or wedged on a building
+    /// never finds a way out, and a column waits for its stuck vehicles. The
+    /// 2008 server's stall reports read "task yes, lead 0.0 m/s, ours vs DCS
+    /// 0 m" for every armoured company, by road and across country, through
+    /// every re-route. A road is ground DCS can always drive off.
+    ///
+    /// Returns whether it moved them; nothing changes with no road in
+    /// `ROAD_SNAP_M`.
+    fn lay_on_road(&mut self, lua: MizLua, id: FormationId) -> Result<bool> {
+        let f = self.persisted.formations.get(&id).ok_or_else(|| anyhow!("no formation {id}"))?;
+        let Some(ahead) = f.path.first().copied() else { return Ok(false) };
+        let from = f.pos;
+        let uids: SmallVec<[UnitId; 32]> = f
+            .groups
+            .iter()
+            .filter_map(|g| self.persisted.groups.get(g))
+            .flat_map(|g| g.units.into_iter().copied())
+            .filter(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
+            .collect();
+        if uids.is_empty() {
+            return Ok(false);
+        }
+        let land = Land::singleton(lua)?;
+        let road = |p: Vector2| land.get_closest_point_on_roads(RoadType::Road, LuaVec2(p)).map(|r| r.0);
+        let head = road(from)?;
+        if dist(head, from) > ROAD_SNAP_M {
+            return Ok(false);
+        }
+        // Walk back down the road a vehicle gap at a time: step on, then
+        // back onto the nearest road. Where the road ends or doubles back,
+        // carry straight on.
+        let mut back = head - ahead;
+        back = if back.norm() > 1. { back / back.norm() } else { Vector2::new(-1., 0.) };
+        let mut pts: SmallVec<[(Vector2, f64); 32]> = smallvec::smallvec![(head, heading_of(-back))];
+        for i in 1..uids.len() {
+            let prev = pts[i - 1].0;
+            let guess = prev + back * COLUMN_GAP_M;
+            let q = match road(guess) {
+                Ok(q) if dist(q, prev) >= COLUMN_GAP_M * 0.5
+                    && (i < 2 || dist(q, pts[i - 2].0) >= COLUMN_GAP_M * 0.5)
+                    && dist(q, guess) <= COLUMN_GAP_M =>
+                {
+                    q
+                }
+                _ => guess,
+            };
+            let d = q - prev;
+            if d.norm() > 1. {
+                back = d / d.norm();
+            }
+            pts.push((q, heading_of(-back)));
+        }
+        for (uid, (p, h)) in uids.iter().zip(pts) {
+            let u = unit_mut!(self, uid)?;
+            u.pos = p;
+            u.heading = h;
+            u.position.p.0.x = p.x;
+            u.position.p.0.z = p.y;
+        }
+        let moved = dist(head, from);
+        let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+        f.pos = head;
+        f.heading = heading_of(ahead - head);
+        self.ephemeral.dirty();
+        info!("ground war: {} formed up in column on the road {:.0} m from where it stood", f.name, moved);
+        Ok(true)
+    }
+
     /// Move the formations that are on the map only along their paths, each
     /// at its own speed, burning fuel as they go.
     fn advance_on_map(&mut self, rt: &FormationRt, cfg: &GroundWarCfg, dt: f64) {
@@ -1985,9 +2064,23 @@ impl Db {
                             (Some(a), Some(n)) => format_compact!("{:.0} m", dist(a, *n)),
                             _ => "-".into(),
                         };
+                        // What it is standing on: DCS can't drive a vehicle
+                        // out of forest, water or a building (`lay_on_road`).
+                        let ground = match (at, Land::singleton(lua)) {
+                            (Some(a), Ok(land)) => {
+                                let surface = land
+                                    .get_surface_type(LuaVec2(a))
+                                    .map_or_else(|_| "?".into(), |s| format_compact!("{s:?}"));
+                                let road = land
+                                    .get_closest_point_on_roads(RoadType::Road, LuaVec2(a))
+                                    .map_or_else(|_| "?".into(), |r| format_compact!("{:.0} m", dist(a, r.0)));
+                                format_compact!(", on {surface}, road {road}")
+                            }
+                            _ => CompactString::default(),
+                        };
                         let _ = write!(
                             out,
-                            ", lead {:.1} m/s, ours vs DCS {drift}, next waypoint {to_next}",
+                            ", lead {:.1} m/s, ours vs DCS {drift}, next waypoint {to_next}{ground}",
                             speed
                         );
                     }
@@ -2093,7 +2186,18 @@ impl Db {
                     info!("ground war: {name} stuck, re-route {attempt} (off road: {off_road})");
                     f.path = path;
                     f.off_road = off_road;
-                    rt.route_dirty.insert(id);
+                    let column = f.deployment == Deployment::Column;
+                    if attempt == 1 && column {
+                        // Where it stands may be ground DCS can't drive off
+                        // (`lay_on_road`): out of DCS, and `plan_live` brings
+                        // it straight back in from the road. Same attempt
+                        // count, so a second stall still goes across country.
+                        info!("ground war: {name} goes back into DCS from the road");
+                        self.dematerialize(rt, lua, id, now);
+                        rt.stall.insert(id, (pos, now, attempt));
+                    } else {
+                        rt.route_dirty.insert(id);
+                    }
                 }
                 None => {
                     warn!("ground war: {name} stuck for good, holding where it is");
@@ -2786,11 +2890,25 @@ impl Db {
         }
         // Despawned a moment ago and wanted straight back: the despawn is
         // still queued, and DCS would run it against the group spawned here
-        // under the same name. Wait for it.
-        if self.ephemeral.spawn_pending_gids().contains(&gid) {
+        // under the same name. Wait for it -- for every group of the
+        // formation when it is coming in from the road below, which moves
+        // them all.
+        let pending = self.ephemeral.spawn_pending_gids();
+        let to_road = !rt.is_live(f) && f.posture == Posture::Moving && f.deployment == Deployment::Column && !f.path.is_empty();
+        if pending.contains(&gid) || (to_road && f.groups.iter().any(|g| pending.contains(g))) {
             rt.spawnq.push_back((id, gid));
             return Ok(());
         }
+        // Into DCS on the march: from the road, not from wherever the map
+        // laid it out (`lay_on_road`). The whole formation at once, as its
+        // first group goes in -- here, once any old DCS group of it is gone,
+        // so nothing reads the old spot back over the new one.
+        if to_road {
+            if let Err(e) = self.lay_on_road(lua, id) {
+                warn!("ground war: putting formation {id} on the road: {e:?}");
+            }
+        }
+        let Some(f) = self.persisted.formations.get(&id) else { return Ok(()) };
         let (path, off_road) = match f.posture {
             Posture::Moving => (f.path.clone(), f.off_road),
             _ => (vec![], false),
