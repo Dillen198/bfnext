@@ -128,7 +128,7 @@ Represents infrastructure for supply operations:
 - **0**: Completely destroyed — repair, rearm and resupply stop working
 - **1-100**: Infrastructure present and functioning
 
-Logistics is about whether the base *works*, not whether it can be taken. **Capturing** an objective is gated on **health ≤ 20% and every infantry defender dead** — see [Capturing Objectives](./capturing-objectives.md).
+Logistics is about whether the base *works*, not whether it can be taken. [Buildings at an Objective](./objective-buildings.md) shows which buildings count and what each one does when destroyed. **Capturing** an objective is gated on **health ≤ 20% and every infantry defender dead** — see [Capturing Objectives](./capturing-objectives.md).
 
 ### Supply Level
 Resources available for operations:
@@ -209,6 +209,7 @@ The physical area for capturing:
 
 ## See Also
 
+- [Buildings at an Objective](./objective-buildings.md) — what to look for and what each building does
 - [Capturing Objectives](./capturing-objectives.md) — the full capture sequence
 - [Objectives Menu](../f10-menu/objectives.md) — the in-cockpit reports and the **Capture Advisor**, which tells you why a specific base won't flip
 - [Logistics & Supply](./logistics.md) — keeping what you hold

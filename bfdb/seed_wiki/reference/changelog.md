@@ -1,6 +1,14 @@
 # Changelog
 
-Current version: **v3.0**. Each update gets the next number; the newest is at the top.
+Current version: **v3.1**. Each update gets the next number; the newest is at the top.
+
+## v3.1 — October 22, 2026
+
+**New wiki page: [Buildings at an Objective](../gameplay/objective-buildings.md)**
+- What to look for at a base: the warehouses, industrial buildings and fuel
+  and storage depots behind its Logi rating, the `logi:` pins that name them,
+  Command Centers and FARP pieces.
+- What destroying each one does, and how a base gets it back.
 
 ## v3.0 — October 21, 2026
 

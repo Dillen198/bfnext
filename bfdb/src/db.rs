@@ -3887,6 +3887,7 @@ impl StatsDb {
             ("gameplay/progression", "XP, Levels & Squadrons", "Core Gameplay", 15, include_str!("../seed_wiki/gameplay/progression.md")),
             ("gameplay/round-rules", "Rear Bases, Era Weapons & Round Length", "Core Gameplay", 16, include_str!("../seed_wiki/gameplay/round-rules.md")),
             ("gameplay/war-diary", "The War Diary", "Core Gameplay", 17, include_str!("../seed_wiki/gameplay/war-diary.md")),
+            ("gameplay/objective-buildings", "Buildings at an Objective: What to Look For", "Core Gameplay", 18, include_str!("../seed_wiki/gameplay/objective-buildings.md")),
             ("f10-menu/overview", "Overview", "F10 Menu Systems", 0, include_str!("../seed_wiki/f10-menu/overview.md")),
             ("f10-menu/actions", "Actions Menu", "F10 Menu Systems", 1, include_str!("../seed_wiki/f10-menu/actions.md")),
             ("f10-menu/jtac", "JTAC System", "F10 Menu Systems", 2, include_str!("../seed_wiki/f10-menu/jtac.md")),
@@ -3992,6 +3993,17 @@ impl StatsDb {
             ("f7e01aaf-8460-48c5-a6dc-81ab6f36fb17", include_bytes!("../seed_wiki/images/cockpit-wheel-blue.jpeg")),
             ("e6ad2b68-688a-4002-8be6-02f83031c5fb", include_bytes!("../seed_wiki/images/cockpit-settings.jpeg")),
             ("da866270-2d36-4ebb-8582-49420aaa561a", include_bytes!("../seed_wiki/images/cockpit-icons.jpeg")),
+            // Labelled placeholders until real screenshots are taken. Images
+            // are served immutable and never re-seeded, so a real screenshot
+            // goes in under a NEW id (here and in objective-buildings.md).
+            ("bde0527a-d33b-44ea-927a-7e5457673883", include_bytes!("../seed_wiki/images/objective-buildings-f10-pins.jpeg")),
+            ("57e704c4-7cbf-4382-92aa-437a3398ffb7", include_bytes!("../seed_wiki/images/objective-buildings-warehouse.jpeg")),
+            ("9bb0383e-2611-4b7b-a31c-9005c9aeeefa", include_bytes!("../seed_wiki/images/objective-buildings-industrial.jpeg")),
+            ("00a8ea81-cb97-47c4-99d3-b28ceb8f470c", include_bytes!("../seed_wiki/images/objective-buildings-fuel.jpeg")),
+            ("b1e85974-8c99-4a90-834b-be855f21ca6b", include_bytes!("../seed_wiki/images/objective-buildings-destroyed.jpeg")),
+            ("b0a22f34-8776-4cfb-8bc8-a003c9d9c759", include_bytes!("../seed_wiki/images/objective-buildings-command-center.jpeg")),
+            ("6c1f61f3-239d-4e32-bfb6-a4f65a773bdb", include_bytes!("../seed_wiki/images/objective-buildings-farp.jpeg")),
+            ("ad2ed420-c314-4aab-b685-9404872fe3b3", include_bytes!("../seed_wiki/images/objective-buildings-placed-logi.jpeg")),
         ];
         let mut added = 0usize;
         for (id, data) in seed {
