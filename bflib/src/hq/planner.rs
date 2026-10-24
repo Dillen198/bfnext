@@ -610,9 +610,11 @@ impl<'a> Gen<'a> {
         }
     }
 
-    /// AWACS and tankers on station behind the front, while there is an air
-    /// war to support.
-    fn support(&mut self, ctx: &Context, side: Side) {
+    /// AWACS and tankers on station well behind the front, while there is an
+    /// air war to support. One of each per side: none while one is up or
+    /// starting up -- whoever sent it, a player, a commander, the HQ before a
+    /// restart -- unless every one up is due to be relieved.
+    fn support(&mut self, ctx: &Context, side: Side, now: DateTime<Utc>) {
         let pic = self.pic;
         let air_ops = ctx
             .hq
@@ -620,34 +622,52 @@ impl<'a> Gen<'a> {
             .get(&side)
             .map_or(0, |rt| rt.active().filter(|o| o.kind.line() == Line::Air).count()) as u32;
         let enemy_air = pic.enemy_air.len() as u32;
-        if enemy_air > 0 || pic.humans_fw_air > 0 || air_ops > 0 {
-            if let Some(pos) = pic.station_behind_front(80_000.) {
-                if self.in_air_range(pos) {
-                    self.push(
-                        OpKind::Awacs,
-                        None,
-                        pos,
-                        "AWACS station".into(),
-                        30. + 10. * enemy_air.min(4) as f64,
-                        format_compact!("{enemy_air} enemy aircraft on radar, {} of ours up", pic.humans_fw_air + air_ops),
-                    );
-                }
+        let near = self.main_effort().map(|o| o.pos).or_else(|| pic.front_point());
+        let lead = self.cfg.support.relief_secs;
+        let station = |g: &mut Self, kind: OpKind, what: &str, value: f64, why: CompactString| {
+            let up: Vec<_> = pic.support_of(kind).collect();
+            let relief = !up.is_empty() && up.iter().all(|f| f.relief_due(now, lead));
+            if !up.is_empty() && !relief {
+                return;
             }
+            let rules = super::picture::StationRules::of(g.cfg, kind);
+            let Some(st) = pic.support_station(&rules, near, &[]) else { return };
+            let mut why = format_compact!(
+                "{why}; {:.0} km behind the front{}",
+                st.front_m / 1000.,
+                if st.clearance >= 0. {
+                    CompactString::from(", clear of enemy bases and SAMs")
+                } else {
+                    format_compact!(", {:.0} km inside a threat ring (nowhere safer)", -st.clearance / 1000.)
+                }
+            );
+            let name = if relief {
+                let old = up.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join(", ");
+                why.push_str(&format_compact!("; relieving {old}"));
+                format_compact!("{what} relief")
+            } else {
+                CompactString::from(what)
+            };
+            g.push(kind, None, st.pos, name, value, why);
+        };
+        if enemy_air > 0 || pic.humans_fw_air > 0 || air_ops > 0 {
+            station(
+                self,
+                OpKind::Awacs,
+                "AWACS station",
+                30. + 10. * enemy_air.min(4) as f64,
+                format_compact!("{enemy_air} enemy aircraft on radar, {} of ours up", pic.humans_fw_air + air_ops),
+            );
         }
         let thirsty = pic.humans_fw_air + air_ops;
         if thirsty >= 2 {
-            if let Some(pos) = pic.station_behind_front(50_000.) {
-                if self.in_air_range(pos) {
-                    self.push(
-                        OpKind::Tanker,
-                        None,
-                        pos,
-                        "tanker track".into(),
-                        20. + 8. * thirsty.min(5) as f64,
-                        format_compact!("{thirsty} friendly jets up"),
-                    );
-                }
-            }
+            station(
+                self,
+                OpKind::Tanker,
+                "tanker track",
+                20. + 8. * thirsty.min(5) as f64,
+                format_compact!("{thirsty} friendly jets up"),
+            );
         }
     }
 
@@ -799,11 +819,23 @@ impl<'a> Gen<'a> {
                 } else {
                     None
                 };
+                // An AWACS or tanker asked for over a base orbits on a safe
+                // station covering it, never over the base itself (which is
+                // where the asker is: usually the front).
+                let pos = if matches!(kind, OpKind::Awacs | OpKind::Tanker) {
+                    let rules = super::picture::StationRules::of(self.cfg, *kind);
+                    match self.pic.support_station(&rules, Some(o.pos), &[]) {
+                        Some(st) => st.pos,
+                        None => continue,
+                    }
+                } else {
+                    jtac.as_ref().map_or(o.pos, |(_, p)| *p)
+                };
                 let n = self.out.len();
                 self.push(
                     *kind,
                     Some(o),
-                    jtac.as_ref().map_or(o.pos, |(_, p)| *p),
+                    pos,
                     o.name.clone(),
                     30. * bonus,
                     format_compact!("{} asked for {}", r.by, r.kind.label()),
@@ -854,7 +886,7 @@ pub(crate) fn rank(
     let mut g = Gen { cfg, pic, plan, avail: &avail, out: vec![] };
     g.air();
     g.bombers();
-    g.support(ctx, side);
+    g.support(ctx, side, now);
     g.fires(ctx);
     g.naval();
     g.logistics();
@@ -938,7 +970,9 @@ pub(crate) fn rank(
         .into_iter()
         .filter(|c| !plan.disabled.contains(&c.kind))
         .filter(|c| !plan.avoided(c.target) && !plan.avoided(Some(c.anchor)))
-        .filter(|c| !pic.busy(c.kind, c.target))
+        // AWACS and tankers are kept to one per station by `room`, which
+        // counts every one on the map and lets a relief through.
+        .filter(|c| matches!(c.kind, OpKind::Awacs | OpKind::Tanker) || !pic.busy(c.kind, c.target))
         .filter(|c| {
             c.kind.line() != Line::Fires
                 || rt
@@ -985,13 +1019,24 @@ pub(crate) fn room(cfg: &HqCfg, ctx: &Context, side: Side, kind: OpKind) -> u32 
         OpKind::HeloTroops => l.troops.saturating_sub(count(&|k| k == OpKind::HeloTroops)),
         OpKind::Reinforce => l.reinforce.saturating_sub(count(&|k| k == OpKind::Reinforce)),
         OpKind::Bomber => l.bomber.saturating_sub(count(&|k| k == OpKind::Bomber)),
-        OpKind::Awacs => l.awacs.saturating_sub(count(&|k| k == OpKind::Awacs)),
-        OpKind::Tanker => l.tanker.saturating_sub(count(&|k| k == OpKind::Tanker)),
+        OpKind::Awacs => l.awacs.saturating_sub(support_up(cfg, ctx, side, OpKind::Awacs)),
+        OpKind::Tanker => l.tanker.saturating_sub(support_up(cfg, ctx, side, OpKind::Tanker)),
         OpKind::AirRepair => l.logistics.saturating_sub(count(&|k| {
             matches!(k, OpKind::Convoy | OpKind::HeloSupply | OpKind::AirRepair)
         })),
         OpKind::Artillery | OpKind::MissileStrike | OpKind::Ambush | OpKind::NavalStrike => u32::MAX,
     }
+}
+
+/// The side's AWACS (or tankers) up or starting up that aren't due to be
+/// relieved: the HQ's own, players' and commanders', and flights a restart
+/// respawned (whose HQ operations it forgot).
+fn support_up(cfg: &HqCfg, ctx: &Context, side: Side, kind: OpKind) -> u32 {
+    let now = Utc::now();
+    super::picture::support_flights(ctx, side)
+        .iter()
+        .filter(|f| f.kind == kind && !f.relief_due(now, cfg.support.relief_secs))
+        .count() as u32
 }
 
 /// Keep the HQ's asks on the coalition tasking board: take the main effort,

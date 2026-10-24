@@ -378,6 +378,8 @@ mod tests {
             jtac_targets: Default::default(),
             carriers: Default::default(),
             battles: Default::default(),
+            front: vec![],
+            support: vec![],
         }
     }
 

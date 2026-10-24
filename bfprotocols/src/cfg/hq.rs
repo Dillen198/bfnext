@@ -131,12 +131,93 @@ pub struct HqCfg {
     /// judgement, seconds. Default 7200.
     #[serde(default = "default_override_secs")]
     pub override_max_secs: u32,
+    /// Where AWACS and tankers orbit, when they are relieved, and when AI
+    /// flights are sent to a tanker.
+    #[serde(default)]
+    pub support: HqSupportCfg,
 }
 
 impl Default for HqCfg {
     fn default() -> Self {
         serde_json::from_str("{}").expect("HqCfg defaults")
     }
+}
+
+/// The side's AWACS and tankers, and AI flights taking fuel from the tankers.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HqSupportCfg {
+    /// An AWACS orbit -- every point of its racetrack -- stays at least this
+    /// far from the front line and from every enemy objective (where enemy
+    /// fighters launch from). Default 120000 m.
+    #[serde(default = "default_awacs_standoff")]
+    pub awacs_standoff_m: f64,
+    /// The same for a tanker track. Default 90000 m.
+    #[serde(default = "default_tanker_standoff")]
+    pub tanker_standoff_m: f64,
+    /// Clearance from an enemy SAM site objective (long-range SAMs live
+    /// there). Default 110000 m.
+    #[serde(default = "default_sam_site_ring")]
+    pub sam_site_ring_m: f64,
+    /// Clearance from enemy air defence the side's intel holds. Default
+    /// 60000 m.
+    #[serde(default = "default_sam_intel_ring")]
+    pub sam_intel_ring_m: f64,
+    /// An AWACS station is no further than this from the front, so its radar
+    /// still covers it. Default 230000 m.
+    #[serde(default = "default_awacs_cover")]
+    pub awacs_cover_m: f64,
+    /// A relief AWACS or tanker is launched this long before the one on
+    /// station runs out its time. Default 2700 (45 minutes: start-up, taxi,
+    /// climb and the transit out).
+    #[serde(default = "default_relief_secs")]
+    pub relief_secs: u32,
+    /// Two of the side's AWACS (or same-kind tankers) orbiting within this
+    /// of each other are on the same station: the HQ's own spare is sent
+    /// home. Default 100000 m.
+    #[serde(default = "default_same_station")]
+    pub same_station_m: f64,
+    /// An AI flight that can take fuel in the air is sent to a compatible
+    /// friendly tanker when its fuel falls below this fraction. 0 turns it
+    /// off. Default 0.35.
+    #[serde(default = "default_refuel_below")]
+    pub refuel_below: f64,
+    /// Furthest a flight is sent to reach a tanker. Default 250000 m.
+    #[serde(default = "default_refuel_reach")]
+    pub refuel_reach_m: f64,
+}
+
+impl Default for HqSupportCfg {
+    fn default() -> Self {
+        serde_json::from_str("{}").expect("HqSupportCfg defaults")
+    }
+}
+
+fn default_awacs_standoff() -> f64 {
+    120_000.
+}
+fn default_tanker_standoff() -> f64 {
+    90_000.
+}
+fn default_sam_site_ring() -> f64 {
+    110_000.
+}
+fn default_sam_intel_ring() -> f64 {
+    60_000.
+}
+fn default_awacs_cover() -> f64 {
+    230_000.
+}
+fn default_relief_secs() -> u32 {
+    2700
+}
+fn default_same_station() -> f64 {
+    100_000.
+}
+fn default_refuel_below() -> f64 {
+    0.35
+}
+fn default_refuel_reach() -> f64 {
+    250_000.
 }
 
 /// A side's air rosters: every aircraft the HQ may fly for each job, each

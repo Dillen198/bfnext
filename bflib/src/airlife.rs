@@ -261,6 +261,13 @@ pub(crate) fn send_home(lua: MizLua, ctx: &mut Context, gid: GroupId, now: DateT
     }
 }
 
+impl AirLife {
+    /// Has `gid` been sent home (and is on its way to be removed)?
+    pub(crate) fn sent_home(&self, gid: &GroupId) -> bool {
+        self.rtb.contains_key(gid)
+    }
+}
+
 /// Remove flights that have finished flying home -- the same sweep as
 /// `flush_cap_rtb`, for air_life's own flights.
 fn flush_rtb(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
