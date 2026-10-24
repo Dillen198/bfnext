@@ -39,8 +39,10 @@ pub struct GroundWarCfg {
     /// true.
     #[serde(default = "default_true")]
     pub take_aaa: bool,
-    /// Road march speed, km/h. Off-road legs are driven at half of it.
-    /// Default 30.
+    /// Road march speed at Normal pace, km/h. Slow pace is 0.55 of it and
+    /// Fast 1.65 (19 / 35 / 58 km/h at the default), never faster than the
+    /// formation's slowest vehicle. Across country it is 0.6 of that.
+    /// Default 35.
     #[serde(default = "default_speed_kph")]
     pub speed_kph: f64,
     /// A formation becomes real DCS units when a player is this close.
@@ -473,7 +475,7 @@ fn default_keep_home() -> u32 {
     1
 }
 fn default_speed_kph() -> f64 {
-    30.
+    35.
 }
 fn default_bubble_m() -> f64 {
     30_000.

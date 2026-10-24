@@ -255,7 +255,7 @@ pub enum Roe {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Pace {
-    /// Half speed: quieter, keeps together.
+    /// About half speed: quieter, keeps together.
     Slow,
     #[default]
     Normal,
@@ -264,11 +264,14 @@ pub enum Pace {
 }
 
 impl Pace {
+    /// Share of the ground war's `speed_kph` it marches at. With the default
+    /// 35 km/h that is about 19 / 35 / 58 km/h (12 / 22 / 36 mph) on the
+    /// road, each capped at what the slowest vehicle can do.
     pub fn factor(self) -> f64 {
         match self {
-            Pace::Slow => 0.5,
+            Pace::Slow => 0.55,
             Pace::Normal => 1.,
-            Pace::Fast => 1.35,
+            Pace::Fast => 1.65,
         }
     }
 }

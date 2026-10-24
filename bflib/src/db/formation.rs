@@ -651,7 +651,7 @@ fn dcs_route<'lua>(
     path: &[Vector2],
     off_road: bool,
     deployed: bool,
-    speed_mps: f64,
+    (speed, last_leg): (f64, f64),
 ) -> Vec<MissionPoint<'lua>> {
     // Deployed for a fight, it advances in line abreast across country; on
     // the march it keeps to the road.
@@ -662,7 +662,9 @@ fn dcs_route<'lua>(
     } else {
         VehicleFormation::OnRoad
     };
-    let speed = if off_road && !deployed { speed_mps * 0.5 } else { speed_mps };
+    // Both already allow for the ground (`route_speeds_mps`): halving them
+    // again here had DCS drive cross-country routes at half what the
+    // dashboard showed, 5 mph at Normal pace.
     let mut start = ground_point(land, from, VehicleFormation::OffRoad, speed, Task::ComboTask(vec![]));
     // As the supply convoys' routes, which DCS does drive: the start point
     // is now, at this speed.
@@ -688,7 +690,7 @@ fn dcs_route<'lua>(
                 land,
                 p,
                 VehicleFormation::OffRoad,
-                speed_mps * 0.5,
+                last_leg,
                 Task::ComboTask(vec![Task::WrappedOption(AiOption::Ground(
                     GroundOption::AlarmState(AlarmState::Red),
                 ))]),
@@ -873,13 +875,22 @@ impl Db {
         }
     }
 
-    /// How fast `f` moves right now, km/h: its slowest vehicle on road or
-    /// across country, stopped while it deploys, slowed advancing in
-    /// contact and when it is out of fuel. A broken formation just runs.
+    /// How fast `f` moves right now, km/h: the server's march speed at its
+    /// pace, no faster than its slowest vehicle on road or across country,
+    /// stopped while it deploys, slowed advancing in contact and when it is
+    /// out of fuel. A broken formation just runs. This is the speed DCS is
+    /// told (`route_speeds_mps`) and the one the dashboard shows.
     pub fn formation_speed_kph(&self, cfg: &GroundWarCfg, f: &Formation) -> f64 {
+        self.formation_speed_over_kph(cfg, f, f.off_road)
+    }
+
+    /// `formation_speed_kph` as if it were on the road or across country.
+    fn formation_speed_over_kph(&self, cfg: &GroundWarCfg, f: &Formation, off_road: bool) -> f64 {
         let roles: SmallVec<[Role; 32]> = self.formation_units(f).into_iter().map(|(_, r)| r).collect();
-        let (road, off) = combat::speed_of(&roles, cfg.speed_kph);
-        let mut v = if f.off_road { off } else { road };
+        // Pace scales the march speed before the vehicles cap it: flat out
+        // is never faster than the slowest vehicle can drive.
+        let (road, off) = combat::speed_of(&roles, cfg.speed_kph * f.pace.factor());
+        let mut v = if off_road { off } else { road };
         if !f.broken {
             match f.deployment {
                 Deployment::Deploying => v = 0.,
@@ -890,7 +901,14 @@ impl Db {
         if f.supply < cfg.combat.low_supply {
             v *= 0.5;
         }
-        v * f.pace.factor()
+        v
+    }
+
+    /// The DCS route speeds of `f`, m/s: along its path, and on the last
+    /// leg, which is always driven across country.
+    fn route_speeds_mps(&self, cfg: &GroundWarCfg, f: &Formation) -> (f64, f64) {
+        let mps = |kph: f64| kph.max(3.) / 3.6;
+        (mps(self.formation_speed_kph(cfg, f)), mps(self.formation_speed_over_kph(cfg, f, true)))
     }
 
     /// How much of the usual supply `f` burns: its own trucks carry fuel and
@@ -2779,7 +2797,7 @@ impl Db {
         };
         let deployed = matches!(f.deployment, Deployment::Deployed | Deployment::DugIn) && !f.broken;
         let roe = f.dcs_roe(Utc::now());
-        let speed = self.formation_speed_kph(cfg, f).max(3.) / 3.6;
+        let speed = self.route_speeds_mps(cfg, f);
         let land = Land::singleton(lua)?;
         // The persisted positions carry the map's x/y; DCS wants the ground
         // height too.
@@ -2824,7 +2842,7 @@ impl Db {
             };
             let deployed = matches!(f.deployment, Deployment::Deployed | Deployment::DugIn) && !f.broken;
             let roe = f.dcs_roe(Utc::now());
-            let speed = self.formation_speed_kph(cfg, f).max(3.) / 3.6;
+            let speed = self.route_speeds_mps(cfg, f);
             for gid in f.groups.iter().filter(|g| rt.live.contains(g)) {
                 let Some(g) = self.persisted.groups.get(gid) else { continue };
                 let from = self.group_center(gid).unwrap_or(f.pos);
