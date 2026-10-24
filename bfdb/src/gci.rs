@@ -34,7 +34,8 @@
 use crate::db::StatsDb;
 use crate::voice::{radios_from, srs, stt, tts, FreqSpec, Radio};
 use bfprotocols::gci::{
-    GciAspect, GciContact, GciControlPicture, GciFlight, GciRef, GciSamThreat, GciUnits,
+    reporting_name, tidy_type, GciAspect, GciBuddySpike, GciContact, GciControlPicture, GciFlight,
+    GciRef, GciSamThreat, GciUnits,
 };
 use dcso3::coalition::Side;
 use serde::Deserialize;
@@ -733,6 +734,8 @@ struct PlayerGci {
     intercept: Option<Intercept>,
     /// The flight was inside enemy radio jamming last poll.
     jammed: bool,
+    /// Buddy spike last called: (friendly key, was a shot, poll tick).
+    buddy: Option<(String, bool, u64)>,
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
@@ -982,6 +985,7 @@ fn decide(
         prev_contacts: 0,
         intercept: None,
         jammed: false,
+        buddy: None,
     });
     pg.side = side;
     pg.last_seen_tick = tick;
@@ -1210,6 +1214,28 @@ fn decide(
         }
     }
 
+    // BUDDY SPIKE: the flight has a friendly locked, or a missile on one.
+    // Said once per friendly, again on a shot or every 30s the lock is held.
+    // Outranks every other call and goes out even to a flight that turned
+    // unprompted calls off -- it is the controller stopping a blue-on-blue.
+    let buddy = flight.buddy_spike.as_ref().and_then(|b| {
+        let key = format!(
+            "{}/{}",
+            b.type_name.as_deref().unwrap_or(""),
+            b.player_name.as_deref().unwrap_or("")
+        );
+        let due = match &pg.buddy {
+            Some((k, shot, t)) => {
+                *k != key || (b.shot && !*shot) || tick.wrapping_sub(*t) * poll >= 30
+            }
+            None => true,
+        };
+        due.then(|| (key, b.shot, buddy_call(controller, who, b, &rc)))
+    });
+    if flight.buddy_spike.is_none() {
+        pg.buddy = None;
+    }
+
     // Enemy radio jamming (modern_war EW): one notice on the way in, then
     // most calls are lost and the ones that get through are broken up.
     let was_jammed = pg.jammed;
@@ -1220,6 +1246,18 @@ fn decide(
             true,
             format!("{}, {}, you are being jammed, comms degraded", spoken_callsign(who), controller),
         ));
+    }
+    if let Some((key, shot, mut text)) = buddy {
+        pg.buddy = Some((key, shot, tick));
+        if flight.comms_jammed {
+            let roll = jam_roll(&flight.ucid, tick);
+            if roll % 10 < 7 {
+                return None;
+            }
+            text = break_up(&text, roll);
+        }
+        pg.last_tx = Some(Instant::now());
+        return Some((true, text));
     }
     let (prio, mut text) = best?;
     // Ledger is up to date; this flight just doesn't want to be spoken to.
@@ -1359,94 +1397,6 @@ fn prefixed_class(prefix: &str, class: u8) -> String {
         Some(rest) => format!("{prefix}{rest}"),
         None => prefix.to_string(),
     }
-}
-
-/// Turn a raw DCS type into something readable when we have no reporting name:
-/// "F-16C_50" → "F 16", "MiG-29S" → "MiG 29", "Su-30MKI" → "Su 30".
-fn tidy_type(raw: &str) -> String {
-    let mut out = String::new();
-    for ch in raw.chars() {
-        match ch {
-            '_' => break, // drop the "_50" / "_hornet" module suffix
-            '-' | ' ' => out.push(' '),
-            c if c.is_ascii_alphabetic() => out.push(c),
-            c if c.is_ascii_digit() => out.push(c),
-            _ => {}
-        }
-    }
-    // keep "<letters> <first number block>" — drop trailing variant letters
-    let mut parts = out.split_whitespace();
-    let head = parts.next().unwrap_or("").to_string();
-    let num: String = parts
-        .next()
-        .unwrap_or("")
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    if head.is_empty() {
-        String::new()
-    } else if num.is_empty() {
-        head
-    } else {
-        format!("{head} {num}")
-    }
-}
-
-/// DCS aircraft type name → NATO reporting name (Soviet/Russian/Chinese) or
-/// common nickname (Western). Loose substring match on the DCS type string.
-fn reporting_name(raw: &str) -> Option<&'static str> {
-    let t = raw.to_ascii_lowercase();
-    let m = |p: &str| t.contains(p);
-    Some(match () {
-        _ if m("mig-29") => "Fulcrum",
-        _ if m("mig-31") => "Foxhound",
-        _ if m("mig-25") => "Foxbat",
-        _ if m("mig-23") => "Flogger",
-        _ if m("mig-21") => "Fishbed",
-        _ if m("mig-19") => "Farmer",
-        _ if m("mig-15") => "Fagot",
-        _ if m("su-27") || m("j-11") => "Flanker",
-        _ if m("su-33") || m("su-30") || m("su-35") => "Flanker",
-        _ if m("su-34") => "Fullback",
-        _ if m("su-24") => "Fencer",
-        _ if m("su-25") => "Frogfoot",
-        _ if m("su-17") => "Fitter",
-        _ if m("tu-22") => "Backfire",
-        _ if m("tu-95") || m("tu-142") => "Bear",
-        _ if m("tu-160") => "Blackjack",
-        _ if m("il-76") => "Candid",
-        _ if m("il-78") => "Midas",
-        _ if m("a-50") => "Mainstay",
-        _ if m("an-26") => "Curl",
-        _ if m("an-30") => "Clank",
-        _ if m("yak-40") => "Codling",
-        _ if m("f-16") => "Viper",
-        _ if m("fa-18") || m("f/a-18") || m("f-18") => "Hornet",
-        _ if m("f-15e") => "Strike Eagle",
-        _ if m("f-15") => "Eagle",
-        _ if m("f-14") => "Tomcat",
-        _ if m("f-5") => "Tiger",
-        _ if m("f-4") => "Phantom",
-        _ if m("a-10") => "Warthog",
-        _ if m("av8b") || m("av-8b") => "Harrier",
-        _ if m("m-2000") => "Mirage",
-        _ if m("mirage-f1") => "Mirage F1",
-        _ if m("jf-17") => "Thunder",
-        _ if m("jas39") || m("gripen") => "Gripen",
-        _ if m("ka-50") || m("ka-52") => "Hokum",
-        _ if m("mi-24") => "Hind",
-        _ if m("mi-28") => "Havoc",
-        _ if m("mi-8") || m("mi-17") => "Hip",
-        _ if m("mi-26") => "Halo",
-        _ if m("ah-64") => "Apache",
-        _ if m("ah-1") => "Cobra",
-        _ if m("uh-1") => "Huey",
-        _ if m("sa342") => "Gazelle",
-        _ if m("oh-58") || m("oh58") => "Kiowa",
-        _ if m("ch-47") => "Chinook",
-        _ if m("uh-60") => "Blackhawk",
-        _ => return None,
-    })
 }
 
 /// Small cardinal numbers as words (for clock positions).
@@ -1719,6 +1669,37 @@ fn splash_call(controller: &str, callsign: &str, s: &GciSamThreat, rc: &RCtx) ->
 }
 
 /// Faded — a tracked group has dropped off radar.
+/// "Viper one one, Overlord, buddy spike, buddy spike, your lock is friendly
+/// Reaper, BRAA ..." -- or "check fire, check fire" once a missile is on it.
+fn buddy_call(controller: &str, callsign: &str, b: &GciBuddySpike, rc: &RCtx) -> String {
+    let what = match b.type_name.as_deref() {
+        Some(raw) => match reporting_name(raw) {
+            Some(name) => name.to_string(),
+            None => match tidy_type(raw) {
+                t if t.is_empty() => "aircraft".to_string(),
+                t => t,
+            },
+        },
+        None => "aircraft".to_string(),
+    };
+    let what = match b.player_name.as_deref() {
+        Some(p) if !p.is_empty() => format!("friendly {what}, {p}"),
+        _ => format!("friendly {what}"),
+    };
+    let lead = if b.shot {
+        "check fire, check fire, your missile is on"
+    } else {
+        "buddy spike, buddy spike, your lock is"
+    };
+    format!(
+        "{}, {}, {lead} {what}, {}, {}",
+        spoken_callsign(callsign),
+        controller,
+        rc.pos(b.brg, b.rng_m, Some(b.alt_m)),
+        altitude_phrase(b.alt_m, rc.units),
+    )
+}
+
 fn faded_call(callsign: &str, t: &Tracked, rc: &RCtx) -> String {
     format!(
         "{}, {} faded, last {}",

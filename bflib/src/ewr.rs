@@ -37,6 +37,7 @@ use bfprotocols::{
 };
 use chrono::prelude::*;
 use compact_str::{CompactString, format_compact};
+use enumflags2::BitFlags;
 use dcso3::{
     MizLua, Position3, Vector2, Vector3, azumith2d_to, azumith3d, azumith3d_to, coalition::Side,
     land::Land, net::Ucid, radians_to_degrees,
@@ -139,7 +140,7 @@ impl Aspect {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct GibBraa {
     pub bearing: u16,
     pub range: u32,
@@ -151,7 +152,61 @@ pub struct GibBraa {
     pub units: EwrUnits,
     pub stale: bool,
     pub detected_by: DetectedBy,
+    /// What the contact is, as GCI names it ("Fulcrum", "MQ-9 Reaper").
+    /// `None` when the type can't be resolved.
+    pub typ: Option<CompactString>,
+    /// How much of a threat the contact is; the text report lists the
+    /// biggest threats first.
+    pub threat: ThreatClass,
     converted: bool,
+}
+
+/// Coarse threat ordering for the text report: fighters first, then other
+/// armed aircraft, then helicopters, then support (AWACS, tankers,
+/// transports, drones). Variant order is sort order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ThreatClass {
+    Fighter,
+    Attack,
+    Helicopter,
+    Support,
+}
+
+impl ThreatClass {
+    /// Classify an aircraft from its classification tags and DCS type name.
+    /// The campaign cfg tags most types only `Aircraft` / `Helicopter` /
+    /// `AWACS` (and AI CAP flights `CAP`), so the type name fills in the
+    /// fighter / attack / support split the tags don't carry.
+    pub fn of(tags: BitFlags<UnitTag>, typ: Option<&str>) -> Self {
+        let t = typ.map(|t| t.to_ascii_lowercase()).unwrap_or_default();
+        let any = |names: &[&str]| names.iter().any(|n| t.contains(n));
+        // Helicopters before support: "ka-50" contains "a-50" (Mainstay).
+        if tags.contains(UnitTag::Helicopter)
+            || any(&["ka-", "mi-", "ah-", "uh-", "ch-", "oh-", "oh58", "mh-", "sh-60", "sa342"])
+        {
+            ThreatClass::Helicopter
+        } else if tags.contains(UnitTag::AWACS)
+            || tags.contains(UnitTag::Unarmed)
+            || any(&[
+                "kc-", "kc130", "kc135", "il-78", "tanker", "e-3", "e-2", "a-50", "kj-2000",
+                "c-130", "c-17", "c-47", "il-76", "an-12", "an-26", "an-30", "yak-40", "mq-",
+                "rq-", "wingloong", "predator", "reaper", "drone", "uav",
+            ])
+        {
+            ThreatClass::Support
+        } else if tags.contains(UnitTag::CAP)
+            || any(&[
+                "f-14", "f-15", "f-16", "fa-18", "f/a-18", "f-18", "f-4", "f-5", "f-86", "f-35",
+                "mig-15", "mig-19", "mig-21", "mig-23", "mig-25", "mig-29", "mig-31", "su-27",
+                "su-30", "su-33", "su-35", "su-57", "j-11", "j-10", "jf-17", "m-2000", "mirage",
+                "jas39", "gripen", "eurofighter", "rafale",
+            ])
+        {
+            ThreatClass::Fighter
+        } else {
+            ThreatClass::Attack
+        }
+    }
 }
 
 /// Age at which a track is considered stale (data may be old) but still reported.
@@ -160,30 +215,41 @@ pub const STALE_AGE_SECS: i64 = 60;
 pub const DROP_AGE_SECS: i64 = 120;
 
 /// BRG and HDG are magnetic in the text report (see `Ewr::where_chicken`).
-pub const HEADER: &'static str = "   BRG°M      RNG      ALT      SPD      HDG°M      AGE  ASPECT    SRC";
+/// Imperial altitude is in angels (thousands of feet, "A23.8" = 23,800 ft).
+pub const HEADER: &'static str =
+    "   BRG°M      RNG      ALT      SPD      HDG°M      AGE  ASPECT    SRC   TYPE";
 
 impl fmt::Display for GibBraa {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (range_u, altitude_u, speed_u) = match self.units {
-            EwrUnits::Imperial => ("nm", "ft", "kts "),
-            EwrUnits::Metric => ("km", "m ", "km/h"),
+        let (range_u, speed_u) = match self.units {
+            EwrUnits::Imperial => ("nm", "kts "),
+            EwrUnits::Metric => ("km", "km/h"),
+        };
+        let altitude = match self.units {
+            // `convert` leaves imperial altitude in feet, rounded to 100.
+            EwrUnits::Imperial => format_compact!(
+                "A{}.{}",
+                self.altitude / 1000,
+                (self.altitude % 1000) / 100
+            ),
+            EwrUnits::Metric => format_compact!("{}m ", self.altitude),
         };
         let stale = if self.stale { "*" } else { " " };
         write!(
             f,
-            "{}{:>6} {:>6}{} {:>6}{} {:>6}{} {:>6} {:>6}s {} {}",
+            "{}{:>6} {:>6}{} {:>8} {:>6}{} {:>6} {:>6}s {} {}   {}",
             stale,
             self.bearing,
             self.range,
             range_u,
-            self.altitude,
-            altitude_u,
+            altitude,
             self.speed,
             speed_u,
             self.heading,
             self.age,
             self.aspect.label(),
             self.detected_by.label(),
+            self.typ.as_deref().unwrap_or("?"),
         )
     }
 }
@@ -206,13 +272,9 @@ impl GibBraa {
             }
             EwrUnits::Imperial => {
                 self.range = self.range / 1852;
-                self.altitude = (self.altitude as f64 * 3.28084) as u32;
                 self.speed = ((((self.speed as f64) * 1.94384) / 100.0).round() * 100.0) as u16;
-                if self.altitude < 1000 {
-                    self.altitude = ((self.altitude as f64 / 100.0).round() * 100.0) as u32;
-                } else {
-                    self.altitude = ((self.altitude as f64 / 1000.0).round() * 1000.0) as u32;
-                }
+                // Feet to the nearest hundred, shown as angels ("A23.8").
+                self.altitude = ((self.altitude as f64 * 3.28084 / 100.0).round() * 100.0) as u32;
             }
         }
         self.units = unit;
@@ -231,7 +293,7 @@ struct Track {
     detected: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EwrUnits {
     Imperial,
     Metric,
@@ -239,14 +301,54 @@ pub enum EwrUnits {
 
 impl Default for EwrUnits {
     fn default() -> Self {
-        Self::Metric
+        Self::Imperial
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+impl EwrUnits {
+    /// The units an airframe's own instruments read in: metric for the
+    /// Russian / Soviet (and Czech, Chinese Flanker) types, imperial for
+    /// everything else.
+    pub fn for_airframe(typ: &str) -> Self {
+        let t = typ.to_ascii_lowercase();
+        const METRIC: [&str; 10] =
+            ["mig-", "su-", "yak-", "ka-", "mi-", "il-", "tu-", "an-", "l-39", "j-11"];
+        if METRIC.iter().any(|p| t.starts_with(p)) {
+            EwrUnits::Metric
+        } else {
+            EwrUnits::Imperial
+        }
+    }
+}
+
+/// A friendly aircraft a player has locked up (or fired at): "buddy spike".
+/// Refreshed by the radar poll / Shot event while it lasts.
+#[derive(Debug, Clone)]
+pub struct BuddyLock {
+    /// DCS unit name of the friendly, to tell a new lock from the same one.
+    pub key: CompactString,
+    /// Its position when last seen locked.
+    pub pos: Vector3,
+    pub typ: Option<CompactString>,
+    /// Pilot name when the friendly is a player.
+    pub player_name: Option<CompactString>,
+    /// The player has fired a missile at it.
+    pub shot: bool,
+    pub last: DateTime<Utc>,
+    last_warned: DateTime<Utc>,
+}
+
+/// How long a buddy lock stays live after it was last seen.
+const BUDDY_LOCK_FRESH_SECS: i64 = 10;
+
+#[derive(Debug, Clone)]
 struct PlayerState {
     enabled: bool,
     units: EwrUnits,
+    /// The player picked `units` themselves (F10 or cockpit UI), so taking a
+    /// new slot must not reset it to the airframe's default.
+    units_explicit: bool,
+    buddy: Option<BuddyLock>,
     last: DateTime<Utc>,
     last_spike_warned: DateTime<Utc>,
     /// Live voice GCI: whether this player wants anything to do with the
@@ -272,6 +374,8 @@ impl Default for PlayerState {
         Self {
             enabled: true,
             units: EwrUnits::default(),
+            units_explicit: false,
+            buddy: None,
             last: DateTime::default(),
             last_spike_warned: DateTime::default(),
             gci_enabled: true,
@@ -545,6 +649,8 @@ pub struct Ewr {
     /// Magnetic variation (degrees, east positive), refreshed each
     /// `update_tracks`, for the magnetic bearings in the text BRAA report.
     magvar_deg: f64,
+    /// When the buddy-spike radar poll last ran (see `buddy_poll_due`).
+    buddy_poll_at: DateTime<Utc>,
 }
 
 /// Per-SAM-site engagement doctrine state (see Ewr::decide_hot_state).
@@ -1583,7 +1689,127 @@ impl Ewr {
     }
 
     pub fn set_units(&mut self, ucid: &Ucid, units: EwrUnits) {
-        self.player_state.entry(ucid.clone()).or_default().units = units;
+        let st = self.player_state.entry(ucid.clone()).or_default();
+        st.units = units;
+        st.units_explicit = true;
+    }
+
+    /// A player took a slot in `typ`: unless they have chosen EWR units
+    /// themselves, report in the units that airframe's gauges read.
+    pub fn slot_airframe(&mut self, ucid: &Ucid, typ: &str) {
+        let st = self.player_state.entry(ucid.clone()).or_default();
+        if !st.units_explicit {
+            st.units = EwrUnits::for_airframe(typ);
+        }
+    }
+
+    /// The units this player's EWR text reports are in.
+    pub fn units(&self, ucid: &Ucid) -> EwrUnits {
+        self.player_state.get(ucid).map_or(EwrUnits::default(), |s| s.units)
+    }
+
+    /// The player's radar is locked on a friendly (or they fired at one).
+    /// Returns true when they should be warned now: a new friendly, a first
+    /// shot at it, or the same lock still held 30s after the last warning.
+    pub fn note_buddy_lock(
+        &mut self,
+        ucid: &Ucid,
+        key: CompactString,
+        pos: Vector3,
+        typ: Option<CompactString>,
+        player_name: Option<CompactString>,
+        shot: bool,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let st = self.player_state.entry(ucid.clone()).or_default();
+        // The same friendly, still live: only re-warn on a first shot or
+        // after 30s of holding the lock.
+        let same = st
+            .buddy
+            .as_ref()
+            .filter(|b| b.key == key && (now - b.last).num_seconds() <= BUDDY_LOCK_FRESH_SECS);
+        let (warn, was_shot, last_warned) = match same {
+            Some(b) => {
+                let warn = (shot && !b.shot) || (now - b.last_warned).num_seconds() >= 30;
+                (warn, b.shot, if warn { now } else { b.last_warned })
+            }
+            None => (true, false, now),
+        };
+        st.buddy = Some(BuddyLock {
+            key,
+            pos,
+            typ,
+            player_name,
+            shot: shot || was_shot,
+            last: now,
+            last_warned,
+        });
+        warn
+    }
+
+    /// Throttle for the buddy-spike radar poll: true at most every 2s.
+    pub fn buddy_poll_due(&mut self, now: DateTime<Utc>) -> bool {
+        if (now - self.buddy_poll_at).num_milliseconds() < 2000 {
+            return false;
+        }
+        self.buddy_poll_at = now;
+        true
+    }
+
+    /// The text warning for this player's current buddy lock, in their EWR
+    /// units with a magnetic bearing, from their own position `own`.
+    pub fn buddy_warning(&self, ucid: &Ucid, own: Vector2, now: DateTime<Utc>) -> Option<CompactString> {
+        let b = self.buddy_lock(ucid, now)?;
+        let tpos = Vector2::new(b.pos.x, b.pos.z);
+        let range = na::distance(&own.into(), &tpos.into());
+        let brg = crate::atis::true_to_magnetic(
+            radians_to_degrees(azumith2d_to(own, tpos)),
+            self.magvar_deg,
+        )
+        .round() as u16
+            % 360;
+        let brg = if brg == 0 { 360 } else { brg };
+        let alt_m = b.pos.y.max(0.);
+        let (rng, alt) = match self.units(ucid) {
+            EwrUnits::Imperial => {
+                let ft = ((alt_m * 3.28084 / 100.).round() * 100.) as u32;
+                (
+                    format_compact!("{}nm", (range / 1852.).round() as u32),
+                    format_compact!("A{}.{}", ft / 1000, (ft % 1000) / 100),
+                )
+            }
+            EwrUnits::Metric => (
+                format_compact!("{}km", (range / 1000.).round() as u32),
+                format_compact!("{}m", ((alt_m / 100.).round() * 100.) as u32),
+            ),
+        };
+        let typ = b
+            .typ
+            .as_deref()
+            .map(|t| CompactString::from(bfprotocols::gci::type_label(t)))
+            .unwrap_or_else(|| CompactString::from("aircraft"));
+        let who = match b.player_name.as_deref() {
+            Some(n) => format_compact!("{typ} ({n})"),
+            None => typ,
+        };
+        Some(if b.shot {
+            format_compact!(
+                "CHECK FIRE! Your missile is guided on a FRIENDLY {who}, {brg:03}°M {rng} {alt}."
+            )
+        } else {
+            format_compact!(
+                "BUDDY SPIKE! Your radar is locked on a FRIENDLY {who}, {brg:03}°M {rng} {alt}. Do not shoot."
+            )
+        })
+    }
+
+    /// The player's current buddy lock, if one was seen in the last few
+    /// seconds. Read by `crate::admin::query_gci` for the voice call.
+    pub fn buddy_lock(&self, ucid: &Ucid, now: DateTime<Utc>) -> Option<&BuddyLock> {
+        self.player_state
+            .get(ucid)
+            .and_then(|s| s.buddy.as_ref())
+            .filter(|b| (now - b.last).num_seconds() <= BUDDY_LOCK_FRESH_SECS)
     }
 
     /// Live voice GCI: is this player opted in to unsolicited GCI calls, what
@@ -1733,6 +1959,8 @@ impl Ewr {
                 units: EwrUnits::Metric,
                 stale: age >= STALE_AGE_SECS,
                 detected_by: track.detected_by,
+                typ: None,
+                threat: ThreatClass::Attack,
                 converted: false,
             };
             let vspd = track.velocity.y as i16;
@@ -1765,8 +1993,23 @@ impl Ewr {
         typ.map(|t| CompactString::from(t.to_string()))
     }
 
+    /// Threat class of a tracked contact: cfg tags for its type, plus an AI
+    /// unit's own tags (reactive CAP flights carry `CAP`), plus its type name.
+    fn threat_class(id: &EnId, typ: Option<&str>, db: &crate::db::Db) -> ThreatClass {
+        let mut tags = Self::contact_typ_vehicle(id, db)
+            .and_then(|v| db.ephemeral.cfg.unit_classification.get(&v).map(|t| t.0))
+            .unwrap_or_default();
+        if let EnId::Unit(uid) = id {
+            if let Some(u) = db.persisted.units.get(uid) {
+                tags |= u.tags.0;
+            }
+        }
+        ThreatClass::of(tags, typ)
+    }
+
     pub fn where_chicken(
         &mut self,
+        db: &Db,
         now: DateTime<Utc>,
         friendly: bool,
         force: bool,
@@ -1807,6 +2050,7 @@ impl Ewr {
                 let speed = track.velocity.magnitude();
                 let altitude = track.pos.p.y;
                 let aspect = Aspect::compute(bearing, heading, pos, cpos);
+                let typ = Self::contact_type(tucid, db);
                 reports.push(GibBraa {
                     range: range as u32,
                     heading: mag(heading),
@@ -1818,6 +2062,8 @@ impl Ewr {
                     units: EwrUnits::Metric,
                     stale: age >= STALE_AGE_SECS,
                     detected_by: track.detected_by,
+                    threat: Self::threat_class(tucid, typ.as_deref(), db),
+                    typ: typ.map(|t| CompactString::from(bfprotocols::gci::type_label(&t))),
                     converted: false,
                 })
             }
@@ -1826,18 +2072,25 @@ impl Ewr {
         if reports.is_empty() {
             return reports;
         }
-        reports.sort_by_key(|r| r.range);
+        let since_last = (now - state.last).num_seconds();
+        // For proximity-based auto-reports, skip stale tracks as the threat may have moved.
+        // Picked before the threat sort below: urgency is about distance.
+        let closest_fresh = reports
+            .iter()
+            .filter(|r| !r.stale)
+            .min_by_key(|r| r.range)
+            .map(|r| (r.range, r.age));
+        // Biggest threat first (a fighter at 18nm before a helicopter at
+        // 10nm), nearest first within a class.
+        reports.sort_by_key(|r| (r.threat, r.range));
         while reports.len() > 10 {
             reports.pop();
         }
-        let since_last = (now - state.last).num_seconds();
-        // For proximity-based auto-reports, skip stale tracks as the threat may have moved.
-        let closest_fresh = reports.iter().find(|r| !r.stale);
         match ewr_mode {
             EwrMode::Original => {
-                let urgent = closest_fresh.map_or(false, |r| {
-                    (r.range <= 20000 && r.age <= 10)
-                        || (r.range <= 40000 && r.age <= 10 && since_last >= 30)
+                let urgent = closest_fresh.map_or(false, |(range, age)| {
+                    (range <= 20000 && age <= 10)
+                        || (range <= 40000 && age <= 10 && since_last >= 30)
                 });
                 if force || since_last >= 60 || urgent {
                     state.last = now;
@@ -2164,9 +2417,68 @@ mod tests {
             units: EwrUnits::Metric,
             stale: false,
             detected_by: DetectedBy::GROUND,
+            typ: None,
+            threat: ThreatClass::Attack,
             converted: false,
         };
         b.convert(EwrUnits::Imperial);
         assert_eq!(b.altitude, 10_000);
+    }
+
+    #[test]
+    fn angels() {
+        let mut b = GibBraa {
+            bearing: 90,
+            range: 30_000,
+            altitude: 7254, // 23,800 ft
+            heading: 270,
+            speed: 250,
+            age: 3,
+            aspect: Aspect::Hot,
+            units: EwrUnits::Metric,
+            stale: false,
+            detected_by: DetectedBy::GROUND,
+            typ: Some("Fulcrum".into()),
+            threat: ThreatClass::Fighter,
+            converted: false,
+        };
+        b.convert(EwrUnits::Imperial);
+        assert_eq!(b.altitude, 23_800);
+        let line = b.to_string();
+        assert!(line.contains("A23.8"), "{line}");
+        assert!(line.ends_with("Fulcrum"), "{line}");
+    }
+
+    #[test]
+    fn airframe_units() {
+        assert_eq!(EwrUnits::for_airframe("MiG-29S"), EwrUnits::Metric);
+        assert_eq!(EwrUnits::for_airframe("Su-25T"), EwrUnits::Metric);
+        assert_eq!(EwrUnits::for_airframe("Ka-50_3"), EwrUnits::Metric);
+        assert_eq!(EwrUnits::for_airframe("Mi-24P"), EwrUnits::Metric);
+        assert_eq!(EwrUnits::for_airframe("F-16C_50"), EwrUnits::Imperial);
+        assert_eq!(EwrUnits::for_airframe("FA-18C_hornet"), EwrUnits::Imperial);
+        assert_eq!(EwrUnits::for_airframe("Mirage-F1CE"), EwrUnits::Imperial);
+    }
+
+    #[test]
+    fn threat_order() {
+        let none = BitFlags::<UnitTag>::empty();
+        let c = |t: &str| ThreatClass::of(none, Some(t));
+        assert_eq!(c("F-16C_50"), ThreatClass::Fighter);
+        assert_eq!(c("MiG-29S"), ThreatClass::Fighter);
+        assert_eq!(c("Su-25T"), ThreatClass::Attack);
+        assert_eq!(c("A-10C_2"), ThreatClass::Attack);
+        assert_eq!(c("Ka-50"), ThreatClass::Helicopter);
+        assert_eq!(c("Mi-8MT"), ThreatClass::Helicopter);
+        assert_eq!(c("A-50"), ThreatClass::Support);
+        assert_eq!(c("KC135MPRS"), ThreatClass::Support);
+        assert_eq!(c("MQ-9 Reaper"), ThreatClass::Support);
+        assert_eq!(c("C-130J-30"), ThreatClass::Support);
+        assert_eq!(
+            ThreatClass::of(UnitTag::Aircraft | UnitTag::CAP, Some("Su-25T")),
+            ThreatClass::Fighter
+        );
+        assert!(ThreatClass::Fighter < ThreatClass::Attack);
+        assert!(ThreatClass::Helicopter < ThreatClass::Support);
     }
 }

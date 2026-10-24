@@ -4280,6 +4280,12 @@ pub struct Cfg {
     /// EWR track update delay in seconds (only used when ewr_mode is Delayed)
     #[serde(default = "default_ewr_delay")]
     pub ewr_delay: u32,
+    /// Poll each airborne player's radar (DCS `Unit.getRadar`) for a lock on
+    /// a friendly aircraft and warn them -- text plus the GCI "buddy spike"
+    /// call. A missile fired at a friendly is caught from the Shot event
+    /// either way; this only switches off the radar poll.
+    #[serde(default = "default_true")]
+    pub buddy_spike_radar: bool,
     /// Front line drawing configuration
     #[serde(default)]
     pub frontline: Option<FrontLineConfig>,

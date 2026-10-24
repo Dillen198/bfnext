@@ -229,6 +229,29 @@ pub struct GciFlight {
     /// most calls to it are lost and the rest come through broken.
     #[serde(default)]
     pub comms_jammed: bool,
+    /// The flight's radar is locked on a friendly aircraft (or it just fired
+    /// an air-to-air missile at one) -- "buddy spike". `None` for older
+    /// engines and when the flight's lock is clean.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub buddy_spike: Option<GciBuddySpike>,
+}
+
+/// A friendly aircraft this flight has locked up (or shot at). Position is
+/// from the flight, true bearing, like [`GciContact`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GciBuddySpike {
+    pub brg: u16,
+    pub rng_m: u32,
+    pub alt_m: i32,
+    /// DCS type name of the friendly ("MQ-9 Reaper"), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_name: Option<String>,
+    /// The friendly's pilot name when it is a player.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player_name: Option<String>,
+    /// The flight has fired a missile at it, not just locked it.
+    #[serde(default)]
+    pub shot: bool,
 }
 
 /// A friendly support asset (tanker / AWACS) on the coalition picture.
@@ -323,4 +346,104 @@ pub struct GciPicture {
 
 pub(crate) fn default_true() -> bool {
     true
+}
+
+/// DCS aircraft type name -> NATO reporting name (Soviet/Russian/Chinese) or
+/// common nickname (Western). Loose substring match on the DCS type string.
+/// Shared by the GCI voice (bfdb) and the EWR text report (bflib) so both
+/// call a contact the same thing.
+pub fn reporting_name(raw: &str) -> Option<&'static str> {
+    let t = raw.to_ascii_lowercase();
+    let m = |p: &str| t.contains(p);
+    Some(match () {
+        _ if m("mig-29") => "Fulcrum",
+        _ if m("mig-31") => "Foxhound",
+        _ if m("mig-25") => "Foxbat",
+        _ if m("mig-23") => "Flogger",
+        _ if m("mig-21") => "Fishbed",
+        _ if m("mig-19") => "Farmer",
+        _ if m("mig-15") => "Fagot",
+        _ if m("su-27") || m("j-11") => "Flanker",
+        _ if m("su-33") || m("su-30") || m("su-35") => "Flanker",
+        _ if m("su-34") => "Fullback",
+        _ if m("su-24") => "Fencer",
+        _ if m("su-25") => "Frogfoot",
+        _ if m("su-17") => "Fitter",
+        _ if m("tu-22") => "Backfire",
+        _ if m("tu-95") || m("tu-142") => "Bear",
+        _ if m("tu-160") => "Blackjack",
+        _ if m("il-76") => "Candid",
+        _ if m("il-78") => "Midas",
+        _ if m("a-50") => "Mainstay",
+        _ if m("an-26") => "Curl",
+        _ if m("an-30") => "Clank",
+        _ if m("yak-40") => "Codling",
+        _ if m("f-16") => "Viper",
+        _ if m("fa-18") || m("f/a-18") || m("f-18") => "Hornet",
+        _ if m("f-15e") => "Strike Eagle",
+        _ if m("f-15") => "Eagle",
+        _ if m("f-14") => "Tomcat",
+        _ if m("f-5") => "Tiger",
+        _ if m("f-4") => "Phantom",
+        _ if m("a-10") => "Warthog",
+        _ if m("av8b") || m("av-8b") => "Harrier",
+        _ if m("m-2000") => "Mirage",
+        _ if m("mirage-f1") => "Mirage F1",
+        _ if m("jf-17") => "Thunder",
+        _ if m("jas39") || m("gripen") => "Gripen",
+        _ if m("ka-50") || m("ka-52") => "Hokum",
+        _ if m("mi-24") => "Hind",
+        _ if m("mi-28") => "Havoc",
+        _ if m("mi-8") || m("mi-17") => "Hip",
+        _ if m("mi-26") => "Halo",
+        _ if m("ah-64") => "Apache",
+        _ if m("ah-1") => "Cobra",
+        _ if m("uh-1") => "Huey",
+        _ if m("sa342") => "Gazelle",
+        _ if m("oh-58") || m("oh58") => "Kiowa",
+        _ if m("ch-47") => "Chinook",
+        _ if m("uh-60") => "Blackhawk",
+        _ => return None,
+    })
+}
+
+/// Turn a raw DCS type into something speakable when we have no reporting
+/// name: "F-16C_50" -> "F 16", "MiG-29S" -> "MiG 29", "Su-30MKI" -> "Su 30".
+pub fn tidy_type(raw: &str) -> String {
+    let mut out = String::new();
+    for ch in raw.chars() {
+        match ch {
+            '_' => break, // drop the "_50" / "_hornet" module suffix
+            '-' | ' ' => out.push(' '),
+            c if c.is_ascii_alphabetic() => out.push(c),
+            c if c.is_ascii_digit() => out.push(c),
+            _ => {}
+        }
+    }
+    // keep "<letters> <first number block>" -- drop trailing variant letters
+    let mut parts = out.split_whitespace();
+    let head = parts.next().unwrap_or("").to_string();
+    let num: String = parts
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if head.is_empty() {
+        String::new()
+    } else if num.is_empty() {
+        head
+    } else {
+        format!("{head} {num}")
+    }
+}
+
+/// The written form of a contact's type for text reports: the reporting name
+/// GCI speaks ("Fulcrum", "Viper") when there is one, otherwise the DCS type
+/// without its module suffix ("MQ-9 Reaper", "C-130").
+pub fn type_label(raw: &str) -> String {
+    match reporting_name(raw) {
+        Some(n) => n.to_string(),
+        None => raw.split('_').next().unwrap_or(raw).trim().to_string(),
+    }
 }

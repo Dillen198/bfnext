@@ -2552,6 +2552,7 @@ impl Default for Cfg {
             extra_fixed_wing_objectives: FxHashSet::default(),
             ewr_mode: EwrMode::Original,
             ewr_delay: 60,
+            buddy_spike_radar: true,
             frontline: None,
             factory: Some(FactoryCfg {
                 production_rate: 100,

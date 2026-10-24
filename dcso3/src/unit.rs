@@ -205,6 +205,17 @@ impl<'lua> Unit<'lua> {
         Ok(self.t.call_method("getCategory", ())?)
     }
 
+    /// `Unit.getRadar()`: whether at least one of the unit's radars is on,
+    /// and the object it is tracking -- a lock -- if any.
+    pub fn get_radar(&self) -> Result<(bool, Option<Object<'lua>>)> {
+        let (on, target): (Option<bool>, Value) = self.t.call_method("getRadar", ())?;
+        let target = match target {
+            Value::Nil => None,
+            v => Some(Object::from_lua(v, self.lua)?),
+        };
+        Ok((on.unwrap_or(false), target))
+    }
+
     pub fn get_ammo(&self) -> Result<Sequence<'lua, Ammo<'lua>>> {
         Ok(record_perf!(get_ammo, self.t.call_method("getAmmo", ())?))
     }

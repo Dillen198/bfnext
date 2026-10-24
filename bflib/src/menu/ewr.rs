@@ -49,7 +49,7 @@ pub(crate) fn build_braa_report(ctx: &mut Context, ucid: &Ucid, friendly: bool) 
         if let Some((_, Some(inst))) = &player.current_slot {
             let contacts = ctx
                 .ewr
-                .where_chicken(Utc::now(), friendly, true, ucid, player, inst, mode, delay);
+                .where_chicken(&ctx.db, Utc::now(), friendly, true, ucid, player, inst, mode, delay);
             let _ = write!(report, "{}\n", ewr::HEADER);
             for braa in contacts {
                 let _ = write!(report, "{braa}\n");

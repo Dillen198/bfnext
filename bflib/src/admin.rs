@@ -2425,9 +2425,8 @@ pub(crate) fn query_gci(
 ) -> bfprotocols::gci::GciControlPicture {
     use bfprotocols::cfg::SensorType;
     use bfprotocols::gci::{
-        GciAspect, GciContact, GciControlPicture, GciFlight, GciRef, GciSamThreat, GciSupport,
-        GciTask,
-        GciUnits,
+        GciAspect, GciBuddySpike, GciContact, GciControlPicture, GciFlight, GciRef, GciSamThreat,
+        GciSupport, GciTask, GciUnits,
     };
     use crate::ewr::{Aspect, ContactClass, EwrUnits};
 
@@ -2578,6 +2577,20 @@ pub(crate) fn query_gci(
         splashes.sort_by_key(|t| t.rng_m);
         splashes.truncate(2);
 
+        // Buddy spike: this flight has a friendly locked (or shot at).
+        let buddy_spike = ctx.ewr.buddy_lock(ucid, now).map(|b| {
+            let dn = b.pos.x - fp.x;
+            let de = b.pos.z - fp.y;
+            GciBuddySpike {
+                brg: ((de.atan2(dn).to_degrees() + 360.0) % 360.0) as u16,
+                rng_m: (dn * dn + de * de).sqrt() as u32,
+                alt_m: b.pos.y as i32,
+                type_name: b.typ.as_ref().map(|t| t.to_string()),
+                player_name: b.player_name.as_ref().map(|n| n.to_string()),
+                shot: b.shot,
+            }
+        });
+
         let v = inst.velocity;
         let heading = if v.x.abs() > f64::EPSILON || v.z.abs() > f64::EPSILON {
             ((v.z.atan2(v.x).to_degrees() + 360.0) % 360.0) as u16
@@ -2611,6 +2624,7 @@ pub(crate) fn query_gci(
                 side,
                 dcso3::Vector2::new(inst.position.p.x, inst.position.p.z),
             ),
+            buddy_spike,
         });
     }
 

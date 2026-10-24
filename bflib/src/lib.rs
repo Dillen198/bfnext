@@ -1038,6 +1038,13 @@ fn handle_birth(lua: MizLua, ctx: &mut Context, initiator: &dcso3::object::Objec
             Ok(BirthRes::None) => (),
             Ok(BirthRes::OccupiedSlot(slot)) => {
                 ctx.menu_init_queue.insert(slot.clone());
+                // EWR text units follow the airframe (metric for the
+                // Russian types) unless the player picked their own.
+                if let (Some(ucid), Ok(typ)) =
+                    (ctx.db.ephemeral.player_in_slot(&slot).copied(), unit.get_type_name())
+                {
+                    ctx.ewr.slot_airframe(&ucid, typ.as_str());
+                }
                 if let Err(e) = atis::schedule_atis(lua, slot.clone()) {
                     error!("could not schedule atis: {:?}", e);
                 }
@@ -1297,6 +1304,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             if let Err(e) = ctx.shots_out.shot(&ctx.db, start_ts, &e) {
                 error!("error processing shot event {:?}", e)
             }
+            buddy_shot(ctx, &e, start_ts);
             banned_weapon_fired(lua, ctx, &e);
             if let Some(ucid) = e
                 .initiator
@@ -2284,6 +2292,7 @@ fn generate_ewr_reports(ctx: &mut Context, now: DateTime<Utc>) -> Result<()> {
             None => continue,
         };
         let braa_to_chickens = ctx.ewr.where_chicken(
+            &ctx.db,
             now,
             false,
             false,
@@ -2310,6 +2319,108 @@ fn generate_ewr_reports(ctx: &mut Context, now: DateTime<Utc>) -> Result<()> {
         ctx.db.ephemeral.msgs().panel_to_unit(10, false, uid, msg)
     }
     Ok(())
+}
+
+/// A friendly aircraft one of our players has locked or shot at, as seen
+/// from the DCS side: (unit name, position, type, pilot name if a player).
+fn friendly_air_target(
+    target: &dcso3::unit::Unit,
+    side: Side,
+) -> Option<(CompactString, Vector3, Option<CompactString>, Option<CompactString>)> {
+    use dcso3::unit::UnitCategory;
+    match target.get_category().ok()? {
+        UnitCategory::Airplane | UnitCategory::Helicopter => (),
+        _ => return None,
+    }
+    if target.get_coalition().ok()? != side {
+        return None;
+    }
+    let key = CompactString::from(target.get_name().ok()?.as_str());
+    let pos = target.get_point().ok()?.0;
+    let typ = target.get_type_name().ok().map(|t| CompactString::from(t.as_str()));
+    let pilot = target
+        .get_player_name()
+        .ok()
+        .flatten()
+        .map(|n| CompactString::from(n.as_str()));
+    Some((key, pos, typ, pilot))
+}
+
+/// Text "buddy spike" warning to a player who has a friendly locked or
+/// fired on, when `note_buddy_lock` says it is due. The GCI voice picks the
+/// same lock up from `admin::query_gci`.
+fn warn_buddy_lock(
+    ctx: &mut Context,
+    ucid: &Ucid,
+    target: (CompactString, Vector3, Option<CompactString>, Option<CompactString>),
+    shot: bool,
+    now: DateTime<Utc>,
+) {
+    let (key, pos, typ, pilot) = target;
+    if !ctx.ewr.note_buddy_lock(ucid, key, pos, typ, pilot, shot, now) {
+        return;
+    }
+    let Some(player) = ctx.db.player(ucid) else { return };
+    let Some((slot, Some(inst))) = player.current_slot.as_ref() else { return };
+    let Some(uid) = slot.as_unit_id() else { return };
+    let own = Vector2::new(inst.position.p.x, inst.position.p.z);
+    if let Some(msg) = ctx.ewr.buddy_warning(ucid, own, now) {
+        ctx.db.ephemeral.msgs().panel_to_unit(10, false, uid, msg)
+    }
+}
+
+/// Buddy spike from the radar: poll every airborne player's radar
+/// (`Unit.getRadar`) for a lock on a friendly aircraft. Every 2s at most.
+fn check_buddy_spikes(ctx: &mut Context, lua: MizLua, now: DateTime<Utc>) {
+    if !ctx.db.ephemeral.cfg.buddy_spike_radar || !ctx.ewr.buddy_poll_due(now) {
+        return;
+    }
+    let mut locks: SmallVec<
+        [(Ucid, (CompactString, Vector3, Option<CompactString>, Option<CompactString>)); 4],
+    > = smallvec![];
+    for (ucid, player, inst) in ctx.db.instanced_players() {
+        if !inst.in_air {
+            continue;
+        }
+        let Some((slot, _)) = player.current_slot.as_ref() else { continue };
+        let Ok(unit) = ctx.db.ephemeral.slot_instance_unit(lua, slot) else { continue };
+        let target = match unit.get_radar() {
+            Ok((_, Some(target))) => target,
+            Ok((_, None)) => continue,
+            Err(e) => {
+                debug!("buddy spike: getRadar failed for {ucid}: {e:?}");
+                continue;
+            }
+        };
+        let Ok(target) = target.as_unit() else { continue };
+        if let Some(t) = friendly_air_target(&target, player.side) {
+            locks.push((*ucid, t));
+        }
+    }
+    for (ucid, t) in locks {
+        warn_buddy_lock(ctx, &ucid, t, false, now);
+    }
+}
+
+/// Buddy spike from a launch: a player fired an air-to-air missile guided on
+/// a friendly aircraft.
+fn buddy_shot(ctx: &mut Context, e: &dcso3::event::Shot, now: DateTime<Utc>) {
+    use dcso3::weapon::MissileCategory;
+    let Some(oid) = e.initiator.as_ref().and_then(|u| u.object_id().ok()) else { return };
+    let Some(ucid) = ctx.db.player_in_unit(false, &oid) else { return };
+    let Some(side) = ctx.db.player(&ucid).map(|p| p.side) else { return };
+    // Air-to-air missiles only. They are guided on a unit or on nothing,
+    // never on a map point -- `get_target()` on a point-targeted weapon
+    // takes the server down (see `ShotDb::shot`), so nothing else gets near it.
+    match e.weapon.get_weapon_desc() {
+        Ok(d) if d.missile_category == Some(MissileCategory::Aam) => (),
+        _ => return,
+    }
+    let Ok(Some(target)) = e.weapon.get_target() else { return };
+    let Ok(target) = target.as_unit() else { return };
+    if let Some(t) = friendly_air_target(&target, side) {
+        warn_buddy_lock(ctx, &ucid, t, true, now);
+    }
 }
 
 fn check_auto_shutdown(
@@ -4815,6 +4926,7 @@ fn run_slow_timed_events(
         }
         record_perf(&mut perf.ewr_reports, ts);
     });
+    step(lua, ctx, "buddy spikes", |ctx| check_buddy_spikes(ctx, lua, Utc::now()));
     step(lua, ctx, "unit culling", |ctx| {
         let ts = Utc::now();
         match ctx.db.cull_or_respawn_objectives(lua, &mut ctx.landcache, ts) {
