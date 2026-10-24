@@ -434,6 +434,8 @@ pub struct Ephemeral {
     /// `Db::check_threatened_garrisons` makes sure their garrison is really
     /// in DCS (see there).
     pub(super) threat_spawn_check: FxHashMap<ObjectiveId, DateTime<Utc>>,
+    /// When the contested bases' F10 icons last flashed.
+    last_markup_flash: Option<DateTime<Utc>>,
     /// Station orders (AWACS/tanker/drone/fighter waypoints) given to a
     /// flight still on the ground: the new orbit point and who ordered it.
     /// Applied once the flight is airborne (`Db::flush_pending_air_stations`)
@@ -664,6 +666,7 @@ impl Default for Ephemeral {
             ramp_watch: FxHashMap::default(),
             ramp_blocked: FxHashMap::default(),
             threat_spawn_check: FxHashMap::default(),
+            last_markup_flash: None,
             pending_air_station: FxHashMap::default(),
             contributions: Default::default(),
             ramp_rejected: FxHashSet::default(),
@@ -871,6 +874,24 @@ impl Ephemeral {
         self.ramp_blocked
             .get(oid)
             .map_or(false, |t| Utc::now() - *t < chrono::Duration::seconds(RAMP_BLOCK_SECS))
+    }
+
+    /// Once a second: flash the F10 icon of every base under attack
+    /// (threatened) or being captured, and stop when it is clear.
+    pub(super) fn flash_objective_markup(&mut self, persisted: &Persisted, now: DateTime<Utc>) {
+        if self
+            .last_markup_flash
+            .is_some_and(|t| now - t < chrono::Duration::milliseconds(1000))
+        {
+            return;
+        }
+        self.last_markup_flash = Some(now);
+        let capturing = &self.capture_progress;
+        let msgs = &mut self.msgs;
+        for (oid, mk) in self.objective_markup.iter_mut() {
+            let Some(obj) = persisted.objectives.get(oid) else { continue };
+            mk.set_flash(obj, obj.threatened || capturing.contains_key(oid), msgs);
+        }
     }
 
     pub fn get_airbase_by_oid(&self, oid: &ObjectiveId) -> Option<&DcsOid<ClassAirbase>> {
