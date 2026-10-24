@@ -40,6 +40,20 @@ use serde_derive::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 use std::cmp::{max, min};
 
+/// How a player came by a share of a kill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Via {
+    /// Their own aircraft.
+    Flying,
+    /// A ground unit they were driving from a Combined Arms slot
+    /// (`shots::shooter`). Theirs in full like a pilot's, but there is no
+    /// sortie: nowhere to land and bank provisional points, nothing to end a
+    /// streak, no debrief.
+    Driving,
+    /// AI they deployed, fighting on its own.
+    OwnedAi,
+}
+
 struct VictimInfo {
     ucid: Ucid,
     name: String,
@@ -1706,6 +1720,8 @@ impl Db {
         oid: ObjectiveId,
         ucid: Ucid,
     ) -> Result<()> {
+        // In an aircraft now, so no longer driving anything.
+        self.ephemeral.ca_drivers.retain(|_, (driver, _)| *driver != ucid);
         if let Some(old_ucid) = self.ephemeral.players_by_slot.get(&slot) {
             let old_ucid = *old_ucid;
             if old_ucid != ucid {
@@ -1886,7 +1902,16 @@ impl Db {
     /// of the campaign's ground vehicles. The enemy bases it drives up to wake
     /// (`cull_or_respawn_objectives`) only if its position is being read, and
     /// a vehicle that doesn't start out tracked (not `Driveable`) never was.
-    pub fn player_entered_unit(&mut self, objid: &DcsOid<ClassUnit>) {
+    ///
+    /// `driver` is who is driving it and from which commander slot. What the
+    /// vehicle kills is credited to them (`shots::shooter`): before, a kill
+    /// by a driven garrison vehicle paid nobody, and one by a driven deployed
+    /// unit paid whoever deployed it.
+    pub fn player_entered_unit(
+        &mut self,
+        objid: &DcsOid<ClassUnit>,
+        driver: Option<(Ucid, SlotId)>,
+    ) {
         let Some(uid) = self.ephemeral.uid_by_object_id.get(objid).copied() else {
             return;
         };
@@ -1896,6 +1921,19 @@ impl Db {
         if ground {
             self.ephemeral.units_able_to_move.insert(uid);
             self.ephemeral.units_potentially_close_to_enemies.insert(uid);
+            // A pilot's own aircraft fires this event too; only a commander
+            // slot (no unit of its own) is driving one of ours.
+            if let Some((ucid, slot)) = driver
+                && slot.as_unit_id().is_none()
+                && !slot.is_spectator()
+                && !self.ephemeral.slot_by_object_id.contains_key(objid)
+            {
+                info!("{ucid} from {slot:?} is driving {uid:?}");
+                // One vehicle at a time: a missed leave event must not leave
+                // them credited for the last one too.
+                self.ephemeral.ca_drivers.retain(|_, (driver, _)| *driver != ucid);
+                self.ephemeral.ca_drivers.insert(objid.clone(), (ucid, slot));
+            }
         }
     }
 
@@ -1906,6 +1944,7 @@ impl Db {
         objid: &DcsOid<ClassUnit>,
     ) -> Result<Vec<DcsOid<ClassUnit>>> {
         let mut dead = vec![];
+        self.ephemeral.ca_drivers.remove(objid);
         if let Some(uid) = self.ephemeral.uid_by_object_id.get(objid) {
             let uid = *uid;
             match self.update_unit_positions(lua, now, &[uid]) {
@@ -2030,6 +2069,7 @@ impl Db {
             }
         }
         self.ephemeral.stat(Stat::Disconnect { id: *ucid });
+        self.ephemeral.ca_drivers.retain(|_, (driver, _)| driver != ucid);
         if let Some(slot) = self.persisted.players.get(ucid).and_then(|p| p.current_slot.as_ref().map(|(s, _)| s.clone())) {
             self.return_troops_on_deslot(&slot);
         }
@@ -2185,18 +2225,22 @@ impl Db {
                     }
                 })
         };
-        // Who gets credit, keyed by (player, credited through their deployed
-        // AI), weighted by hits; the killing blow counts extra. It used to be
-        // `ceil(total / shooters)` each, which minted points on every shared
-        // kill and paid a single gun hit the same as the missile that killed.
+        // Who gets credit, keyed by (player, how), weighted by hits; the
+        // killing blow counts extra. It used to be `ceil(total / shooters)`
+        // each, which minted points on every shared kill and paid a single
+        // gun hit the same as the missile that killed.
         let credit_key = |shooter: &Who| match shooter {
-            Who::Player { ucid, .. } => Some((*ucid, false)),
-            Who::AI { ucid: Some(ucid), .. } => Some((*ucid, true)),
+            // A commander slot has no unit of its own: they were driving.
+            Who::Player { ucid, slot, .. } if slot.as_unit_id().is_none() => {
+                Some((*ucid, Via::Driving))
+            }
+            Who::Player { ucid, .. } => Some((*ucid, Via::Flying)),
+            Who::AI { ucid: Some(ucid), .. } => Some((*ucid, Via::OwnedAi)),
             Who::AI { ucid: None, .. } => None,
         };
         fn add_credit(
-            credit: &mut SmallVec<[((Ucid, bool), f64); 8]>,
-            k: (Ucid, bool),
+            credit: &mut SmallVec<[((Ucid, Via), f64); 8]>,
+            k: (Ucid, Via),
             w: f64,
         ) {
             match credit.iter_mut().find(|(c, _)| *c == k) {
@@ -2204,8 +2248,8 @@ impl Db {
                 None => credit.push((k, w)),
             }
         }
-        let mut credit: SmallVec<[((Ucid, bool), f64); 8]> = smallvec![];
-        let mut last_hit: Option<((Ucid, bool), DateTime<Utc>)> = None;
+        let mut credit: SmallVec<[((Ucid, Via), f64); 8]> = smallvec![];
+        let mut last_hit: Option<((Ucid, Via), DateTime<Utc>)> = None;
         for shot in valid_shots().filter(|s| s.hit) {
             let Some(k) = credit_key(&shot.shooter) else { continue };
             add_credit(&mut credit, k, 1.);
@@ -2305,7 +2349,9 @@ impl Db {
                     .and_then(|(_, i)| i.as_ref())
                     .map(|i| Vector2::new(i.position.p.x, i.position.p.z)),
             };
-            for (((ucid, via_ai), _), share) in credit.iter().copied().zip(shares) {
+            for (((ucid, via), _), share) in credit.iter().copied().zip(shares) {
+                let via_ai = via == Via::OwnedAi;
+                let flying = via == Via::Flying;
                 let Some((side, streak)) = self
                     .persisted
                     .players
@@ -2320,13 +2366,14 @@ impl Db {
                     // A kill by the player's deployed SAMs/troops pays a
                     // share, less while they aren't flying -- it used to pay
                     // in full, offline included, which out-earned actually
-                    // hauling the stuff. Streaks are the pilot's own.
+                    // hauling the stuff. Streaks are the pilot's own: a
+                    // driver has no sortie to end one.
                     let ai_frac = if via_ai {
                         econ.owned_ai_fraction(self.is_slotted(&ucid))
                     } else {
                         1.
                     };
-                    let streak_mult = if via_ai {
+                    let streak_mult = if !flying {
                         1.0
                     } else {
                         cfg.kill_streak_bonuses
@@ -2345,7 +2392,8 @@ impl Db {
                     let raw = (share as f64 * ai_frac * streak_mult * task_mult).round() as i32;
                     let earned = self.scale_earning(&ucid, raw);
                     let pts = earned.amount;
-                    let provisional = !via_ai && cfg.provisional;
+                    // Provisional points bank on landing; a driver never lands.
+                    let provisional = flying && cfg.provisional;
                     let player = match self.persisted.players.get_mut_cow(&ucid) {
                         Some(p) => p,
                         None => continue,
@@ -2359,14 +2407,14 @@ impl Db {
                     };
                     // Only a pilot's own kills go on their debrief -- not
                     // kills their deployed AI made while they flew.
-                    if !via_ai
+                    if flying
                         && let Some(f) = player.flight.as_mut()
                     {
                         let typ = victim_typ.as_ref().map(|t| t.as_str()).unwrap_or("unknown");
                         f.tally.add_kill(typ, pts);
                     }
                     player.total_kills = player.total_kills.saturating_add(1);
-                    if !via_ai {
+                    if flying {
                         player.kill_streak = player.kill_streak.saturating_add(1);
                         if player.kill_streak == 5 {
                             self.ephemeral.pending_achievements.push(format!("{} is now an Ace! (5 kill streak)", player.name).into());
