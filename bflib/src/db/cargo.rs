@@ -2452,7 +2452,7 @@ impl Db {
                     let dy = obj.pos().y - pos.y;
                     Some((*oid, dx * dx + dy * dy))
                 })
-                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(oid, d2)| (oid, d2.sqrt()));
             // The parties drive out of that objective to the pilot -- by road
             // where there is one, the last stretch off road -- instead of
@@ -3045,7 +3045,7 @@ impl Db {
                         let dy = pilot_pos.y - b.2.y;
                         dx * dx + dy * dy
                     };
-                    da.partial_cmp(&db).unwrap()
+                    da.total_cmp(&db)
                 });
 
             if let Some((helo_ucid, helo_slot, helo_pos, _)) = closest {

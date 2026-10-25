@@ -130,6 +130,9 @@ fn unload_crate(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 pub(crate) fn list_cargo_for_slot(ctx: &mut Context, slot: &SlotId) -> Result<()> {
+    let uid = slot
+        .as_unit_id()
+        .ok_or_else(|| anyhow!("{slot:?} is not an aircraft slot"))?;
     let cargo = Cargo::default();
     let cargo = ctx.db.list_cargo(&slot).unwrap_or(&cargo);
     let sifo = ctx
@@ -192,7 +195,7 @@ pub(crate) fn list_cargo_for_slot(ctx: &mut Context, slot: &SlotId) -> Result<()
     ctx.db
         .ephemeral
         .msgs()
-        .panel_to_unit(15, false, slot.as_unit_id().unwrap(), msg);
+        .panel_to_unit(15, false, uid, msg);
     Ok(())
 }
 
@@ -510,7 +513,7 @@ fn request_smoke(lua: MizLua, gid: GroupId) -> Result<()> {
             let dy = pos.y - st.point.y;
             Some((*pgid, name, pos, dx * dx + dy * dy))
         })
-        .min_by(|a, b| a.3.partial_cmp(&b.3).unwrap());
+        .min_by(|a, b| a.3.total_cmp(&b.3));
     match nearest {
         None => {
             ctx.db

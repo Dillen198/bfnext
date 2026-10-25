@@ -1116,9 +1116,10 @@ impl Db {
                 String::from(format_compact!("{}-{}", group_name, uid))
             };
             let pos = match gpos.by_type.get_mut(&typ) {
-                None => gpos.positions.pop_front().unwrap(),
-                Some(positions) => positions.pop_front().unwrap(),
-            };
+                None => gpos.positions.pop_front(),
+                Some(positions) => positions.pop_front(),
+            }
+            .ok_or_else(|| anyhow!("{group_name}: no spawn position left for unit {typ}"))?;
             let position = {
                 let mut p = Position3::default();
                 p.p.x = pos.position.x;
