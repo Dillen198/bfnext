@@ -13,7 +13,50 @@
 //! warning, and that installer refuses to install (see lib.rs, `NET_DLL`)
 //! rather than ship a plugin that cannot reach the server. Rebuilding after the
 //! DLL exists picks it up.
+//!
+//! The DLL found is checked against this build (`check_dll`): it carries the
+//! Hooks script version and git commit it was built from (build_info.rs).
+//! One built for another script version, from another commit or before the
+//! stamp existed gives a warning -- an error with BFCOCKPIT_REQUIRE_MATCH=1,
+//! which a release build should set -- so a stale target/release DLL can't
+//! ride along unnoticed.
 use std::{env, fs, path::{Path, PathBuf}};
+
+include!("../net/build_info.rs");
+
+/// None when `dll` was built from the same script version and commit as this
+/// installer, else what differs.
+fn dll_mismatch(dll: &[u8], script: &str, git: &str) -> Option<String> {
+    let Some((version, dll_script, dll_git)) = read_stamp(dll) else {
+        return Some("it carries no build stamp (built before bfcockpit/net/build.rs existed)".into());
+    };
+    let mut why = Vec::new();
+    if dll_script != script {
+        why.push(format!("it was built for script {dll_script}, this installer ships {script}"));
+    }
+    // "-dirty" is part of the string, so a clean and a dirty build differ
+    if dll_git != git || git == "unknown" {
+        why.push(format!("it was built from {dll_git}, this installer from {git}"));
+    }
+    (!why.is_empty()).then(|| format!("bfcockpit_net {version}: {}", why.join("; ")))
+}
+
+fn check_dll(path: &Path, bytes: &[u8]) {
+    let here = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let lua = here.join("..").join("Scripts").join("Hooks").join("bfcockpit.lua");
+    let script = fs::read_to_string(&lua).ok().and_then(|s| script_version_of(&s)).unwrap_or_else(|| "unknown".into());
+    let git = git_rev_of(&here);
+    println!("cargo:rerun-if-env-changed=BFCOCKPIT_REQUIRE_MATCH");
+    let Some(why) = dll_mismatch(bytes, &script, &git) else { return };
+    let msg = format!(
+        "{} does not match this build -- {why}. Rebuild it first: cargo build --release -p bfcockpit-net",
+        path.display()
+    );
+    if env::var("BFCOCKPIT_REQUIRE_MATCH").map(|v| v == "1").unwrap_or(false) {
+        panic!("{msg}");
+    }
+    println!("cargo:warning={msg}");
+}
 
 /// Every file under `dir`, as (path relative to `root` with '/', absolute path).
 fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) {
@@ -64,7 +107,10 @@ fn main() {
 
     let out = PathBuf::from(env::var("OUT_DIR").unwrap()).join("bfcockpit_net.dll");
     match fs::read(&dll) {
-        Ok(bytes) => fs::write(&out, bytes).expect("writing embedded dll"),
+        Ok(bytes) => {
+            check_dll(&dll, &bytes);
+            fs::write(&out, bytes).expect("writing embedded dll")
+        }
         Err(e) => {
             println!(
                 "cargo:warning=bfcockpit_net.dll not found at {} ({e}); this installer will refuse to install. \

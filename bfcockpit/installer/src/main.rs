@@ -34,7 +34,8 @@ fn main() {
             .and_then(|i| args.get(i + 1))
             .map(PathBuf::from);
         let code = match profile {
-            Some(p) => match installer::auto_update(&p, std::time::Duration::from_secs(24 * 3600)) {
+            // half a day: the plugin starts a new one next session anyway
+            Some(p) => match installer::auto_update(&p, std::time::Duration::from_secs(12 * 3600)) {
                 Ok(_) => 0,
                 Err(_) => 1,
             },

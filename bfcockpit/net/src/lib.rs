@@ -20,6 +20,19 @@
 //! against the release key compiled into this DLL (`RELEASE_PUBKEY`). Its
 //! result comes back through `poll()` like a request.
 //!
+//! Also, for the script to adopt (none of it needs the network):
+//!
+//! ```lua
+//! http.random_key([len])   -- `len` (16..128, default 40) letters and digits
+//!                          -- from the OS CSPRNG (BCryptGenRandom), for the
+//!                          -- `-cockpitkey` handshake instead of math.random
+//! http.version             -- this DLL's crate version ("1.0.0")
+//! http.script_version      -- the BFCOCKPIT_VERSION of the Hooks script it
+//!                          -- was built with, e.g. "3.3.0": compare it with
+//!                          -- the script's own to spot a DLL from another build
+//! http.git                 -- the commit it was built from ("unknown" outside git)
+//! ```
+//!
 //! Requests run on a few background threads; results queue up until the next
 //! `poll()`. Nothing here touches Lua outside those two calls, so no Lua state
 //! is ever used from another thread. Neither call ever raises a Lua error (see
@@ -38,8 +51,22 @@ use std::{
 
 /// Enough that a slow menu request cannot hold up a status poll behind it.
 const WORKERS: usize = 3;
-/// The largest body handed back to Lua. A whole F10 menu is tens of KB.
+/// The largest body handed back to Lua. A whole F10 menu is tens of KB; a
+/// bigger body is refused with an error rather than cut short (half a JSON
+/// document only fails later, in the script's decoder, with no hint why).
 const MAX_BODY: u64 = 4 * 1024 * 1024;
+
+/// What this build is, in one string: the installer's build script reads it
+/// back out of the DLL bytes (build_info.rs), and Lua gets it as `build`.
+const BUILD_STAMP: &str = concat!(
+    "BFCOCKPIT_NET_BUILD;version=",
+    env!("CARGO_PKG_VERSION"),
+    ";script=",
+    env!("BFCOCKPIT_SCRIPT_VERSION"),
+    ";git=",
+    env!("BFCOCKPIT_NET_GIT"),
+    ";END"
+);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Where every plugin version's installer is published (a GitHub release per
@@ -125,12 +152,16 @@ fn pool() -> &'static Pool {
 }
 
 fn read_body(resp: ureq::Response) -> Result<String, String> {
-    let mut body = String::new();
-    resp.into_reader()
-        .take(MAX_BODY)
-        .read_to_string(&mut body)
-        .map_err(|e| format!("reading response: {e}"))?;
-    Ok(body)
+    read_limited(resp.into_reader(), MAX_BODY)
+}
+
+fn read_limited(r: impl Read, max: u64) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    r.take(max + 1).read_to_end(&mut bytes).map_err(|e| format!("reading response: {e}"))?;
+    if bytes.len() as u64 > max {
+        return Err(format!("response body is larger than {} MB -- not passed on", max / (1024 * 1024)));
+    }
+    String::from_utf8(bytes).map_err(|_| "response body is not UTF-8 text".to_string())
 }
 
 fn run(agent: &ureq::Agent, job: Job) -> Done {
@@ -376,6 +407,70 @@ fn update<'lua>(
     })
 }
 
+/// Fill `buf` from the OS CSPRNG.
+#[cfg(windows)]
+fn os_random(buf: &mut [u8]) -> Result<(), String> {
+    #[link(name = "bcrypt")]
+    extern "system" {
+        fn BCryptGenRandom(alg: *mut core::ffi::c_void, buf: *mut u8, len: u32, flags: u32) -> i32;
+    }
+    const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
+    // SAFETY: a null algorithm handle is what SYSTEM_PREFERRED_RNG asks for;
+    // buf is valid for len bytes.
+    let status = unsafe {
+        BCryptGenRandom(std::ptr::null_mut(), buf.as_mut_ptr(), buf.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
+    };
+    if status == 0 {
+        Ok(())
+    } else {
+        Err(format!("BCryptGenRandom failed (NTSTATUS {status:#x})"))
+    }
+}
+
+#[cfg(not(windows))]
+fn os_random(buf: &mut [u8]) -> Result<(), String> {
+    use std::fs::File;
+    File::open("/dev/urandom").and_then(|mut f| f.read_exact(buf)).map_err(|e| format!("/dev/urandom: {e}"))
+}
+
+const KEY_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+/// `len` characters from KEY_CHARS, uniformly: bytes of 248 and up are
+/// dropped so `% 62` has no bias.
+fn new_key(len: usize) -> Result<String, String> {
+    let limit = (256 / KEY_CHARS.len() * KEY_CHARS.len()) as u8; // 248
+    let mut out = String::with_capacity(len);
+    let mut buf = [0u8; 64];
+    while out.len() < len {
+        os_random(&mut buf)?;
+        for &b in buf.iter().filter(|&&b| b < limit) {
+            if out.len() == len {
+                break;
+            }
+            out.push(KEY_CHARS[b as usize % KEY_CHARS.len()] as char);
+        }
+    }
+    Ok(out)
+}
+
+/// `random_key([len]) -> key | nil, err`
+///
+/// A key for the `-cockpitkey` handshake from the OS's CSPRNG, in the form
+/// bflib accepts (16..128 ASCII letters and digits); `len` defaults to 40, as
+/// the script's own key does. Never raises (see `request`).
+fn random_key<'lua>(_: &'lua Lua, len: LuaValue<'lua>) -> LuaResult<(Option<String>, Option<String>)> {
+    let len = match len {
+        LuaValue::Nil => Ok(40),
+        LuaValue::Integer(n) if (16..=128).contains(&n) => Ok(n as usize),
+        LuaValue::Number(n) if n.fract() == 0. && (16. ..=128.).contains(&n) => Ok(n as usize),
+        _ => Err("len must be a whole number from 16 to 128".to_string()),
+    };
+    Ok(match len.and_then(new_key) {
+        Ok(k) => (Some(k), None),
+        Err(e) => (None, Some(e)),
+    })
+}
+
 /// `poll() -> { {id=, status=, body=, error=}, ... }`, oldest first. Never
 /// blocks; an empty table when nothing has finished.
 fn poll(lua: &Lua, _: ()) -> LuaResult<LuaTable<'_>> {
@@ -404,7 +499,11 @@ fn bfcockpit_net(lua: &Lua) -> LuaResult<LuaTable<'_>> {
     m.set("request", lua.create_function(request)?)?;
     m.set("poll", lua.create_function(poll)?)?;
     m.set("update", lua.create_function(update)?)?;
+    m.set("random_key", lua.create_function(random_key)?)?;
     m.set("version", env!("CARGO_PKG_VERSION"))?;
+    m.set("script_version", env!("BFCOCKPIT_SCRIPT_VERSION"))?;
+    m.set("git", env!("BFCOCKPIT_NET_GIT"))?;
+    m.set("build", BUILD_STAMP)?;
     Ok(m)
 }
 
@@ -439,6 +538,42 @@ mod tests {
         assert!(verify(DATA, "", PUB).is_err(), "no signature");
         assert!(verify(DATA, "not a signature", PUB).is_err());
         assert!(verify(DATA, SIG, "not a key").is_err());
+    }
+
+    #[test]
+    fn random_keys_are_valid_and_differ() {
+        let a = new_key(40).unwrap();
+        let b = new_key(40).unwrap();
+        assert_eq!(a.len(), 40);
+        assert!(a.bytes().all(|c| c.is_ascii_alphanumeric()), "{a}");
+        assert_ne!(a, b);
+        assert_eq!(new_key(128).unwrap().len(), 128);
+        // every character turns up over enough draws (no stuck alphabet)
+        let many: std::collections::HashSet<char> = new_key(4000).unwrap().chars().collect();
+        assert_eq!(many.len(), KEY_CHARS.len());
+    }
+
+    #[test]
+    fn oversized_body_is_an_error_not_a_cut() {
+        let big = vec![b'x'; 11];
+        assert_eq!(read_limited(&big[..10], 10).unwrap().len(), 10);
+        let e = read_limited(&big[..], 10).unwrap_err();
+        assert!(e.contains("larger than"), "{e}");
+        assert!(read_limited(&[0xff, 0xfe][..], 10).is_err());
+    }
+
+    mod stamp {
+        include!("../build_info.rs");
+
+        #[test]
+        fn build_stamp_reads_back() {
+            let dll = [b"junk\0".as_slice(), super::super::BUILD_STAMP.as_bytes(), b"\0more"].concat();
+            let (version, script, git) = read_stamp(&dll).expect("stamp");
+            assert_eq!(version, env!("CARGO_PKG_VERSION"));
+            assert_eq!(script, env!("BFCOCKPIT_SCRIPT_VERSION"));
+            assert_eq!(git, env!("BFCOCKPIT_NET_GIT"));
+            assert!(read_stamp(b"no stamp here").is_none());
+        }
     }
 
     #[test]
