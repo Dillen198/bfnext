@@ -1062,7 +1062,7 @@ async fn api_round_summary(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = cached_json(format!("round_summary:{}:{id}", inst.id), || -> Result<String> {
+    let data = cached_json(format!("round_summary:{}:{id}", inst.id), move || -> Result<String> {
         let rid = db::RoundId(id);
         if db.round_instance_of(rid) != inst.id {
             return Ok("null".into());
@@ -1142,11 +1142,14 @@ async fn api_round_summary(
 /// N identical full scans a second into one.
 const PUBLIC_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// How old an answer `cached_json` still hands out while it refreshes it in
+/// the background.
+const PUBLIC_CACHE_MAX_STALE: std::time::Duration = std::time::Duration::from_secs(60);
+
 static ROUTE_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Arc<std::string::String>>> =
     std::sync::LazyLock::new(websec::CacheMap::new);
 
-/// Serve `key` from [`ROUTE_CACHE`], computing it with `f` (a blocking DB
-/// read) at most once per TTL however many requests arrive together.
+
 /// GET /api/rounds/:id/report — the round over time: kills and captures by
 /// side per bucket, territory held, most contested objectives.
 async fn api_round_report(
@@ -1154,7 +1157,7 @@ async fn api_round_report(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = cached_json(format!("round_report:{}:{id}", inst.id), || -> Result<String> {
+    let data = cached_json(format!("round_report:{}:{id}", inst.id), move || -> Result<String> {
         let rid = db::RoundId(id);
         if db.round_instance_of(rid) != inst.id {
             return Ok("null".into());
@@ -1165,17 +1168,21 @@ async fn api_round_report(
     Ok(json_response(data))
 }
 
+/// Serve `key` from [`ROUTE_CACHE`], computing it with `f` (a blocking DB
+/// read) at most once per TTL however many requests arrive together. Past
+/// the TTL the last answer is still served (up to
+/// [`PUBLIC_CACHE_MAX_STALE`]) while `f` re-runs on the blocking pool, so a
+/// request waits on a full scan only when there is no answer at all yet.
 async fn cached_json(
     key: std::string::String,
-    f: impl FnOnce() -> Result<std::string::String>,
+    f: impl FnOnce() -> Result<std::string::String> + Send + 'static,
 ) -> std::result::Result<std::string::String, Error> {
     ROUTE_CACHE
         .entry(&key)
-        .get_or_refresh(PUBLIC_CACHE_TTL, || async move {
-            task::block_in_place(f).map(Arc::new).map_err(Error)
-        })
+        .get_swr(PUBLIC_CACHE_TTL, PUBLIC_CACHE_MAX_STALE, move || f().map(Arc::new))
         .await
         .map(|a| (*a).clone())
+        .map_err(Error)
 }
 
 async fn api_leaderboard(
@@ -1186,7 +1193,7 @@ async fn api_leaderboard(
     // ?round=<id> ranks one round; without it, all-time totals (so pilot
     // stats are never empty between rounds).
     let round = q.get("round").and_then(|r| r.parse::<u64>().ok());
-    let data = cached_json(format!("leaderboard:{}:{round:?}", inst.id), || -> Result<String> {
+    let data = cached_json(format!("leaderboard:{}:{round:?}", inst.id), move || -> Result<String> {
         let pilots = match round {
             // Another instance's round is not this instance's to rank.
             Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => vec![],
@@ -1240,21 +1247,19 @@ async fn api_leaderboard(
 /// refreshed at most once a minute (a new pilot's name shows up within one).
 async fn api_all_pilots(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
     const PILOTS_TTL: std::time::Duration = std::time::Duration::from_secs(60);
-    static PILOTS: std::sync::LazyLock<websec::Cached<Arc<std::string::String>>> =
-        std::sync::LazyLock::new(websec::Cached::new);
+    static PILOTS: std::sync::LazyLock<Arc<websec::Cached<Arc<std::string::String>>>> =
+        std::sync::LazyLock::new(|| Arc::new(websec::Cached::new()));
     let data = PILOTS
-        .get_or_refresh(PILOTS_TTL, || async move {
-            task::block_in_place(|| -> Result<String> {
-                let pilots = db.all_pilot_names()?;
-                let entries: Vec<_> = pilots.iter().map(|(ucid, name)| {
-                    serde_json::json!({ "ucid": ucid.to_string(), "name": name.to_string() })
-                }).collect();
-                Ok(serde_json::to_string(&entries)?)
-            })
-            .map(Arc::new)
-            .map_err(Error)
+        .clone()
+        .get_swr(PILOTS_TTL, PILOTS_TTL * 10, move || -> Result<Arc<String>> {
+            let pilots = db.all_pilot_names()?;
+            let entries: Vec<_> = pilots.iter().map(|(ucid, name)| {
+                serde_json::json!({ "ucid": ucid.to_string(), "name": name.to_string() })
+            }).collect();
+            Ok(Arc::new(serde_json::to_string(&entries)?))
         })
-        .await?;
+        .await
+        .map_err(Error)?;
     Ok(json_response((*data).clone()))
 }
 
@@ -1991,7 +1996,7 @@ async fn api_kills(
     let limit = limit.unwrap_or(50).clamp(1, 500);
     let key = format!("kills:{}:{round_id:?}:{limit}", inst.id);
     // recent_kills walks the whole kills tree; see ROUTE_CACHE.
-    let data = cached_json(key, || -> Result<String> {
+    let data = cached_json(key, move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match round_id {
             // Another instance's round is not this instance's to show.
@@ -2370,7 +2375,7 @@ async fn api_pilot_card(ucid: String, db: StatsDb) -> std::result::Result<Respon
 
 /// GET /api/progression/top -- the 50 pilots with the most XP.
 async fn api_xp_leaderboard(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
-    let data = cached_json("xp_leaderboard".into(), || -> Result<String> {
+    let data = cached_json("xp_leaderboard".into(), move || -> Result<String> {
         let rows: Vec<_> = db
             .xp_leaderboard(50)?
             .into_iter()
@@ -2901,7 +2906,7 @@ async fn stats_apply_bot_info(
 
 async fn api_points(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
     // pilot_points walks every pilot's every round; see ROUTE_CACHE.
-    let data = cached_json(format!("points:{}", inst.id), || -> Result<String> {
+    let data = cached_json(format!("points:{}", inst.id), move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,

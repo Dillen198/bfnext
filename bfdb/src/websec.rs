@@ -863,11 +863,57 @@ pub(crate) fn valid_hex_color(s: &str) -> bool {
 /// (run inside the DCS frame) or a full table scan per request.
 pub(crate) struct Cached<T> {
     slot: tokio::sync::Mutex<Option<(Instant, T)>>,
+    /// A background refresh (`get_swr`) is under way.
+    refreshing: std::sync::atomic::AtomicBool,
+}
+
+impl<T: Clone + Send + Sync + 'static> Cached<T> {
+    /// Stale-while-revalidate: a value younger than `ttl` is served as is;
+    /// one younger than `max_stale` is served too, while one background
+    /// refresh replaces it. Only with nothing usable does a caller wait --
+    /// and then every concurrent caller waits for the same computation.
+    ///
+    /// `f` is blocking (a sled scan) and runs on the blocking pool, never on
+    /// a request's worker thread: a full scan of a big tree used to hold an
+    /// executor thread for its whole length on every refresh.
+    pub(crate) async fn get_swr<F>(self: Arc<Self>, ttl: Duration, max_stale: Duration, f: F) -> anyhow::Result<T>
+    where
+        F: FnOnce() -> anyhow::Result<T> + Send + 'static,
+    {
+        use std::sync::atomic::Ordering;
+        let mut g = self.slot.lock().await;
+        if let Some((at, v)) = &*g {
+            let age = at.elapsed();
+            if age < ttl {
+                return Ok(v.clone());
+            }
+            if age < max_stale {
+                let v = v.clone();
+                if !self.refreshing.swap(true, Ordering::SeqCst) {
+                    let me = self.clone();
+                    tokio::spawn(async move {
+                        match tokio::task::spawn_blocking(f).await {
+                            Ok(Ok(new)) => *me.slot.lock().await = Some((Instant::now(), new)),
+                            Ok(Err(e)) => log::warn!("background cache refresh failed: {e:#}"),
+                            Err(e) => log::warn!("background cache refresh died: {e}"),
+                        }
+                        me.refreshing.store(false, Ordering::SeqCst);
+                    });
+                }
+                return Ok(v);
+            }
+        }
+        let v = tokio::task::spawn_blocking(f)
+            .await
+            .map_err(|e| anyhow::anyhow!("cache refresh died: {e}"))??;
+        *g = Some((Instant::now(), v.clone()));
+        Ok(v)
+    }
 }
 
 impl<T: Clone> Cached<T> {
     pub(crate) fn new() -> Self {
-        Self { slot: tokio::sync::Mutex::new(None) }
+        Self { slot: tokio::sync::Mutex::new(None), refreshing: std::sync::atomic::AtomicBool::new(false) }
     }
 
     pub(crate) async fn get_or_refresh<F, Fut, E>(&self, ttl: Duration, f: F) -> Result<T, E>
@@ -1067,6 +1113,24 @@ mod tests {
         assert!(v.contains("connect-src 'self' https://server.arcgisonline.com https://s3.amazonaws.com https://tiles.example.org;"));
         assert!(!v.contains("evil"));
         assert!(!v.contains("https:;") && !v.contains(" https: "));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn stale_while_revalidate() {
+        let c: Arc<Cached<u32>> = Arc::new(Cached::new());
+        let ttl = Duration::from_millis(50);
+        let stale = Duration::from_secs(60);
+        assert_eq!(c.clone().get_swr(ttl, stale, || Ok(1)).await.unwrap(), 1);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        // stale: the old value comes back at once, the refresh runs behind it
+        assert_eq!(c.clone().get_swr(ttl, stale, || Ok(2)).await.unwrap(), 1);
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if c.clone().get_swr(ttl, stale, || Ok(3)).await.unwrap() == 2 {
+                return;
+            }
+        }
+        panic!("the background refresh never landed");
     }
 
     #[test]
