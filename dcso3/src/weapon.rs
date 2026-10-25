@@ -153,6 +153,16 @@ simple_enum!(WeaponCategory, u8, [
     Torpedo => 4
 ]);
 
+/// `Weapon.GuidanceType` from `getDesc().guidance`.
+///
+/// UNVERIFIED NUMBERING. The usual public references (e.g. the Hoggit
+/// wiki) number this enum without a millimetre-wave entry, so active radar
+/// is 3 there. This table puts MmwRadar at 3, which shifts the three radar
+/// kinds and everything after them up by one. One of the two is wrong for
+/// current DCS. Do not renumber from memory: dump
+/// `Weapon.GuidanceType` (and a few known weapons' `getDesc().guidance`) from
+/// a live server first, then fix this table and `WeaponDesc::from_table`
+/// below together (docs/dcs-update-checklist.md has the dump step).
 simple_enum!(GuidanceType, u8, [
     Ins => 1,
     IrHoming => 2,
