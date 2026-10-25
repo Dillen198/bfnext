@@ -386,14 +386,14 @@ fn init_miz(lua: MizLua) -> Result<()> {
     *ctx = Ctx { write_dir, players, disconnects, ..Default::default() };
     let timer = Timer::singleton(lua)?;
     let when = dcso3::Time(timer.get_time()?.0 + 1.);
-    timer.schedule_function(when, mlua::Value::Nil, move |lua, _, _now| {
+    timer.schedule_once(when, mlua::Value::Nil, move |lua, _, _now| {
         if let Err(e) = delayed_init(lua) {
             error!("THE RANGE CANNOT START: {e:?}");
             let _ = Trigger::singleton(lua)
                 .and_then(|t| t.action())
                 .and_then(|a| a.out_text(format!("THE RANGE CANNOT START\n\n{e:?}").as_str().into(), 3600, true));
         }
-        Ok(None)
+        Ok(())
     })?;
     Ok(())
 }

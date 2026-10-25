@@ -1761,11 +1761,11 @@ pub(crate) fn schedule_slot_briefing(lua: MizLua, slot: dcso3::net::SlotId) -> a
     }
     let timer = Timer::singleton(lua)?;
     let when = timer.get_time()? + cfg.delay_secs as f64;
-    timer.schedule_function(when, slot, move |lua, slot, _| {
+    timer.schedule_once(when, slot, move |lua, slot, _| {
         let ctx = unsafe { Context::get_mut() };
         // The player may have jumped back to spectator in the meantime.
         let Some(si) = ctx.db.ephemeral.get_slot_info(&slot) else {
-            return Ok(None);
+            return Ok(());
         };
         let (miz_gid, side, typ) = (si.miz_gid, si.side, si.typ.clone());
         let from = crate::menu::player_world_pos(ctx, &slot);
@@ -1773,7 +1773,7 @@ pub(crate) fn schedule_slot_briefing(lua: MizLua, slot: dcso3::net::SlotId) -> a
         let task_line = assign_paid_task(ctx, lua, &slot, miz_gid, &typ, &rep);
         let cfg = match ctx.db.ephemeral.cfg.situation_briefing.as_ref() {
             Some(c) => c.clone(),
-            None => return Ok(None),
+            None => return Ok(()),
         };
         let mut text = render_panel(
             &rep,
@@ -1790,7 +1790,7 @@ pub(crate) fn schedule_slot_briefing(lua: MizLua, slot: dcso3::net::SlotId) -> a
             .ephemeral
             .msgs()
             .panel_to_group(cfg.display_secs, false, miz_gid, text);
-        Ok(None)
+        Ok(())
     })?;
     Ok(())
 }

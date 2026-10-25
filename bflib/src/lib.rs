@@ -6069,9 +6069,16 @@ fn init_miz(lua: MizLua) -> Result<()> {
     // Register the Lua API
     api::register(lua)?;
     let when = timer.get_time()? + 1.;
+    // A failed scheduled function is run again a second later, and a
+    // delayed_init_miz that panicked part way through must not run twice.
+    let init_tried = std::cell::Cell::new(false);
     timer.schedule_function(when, mlua::Value::Nil, move |lua, _, now| {
         let ctx = unsafe { Context::get_mut() };
+        if init_tried.get() {
+            return Ok(None);
+        }
         if ctx.load_state.init_ok() {
+            init_tried.set(true);
             if let Err(e) = delayed_init_miz(lua) {
                 error!("THE MISSION CANNOT START: {:?}", e);
                 let timer = Timer::singleton(lua)?;

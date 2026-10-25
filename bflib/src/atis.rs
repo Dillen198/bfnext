@@ -1476,11 +1476,11 @@ pub fn schedule_atis(lua: MizLua, slot: SlotId) -> Result<()> {
     }
     let timer = Timer::singleton(lua)?;
     let when = timer.get_time()? + 15.0;
-    timer.schedule_function(when, slot, move |lua, slot, _| {
+    timer.schedule_once(when, slot, move |lua, slot, _| {
         if let Err(e) = send_atis(lua, slot, false) {
             error!("atis send failed: {:?}", e);
         }
-        Ok(None)
+        Ok(())
     })?;
     Ok(())
 }
