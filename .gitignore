@@ -10,7 +10,7 @@ bfsystem.local.ps1
 # keys, HMAC secrets). Commit the .sample.yaml templates instead.
 plugins/fowlengine/fowlengine.yaml
 plugins/smartmod/smartmod.yaml
-plugins/plugines.zip
+plugins/*.zip
 # Live DCSServerBot config pulled from the production host for reference --
 # contains real credentials (.secret/*.pkl tokens, admin_password,
 # dashboard_secret in fowlengine.yaml). Never commit this.
@@ -150,3 +150,7 @@ docs/dcso3/
 # straight from the checkout.
 bfrange/mission/dist/*.miz
 !bfrange/mission/dist/VS_Range_Marianas.miz
+
+# Local audit reports and research scratch -- not part of the source tree
+reports/
+research_notes/
