@@ -1,156 +1,93 @@
+# ---- build output ------------------------------------------------------------
 **/target/
 **/node_modules/
+/dist/
+**/*.rs.bk
+.cargo
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Binaries never belong in git. The few that must be (lua.dll, the
+# Marianas .miz) are tracked explicitly, and a tracked file isn't affected by
+# these rules.
+*.dll
+*.exe
+*.pdb
+*.so
+*.dylib
+*.o
+*.a
+*.rlib
+
+# ---- logs and local run output -------------------------------------------------
+*.log
 Logs/
 bfdb_log.txt
 netidx_out.txt
 test_stats.jsonl
+*.tmp
+*.orig
+*.rej
+/tmp/
+
+# ---- local config and secrets -------------------------------------------------
 netidx-resolver.json
 bfsystem.local.ps1
-# Real deployed plugin configs -- contain live secrets (admin passwords, API
-# keys, HMAC secrets). Commit the .sample.yaml templates instead.
-plugins/fowlengine/fowlengine.yaml
-plugins/smartmod/smartmod.yaml
-plugins/*.zip
-# Live DCSServerBot config pulled from the production host for reference --
-# contains real credentials (.secret/*.pkl tokens, admin_password,
-# dashboard_secret in fowlengine.yaml). Never commit this.
-Server Bot/
-**/*.rs.bk
-*.a
-*.aux
-*.bc
-*.boot
-*.bz2
-*.cmi
-*.cmo
-*.cmx
-*.cp
-*.cps
-*.d
-*.dSYM
-*.def
-*.diff
-*.dll
-*.dylib
-*.elc
-*.epub
-*.exe
-*.fn
-*.kdev4
-*.ky
-*.ll
-*.llvm
-*.log
-*.o
-*.orig
-*.out
-*.patch
-*.pdb
-*.pdf
-*.pg
-*.pot
-*.pyc
-*.rej
-*.rlib
-*.rustc
-*.so
-*.swo
-*.swp
-*.tmp
-*.toc
-*.tp
-*.vr
-*.x86
-*~
-.#*
-.DS_Store
-.cproject
-.hg/
-.hgignore
-.idea
-*.iml
-__pycache__/
-*.py[cod]
-*$py.class
-.project
-.settings/
-.valgrindrc
-.vscode/
-.claude/
-/Makefile
-/build
-/config.toml
-/dist/
-/dl/
-/inst/
-/llvm/
-/mingw-build/
-/nd/
-/obj/
-/rt/
-/rustllvm/
-/src/libstd_unicode/DerivedCoreProperties.txt
-/src/libstd_unicode/DerivedNormalizationProps.txt
-/src/libstd_unicode/PropList.txt
-/src/libstd_unicode/ReadMe.txt
-/src/libstd_unicode/Scripts.txt
-/src/libstd_unicode/SpecialCasing.txt
-/src/libstd_unicode/UnicodeData.txt
-/stage[0-9]+/
-/target
-/test/
-/tmp/
-TAGS
-TAGS.emacs
-TAGS.vi
-\#*
-\#*\#
-config.mk
-config.stamp
-keywords.md
-lexer.ml
-src/etc/dl
-src/librustc_llvm/llvmdeps.rs
-tmp.*.rs
-version.md
-version.ml
-version.texi
-.cargo
-!src/vendor/**
-/src/target/
-no_llvm_build
-
-# Live DCSServerBot deployment config copied from the production host --
-# contains real credentials (.secret/*.pkl tokens, postgres DSN, Discord
-# client secret, CheckWX/Gemini API keys, admin_password, dashboard_secret).
-# The committed plugin/extension sources and *.sample.yaml templates are the
-# shareable half; this tree is not.
+# Live DCSServerBot deployment config copied from a server: real
+# credentials (.secret/*.pkl tokens, postgres DSN, Discord client secret,
+# CheckWX/Gemini API keys, admin_password, dashboard_secret). The committed
+# plugin/extension sources and *.sample.yaml templates are the shareable half;
+# this tree is not. Both spellings: the lowercase one only catches `Config/` on
+# case-insensitive filesystems.
 DCSServerBot/config/
-# Same tree, explicit capitalised spelling: the lowercase rule above only
-# catches `Config/` on case-insensitive filesystems (Windows/macOS).
 DCSServerBot/Config/
-DCSServerBot/plugins/fowlengine/fowlengine.yaml
-DCSServerBot/plugins/smartmod/smartmod.yaml
+Server Bot/
+# Real plugin configs, wherever a copy of a bot's plugins/ folder lands.
+**/plugins/fowlengine/fowlengine.yaml
+**/plugins/smartmod/smartmod.yaml
+**/plugins/*.zip
 # Packaged extension bundle -- rebuilt from DCSServerBot/extensions/
 DCSServerBot/extensions.zip
-
+# Signing keys and certificates (deploy/signing-keys.md). The public halves
+# are *.pub and stay committable.
+*.key
+*.pfx
+*.p12
+*.pem
+# Bot backups (deploy/backups/) and Fowl Engine Manager backup zips
+*.fowlbak
+FowlEngine-backup-*.zip
 # Dated config backups taken before a live edit -- local only
 miz/ODFv2_CFG.bak-*
-
 # Fowl Engine plugin build stamp -- written into an installed plugin by the
 # updater / Fowl Engine Manager, never part of the source tree
 .fowl-plugin.json
 
+# ---- generated docs and data --------------------------------------------------
 # Generated rustdoc for dcso3 -- see https://docs.rs/dcso3, or run
 # `cargo doc -p dcso3` locally
 docs/dcso3/
-
 # Built range missions (bfrange/mission/build_range_miz.py). The Marianas one
 # stays tracked: bfmanager's `tauri build` (scripts/stage-range.mjs) bundles it
 # straight from the checkout.
 bfrange/mission/dist/*.miz
 !bfrange/mission/dist/VS_Range_Marianas.miz
 
+# ---- editors and local tooling ------------------------------------------------
+*.swp
+*.swo
+*~
+.#*
+\#*\#
+.DS_Store
+.idea
+*.iml
+.vscode/
+.claude/
+.project
+.settings/
 # Local audit reports and research scratch -- not part of the source tree
 reports/
 research_notes/
