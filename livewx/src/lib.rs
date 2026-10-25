@@ -45,7 +45,7 @@ pub fn apply(miz_path: &Path, cfg: &LiveWeatherConfig) -> Result<()> {
 /// set the mission's date and start_time to the current real-world local
 /// date/time: the theatre's, when its UTC offset is given (the Marianas are
 /// UTC+10), else the machine running the server's
-fn apply_live_time(mission: &Table, utc_offset_hours: Option<f64>) -> Result<()> {
+pub fn apply_live_time(mission: &Table, utc_offset_hours: Option<f64>) -> Result<()> {
     let now = match utc_offset_hours {
         Some(h) => {
             let secs = (h * 3600.).round() as i32;
@@ -81,7 +81,7 @@ fn apply_live_time(mission: &Table, utc_offset_hours: Option<f64>) -> Result<()>
 /// picks the preset that best matches real cloud cover and precipitation
 /// intensity, plus that preset's own base altitude, both taken from the
 /// preset .miz templates DCS itself ships in the mission editor.
-fn select_cloud_preset(cover_pct: f64, precip_mm: f64) -> (Option<&'static str>, i64) {
+pub fn select_cloud_preset(cover_pct: f64, precip_mm: f64) -> (Option<&'static str>, i64) {
     if precip_mm > 0.2 {
         return if precip_mm > 6.0 {
             (Some("RainyPreset3"), 1700)
@@ -119,19 +119,25 @@ fn wind_to_ms(raw: f64, unit: &str) -> f64 {
     }
 }
 
-/// Real-world weather decoded from one station's METAR (checkwxapi.com).
-/// Drives only the mission's surface layer; the winds-aloft layers still come
-/// from the open-meteo model since METAR carries no upper-air data.
-struct CheckWxSurface {
-    temp_c: f64,
-    pressure_hpa: f64,
-    wind_speed_ms: f64,
-    wind_from_dir: f64,
-    cloud_cover_pct: f64,
-    precipitation_mm: f64,
+/// Real-world surface weather decoded from one station's METAR
+/// (checkwxapi.com). It drives only the mission's surface layer: METAR has
+/// no upper-air data, so the winds aloft come from open-meteo.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetarSurface {
+    pub temp_c: f64,
+    /// None when the station reports no pressure in any unit.
+    pub pressure_hpa: Option<f64>,
+    pub wind_speed_ms: f64,
+    pub wind_from_dir: f64,
+    pub cloud_cover_pct: f64,
+    pub precipitation_mm: f64,
+    /// The station's own position, as checkwx reports it.
+    pub lat: Option<f64>,
+    pub lon: Option<f64>,
 }
 
-fn fetch_checkwx_surface(api_key: &str, station: &str) -> Result<CheckWxSurface> {
+/// Fetch and decode `station`'s current METAR from checkwxapi.com.
+pub fn fetch_checkwx_surface(api_key: &str, station: &str) -> Result<MetarSurface> {
     let url = format!("https://api.checkwx.com/metar/{station}/decoded");
     log::info!("[LIVE_WX] requesting {url}");
     let body = ureq::get(&url)
@@ -141,9 +147,16 @@ fn fetch_checkwx_surface(api_key: &str, station: &str) -> Result<CheckWxSurface>
         .context("requesting METAR from checkwxapi.com")?
         .into_string()
         .context("reading METAR response body")?;
-    log::info!("[LIVE_WX] checkwx raw response: {body}");
+    // debug, not info: the whole report on every restart is noise in the
+    // server log, and it is the answer to a keyed request.
+    log::debug!("[LIVE_WX] checkwx raw response: {body}");
     let resp: serde_json::Value =
         serde_json::from_str(&body).context("parsing METAR response")?;
+    decode_checkwx_metar(&resp)
+}
+
+/// Decode a checkwx `/metar/{station}/decoded` response.
+pub fn decode_checkwx_metar(resp: &serde_json::Value) -> Result<MetarSurface> {
     let d = resp
         .get("data")
         .and_then(|d| d.as_array())
@@ -154,15 +167,13 @@ fn fetch_checkwx_surface(api_key: &str, station: &str) -> Result<CheckWxSurface>
         .pointer("/temperature/celsius")
         .and_then(|v| v.as_f64())
         .context("METAR missing temperature.celsius")?;
-    let pressure_hpa = d
-        .pointer("/barometer/hpa")
-        .and_then(|v| v.as_f64())
-        .or_else(|| d.pointer("/barometer/mb").and_then(|v| v.as_f64()))
-        .context("METAR missing barometer.hpa")?;
-
-    // No `wind` object (or a null one) is a calm report. `degrees` is absent
-    // for a variable-direction wind -- treat that as "from 0" so DCS still gets
-    // a number; the speed is what matters there anyway.
+    // Some stations (OSDI, Sept 29) come back with no hPa reading; take the
+    // same pressure in whichever unit checkwx did report.
+    let baro = |key: &str| d.pointer(&format!("/barometer/{key}")).and_then(|v| v.as_f64());
+    let pressure_hpa = baro("hpa")
+        .or_else(|| baro("mb"))
+        .or_else(|| baro("kpa").map(|k| k * 10.0))
+        .or_else(|| baro("hg").map(|h| h * 33.8639));
     let (wind_speed_ms, wind_from_dir) = match d.get("wind") {
         Some(w) if !w.is_null() => {
             let spd = w
@@ -179,8 +190,6 @@ fn fetch_checkwx_surface(api_key: &str, station: &str) -> Result<CheckWxSurface>
         }
         _ => (0.0, 0.0),
     };
-
-    // Cloud cover: the densest layer reported wins.
     let cloud_cover_pct = d
         .get("clouds")
         .and_then(|c| c.as_array())
@@ -193,14 +202,11 @@ fn fetch_checkwx_surface(api_key: &str, station: &str) -> Result<CheckWxSurface>
                     "BKN" => 75.0,
                     "SCT" => 40.0,
                     "FEW" => 15.0,
-                    _ => 0.0, // SKC / CLR / NSC / NCD / CAVOK
+                    _ => 0.0,
                 })
                 .fold(0.0_f64, f64::max)
         })
         .unwrap_or(0.0);
-
-    // METAR gives no precip rate, so infer a plausible mm from the reported
-    // weather codes just so select_cloud_preset reaches for a rainy preset.
     let precipitation_mm = d
         .get("conditions")
         .and_then(|c| c.as_array())
@@ -227,13 +233,21 @@ fn fetch_checkwx_surface(api_key: &str, station: &str) -> Result<CheckWxSurface>
         })
         .unwrap_or(0.0);
 
-    Ok(CheckWxSurface {
+    // checkwx reports the station position as GeoJSON, so coordinates are
+    // [lon, lat] -- not the other way around.
+    let coords = d.pointer("/station/geometry/coordinates");
+    let coord = |i: usize| coords.and_then(|c| c.get(i)).and_then(|v| v.as_f64());
+    let (lon, lat) = (coord(0), coord(1));
+
+    Ok(MetarSurface {
         temp_c,
         pressure_hpa,
         wind_speed_ms,
         wind_from_dir,
         cloud_cover_pct,
         precipitation_mm,
+        lat,
+        lon,
     })
 }
 
@@ -259,7 +273,7 @@ fn apply_live_weather(mission: &Table, cfg: &LiveWeatherConfig) -> Result<()> {
         .context("requesting live weather from open-meteo")?
         .into_string()
         .context("reading live weather response body")?;
-    log::info!("[LIVE_WX] raw response: {body}");
+    log::debug!("[LIVE_WX] raw response: {body}");
     let resp: serde_json::Value =
         serde_json::from_str(&body).context("parsing live weather response")?;
     let current = resp
@@ -313,14 +327,22 @@ fn apply_live_weather(mission: &Table, cfg: &LiveWeatherConfig) -> Result<()> {
         match fetch_checkwx_surface(key, station) {
             Ok(m) => {
                 log::info!(
-                    "[LIVE_WX] CheckWX {station}: temp={:.0}C qnh={:.0}hPa \
+                    "[LIVE_WX] CheckWX {station}: temp={:.0}C qnh={} \
                      wind={:.1}m/s@{:.0}deg cloud={:.0}% precip={:.1}mm -- \
                      overriding open-meteo surface",
-                    m.temp_c, m.pressure_hpa, m.wind_speed_ms, m.wind_from_dir,
-                    m.cloud_cover_pct, m.precipitation_mm,
+                    m.temp_c,
+                    m.pressure_hpa
+                        .map(|p| format!("{p:.0}hPa"))
+                        .unwrap_or_else(|| "not reported, keeping open-meteo's".into()),
+                    m.wind_speed_ms,
+                    m.wind_from_dir,
+                    m.cloud_cover_pct,
+                    m.precipitation_mm,
                 );
                 temp_c = m.temp_c;
-                pressure_hpa = m.pressure_hpa;
+                if let Some(p) = m.pressure_hpa {
+                    pressure_hpa = p;
+                }
                 wind_speed_ms = m.wind_speed_ms;
                 wind_from_dir = m.wind_from_dir;
                 cloud_cover_pct = m.cloud_cover_pct;
@@ -497,5 +519,243 @@ fn apply_live_weather(mission: &Table, cfg: &LiveWeatherConfig) -> Result<()> {
         wind_to_dir.round() as i64,
         preset.unwrap_or("none"),
     );
+    Ok(())
+}
+
+/// apply real-world weather to the mission's weather table: temperature, QNH,
+/// wind (ground plus two upper bands), clouds, and fog/dust obscurant state.
+///
+/// The station's decoded METAR is the whole surface layer, and its own
+/// coordinates are where open-meteo (no API key required) is sampled for the
+/// winds aloft, which METAR has nothing to say about. One ICAO is therefore
+/// the entire configuration -- there is no lat/lon to keep in sync with it.
+///
+/// Both fetches are required: if either service is down this returns an error
+/// rather than a half-real sky, and the caller is expected to fall back to the
+/// weather authored in the options template.
+///
+/// Winds are clamped hard (ground 8, 2000 m 12, 8000 m 20 m/s) -- DCS blends
+/// the layers, so a stiff upper wind drags low-level flight around; the caps
+/// keep it flyable, especially for helicopters.
+pub fn apply_metar_station_weather(
+    mission: &Table,
+    checkwx_key: &str,
+    metar_station: &str,
+) -> Result<()> {
+    let metar = fetch_checkwx_surface(checkwx_key, metar_station)
+        .with_context(|| format!("fetching METAR for {metar_station}"))?;
+    log::info!(
+        "CheckWX {metar_station}: temp={:.0}C qnh={} wind={:.1}m/s@{:.0} cloud={:.0}% precip={:.1}mm",
+        metar.temp_c,
+        metar.pressure_hpa.map(|p| format!("{p:.0}hPa")).unwrap_or_else(|| "not reported".into()),
+        metar.wind_speed_ms,
+        metar.wind_from_dir,
+        metar.cloud_cover_pct,
+        metar.precipitation_mm,
+    );
+    let (lat, lon) = match (metar.lat, metar.lon) {
+        (Some(lat), Some(lon)) => (lat, lon),
+        _ => anyhow::bail!(
+            "checkwx has no position for station {metar_station} -- is that a real ICAO?"
+        ),
+    };
+    log::info!("winds aloft sampled at {metar_station} ({lat}, {lon})");
+    let url = format!(
+        "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=\
+         wind_speed_700hPa,wind_direction_700hPa,\
+         wind_speed_300hPa,wind_direction_300hPa,\
+         visibility\
+         &wind_speed_unit=ms"
+    );
+    let body = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .context("requesting live weather from open-meteo")?
+        .into_string()
+        .context("reading live weather response body")?;
+    let resp: serde_json::Value =
+        serde_json::from_str(&body).context("parsing live weather response")?;
+    let current = resp
+        .get("current")
+        .context("live weather response missing 'current'")?;
+    let get = |key: &'static str| -> Result<f64> {
+        current
+            .get(key)
+            .and_then(|v| v.as_f64())
+            .with_context(|| format!("live weather response missing {key}"))
+    };
+    // open-meteo is asked for nothing the METAR already answers: only the two
+    // upper wind bands, and the visibility the fog/dust layer is derived from.
+    let wind_speed_2000 = get("wind_speed_700hPa")?;
+    let wind_from_dir_2000 = get("wind_direction_700hPa")?;
+    let wind_speed_8000 = get("wind_speed_300hPa")?;
+    let wind_from_dir_8000 = get("wind_direction_300hPa")?;
+    let visibility_m = get("visibility")?;
+
+    // the surface layer is the station's, in full.
+    let temp_c = metar.temp_c;
+    let pressure_hpa = metar.pressure_hpa;
+    let wind_speed_ground = metar.wind_speed_ms;
+    let wind_from_dir_ground = metar.wind_from_dir;
+    let cloud_cover_pct = metar.cloud_cover_pct;
+    let precipitation_mm = metar.precipitation_mm;
+
+    // Sanity caps -- DCS interpolates between bands, so a stiff wind aloft
+    // drags the low-altitude wind up. Keep it flyable.
+    let wind_speed_ground = wind_speed_ground.clamp(0.0, 8.0);
+    let wind_speed_2000 = wind_speed_2000.clamp(0.0, 12.0);
+    let wind_speed_8000 = wind_speed_8000.clamp(0.0, 20.0);
+
+    // DCS's wind direction is the direction the wind blows TOWARD, the
+    // opposite of the real-world meteorological "from" convention
+    let to_dir = |from_dir: f64| (from_dir + 180.0) % 360.0;
+    let qnh_mmhg = pressure_hpa.map(|p| (p * 0.750062).round() as i64);
+
+    let weather: Table = mission.raw_get("weather").context("getting weather table")?;
+    let season: Table = weather
+        .raw_get("season")
+        .context("getting weather.season table")?;
+    season
+        .raw_set("temperature", temp_c.round() as i64)
+        .context("setting weather.season.temperature")?;
+    match qnh_mmhg {
+        Some(q) => weather.raw_set("qnh", q).context("setting weather.qnh")?,
+        None => log::warn!("METAR for {metar_station} has no pressure, keeping the template's QNH"),
+    }
+    // Derive a modest gust component from the (clamped) surface wind rather
+    // than leaving whatever the template authored -- a high authored
+    // groundTurbulence makes flights feel far windier than the reported speed.
+    let ground_turbulence = (wind_speed_ground * 0.15).min(1.5);
+    weather
+        .raw_set("groundTurbulence", ground_turbulence)
+        .context("setting weather.groundTurbulence")?;
+
+    let wind: Table = weather.raw_get("wind").context("getting weather.wind table")?;
+    let set_wind_band = |band: &'static str, speed: f64, dir: f64| -> Result<()> {
+        let t: Table = wind
+            .raw_get(band)
+            .with_context(|| format!("getting weather.wind.{band} table"))?;
+        t.raw_set("speed", speed)
+            .with_context(|| format!("setting weather.wind.{band}.speed"))?;
+        t.raw_set("dir", dir.round() as i64)
+            .with_context(|| format!("setting weather.wind.{band}.dir"))?;
+        Ok(())
+    };
+    set_wind_band("atGround", wind_speed_ground, to_dir(wind_from_dir_ground))?;
+    // at2000/at8000 are approximated from the nearest standard pressure
+    // levels (700hPa ~ 3000m, 300hPa ~ 9000m in a standard atmosphere) --
+    // open-meteo doesn't offer wind at DCS's exact meter-based altitude
+    // bands, but real directional shear is still far better than repeating
+    // the ground reading, and this mirrors what dcs-real-weather itself
+    // does when its OpenMeteo winds-aloft provider is enabled.
+    set_wind_band("at2000", wind_speed_2000, to_dir(wind_from_dir_2000))?;
+    set_wind_band("at8000", wind_speed_8000, to_dir(wind_from_dir_8000))?;
+
+    let (preset, cloud_base_m) = select_cloud_preset(cloud_cover_pct, precipitation_mm);
+    let clouds: Table = weather.raw_get("clouds").context("getting weather.clouds table")?;
+    match preset {
+        Some(name) => clouds.raw_set("preset", name).context("setting clouds.preset")?,
+        // no preset key at all for clear skies, matching DCS's own
+        // "Preset00 - Nothing" template
+        None => clouds.raw_set("preset", Value::Nil).context("clearing clouds.preset")?,
+    }
+    // density/thickness must stay at these fixed values -- in the new
+    // preset-driven system the preset itself bakes in the actual cloud
+    // appearance, and these fields are only left over from the old system
+    clouds.raw_set("density", 0).context("setting clouds.density")?;
+    clouds.raw_set("thickness", 200).context("setting clouds.thickness")?;
+    clouds.raw_set("base", cloud_base_m).context("setting clouds.base")?;
+    // rain only -- DCS's snow precipitation constant isn't confidently
+    // known here, so snowfall is intentionally left unhandled rather than
+    // risk setting the wrong effect
+    let iprecptns = if preset.is_some_and(|p| p.starts_with("Rainy")) { 1 } else { 0 };
+    clouds.raw_set("iprecptns", iprecptns).context("setting clouds.iprecptns")?;
+
+    log::info!(
+        "applied live weather at ({lat}, {lon}) to mission: {}C, {}mmHg, ground wind {wind_speed_ground}m/s @ {}deg, \
+         cloud cover {cloud_cover_pct}% (preset {}, base {cloud_base_m}m), precipitation {precipitation_mm}mm",
+        temp_c.round() as i64,
+        qnh_mmhg.map(|q| q.to_string()).unwrap_or_else(|| "template".into()),
+        to_dir(wind_from_dir_ground).round() as i64,
+        preset.unwrap_or("none"),
+    );
+
+    // Its dust fetch happens after the rest is written, so a failure here
+    // must not undo the build: the template's fog/dust simply stays.
+    if let Err(e) = apply_live_obscurants(&weather, lat, lon, visibility_m) {
+        log::warn!("live fog/dust unavailable, keeping the template's: {e:#}");
+    }
+    Ok(())
+}
+
+/// Fog and dust storm are mutually exclusive in DCS -- the Mission Editor
+/// disables one when the other is enabled -- so this fetches real dust
+/// concentration (open-meteo's air quality API, a separate host from the
+/// main weather API above) and picks at most one obscurant: dust if the air
+/// quality reading calls for it, otherwise fog if ground visibility is
+/// poor, otherwise neither.
+///
+/// dust_density and fog.visibility are both actually visibility distances
+/// in meters despite the field name "density" -- lower means a worse storm.
+/// Confirmed against the mission editor: a saved dust storm showing
+/// "visibility: 5000 feet" in the UI serialized to `dust_density = 1524`,
+/// which is exactly 5000ft in meters.
+const DUST_ON_THRESHOLD_UGM3: f64 = 50.0;
+const DUST_MAX_UGM3: f64 = 800.0;
+const DUST_VISIBILITY_MIN_M: f64 = 300.0;
+const DUST_VISIBILITY_MAX_M: f64 = 3000.0;
+const FOG_ON_THRESHOLD_M: f64 = 3000.0;
+
+fn apply_live_obscurants(weather: &Table, lat: f64, lon: f64, visibility_m: f64) -> Result<()> {
+    let url = format!(
+        "https://air-quality-api.open-meteo.com/v1/air-quality?latitude={lat}&longitude={lon}&current=dust"
+    );
+    let body = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .call()
+        .context("requesting live dust data from open-meteo")?
+        .into_string()
+        .context("reading live dust response body")?;
+    let resp: serde_json::Value =
+        serde_json::from_str(&body).context("parsing live dust response")?;
+    let dust_ugm3 = resp.get("current").and_then(|c| c.get("dust")).and_then(|v| v.as_f64());
+
+    let fog: Table = weather.raw_get("fog").context("getting weather.fog table")?;
+    let dust_active = match dust_ugm3 {
+        Some(d) if d >= DUST_ON_THRESHOLD_UGM3 => Some(d),
+        _ => None,
+    };
+
+    if let Some(dust_ugm3) = dust_active {
+        let frac = ((dust_ugm3 - DUST_ON_THRESHOLD_UGM3) / (DUST_MAX_UGM3 - DUST_ON_THRESHOLD_UGM3))
+            .clamp(0.0, 1.0);
+        // worse dust (higher ug/m3) -> lower visibility
+        let visibility =
+            (DUST_VISIBILITY_MAX_M - frac * (DUST_VISIBILITY_MAX_M - DUST_VISIBILITY_MIN_M)).round() as i64;
+        weather.raw_set("enable_dust", true).context("enabling dust storm")?;
+        weather.raw_set("dust_density", visibility).context("setting dust_density")?;
+        weather.raw_set("enable_fog", false).context("disabling fog for dust")?;
+        log::info!(
+            "live dust reading {dust_ugm3}ug/m3 at ({lat}, {lon}) -> dust storm enabled, visibility {visibility}m"
+        );
+    } else if visibility_m < FOG_ON_THRESHOLD_M {
+        weather.raw_set("enable_fog", true).context("enabling fog")?;
+        weather.raw_set("enable_dust", false).context("disabling dust for fog")?;
+        fog.raw_set("visibility", visibility_m.round() as i64)
+            .context("setting fog.visibility")?;
+        fog.raw_set("thickness", 200).context("setting fog.thickness")?;
+        log::info!("live visibility {visibility_m}m at ({lat}, {lon}) -> fog enabled");
+    } else {
+        weather.raw_set("enable_dust", false).context("disabling dust storm")?;
+        weather.raw_set("enable_fog", false).context("disabling fog")?;
+        match dust_ugm3 {
+            Some(d) => log::info!(
+                "live dust reading {d}ug/m3, visibility {visibility_m}m at ({lat}, {lon}) -- clear, dust and fog disabled"
+            ),
+            None => log::warn!(
+                "no live dust reading available at ({lat}, {lon}); visibility {visibility_m}m -- clear, dust and fog disabled"
+            ),
+        }
+    }
     Ok(())
 }
