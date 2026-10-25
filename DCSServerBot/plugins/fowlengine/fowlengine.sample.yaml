@@ -588,7 +588,10 @@ DEFAULT:
   # (config/services/webservice.yaml -> DEFAULT: listen: 127.0.0.1), which is
   # where bfdb and Fowl Engine Manager call it from.
   # Without api_key the RestAPI key (bfdb.dcsserverbot_api_key) is still
-  # accepted, with a deprecation warning in the bot log. procman hands
+  # accepted, with a deprecation warning in the bot log on every start.
+  # require_own_key: true refuses that fallback -- the OPS page then stays
+  # off until api_key is set. Set api_key first, restart the bot, check the
+  # OPS page works, then turn require_own_key on. procman hands
   # api_key to bfdb (BFDB_OPS_API_KEY) so the dashboard's OPS page keeps
   # working with a separate key. Generate one with:
   #   python -c "import secrets; print(secrets.token_urlsafe(32))"
@@ -599,6 +602,7 @@ DEFAULT:
     service_name: DCSServerBot     # the Windows service install-service.ps1 created
     # prefix: "/stats"             # override when bfdb.dcsserverbot_url's path differs
     # api_key: ""                  # its own long random value (see above)
+    # require_own_key: false       # true = never fall back to the RestAPI key
 
   # ---------------------------------------------
   # Training range site

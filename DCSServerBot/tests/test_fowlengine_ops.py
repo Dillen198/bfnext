@@ -1190,6 +1190,30 @@ def test_config_post_refuses_protected_edit(world):
     assert "powershell" not in cfgfile.read_text()
 
 
+def test_ops_api_rest_key_fallback_and_require_own_key(world):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    base = "/stats/fowlengine/ops"
+
+    def client():
+        app = FastAPI()
+        oa.OpsApi(world.cog).mount(app)
+        return TestClient(app)
+
+    # default: no ops_api.api_key -> the RestAPI key still works
+    world.cfg["ops_api"] = {}
+    assert oa.OpsApi(world.cog)._api_key() == "KEY123"
+    assert client().get(f"{base}/status", headers={"X-API-Key": "KEY123"}).status_code != 403
+    # opt-in: refuse the fallback, so nothing is accepted until api_key is set
+    world.cfg["ops_api"] = {"require_own_key": True}
+    assert oa.OpsApi(world.cog)._api_key() is None
+    assert client().get(f"{base}/status", headers={"X-API-Key": "KEY123"}).status_code == 403
+    world.cfg["ops_api"] = {"require_own_key": True, "api_key": "OPSKEY"}
+    assert oa.OpsApi(world.cog)._api_key() == "OPSKEY"
+    assert client().get(f"{base}/status", headers={"X-API-Key": "KEY123"}).status_code == 403
+
+
 # ---- procman: redaction, restart folding, loopback defaults ---------------------------
 
 

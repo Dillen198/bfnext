@@ -426,24 +426,24 @@ class OpsApi:
     def _cfg(self) -> dict:
         return self.cog.get_config() or {}
 
-    _warned_shared_key = False
+    def _own_key(self) -> Optional[str]:
+        key = (self._cfg().get("ops_api") or {}).get("api_key")
+        return str(key) if key else None
+
+    def _require_own_key(self) -> bool:
+        return (self._cfg().get("ops_api") or {}).get("require_own_key") is True
 
     def _api_key(self) -> Optional[str]:
-        cfg = self._cfg()
-        ops = cfg.get("ops_api") or {}
-        if ops.get("api_key"):
-            return str(ops["api_key"])
-        key = (cfg.get("bfdb") or {}).get("dcsserverbot_api_key")
-        if not key:
+        """The key the OPS routes accept: ops_api.api_key, else -- unless
+        ops_api.require_own_key is true -- the RestAPI key. register() warns
+        about the fallback on every start."""
+        own = self._own_key()
+        if own:
+            return own
+        if self._require_own_key():
             return None
-        if not OpsApi._warned_shared_key:
-            OpsApi._warned_shared_key = True
-            self.log.warning(
-                "FowlEngine/ops: DEPRECATED -- the OPS API is accepting the RestAPI key "
-                "(bfdb.dcsserverbot_api_key) because ops_api.api_key is not set. Anything holding "
-                "the RestAPI key can then restart processes and rewrite fowlengine.yaml. Set "
-                "ops_api.api_key to its own long random value (see fowlengine.sample.yaml).")
-        return str(key)
+        key = (self._cfg().get("bfdb") or {}).get("dcsserverbot_api_key")
+        return str(key) if key else None
 
     def _prefix(self) -> str:
         cfg = self._cfg()
@@ -475,11 +475,29 @@ class OpsApi:
         if (self._cfg().get("ops_api") or {}).get("enabled") is False:
             self.log.info("FowlEngine/ops: ops_api.enabled is false -- no OPS routes")
             return
+        if self._require_own_key() and not self._own_key():
+            self.log.error("FowlEngine/ops: ops_api.require_own_key is true but ops_api.api_key is not "
+                           "set -- the dashboard OPS page is disabled until it is")
+            return
         key = self._api_key()
         if not key:
             self.log.warning("FowlEngine/ops: no API key (bfdb.dcsserverbot_api_key or ops_api.api_key) -- "
                              "the dashboard OPS page is disabled rather than exposed without one")
             return
+        if not self._own_key():
+            # Said on every start, not once: this is the one setting that lets
+            # anything holding the RestAPI key restart processes and rewrite
+            # fowlengine.yaml.
+            self.log.warning(
+                "FowlEngine/ops: ********************************************************************")
+            self.log.warning(
+                "FowlEngine/ops: DEPRECATED -- the OPS API is accepting the RestAPI key "
+                "(bfdb.dcsserverbot_api_key) because ops_api.api_key is not set. Anything holding "
+                "the RestAPI key can then restart processes and rewrite fowlengine.yaml. Set "
+                "ops_api.api_key to its own long random value, and ops_api.require_own_key: true "
+                "to refuse the fallback (see fowlengine.sample.yaml).")
+            self.log.warning(
+                "FowlEngine/ops: ********************************************************************")
         try:
             from core import ServiceRegistry
             from services.webservice import WebService
