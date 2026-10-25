@@ -125,8 +125,10 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="palette-scrim" onMouseDown={onClose}>
-      <div className="palette" role="dialog" aria-modal="true" aria-label="Search the range" onMouseDown={e => e.stopPropagation()} onKeyDown={onKey}>
+    <div className="palette-scrim" role="presentation" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
+      {/* The dialog's own keys (arrows, Enter, Escape) drive the list inside it. */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
+      <div className="palette" role="dialog" aria-modal="true" aria-label="Search the range" onKeyDown={onKey}>
         <div className="palette-in">
           <Search size={17} className="muted shrink-0" />
           <input

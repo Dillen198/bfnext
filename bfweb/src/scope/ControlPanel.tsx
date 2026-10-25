@@ -82,6 +82,8 @@ export default function ControlPanel(props: ControlPanelProps): ReactElement {
           </button>
           <button
             className="btn-accent btn-xs btn"
+            aria-label="Settings"
+            title="Settings"
             onClick={() => {
               (document.getElementById("settingsModal") as HTMLDialogElement | null)?.showModal();
             }}
@@ -124,14 +126,15 @@ export default function ControlPanel(props: ControlPanelProps): ReactElement {
                   )
                   .map(([id, object]) => (
                     <li key={id}>
-                      <a
+                      <button
+                        type="button"
                         onClick={() => {
                           onObjectClick(id);
                         }}
                       >
                         <Symbol symbol={objectToSymbol(object)} />
                         {makeObjectName(object)}
-                      </a>
+                      </button>
                     </li>
                   ))}
               </ul>
@@ -144,19 +147,20 @@ export default function ControlPanel(props: ControlPanelProps): ReactElement {
           <ul className="menu">
             {watchingObjects.length === 0 ? (
               <li>
-                <a>Empty</a>
+                <span>Empty</span>
               </li>
             ) : (
               watchingObjects.map(([id, object]) => (
                 <li key={id}>
-                  <a
+                  <button
+                    type="button"
                     onClick={() => {
                       onObjectClick(id);
                     }}
                   >
                     <Symbol symbol={objectToSymbol(object)} />
                     {makeObjectName(object)}
-                  </a>
+                  </button>
                 </li>
               ))
             )}

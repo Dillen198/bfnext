@@ -29,6 +29,7 @@ import { classifyTargetClass, TARGET_CLASS_COLOR, fmtTimeZ, windDir, visStr, clo
 import { useRound } from '../context/RoundContext'
 import { useFlagBackground } from '../lib/flags'
 import { useWireframe } from '../lib/wireframe'
+import { pressable } from '@shared/web/a11y'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -207,7 +208,7 @@ function GroundRoster({ online }: { online: OnlinePilot[] }) {
       {grounded.slice(0, 6).map(p => {
         const col = p.side === 'Blue' ? campaign.blueColor : p.side === 'Red' ? campaign.redColor : 'var(--text-dim)'
         return (
-          <div key={p.ucid} onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)} className="kill-row"
+          <div key={p.ucid} {...pressable(() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`))} className="kill-row"
             style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
             <span style={{ width: 5, height: 5, background: col, flexShrink: 0 }} />
             <span style={{ fontSize: '0.74rem', color: 'var(--text)', fontWeight: 500, flex: 1 }}>{p.name}</span>
@@ -290,7 +291,7 @@ function TopShooters({ pilots }: { pilots: Pilot[] }) {
         const kills = p.air_kills + p.ground_kills
         const pct   = kills / maxKills * 100
         return (
-          <div key={p.ucid} onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)} className="kill-row"
+          <div key={p.ucid} {...pressable(() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`))} className="kill-row"
             style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
             <span style={{ fontSize: '0.68rem', fontWeight: 700, color: i === 0 ? 'var(--yellow)' : 'var(--text-dim)', fontFamily: 'var(--font-mono)', width: 12, flexShrink: 0 }}>{i + 1}</span>
             <div style={{ flex: 1, minWidth: 0 }}>

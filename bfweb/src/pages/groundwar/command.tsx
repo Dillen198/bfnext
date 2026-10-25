@@ -8,7 +8,7 @@
 // enemy only from the fog-of-war feeds. Orders go to /api/command/order and
 // the engine checks every one: the asset is ours, the treasury can pay, the
 // battery is in range and reloaded.
-import { memo, useMemo, type MouseEvent, type ReactElement, type ReactNode } from 'react'
+import { memo, useMemo, type ReactElement, type ReactNode } from 'react'
 import { Layer, Marker, Source } from 'react-map-gl/maplibre'
 import type { Feature, FeatureCollection } from 'geojson'
 import { X } from '@icons'
@@ -22,6 +22,7 @@ import { offset } from './geo'
 import { assetSvg } from './assetGlyph'
 import { playerSvg } from './sprites'
 import { PENCIL, SIDE_BRIGHT, SIDE_COLOR, other, type Side } from './theme'
+import { pressable, type PressEvent } from '@shared/web/a11y'
 
 // ── Layers ───────────────────────────────────────────────────────────────
 
@@ -63,7 +64,7 @@ interface AProps {
   side: Side
   selected: boolean
   near: boolean
-  onPick: (e: MouseEvent, id: number) => void
+  onPick: (e: PressEvent, id: number) => void
 }
 
 function AssetMarkerImpl({ a, side, selected, near, onPick }: AProps): ReactElement {
@@ -84,7 +85,7 @@ function AssetMarkerImpl({ a, side, selected, near, onPick }: AProps): ReactElem
       <Marker longitude={a.pos[1]} latitude={a.pos[0]} anchor="center">
         <div
           className={`gw-mk cm-asset cm-${a.kind}${selected ? ' sel' : ''}${a.live ? '' : ' sim'}`}
-          onClick={(e) => onPick(e, a.id)}
+          {...pressable((e) => onPick(e, a.id))}
           title={`${a.name} · ${a.role}${a.typ ? ` (${a.typ})` : ''}`}
         >
           {/* Raw SVG markup: safe because assetSvg builds it only from this

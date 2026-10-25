@@ -7,6 +7,7 @@ import {
 } from './tauri'
 import { Btn, Dot, Pill } from './ui'
 import { input, OK, AMBER, RED, MONO, DIM, fmtWhen } from './style'
+import { pressable } from '@shared/web/a11y'
 
 /**
  * DCSServerBot's own config files, edited on this box. The dashboard's OPS
@@ -485,7 +486,7 @@ export default function BotConfig({ onDirtyChange }: { onDirtyChange: (dirty: bo
             {current && (current.errors.length > 0 || current.warnings.length > 0) && (
               <div style={{ borderTop: '1px solid var(--border)', padding: '6px 12px', maxHeight: 130, overflow: 'auto' }}>
                 {[...current.errors.map(d => ({ d, bad: true })), ...current.warnings.map(d => ({ d, bad: false }))].map(({ d, bad }, i) => (
-                  <div key={i} onClick={() => d.line && gotoLine(d.line, d.column)} style={{
+                  <div key={i} {...(d.line ? pressable(() => d.line && gotoLine(d.line, d.column)) : {})} style={{
                     fontSize: '0.66rem', lineHeight: 1.6, color: bad ? RED : AMBER, cursor: d.line ? 'pointer' : 'default',
                   }}>
                     <span style={{ ...MONO }}>{d.line ? `line ${d.line}${d.column ? `:${d.column}` : ''}` : bad ? 'error' : 'warning'}</span>

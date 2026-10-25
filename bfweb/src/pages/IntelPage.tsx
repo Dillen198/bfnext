@@ -40,6 +40,7 @@ import {
   Maximize2,
   Eraser,
 } from '@icons'
+import { pressable } from '@shared/web/a11y'
 
 const MARKUP_COLORS = ['#ef4444', '#f59e0b', '#eab308', '#22c55e', '#3b82f6', '#a855f7', '#ffffff']
 const RUN_COLORS = ['#22c55e', '#f59e0b', '#3b82f6', '#a855f7', '#ec4899', '#14b8a6', '#f43f5e', '#84cc16']
@@ -517,7 +518,7 @@ export default function IntelPage() {
                 <span style={{
                   flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   color: 'var(--text-muted)', cursor: 'pointer',
-                }} onClick={() => setLightbox(c)}>{c.filename || c.id}</span>
+                }} {...pressable(() => setLightbox(c))}>{c.filename || c.id}</span>
                 {c.mine && (
                   <button onClick={() => doDelete(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}>
                     <Trash2 size={12} />
@@ -551,7 +552,7 @@ export default function IntelPage() {
             </div>
             <div style={{ display: 'flex', gap: 4, marginTop: 8, alignItems: 'center' }}>
               {MARKUP_COLORS.map(c => (
-                <button key={c} onClick={() => setMarkupColor(c)} style={{
+                <button key={c} onClick={() => setMarkupColor(c)} aria-label={`Ink colour ${c}`} aria-pressed={markupColor === c} style={{
                   width: 18, height: 18, borderRadius: 3, cursor: 'pointer', background: c,
                   border: markupColor === c ? '2px solid var(--text)' : '1px solid var(--border)',
                 }} />
@@ -592,16 +593,19 @@ export default function IntelPage() {
                   display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px',
                   background: 'var(--bg-elevated)', borderTop: '1px solid var(--border)',
                   borderBottom: isOpen ? '1px solid var(--border)' : 'none', cursor: 'pointer', fontSize: '0.68rem',
-                }} onClick={() => setCollapsed(s => { const n = new Set(s); if (n.has(g.name)) n.delete(g.name); else n.add(g.name); return n })}>
+                }} {...pressable(() => setCollapsed(s => { const n = new Set(s); if (n.has(g.name)) n.delete(g.name); else n.add(g.name); return n }))} aria-expanded={isOpen}>
                   <span style={{ color: 'var(--text-dim)', transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.12s' }}>
                     <ChevronRight size={12} />
                   </span>
-                  <label onClick={e => e.stopPropagation()} title="Run colour"
+                  {/* The colour input covers the swatch; it stops the click so
+                      picking a colour does not also fold the group. */}
+                  <span title="Run colour"
                     style={{ width: 12, height: 12, borderRadius: 3, flexShrink: 0, cursor: 'pointer', position: 'relative', background: runColor(g.name, runColors[g.name]) }}>
-                    <input type="color" value={runColor(g.name, runColors[g.name])}
+                    <input type="color" value={runColor(g.name, runColors[g.name])} aria-label={`Colour for ${g.name}`}
+                      onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}
                       onChange={e => setRunColors(rc => ({ ...rc, [g.name]: e.target.value }))}
                       style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }} />
-                  </label>
+                  </span>
                   <span style={{ flex: 1, color: 'var(--text)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {g.name}
                   </span>
@@ -629,7 +633,7 @@ export default function IntelPage() {
                         <span style={{
                           flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                           color: 'var(--text)', cursor: 'pointer',
-                        }} onClick={() => setLightbox(c)}>{c.filename || 'capture'}</span>
+                        }} {...pressable(() => setLightbox(c))}>{c.filename || 'capture'}</span>
                         <button onClick={() => sendBack(c.id)} title="Send behind other photos"
                           style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-dim)' }}>
                           <SendToBack size={12} />
@@ -943,11 +947,11 @@ function Lightbox({ capture, onClose }: { capture: IntelCapture; onClose: () => 
   }, [onClose])
 
   return (
-    <div onClick={onClose} style={{
+    <div role="presentation" onClick={e => { if (e.target === e.currentTarget) onClose() }} style={{
       position: 'fixed', inset: 0, zIndex: 4000, background: 'rgba(0,0,0,0.88)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
     }}>
-      <button onClick={onClose} style={{
+      <button onClick={onClose} aria-label="Close" style={{
         position: 'absolute', top: 16, right: 16, zIndex: 4100, background: 'rgba(0,0,0,0.5)',
         border: '1px solid #555', color: '#fff', borderRadius: 4, padding: 6, cursor: 'pointer',
       }}><X size={16} /></button>
@@ -961,12 +965,14 @@ function Lightbox({ capture, onClose }: { capture: IntelCapture; onClose: () => 
         <div>{capture.uploaded_by_name}{capture.captured_at && ` · ${new Date(capture.captured_at).toLocaleString()}`}</div>
       </div>
 
+      {/* Wheel to zoom, drag to pan: a pointer gesture on the photo itself.
+          The keyboard has Escape to close; the photo is also on the map. */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
       <img
         src={api.intel.imageUrl(capture.id)}
         alt={capture.filename}
         crossOrigin="use-credentials"
         draggable={false}
-        onClick={e => e.stopPropagation()}
         onWheel={e => setZoom(z => Math.min(8, Math.max(0.25, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))))}
         onMouseDown={e => { drag.current = { x: e.clientX - pan.x, y: e.clientY - pan.y }; setDragging(true) }}
         onMouseMove={e => { if (drag.current) setPan({ x: e.clientX - drag.current.x, y: e.clientY - drag.current.y }) }}

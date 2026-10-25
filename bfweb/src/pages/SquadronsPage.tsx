@@ -28,7 +28,7 @@ function Detail({ tag, myUcid, mine }: { tag: string; myUcid?: string; mine: boo
           <th style={{ textAlign: 'left' }}>Pilot</th>
           <th>XP for the squadron</th>
           <th>Joined</th>
-          {owner && <th />}
+          {owner && <th><span className="sr-only">Actions</span></th>}
         </tr>
       </thead>
       <tbody>

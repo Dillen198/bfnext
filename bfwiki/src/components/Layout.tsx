@@ -105,6 +105,7 @@ export default function Layout() {
         {/* Backdrop -- closes the drawer on mobile when tapped outside it */}
         <div
           className={`wiki-sidebar-backdrop${sidebarOpen ? ' open' : ''}`}
+          role="presentation"
           onClick={() => setSidebarOpen(false)}
         />
 

@@ -25,6 +25,7 @@ import { useAuth } from '../context/AuthContext'
 import { useTheme } from '@shared/web/theme'
 import { mapStyleFor } from '../lib/mapStyle'
 import { hqMock, hqMockCommand } from './hqMock'
+import { pressable } from '@shared/web/a11y'
 
 const SIDE_COLOR = { Blue: '#4a8fd4', Red: '#cc4444', Neutral: '#8a8f80' } as const
 const EFFORT = '#ff8c1a'
@@ -285,7 +286,7 @@ export default function HqPage(): ReactElement {
         </div>
 
         {result && (
-          <div onClick={() => setResult(null)} style={{ ...panel, cursor: 'pointer', borderColor: result.ok ? 'var(--accent)' : 'var(--red)', fontSize: '0.74rem' }}>
+          <div {...pressable(() => setResult(null), 'Dismiss')} style={{ ...panel, cursor: 'pointer', borderColor: result.ok ? 'var(--accent)' : 'var(--red)', fontSize: '0.74rem' }}>
             {result.ok ? '✓ ' : '✕ '}{result.text}
           </div>
         )}
@@ -296,7 +297,7 @@ export default function HqPage(): ReactElement {
           <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '3px 8px', marginTop: 8, fontSize: '0.74rem' }}>
             <span style={label}>MAIN EFFORT</span>
             <span>{v.main_effort
-              ? <a style={{ color: EFFORT, cursor: 'pointer' }} onClick={() => flyTo(v.main_effort!.pos)}>{v.main_effort.name}</a>
+              ? <span style={{ color: EFFORT, cursor: 'pointer' }} {...pressable(() => flyTo(v.main_effort!.pos))}>{v.main_effort.name}</span>
               : '—'}</span>
             <span style={label}>HOLD</span>
             <span>{v.defend.map((d) => d.name).join(', ') || '—'}</span>
@@ -355,7 +356,7 @@ export default function HqPage(): ReactElement {
             <div key={op.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: '0.74rem', borderTop: '1px solid var(--border)' }}>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.62rem', color: STATUS_COLOR[op.status], minWidth: 74 }}>{OP_LABEL[op.kind]}</span>
               <span style={{ flex: 1, minWidth: 0, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                onClick={() => flyTo(op.pos)} title={op.detail}>
+                {...pressable(() => flyTo(op.pos))} title={op.detail}>
                 {op.target_name}
                 {op.status !== 'active' && <span style={{ color: STATUS_COLOR[op.status] }}> · {op.status}</span>}
                 {op.request != null && <span style={{ color: 'var(--text-dim)' }}> · req #{op.request}</span>}

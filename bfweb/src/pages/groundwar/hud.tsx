@@ -14,6 +14,7 @@ import { MAP_LOOKS, type MapLook } from './mapStyles'
 import { OBJ_ICON, natoSymbol, shortName, vehicleSpriteUrl } from './sprites'
 import { ROLES, ROLE_LABEL, SIDE_COLOR, other, type Side } from './theme'
 import type { Link } from './useGroundFeed'
+import { pressable } from '@shared/web/a11y'
 
 // ── Bits ─────────────────────────────────────────────────────────────────
 
@@ -229,7 +230,7 @@ export function EventFeed({ events, saved = [], time, onPick, onOlder, hasOlder 
           {list.map((e) => {
             const [Icon, col] = EVENT_ICON[e.kind] ?? [Activity, '#b9bca9']
             return (
-              <li key={`${e.at}|${e.text}`} className={e.pos ? 'go' : ''} onClick={() => onPick(e)} title={e.pos ? 'Show on the map' : undefined}>
+              <li key={`${e.at}|${e.text}`} className={e.pos ? 'go' : ''} {...(e.pos ? pressable(() => onPick(e)) : {})} title={e.pos ? 'Show on the map' : undefined}>
                 <Icon size={13} strokeWidth={1.8} style={{ color: col, flexShrink: 0 }} />
                 <span className="gw-log-txt">{e.text}</span>
                 <time>{fmtAge(Math.max(0, time - e.at))}</time>
@@ -360,7 +361,7 @@ export function CommandBar({
         <div className="gw-bar-title">BASE</div>
         <div className="gw-obase">
         <div className="gw-ocard" style={{ ['--oc' as string]: SIDE_COLOR[selObj.owner] }}>
-          <div className="gw-ocard-head" onClick={() => onFocusObj(selObj)}>
+          <div className="gw-ocard-head" {...pressable(() => onFocusObj(selObj))}>
             <Icon size={22} strokeWidth={1.6} />
             <div>
               <b>{selObj.name.toUpperCase()}</b>
@@ -533,7 +534,7 @@ export function Toasts({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id:
   return (
     <div className="gw-toasts" aria-live="polite">
       {toasts.map((t) => (
-        <div key={t.id} className={`gw-toast ${t.ok ? 'ok' : 'bad'}`} onClick={() => onDismiss(t.id)}>
+        <div key={t.id} className={`gw-toast ${t.ok ? 'ok' : 'bad'}`} {...pressable(() => onDismiss(t.id), 'Dismiss')}>
           <span>{t.ok ? '✓' : '✕'}</span>{t.text}
         </div>
       ))}
@@ -584,8 +585,8 @@ const VIEW_KEYS: [string, string][] = [
 
 export function HelpOverlay({ onClose, canCommand, readOnly = false }: { onClose: () => void; canCommand: boolean; readOnly?: boolean }): ReactElement {
   return (
-    <div className="gw-help" onClick={onClose}>
-      <div className="gw-help-card" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Controls">
+    <div className="gw-help" role="presentation" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      <div className="gw-help-card" role="dialog" aria-label="Controls">
         <div className="gw-help-head">
           <Armor size={20} />
           <h2>CONTROLS</h2>

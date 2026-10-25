@@ -20,6 +20,7 @@ import {
   type IconComponent,
 } from '@icons'
 import { rankFor, nextRankAt } from '../ranks'
+import { pressable } from '@shared/web/a11y'
 
 type SortKey = keyof Omit<Pilot, 'ucid' | 'name'> | 'kd' | 'score' | 'logistics'
 
@@ -316,7 +317,7 @@ export default function Leaderboard() {
               const PRankIcon = prank.icon
               return (
                 <div key={p.ucid}
-                  onClick={() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`)}
+                  {...pressable(() => navigate(`/pilots?ucid=${encodeURIComponent(p.ucid)}`))}
                   style={{
                     background: 'var(--bg-card)', border: `1px solid ${mc}22`,
                     borderTop: `3px solid ${mc}`, borderRadius: 8, padding: '16px 20px',

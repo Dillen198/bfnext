@@ -12,7 +12,7 @@
 // warehouse read for the base drawer. The public objective list fills in
 // bases the ground picture leaves out (it skips the sea, and is empty on a
 // server without the ground war).
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import Map, { type MapRef, type ViewStateChangeEvent } from 'react-map-gl/maplibre'
@@ -43,6 +43,7 @@ import { BaseDrawer, ContactDrawer } from './groundwar/baseDrawer'
 import { createGroundwarMock } from './groundwarMock'
 import { createCommandMock } from './commandMock'
 import { mockCaptures, mockObjectives, mockWarehouse } from './tacmapMock'
+import type { PressEvent } from '@shared/web/a11y'
 import './groundwar/groundwar.css'
 import './groundwar/tacmap.css'
 
@@ -283,24 +284,24 @@ export default function TacMapPage(): ReactElement {
     clearAll()
     setSel(ids)
   }
-  const pickFormation = (e: MouseEvent, id: number) => {
+  const pickFormation = (e: PressEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
     selectOnly([id])
   }
-  const pickObjective = (e: MouseEvent, id: number) => {
+  const pickObjective = (e: PressEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
     clearAll()
     setSelObjId(id)
   }
-  const pickEnemy = (e: MouseEvent, id: number) => {
+  const pickEnemy = (e: PressEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
     clearAll()
     setSelEnemyId(id)
   }
-  const pickAsset = (e: MouseEvent, id: number) => {
+  const pickAsset = (e: PressEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
     clearAll()
@@ -346,10 +347,10 @@ export default function TacMapPage(): ReactElement {
   const objKey = (pic?.objectives ?? []).map((o) => `${o.id}${o.owner[0]}${o.being_captured ? 'c' : ''}`).join()
   useEffect(() => { declutter() }, [declutter, objKey, selObjId])
 
-  const onPickFormation = useCallback((e: MouseEvent, id: number) => live.current.pickFormation(e, id), [])
-  const onPickObjective = useCallback((e: MouseEvent, id: number) => live.current.pickObjective(e, id), [])
-  const onPickEnemy = useCallback((e: MouseEvent, id: number) => live.current.pickEnemy(e, id), [])
-  const onPickAsset = useCallback((e: MouseEvent, id: number) => live.current.pickAsset(e, id), [])
+  const onPickFormation = useCallback((e: PressEvent, id: number) => live.current.pickFormation(e, id), [])
+  const onPickObjective = useCallback((e: PressEvent, id: number) => live.current.pickObjective(e, id), [])
+  const onPickEnemy = useCallback((e: PressEvent, id: number) => live.current.pickEnemy(e, id), [])
+  const onPickAsset = useCallback((e: PressEvent, id: number) => live.current.pickAsset(e, id), [])
 
   // Wire up as soon as the style is in, not on 'load' (that waits for every
   // first tile). The input layer is the command map's, minus the orders: a

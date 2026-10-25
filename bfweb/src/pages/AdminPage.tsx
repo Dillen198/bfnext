@@ -906,9 +906,9 @@ export default function AdminPage() {
 
         {/* ── Kick helper modal ── */}
         {kickInfo && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-               onClick={() => setKickInfo(null)}>
-            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 3, padding: '1.5rem', minWidth: 380, maxWidth: 480 }}>
+          <div role="presentation" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+               onClick={e => { if (e.target === e.currentTarget) setKickInfo(null) }}>
+            <div role="dialog" aria-modal="true" aria-label="Kick player" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 3, padding: '1.5rem', minWidth: 380, maxWidth: 480 }}>
               <div style={{ ...DIM, marginBottom: '0.75rem', color: '#f59e0b' }}>Kick Player</div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text)', marginBottom: '0.5rem' }}>
                 Run this command in the DCS server F10 admin chat:
@@ -939,16 +939,17 @@ export default function AdminPage() {
 
         {/* ── Ban modal ── */}
         {banTarget && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-               onClick={() => setBanTarget(null)}>
-            <div onClick={e => e.stopPropagation()} style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 3, padding: '1.5rem', minWidth: 380, maxWidth: 480 }}>
+          <div role="presentation" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+               onClick={e => { if (e.target === e.currentTarget) setBanTarget(null) }}>
+            <div role="dialog" aria-modal="true" aria-label="Ban player" style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 3, padding: '1.5rem', minWidth: 380, maxWidth: 480 }}>
               <div style={{ ...DIM, marginBottom: '0.75rem', color: '#ef4444' }}>Ban Player</div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text)', marginBottom: '1rem' }}>
                 <span style={{ ...MONO, color: 'var(--accent)' }}>{banTarget.name}</span>
               </div>
               <div style={{ marginBottom: '0.75rem' }}>
-                <label style={{ ...DIM, display: 'block', marginBottom: '0.3rem' }}>Reason</label>
+                <label htmlFor="ban-reason" style={{ ...DIM, display: 'block', marginBottom: '0.3rem' }}>Reason</label>
                 <input
+                  id="ban-reason"
                   value={banReason}
                   onChange={e => setBanReason(e.target.value)}
                   placeholder="Optional reason"
@@ -956,8 +957,9 @@ export default function AdminPage() {
                 />
               </div>
               <div style={{ marginBottom: '1rem' }}>
-                <label style={{ ...DIM, display: 'block', marginBottom: '0.3rem' }}>Ban Until (leave empty = permanent)</label>
+                <label htmlFor="ban-until" style={{ ...DIM, display: 'block', marginBottom: '0.3rem' }}>Ban Until (leave empty = permanent)</label>
                 <input
+                  id="ban-until"
                   type="datetime-local"
                   value={banUntil}
                   onChange={e => setBanUntil(e.target.value)}

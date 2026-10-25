@@ -128,8 +128,8 @@ export default function EditPage({ isNew = false }: { isNew?: boolean }) {
 
       <div style={{ display: 'flex', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 220px' }}>
-          <label className="vs-label">Slug (URL path)</label>
-          <input
+          <label className="vs-label" htmlFor="wiki-slug">Slug (URL path)</label>
+          <input id="wiki-slug"
             className="vs-input"
             value={slug}
             onChange={e => setSlug(e.target.value.trim())}
@@ -138,23 +138,23 @@ export default function EditPage({ isNew = false }: { isNew?: boolean }) {
           />
         </div>
         <div style={{ flex: '1 1 220px' }}>
-          <label className="vs-label">Section (sidebar group)</label>
-          <input className="vs-input" value={section} onChange={e => setSection(e.target.value)} placeholder="Core Gameplay" />
+          <label className="vs-label" htmlFor="wiki-section">Section (sidebar group)</label>
+          <input id="wiki-section" className="vs-input" value={section} onChange={e => setSection(e.target.value)} placeholder="Core Gameplay" />
         </div>
         <div style={{ width: 100 }}>
-          <label className="vs-label">Order</label>
-          <input className="vs-input" type="number" value={order} onChange={e => setOrder(Number(e.target.value))} />
+          <label className="vs-label" htmlFor="wiki-order">Order</label>
+          <input id="wiki-order" className="vs-input" type="number" value={order} onChange={e => setOrder(Number(e.target.value))} />
         </div>
       </div>
 
       <div style={{ marginBottom: 12 }}>
-        <label className="vs-label">Title</label>
-        <input className="vs-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="Page title" />
+        <label className="vs-label" htmlFor="wiki-title">Title</label>
+        <input id="wiki-title" className="vs-input" value={title} onChange={e => setTitle(e.target.value)} placeholder="Page title" />
       </div>
 
       <div style={{ marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
-          <label className="vs-label" style={{ margin: 0 }}>Content (Markdown)</label>
+          <label className="vs-label" htmlFor="wiki-content" style={{ margin: 0 }}>Content (Markdown)</label>
           <button
             type="button"
             className="vs-btn-outline"
@@ -175,6 +175,7 @@ export default function EditPage({ isNew = false }: { isNew?: boolean }) {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <textarea
+            id="wiki-content"
             ref={textareaRef}
             className="vs-textarea"
             style={{ minHeight: 480 }}
