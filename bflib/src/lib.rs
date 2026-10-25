@@ -1007,6 +1007,27 @@ impl Drop for DeferEvents {
     }
 }
 
+/// Run `f` with the campaign state, from a callback DCS makes outside our own
+/// ticks -- a mission script calling the `vector_strike` API. Refused when
+/// something on this thread already holds the state (a tick, or an API call
+/// further up the stack): handing out a second `&mut Context` is undefined
+/// behaviour. Events our own DCS calls raise inside `f` are deferred and
+/// handled before returning, as in a tick.
+pub(crate) fn with_context<R>(
+    lua: MizLua,
+    what: &str,
+    f: impl FnOnce(&mut Context) -> Result<R>,
+) -> Result<R> {
+    if DEFER_DEPTH.with(|d| d.get()) > 0 {
+        bail!("{what}: called while the engine holds the campaign state (re-entrant call), refused")
+    }
+    let _defer = DeferEvents::begin();
+    let ctx = unsafe { Context::get_mut() };
+    let res = f(ctx);
+    drain_deferred_events(lua, ctx);
+    res
+}
+
 /// Handle every Birth queued while events were deferred. Handlers can spawn
 /// in turn (queueing more), so keep going until the queue stays empty --
 /// bounded, in case something spawns on every birth.
@@ -2418,7 +2439,7 @@ fn advise_captured(ctx: &mut Context, lua: MizLua, ts: DateTime<Utc>) -> Result<
         let mark_text = format_compact!("{} captured by {:?}", name, side);
         let (map_layer, msgs) = ctx.db.ephemeral.map_layer_and_msgs();
         map_layer.on_objective_captured(pos, side, owner_only, &mark_text, ts, msgs);
-        crate::api::dispatch_event(lua, "alert", &mark_text);
+        crate::api::dispatch_event("alert", &mark_text);
         ctx.captureable.remove(&oid);
     }
     Ok(has_captures)
@@ -4942,7 +4963,7 @@ fn run_slow_timed_events(
     step(lua, ctx, "achievements", |ctx| {
         let achievements = std::mem::take(&mut ctx.db.ephemeral.pending_achievements);
         for achievement in achievements {
-            crate::api::dispatch_event(lua, "achievement", &achievement);
+            crate::api::dispatch_event("achievement", &achievement);
         }
     });
 
@@ -5735,6 +5756,9 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
                 // this says which tick died, so the two can be paired up.
                 Err(e) => error!("run_timed_events panicked: {}", bg::panic_msg(&e)),
             }
+            // The tick has let go of the state: the mission's on_event hook
+            // may now call back into the vector_strike API.
+            crate::api::flush_events(lua);
             Ok(Some(now + 1.))
         }
     })?;
