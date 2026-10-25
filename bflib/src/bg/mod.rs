@@ -84,6 +84,22 @@ static FALLBACK_LOG: OnceCell<PathBuf> = OnceCell::new();
 /// means the loop is wedged even though its channel is still open.
 static BG_HEARTBEAT: AtomicI64 = AtomicI64::new(0);
 
+/// The message out of a panic payload. The payload of a normal `panic!` is
+/// a `&str` or a `String`; its `Debug` is a useless `Any { .. }`.
+pub(crate) fn panic_payload_msg(p: &(dyn std::any::Any + Send)) -> &str {
+    p.downcast_ref::<&'static str>()
+        .copied()
+        .or_else(|| p.downcast_ref::<std::string::String>().map(|s| s.as_str()))
+        .unwrap_or("<panic payload was not a string>")
+}
+
+/// The message out of the payload `catch_unwind` hands back.
+pub(crate) fn panic_msg(e: &Box<dyn std::any::Any + Send>) -> &str {
+    // `&**e`, not `&e`: a `&Box<dyn Any>` coerces to a `&dyn Any` whose
+    // concrete type is the Box itself, and every downcast would miss.
+    panic_payload_msg(&**e)
+}
+
 /// Last-resort log sink that doesn't depend on the background thread.
 ///
 /// Every log line, every stat and every save goes through that one thread,
@@ -938,11 +954,7 @@ async fn background_loop(
         };
         let kind = msg.kind();
         if let Err(e) = AssertUnwindSafe(bg.handle(msg)).catch_unwind().await {
-            let m = e
-                .downcast_ref::<&'static str>()
-                .copied()
-                .or_else(|| e.downcast_ref::<std::string::String>().map(|s| s.as_str()))
-                .unwrap_or("<panic payload was not a string>");
+            let m = panic_msg(&e);
             fallback_log(format!("bflib: background task {kind} panicked: {m}\n").as_bytes());
             error!("background task {kind} panicked: {m}")
         }
@@ -1060,13 +1072,7 @@ pub(super) fn init(write_dir: PathBuf) -> UnboundedSender<Task> {
                         Ok(()) => break,
                         Err(e) => {
                             restarts = restarts.saturating_add(1);
-                            let m = e
-                                .downcast_ref::<&'static str>()
-                                .copied()
-                                .or_else(|| {
-                                    e.downcast_ref::<std::string::String>().map(|s| s.as_str())
-                                })
-                                .unwrap_or("<panic payload was not a string>");
+                            let m = panic_msg(&e);
                             fallback_log(
                                 format!(
                                     "bflib: background loop died ({m}), restart #{restarts}\n"

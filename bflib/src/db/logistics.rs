@@ -70,17 +70,7 @@ pub enum LogiStage {
         transfers: Vec<Transfer>,
     },
     // Transports are polled every step, independently of the stage machine
-    // (see `Db::manage_transports`). The pass used to sit in these stages
-    // until every convoy, cargo flight and ship had finished -- up to an hour
-    // and a half -- with production, dispatch and the DCS sync all frozen
-    // behind them. Kept so existing matches on the stage still compile; a
-    // stage left in one just moves on to the sync.
-    #[allow(dead_code)]
-    ManageConvoys,
-    #[allow(dead_code)]
-    ManageAirRoutes,
-    #[allow(dead_code)]
-    ManageSeaRoutes,
+    // (see `Db::manage_transports`), not in stages of their own.
     Init,
 }
 
@@ -2646,10 +2636,7 @@ impl Db {
             LogiStage::Init
             | LogiStage::SyncFromWarehouses { .. }
             | LogiStage::SyncToWarehouses { .. }
-            | LogiStage::ExecuteTransfers { .. }
-            | LogiStage::ManageConvoys
-            | LogiStage::ManageAirRoutes
-            | LogiStage::ManageSeaRoutes => (),
+            | LogiStage::ExecuteTransfers { .. } => (),
             LogiStage::Complete { last_tick } => {
                 *last_tick = DateTime::<Utc>::MIN_UTC;
             }
@@ -3437,10 +3424,6 @@ impl Db {
                     }
                     record_perf(&mut perf.logistics_transfer, st);
                 }
-                LogiStage::ManageConvoys | LogiStage::ManageAirRoutes | LogiStage::ManageSeaRoutes => {
-                    let objectives = self.warehouse_objectives();
-                    self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses { objectives };
-                }
                 LogiStage::SyncToWarehouses { objectives } => match objectives.pop() {
                     None => self.ephemeral.logistics_stage = LogiStage::Complete { last_tick: ts },
                     Some(oid) => {
@@ -3771,7 +3754,7 @@ impl Db {
         else {
             // Convoy config gone (edited out mid-mission): nothing can track
             // these any more, so bring every load home. This used to have no
-            // branch at all and the stage machine sat in ManageConvoys forever.
+            // branch at all and the stage machine sat waiting on convoys forever.
             let orphaned: Vec<(ConvoyId, Side, GroupId)> = self
                 .ephemeral
                 .active_convoys

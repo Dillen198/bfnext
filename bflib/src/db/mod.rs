@@ -227,11 +227,7 @@ pub struct RadarDonor {
     /// cached, so a donor whose objective gets culled and later respawned
     /// is handled correctly with no stale reference.
     pub gid: Option<GroupId>,
-    /// Stored for future chaff mechanic — not yet consumed by physics.
-    #[allow(dead_code)]
-    pub chaff_susceptibility: f32,
-    /// Stored for future jamming mechanic — not yet consumed by physics.
-    #[allow(dead_code)]
+    /// Scales how much a nearby jammer degrades this donor's detection.
     pub ecm_susceptibility: f32,
     pub scan_interval_secs: u32,
     pub frequency_band: bfprotocols::cfg::RadarBand,
@@ -515,15 +511,6 @@ impl Db {
             .filter(move |c| c.side == side)
     }
 
-    /// True if there is an active supply convoy currently headed to the given objective.
-    #[allow(dead_code)]
-    pub fn convoy_inbound_to(&self, oid: ObjectiveId) -> bool {
-        self.ephemeral
-            .active_convoys
-            .values()
-            .any(|c| c.destination == oid)
-    }
-
     /// True if a capture timer is currently running against this objective.
     pub fn capture_in_progress(&self, oid: &ObjectiveId) -> bool {
         self.ephemeral.capture_progress.contains_key(oid)
@@ -593,7 +580,6 @@ impl Db {
                 pulse_doppler: false,
                 look_down_capable: false,
                 gid: Some(*gid),
-                chaff_susceptibility: 0.3,
                 ecm_susceptibility: 0.5,
                 scan_interval_secs: 8,
                 frequency_band: bfprotocols::cfg::RadarBand::Vhf,
@@ -632,7 +618,6 @@ impl Db {
                             pulse_doppler: ewr_cfg.pulse_doppler,
                             look_down_capable: ewr_cfg.look_down_capable,
                             gid: Some(u.group),
-                            chaff_susceptibility: ewr_cfg.chaff_susceptibility,
                             ecm_susceptibility: ewr_cfg.ecm_susceptibility,
                             scan_interval_secs: ewr_cfg.scan_interval_secs,
                             frequency_band: ewr_cfg.frequency_band,
@@ -663,7 +648,6 @@ impl Db {
                             pulse_doppler: ewr_cfg.pulse_doppler,
                             look_down_capable: ewr_cfg.look_down_capable,
                             gid: None,
-                            chaff_susceptibility: ewr_cfg.chaff_susceptibility,
                             ecm_susceptibility: ewr_cfg.ecm_susceptibility,
                             scan_interval_secs: ewr_cfg.scan_interval_secs,
                             frequency_band: ewr_cfg.frequency_band,

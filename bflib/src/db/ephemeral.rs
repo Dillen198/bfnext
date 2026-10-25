@@ -15,7 +15,7 @@ for more details.
 */
 
 use super::{
-    cargo::{Cargo, C130Cargo, GroundVehiclePassengers},
+    cargo::{Cargo, C130Cargo},
     ghosts::GhostTracker,
 
     group::{DeployKind, SpawnedGroup, SpawnedUnit},
@@ -498,8 +498,6 @@ pub struct Ephemeral {
     /// fade over an hour instead sat on the F10 map for most of a day, and
     /// the map filled up with everything anybody had ever seen.
     last_intel_decay: Option<DateTime<Utc>>,
-    /// Ground vehicle passenger manifests: vehicle UnitId -> passengers.
-    pub(crate) ground_vehicle_passengers: FxHashMap<bfprotocols::db::group::UnitId, GroundVehiclePassengers>,
     /// In-progress player "Recon Pass" sessions, keyed by pilot ucid.
     pub(crate) recon_sessions: FxHashMap<Ucid, ReconSession>,
     /// Per-pilot cooldown after a recon pass ends (completed or aborted).
@@ -688,7 +686,6 @@ impl Default for Ephemeral {
             capture_total_secs: FxHashMap::default(),
             intel_db: IntelDatabase::default(),
             last_intel_decay: None,
-            ground_vehicle_passengers: FxHashMap::default(),
             recon_sessions: FxHashMap::default(),
             recon_cooldown: FxHashMap::default(),
             intel_map_marks: FxHashMap::default(),
