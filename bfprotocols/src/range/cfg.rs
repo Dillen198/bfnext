@@ -1061,6 +1061,22 @@ pub struct SpawnPolicyCfg {
     /// Instructor UCIDs (in addition to dashboard admins, which bfdb flags).
     #[serde(default)]
     pub instructors: Vec<String>,
+    /// Honour the `instructor` flag bfdb sends with the spawn, despawn and
+    /// reset-station RPCs (it marks dashboard admins). The range's netidx
+    /// RPCs are not authenticated: anything that can reach the publisher
+    /// can set the flag and name any ucid. With `netidx_bind` left at
+    /// `local` only this PC can, which is the usual set-up. Set this false
+    /// when the publisher is reachable from other machines: only the
+    /// `instructors` above are instructors, and dashboard admins without a
+    /// listed ucid can no longer reset locked stations from the website.
+    #[serde(default = "yes")]
+    pub trust_rpc_instructor: bool,
+    /// Refuse a despawn or station reset RPC whose ucid is not connected to
+    /// the server (instructors listed above excepted), so a caller can't act
+    /// in the name of someone who isn't there. Off by default: players can
+    /// clear their spawns from the website after leaving.
+    #[serde(default)]
+    pub rpc_requires_connected: bool,
 }
 
 fn default_max_active() -> u32 {
@@ -1089,6 +1105,8 @@ impl Default for SpawnPolicyCfg {
             despawn_on_leave: true,
             instructor_only: default_instructor_only(),
             instructors: vec![],
+            trust_rpc_instructor: true,
+            rpc_requires_connected: false,
         }
     }
 }

@@ -1990,7 +1990,9 @@
       "sam_site",
       "naval_group"
     ],
-    "instructors": []
+    "instructors": [],
+    "trust_rpc_instructor": true,
+    "rpc_requires_connected": false
   },
   "in_game_results": true,
   "message_s": 20,

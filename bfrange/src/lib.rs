@@ -646,8 +646,24 @@ fn gun_ammo(u: &Unit) -> u32 {
     n
 }
 
+/// `dashboard_admin` is the flag bfdb sends with an RPC. netidx RPCs are
+/// unauthenticated, so it counts only while the config trusts it
+/// (`spawn.trust_rpc_instructor`, on by default); the config's own
+/// instructor list always counts.
 fn is_instructor(ctx: &Ctx, ucid: &str, dashboard_admin: bool) -> bool {
-    dashboard_admin || ctx.cfg.spawn.instructors.iter().any(|i| i == ucid)
+    (dashboard_admin && ctx.cfg.spawn.trust_rpc_instructor) || ctx.cfg.spawn.instructors.iter().any(|i| i == ucid)
+}
+
+/// With `spawn.rpc_requires_connected`, an RPC acting for a ucid must name
+/// someone connected to the server (listed instructors excepted).
+fn rpc_caller_ok(ctx: &Ctx, ucid: &str) -> Result<()> {
+    if !ctx.cfg.spawn.rpc_requires_connected || ctx.cfg.spawn.instructors.iter().any(|i| i == ucid) {
+        return Ok(());
+    }
+    match Ucid::from_str(ucid) {
+        Ok(u) if ctx.players.is_connected(&u) => Ok(()),
+        _ => bail!("you need to be connected to the range server to do that"),
+    }
 }
 
 /// A player is out of their aircraft (death, slot change, disconnect).
@@ -1440,11 +1456,12 @@ fn handle_cmd(lua: MizLua, ctx: &mut Ctx, cmd: bg::Cmd, now: f64) -> Value {
         },
         bg::Cmd::Spawn(req) => reply_json(&spawn_request(lua, ctx, req, now)),
         bg::Cmd::Despawn { ucid, spawn_id, instructor } => {
-            let r = despawn_request(lua, ctx, &ucid, &spawn_id, instructor);
+            let r = rpc_caller_ok(ctx, &ucid).and_then(|()| despawn_request(lua, ctx, &ucid, &spawn_id, instructor));
             reply_json(&json!({ "ok": r.is_ok(), "message": match r { Ok(m) => m, Err(e) => e.to_string() } }))
         }
         bg::Cmd::ResetStation { ucid, station, instructor } => {
             let r = (|| -> Result<std::string::String> {
+                rpc_caller_ok(ctx, &ucid)?;
                 let i = ctx.ag.station_by_id(&station).ok_or_else(|| anyhow!("no station {station}"))?;
                 if ctx.ag.stations[i].cfg.locked && !is_instructor(ctx, &ucid, instructor) {
                     bail!("that station can only be reset by an instructor")

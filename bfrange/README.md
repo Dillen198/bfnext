@@ -36,6 +36,16 @@ Its netidx RPCs are published under `<netidx_base>/<sortie>/api/`: `query-range`
 `query-range-catalog`, `query-weapons`, `range-spawn`, `range-despawn` and
 `range-reset-station`.
 
+They are not authenticated. bfdb sends the caller's ucid and an
+`instructor` flag for dashboard admins, and the engine believes both, so
+keep the publisher where only bfdb can reach it: `netidx_bind` unset (or
+`"local"`) when bfdb runs on the same PC. If it must listen on a network,
+set `spawn.trust_rpc_instructor: false` (only the ucids in
+`spawn.instructors` are instructors; website admins without a listed ucid
+can no longer reset locked stations) and `spawn.rpc_requires_connected:
+true` (despawn and station reset only for a ucid that is on the server).
+Both default to today's behaviour.
+
 ## The range mission
 
 **The ready-made one:** `python bfrange/mission/build_range_miz.py` builds
