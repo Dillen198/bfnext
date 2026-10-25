@@ -331,7 +331,7 @@ def test_no_raw_emoji_in_plugin_strings():
 
 
 def test_message_template_defaults_use_icon_placeholders():
-    for name in ("commands.py", "listener.py"):
+    for name in ("commands.py",):
         src = (PLUGIN / name).read_text(encoding="utf-8")
         defaults = re.findall(r"messages\.get\('\w+', \"([^\"]*)\"\)", src)
         assert defaults, name

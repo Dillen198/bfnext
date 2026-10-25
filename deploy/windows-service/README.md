@@ -1,8 +1,10 @@
 # Running DCSServerBot as a Windows service (no login, auto-restart)
 
-> **Superseded by [Fowl Engine Manager](../../bfmanager/README.md)**, an installer and app
-> that creates its own boot-time service (`FowlEngine`) and disables this NSSM one when
-> it is set up. These scripts still work if you'd rather not use the app. Don't run both.
+> **Legacy: superseded by [Fowl Engine Manager](../../bfmanager/README.md)**, an installer
+> and app that creates its own boot-time service (`FowlEngine`) and disables this NSSM one
+> when it is set up. These scripts still work if you'd rather not use the app, and the OPS
+> API still falls back to the `DCSServerBot` service name they create. They get no new
+> features, though. Don't run both.
 
 Goal: after a Windows reboot or a crash, the whole Vector Strike stack comes
 back **without anyone logging in or RDPing**:

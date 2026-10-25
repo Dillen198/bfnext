@@ -34,10 +34,12 @@ The server box looks after itself:
 
 ## 1. One-time setup on the server
 
-1. **Service.** From an elevated PowerShell on the server:
-   `deploy\windows-service\install-service.ps1`, then `check-autostart.ps1`.
-   See [windows-service/README.md](windows-service/README.md). Then do a real
-   test: `Restart-Computer`, don't log in, and check that the dashboard comes back.
+1. **Service.** Install [Fowl Engine Manager](../bfmanager/README.md) and
+   follow its Setup page. On a box without it, use the legacy NSSM service:
+   `deploy\windows-service\install-service.ps1`, then `check-autostart.ps1`
+   (see [windows-service/README.md](windows-service/README.md)). Either way,
+   do a real test: `Restart-Computer`, don't log in, and check that the
+   dashboard comes back.
 2. **BIOS/UEFI:** set *Restore on AC power loss* to *Power On*, so a power cut
    also ends with the box booting. Windows can't check this setting.
 3. **Bot WebService.** The OPS page reaches the plugin through DCSServerBot's

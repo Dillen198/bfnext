@@ -34,13 +34,13 @@ from . import serverinfo
 # The status embed's map snapshot, attached as attachment://<this>.
 STATUS_MAP_FILE = "campaign-map.png"
 
-# NOTE: this plugin previously subclassed Plugin[FowlEngineEventListener] and
-# registered .listener.FowlEngineEventListener for the vs_event/registerDCSServer
-# bridge. That bridge has no producer yet (lua/callbacks.lua never actually calls
-# sendBotTable), so it's untested and was the one piece structurally different
-# from this bot's other working plugins (radio, smartmod), which both use plain
-# Plugin with no eventlistener. Dropped for now to isolate a plugin-load failure;
-# listener.py is still there to wire back in once the Lua side sends real events.
+# NOTE: this plugin once subclassed Plugin[FowlEngineEventListener] and
+# registered listener.py's FowlEngineEventListener for a vs_event /
+# registerDCSServer bridge. That bridge never had a producer (lua/callbacks.lua
+# never calls sendBotTable), so the listener was unregistered and then removed
+# as dead code; `git log --diff-filter=D -- DCSServerBot/plugins/fowlengine/listener.py`
+# finds it, should the Lua side ever send real events. Everything it would have
+# posted is polled from bfdb instead (below).
 
 # ── Live engine log relay ───────────────────────────────────────────────────
 # Tails bfdb's /ws/engine-logs websocket (the raw bflib engine log, distinct
@@ -54,7 +54,7 @@ ENGINE_LOG_ALERT_DEDUPE = 500
 ENGINE_LOG_LEVEL_RE = re.compile(r"\[(ERROR|WARN|WARNING)\]", re.IGNORECASE)
 
 # ── Live capture/achievement alerts ─────────────────────────────────────────
-# vs_event (listener.py) has no producer on the Lua side, so this polls bfdb's
+# vs_event (the removed listener.py) had no producer on the Lua side, so this polls bfdb's
 # public /api/objectives and /api/kills instead: no bflib/Lua changes needed,
 # and both endpoints are unauthenticated (no admin_username/password required).
 CAMPAIGN_POLL_SECS = 20

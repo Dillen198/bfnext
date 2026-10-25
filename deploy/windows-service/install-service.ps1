@@ -1,3 +1,6 @@
+# LEGACY: Fowl Engine Manager (bfmanager/) installs its own "FowlEngine"
+# service and disables this one. Use this only on a box without the Manager.
+#
 # Installs DCSServerBot as an auto-starting, auto-restarting Windows service
 # via NSSM, so the Vector Strike stack survives a reboot, a blue screen or a
 # crash with nobody logging in. Run from an ELEVATED PowerShell. See README.md
