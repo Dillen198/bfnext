@@ -80,12 +80,16 @@ pub struct GroundWarCfg {
     /// pulled back to refit. Default 40.
     #[serde(default = "default_withdraw_pct")]
     pub withdraw_strength_pct: u8,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// While two enemy formations are in contact and neither can be made
     /// live (the live budget is spent), the engine fights it out on the map:
     /// every `attrition_secs`, each side loses this fraction of the other's
     /// live strength in vehicles (at least one). Default 0.1 every 300 s.
     #[serde(default = "default_attrition_rate")]
     pub attrition_rate: f64,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     #[serde(default = "default_attrition_secs")]
     pub attrition_secs: u32,
     /// The AI commander. Absent = players command alone.
@@ -492,10 +496,10 @@ fn default_arrive_m() -> f64 {
 fn default_withdraw_pct() -> u8 {
     40
 }
-fn default_attrition_rate() -> f64 {
+pub(super) fn default_attrition_rate() -> f64 {
     0.1
 }
-fn default_attrition_secs() -> u32 {
+pub(super) fn default_attrition_secs() -> u32 {
     300
 }
 fn default_player_lock() -> u32 {

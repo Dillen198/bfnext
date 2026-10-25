@@ -2278,6 +2278,8 @@ pub struct NavalCruiseMissileCfg {
     pub missiles_per_strike: u8,
     /// maximum range in meters from carrier to target
     pub max_range: u32,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// supply cost deducted from carrier group warehouse
     pub supply_cost: u32,
 }
@@ -2920,10 +2922,14 @@ pub struct FrontLineConfig {
     /// finer, more stair-steps resolved, slower). Clamped to 50-200.
     #[serde(default = "default_frontline_samples")]
     pub samples_per_boundary: usize,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// Upper bound on the number of line segments drawn. Fewer = lighter on the
     /// server and clients. Default: 200. The segment list is thinned to fit.
     #[serde(default = "default_frontline_max_marks")]
     pub max_marks: usize,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// Legacy: transparency of the old filled-territory shading. No longer used
     /// by the line renderer; kept so existing configs still parse.
     #[serde(default = "default_territory_zone_alpha")]
@@ -3205,12 +3211,18 @@ pub struct WeatherEffectsCfg {
     /// Convoy speed multiplier in snow (0.0-1.0)
     #[serde(default = "default_snow_speed_mult")]
     pub snow_speed_multiplier: f64,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// Minimum visibility (meters) for fixed-wing takeoff
     #[serde(default = "default_min_vis_fixed_wing")]
     pub min_visibility_fixed_wing: f64,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// Disable helicopter operations in thunderstorms
     #[serde(default = "default_true")]
     pub no_helo_in_thunderstorm: bool,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// EWR detection range multiplier in bad weather (0.0-1.0)
     #[serde(default = "default_ewr_weather_mult")]
     pub ewr_weather_range_multiplier: f64,
@@ -3274,15 +3286,21 @@ pub struct CampaignEventsCfg {
     /// Minimum seconds between event checks
     #[serde(default = "default_event_check_interval")]
     pub check_interval_secs: u32,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// Probability (0.0-1.0) of spawning an event per check
     #[serde(default = "default_event_probability")]
     pub event_probability: f64,
     /// Maximum number of concurrent active events per side
     #[serde(default = "default_max_events")]
     pub max_concurrent_events: u32,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// Points awarded for successful VIP extraction
     #[serde(default = "default_vip_reward")]
     pub vip_reward_points: i32,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// Points per civilian evacuated
     #[serde(default = "default_evac_reward")]
     pub evacuation_reward_per_civilian: i32,
@@ -3351,6 +3369,8 @@ pub struct CampaignEventsCfg {
     /// actual threat instead of accumulating idle flights. Default 240.
     #[serde(default = "default_cap_idle_rtb_secs")]
     pub cap_idle_rtb_secs: u32,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// Distance from an objective (metres) within which a CAP orbit is placed. Default: 15000.
     #[serde(default = "default_cap_orbit_radius")]
     pub cap_orbit_radius_m: f64,
@@ -3691,6 +3711,9 @@ impl Default for CampaignEventsCfg {
 }
 
 /// Pilot experience and progression configuration
+///
+/// UNUSED: nothing in the engine implements pilot experience; see
+/// `Cfg::pilot_experience`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 // #[serde(deny_unknown_fields)]
 pub struct PilotExperienceCfg {
@@ -4140,6 +4163,8 @@ pub struct Cfg {
     /// the objective map. Set to 0 to fall back to ground_vehicle_cull_distance.
     #[serde(default = "default_lr_cull_distance")]
     pub lr_cull_distance: u32,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// cull distance override for EWR units. Defaults to 300 000 m.
     /// Set to 0 to fall back to ground_vehicle_cull_distance.
     #[serde(default = "default_ewr_cull_distance")]
@@ -4153,6 +4178,8 @@ pub struct Cfg {
     /// though both are LR-tagged.
     #[serde(default)]
     pub special_sam_wake_distance: FxHashMap<Vehicle, u32>,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// spawn objectives within this radius (m) of a recent weapon launch
     /// position. Allows objectives to be awake when missiles or artillery rounds
     /// are inbound. Default: 60 000 m.
@@ -4373,6 +4400,8 @@ pub struct Cfg {
     /// Dynamic campaign events configuration
     #[serde(default)]
     pub campaign_events: Option<Arc<CampaignEventsCfg>>,
+    /// UNUSED: nothing in the engine reads this, so it has no effect. Kept so
+    /// existing configs still load; `Cfg::load` warns when it is set.
     /// Pilot experience and progression system
     #[serde(default)]
     pub pilot_experience: Option<PilotExperienceCfg>,
@@ -5847,7 +5876,75 @@ impl Cfg {
             write_atomic(&path, serde_json::to_string_pretty(&cfg)?.as_bytes())?
         }
         cfg.validate().with_context(|| format_compact!("invalid cfg {:?}", path))?;
+        for key in cfg.unused_settings() {
+            warn!("cfg {path:?}: {key} is set, but nothing in the engine reads it: it has no effect")
+        }
         Ok(cfg)
+    }
+
+    /// Settings that are parsed but that nothing reads, so `load` can tell an
+    /// operator who set one that it does nothing. Only values that differ
+    /// from the default count as set: a config written out from the defaults
+    /// has every key.
+    pub fn unused_settings(&self) -> Vec<&'static str> {
+        let mut unused: Vec<&'static str> = vec![];
+        let mut check = |set: bool, key: &'static str| {
+            if set {
+                unused.push(key)
+            }
+        };
+        check(self.pilot_experience.is_some(), "pilot_experience");
+        check(self.counter_battery.is_some(), "counter_battery");
+        check(self.ewr_cull_distance != default_ewr_cull_distance(), "ewr_cull_distance");
+        check(self.weapon_spawn_radius != default_weapon_spawn_radius(), "weapon_spawn_radius");
+        if let Some(f) = &self.frontline {
+            check(f.max_marks != default_frontline_max_marks(), "frontline.max_marks");
+            check(
+                f.territory_zone_alpha != default_territory_zone_alpha(),
+                "frontline.territory_zone_alpha",
+            );
+        }
+        if let Some(w) = &self.weather_effects {
+            check(
+                w.min_visibility_fixed_wing != default_min_vis_fixed_wing(),
+                "weather_effects.min_visibility_fixed_wing",
+            );
+            check(!w.no_helo_in_thunderstorm, "weather_effects.no_helo_in_thunderstorm");
+            check(
+                w.ewr_weather_range_multiplier != default_ewr_weather_mult(),
+                "weather_effects.ewr_weather_range_multiplier",
+            );
+        }
+        if let Some(e) = &self.campaign_events {
+            check(
+                e.event_probability != default_event_probability(),
+                "campaign_events.event_probability",
+            );
+            check(e.vip_reward_points != default_vip_reward(), "campaign_events.vip_reward_points");
+            check(
+                e.evacuation_reward_per_civilian != default_evac_reward(),
+                "campaign_events.evacuation_reward_per_civilian",
+            );
+            check(
+                e.cap_orbit_radius_m != default_cap_orbit_radius(),
+                "campaign_events.cap_orbit_radius_m",
+            );
+        }
+        if let Some(g) = &self.ground_war {
+            check(
+                g.attrition_rate != ground_war::default_attrition_rate(),
+                "ground_war.attrition_rate",
+            );
+            check(
+                g.attrition_secs != ground_war::default_attrition_secs(),
+                "ground_war.attrition_secs",
+            );
+        }
+        let naval_cost = self.actions.values().flat_map(|a| a.values()).any(|a| {
+            matches!(&a.kind, ActionKind::NavalCruiseMissileStrike(c) if c.supply_cost != 0)
+        });
+        check(naval_cost, "actions.*.NavalCruiseMissileStrike.supply_cost");
+        unused
     }
 
     /// Sanity checks on values that would crash or silently disable a core
@@ -6093,5 +6190,24 @@ mod secret_tests {
         // what Cfg::load writes back still has the real key
         let json = serde_json::to_string(&cfg).unwrap();
         assert!(json.contains(r#""checkwx_api_key":"abc123""#));
+    }
+}
+
+#[cfg(test)]
+mod unused_settings_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_report_nothing_and_set_values_are_named() {
+        let mut cfg = Cfg::default();
+        assert_eq!(cfg.unused_settings(), Vec::<&str>::new());
+        cfg.weapon_spawn_radius = 1;
+        cfg.weather_effects = Some(WeatherEffectsCfg::default());
+        assert_eq!(cfg.unused_settings(), vec!["weapon_spawn_radius"]);
+        cfg.weather_effects.as_mut().unwrap().no_helo_in_thunderstorm = false;
+        assert_eq!(
+            cfg.unused_settings(),
+            vec!["weapon_spawn_radius", "weather_effects.no_helo_in_thunderstorm"]
+        );
     }
 }
