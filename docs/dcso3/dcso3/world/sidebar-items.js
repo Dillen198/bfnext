@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["SearchVolume"],"struct":["HandlerId","HandlerIdVisitor","MarkPanel","World"]};

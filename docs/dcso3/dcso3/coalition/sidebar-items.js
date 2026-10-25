@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Service","Side","Static"],"struct":["Coalition"]};
