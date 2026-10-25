@@ -66,7 +66,9 @@ tokio = { version = "1", features = ["full"] }
 ureq = { version = "2" }
 uuid = { version = "1", features = ["v4", "serde"] }
 warp = { version = "0.3", features = ["tls"] }
-zip = { version = "0.6.6" }
+# deflate only: .miz files and Tacview .zip.acmi are deflate, and zip's
+# defaults pulled a second zstd (0.11, beside the 0.13 above), bzip2 and AES.
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13" }
 
 # Shared lint levels. Everything here is `warn`, never `deny`, so a new hit
