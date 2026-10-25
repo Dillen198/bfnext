@@ -4073,6 +4073,12 @@ impl CommsPlanCfg {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 // #[serde(deny_unknown_fields)]
 pub struct Cfg {
+    /// The config format version, `CFG_VERSION` when this build writes it.
+    /// Absent in files from before versions existed, which read as version 1.
+    /// Lets a future change that has to reinterpret an existing key tell old
+    /// files from new ones; `load` warns about a file from a newer build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
     #[serde(default)]
     #[schemars(with = "Option<std::string::String>")]
     pub netidx_base: Option<NetIdxPath>,
@@ -5799,7 +5805,57 @@ mod load_tests {
     }
 }
 
+/// The config format version this build writes (see `Cfg::version`).
+pub const CFG_VERSION: u32 = 1;
+
+/// Copy back into `new` (what this build would write) every key of `raw`
+/// (the file as read) that this build does not know, so rewriting an
+/// operator's config never silently deletes a setting a newer build, a typo
+/// fix still to come, or a `_note` comment put there. `known` is `raw` as this
+/// build parsed and re-serialized it: a key in `raw` but not in `known` is one
+/// this build dropped. A key that is known is never copied back, so clearing a
+/// known setting still clears it.
+fn restore_unknown_keys(
+    raw: &serde_json::Value,
+    known: &serde_json::Value,
+    new: &mut serde_json::Value,
+) {
+    use serde_json::Value as J;
+    match (raw, known, new) {
+        (J::Object(r), J::Object(k), J::Object(n)) => {
+            for (key, rv) in r {
+                match (k.get(key), n.get_mut(key)) {
+                    (None, None) => {
+                        n.insert(key.clone(), rv.clone());
+                    }
+                    (Some(kv), Some(nv)) => restore_unknown_keys(rv, kv, nv),
+                    _ => (),
+                }
+            }
+        }
+        (J::Array(r), J::Array(k), J::Array(n)) if r.len() == k.len() && k.len() == n.len() => {
+            for ((rv, kv), nv) in r.iter().zip(k).zip(n.iter_mut()) {
+                restore_unknown_keys(rv, kv, nv)
+            }
+        }
+        _ => (),
+    }
+}
+
 impl Cfg {
+    /// `self` as JSON, plus any keys `raw` (the file being replaced) has that
+    /// this build does not know. See `restore_unknown_keys`.
+    fn to_json_keeping_unknown(
+        &self,
+        raw: Option<(&serde_json::Value, &serde_json::Value)>,
+    ) -> Result<std::string::String> {
+        let mut new = serde_json::to_value(self).context("serializing cfg")?;
+        if let Some((raw, known)) = raw {
+            restore_unknown_keys(raw, known, &mut new);
+        }
+        Ok(serde_json::to_string_pretty(&new)?)
+    }
+
     fn path(miz_state_path: &Path) -> PathBuf {
         let mut path = PathBuf::from(miz_state_path);
         let file_name = path
@@ -5836,12 +5892,19 @@ impl Cfg {
             .map_err(|e| anyhow!("failed to read cfg file {:?}, {:?}", path, e))?;
         let mut cfg: Self = serde_json::from_str(&text)
             .map_err(|e| anyhow!("failed to decode cfg file {:?}, {:?}", path, e))?;
+        if let Some(v) = cfg.version.filter(|v| *v > CFG_VERSION) {
+            warn!(
+                "cfg {:?} is version {v}, from a newer engine (this one reads up to \
+                 {CFG_VERSION}): settings it does not know are ignored",
+                path
+            )
+        }
         // Unknown keys are silently dropped by serde (deny_unknown_fields is
         // off so old configs keep loading), which hid typos like
         // "tk_windw": the setting just quietly ran at its default. Say so.
         // Done before the deprecated-field migration so the comparison sees
         // the deprecated keys still in place.
-        match serde_json::from_str::<serde_json::Value>(&text)
+        let raw_and_known = match serde_json::from_str::<serde_json::Value>(&text)
             .and_then(|raw| Ok((raw, serde_json::to_value(&cfg)?)))
         {
             Ok((raw, known)) => {
@@ -5850,9 +5913,13 @@ impl Cfg {
                 for key in unknown {
                     warn!("cfg {:?}: unknown key {key} is ignored (typo, or removed setting?)", path)
                 }
+                Some((raw, known))
             }
-            Err(e) => warn!("cfg {:?}: could not check for unknown keys {e:?}", path),
-        }
+            Err(e) => {
+                warn!("cfg {:?}: could not check for unknown keys {e:?}", path);
+                None
+            }
+        };
         for (_, actions) in &mut cfg.actions {
             actions.sort_by(|name0, _, name1, _| name0.cmp(name1));
         }
@@ -5872,8 +5939,19 @@ impl Cfg {
         }
         if has_deprecated {
             // the operator's only copy of their config: never leave it
-            // half-written if we die mid-write
-            write_atomic(&path, serde_json::to_string_pretty(&cfg)?.as_bytes())?
+            // half-written if we die mid-write, and never drop a key this
+            // build does not understand. If the file could not be compared
+            // (it parsed as a Cfg but not as JSON, which cannot happen) it
+            // is left alone rather than rewritten blind.
+            match &raw_and_known {
+                Some((raw, known)) => {
+                    let mut migrated = cfg.clone();
+                    migrated.version = Some(CFG_VERSION);
+                    let text = migrated.to_json_keeping_unknown(Some((raw, known)))?;
+                    write_atomic(&path, text.as_bytes())?
+                }
+                None => warn!("cfg {:?}: not rewriting the migrated deployables", path),
+            }
         }
         cfg.validate().with_context(|| format_compact!("invalid cfg {:?}", path))?;
         for key in cfg.unused_settings() {
@@ -6138,9 +6216,18 @@ impl Cfg {
         Ok(())
     }
 
+    /// Write the config, keeping any key the file on disk has that this
+    /// build does not know (and `_note` comments), so saving from an older
+    /// build or after a typo does not delete the operator's settings.
     pub fn save(&self, miz_state_path: &Path) -> Result<()> {
-        let s = serde_json::to_string_pretty(self).context("serializing cfg")?;
-        write_atomic(&Self::path(miz_state_path), s.as_bytes())
+        let path = Self::path(miz_state_path);
+        let old = fs::read_to_string(&path).ok().and_then(|text| {
+            let raw = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+            let known = serde_json::to_value(serde_json::from_str::<Cfg>(&text).ok()?).ok()?;
+            Some((raw, known))
+        });
+        let s = self.to_json_keeping_unknown(old.as_ref().map(|(r, k)| (r, k)))?;
+        write_atomic(&path, s.as_bytes())
     }
 
     pub fn check_vehicle_has_threat_distance(&self, vehicle: &Vehicle) -> Result<()> {
@@ -6209,5 +6296,57 @@ mod unused_settings_tests {
             cfg.unused_settings(),
             vec!["weapon_spawn_radius", "weather_effects.no_helo_in_thunderstorm"]
         );
+    }
+}
+
+#[cfg(test)]
+mod keep_unknown_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn restore_puts_back_only_unknown_keys() {
+        let raw = json!({
+            "a": 1, "future": {"x": 1}, "_note": "why a is 1",
+            "nested": {"b": 1, "typo": 2}, "list": [{"c": 1, "extra": 0}],
+            "cleared": 5
+        });
+        // what this build parsed: it knows a, nested.b, list[].c, cleared
+        let known = json!({"a": 1, "nested": {"b": 1}, "list": [{"c": 1}], "cleared": 5});
+        // what it now wants to write: a changed, cleared removed
+        let mut new = json!({"a": 2, "nested": {"b": 1}, "list": [{"c": 1}]});
+        restore_unknown_keys(&raw, &known, &mut new);
+        assert_eq!(
+            new,
+            json!({
+                "a": 2, "future": {"x": 1}, "_note": "why a is 1",
+                "nested": {"b": 1, "typo": 2}, "list": [{"c": 1, "extra": 0}]
+            })
+        );
+    }
+
+    #[test]
+    fn save_keeps_unknown_keys_and_versions_are_optional() {
+        let dir = std::env::temp_dir().join(format!("bfcfg-keep-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let miz = dir.join("state");
+        let cfg = Cfg::default();
+        // an operator file with a comment and a key from some other build
+        let mut v = serde_json::to_value(&cfg).unwrap();
+        v["_note"] = json!("hand edited");
+        v["setting_from_the_future"] = json!({"on": true});
+        v.as_object_mut().unwrap().remove("version");
+        fs::write(Cfg::path(&miz), serde_json::to_string(&v).unwrap()).unwrap();
+        // a file without a version still loads
+        let mut loaded = Cfg::load(&miz).unwrap();
+        assert_eq!(loaded.version, None);
+        loaded.max_msgs_per_second = 7;
+        loaded.save(&miz).unwrap();
+        let back: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(Cfg::path(&miz)).unwrap()).unwrap();
+        assert_eq!(back["_note"], json!("hand edited"));
+        assert_eq!(back["setting_from_the_future"], json!({"on": true}));
+        assert_eq!(back["max_msgs_per_second"], json!(7));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
