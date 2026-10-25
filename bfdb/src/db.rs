@@ -6484,6 +6484,17 @@ impl StatsDb {
 }
 
 #[cfg(test)]
+impl StatsDb {
+    /// A round of `inst`'s, for route tests.
+    pub(crate) fn insert_test_round(&self, rid: RoundId, inst: &str, start: DateTime<Utc>) {
+        self.round
+            .insert(&(Scenario::from("campaign"), rid), &Round { start, end: Some(start), winner: None })
+            .unwrap();
+        self.round_instance.insert(&rid, &inst.to_string()).unwrap();
+    }
+}
+
+#[cfg(test)]
 mod wiki_tombstone_tests {
     use super::*;
 

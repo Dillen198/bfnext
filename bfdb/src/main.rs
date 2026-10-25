@@ -2081,6 +2081,16 @@ async fn api_pilot(
     Ok(json_response(data))
 }
 
+/// Which rounds the instance-agnostic pilot routes may list: every round
+/// but those of a non-public instance or a range -- the same rule the
+/// lifetime totals, XP and leaderboards follow (`counts_toward_totals`).
+/// These routes take no `?instance=`, so they could not be locked like the
+/// per-instance ones.
+fn shown_round(db: &StatsDb) -> Result<impl Fn(db::RoundId) -> bool> {
+    let public = db.public_rounds()?;
+    Ok(move |r| public.as_ref().map_or(true, |s| s.contains(&r)))
+}
+
 /// GET /api/pilot/:ucid/sorties — all sorties for a pilot
 async fn api_pilot_sorties(
     ucid: String,
@@ -2090,8 +2100,9 @@ async fn api_pilot_sorties(
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         // Summary rows, newest first. The per-sortie event lists are left to
         // /api/pilot/:ucid/sortie/:id so a long career stays a small payload.
+        let shown = shown_round(&db)?;
         let sorties = db.pilot_sortie_stats(&ucid)?;
-        let entries: Vec<_> = sorties.iter().rev().map(|s| {
+        let entries: Vec<_> = sorties.iter().rev().filter(|s| shown(s.round_id)).map(|s| {
             serde_json::json!({
                 "round_id": s.round_id.0,
                 "sortie_id": s.sortie_id.0,
@@ -2125,10 +2136,11 @@ async fn api_pilot_sortie(
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+        let shown = shown_round(&db)?;
         let sortie = db
             .pilot_sortie_stats(&ucid)?
             .into_iter()
-            .find(|s| s.sortie_id.0 == sortie_id)
+            .find(|s| s.sortie_id.0 == sortie_id && shown(s.round_id))
             .ok_or_else(|| websec::not_found("no such sortie"))?;
         Ok(serde_json::to_string(&sortie)?)
     })?;
@@ -2142,8 +2154,9 @@ async fn api_pilot_breakdown(
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+        let shown = shown_round(&db)?;
         let rounds = db.pilot_round_breakdown(&ucid)?;
-        let entries: Vec<_> = rounds.iter().map(|(scenario, rid, agg)| serde_json::json!({
+        let entries: Vec<_> = rounds.iter().filter(|(_, rid, _)| shown(*rid)).map(|(scenario, rid, agg)| serde_json::json!({
             "round_id": rid.0,
             "scenario": scenario,
             "air_kills": agg.air_kills,
@@ -2378,8 +2391,9 @@ async fn api_pilot_kills(
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+        let shown = shown_round(&db)?;
         let kills = db.pilot_kills_for(&ucid)?;
-        let entries: Vec<_> = kills.iter().map(|(round_id, dead)| {
+        let entries: Vec<_> = kills.iter().filter(|(rid, _)| shown(*rid)).map(|(round_id, dead)| {
             // `dead.shots` holds every shot that ever landed on this victim,
             // possibly from several shooters across a long engagement. This is
             // *this* pilot's kill list, so pick this pilot's own shot for the
@@ -2417,8 +2431,9 @@ async fn api_pilot_deploys(
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+        let shown = shown_round(&db)?;
         let deploys = db.pilot_deploys_for(&ucid)?;
-        let entries: Vec<_> = deploys.iter().map(|(round_id, rec)| {
+        let entries: Vec<_> = deploys.iter().filter(|(rid, _)| shown(*rid)).map(|(round_id, rec)| {
             serde_json::json!({
                 "round_id": round_id.0,
                 "time": rec.time.to_rfc3339(),
@@ -7828,9 +7843,10 @@ fn with_bot_link_cfg(
 /// here already hits on an earlier query filter, before its body is read.)
 fn with_instance(db: StatsDb) -> impl Filter<Extract = (Inst,), Error = warp::Rejection> + Clone {
     warp::query::<std::collections::HashMap<std::string::String, std::string::String>>()
+        .and(extract_session_cookie())
         .and(warp::any().map(move || db.clone()))
         .map(
-            |q: std::collections::HashMap<std::string::String, std::string::String>, db: StatsDb| {
+            |q: std::collections::HashMap<std::string::String, std::string::String>, sid: Option<Uuid>, db: StatsDb| {
                 // `?server=` lets a caller that only knows the DCSServerBot
                 // server name (the Discord plugin) address an instance without
                 // having to learn its bfdb id first.
@@ -7841,11 +7857,49 @@ fn with_instance(db: StatsDb) -> impl Filter<Extract = (Inst,), Error = warp::Re
                 });
                 let requested = by_server
                     .as_deref()
-                    .or_else(|| q.get("instance").map(|s| s.as_str()));
-                db.resolve_state(requested)
-                    .unwrap_or_else(|_| db.state(db.instances().default_id()))
+                    .or_else(|| q.get("instance").map(|s| s.as_str()))
+                    .filter(|s| !s.trim().is_empty());
+                match requested {
+                    Some(_) => db
+                        .resolve_state(requested)
+                        .unwrap_or_else(|_| db.state(db.instances().default_id())),
+                    None => db.state(&implicit_instance(&db, sid)),
+                }
             },
         )
+}
+
+/// The instance a request that names none gets: the configured default --
+/// unless that is a non-public campaign and the caller is not an admin. It
+/// used to be served regardless, so anyone who left `?instance=` off read
+/// the war the lock on `?instance=<id>` hides. Such a caller gets the first
+/// public campaign instance instead -- the one `GET /api/instances` already
+/// tells them is the default -- or, when there is none, the private default,
+/// which `bad_instance_guard` then refuses on the per-instance routes.
+fn implicit_instance(db: &StatsDb, sid: Option<Uuid>) -> InstanceId {
+    let default = db.instances().default_id().clone();
+    let Some(cfg) = db.instances().get(&default) else { return default };
+    if cfg.public || cfg.is_range() || session_is_admin(db, sid) {
+        return default;
+    }
+    db.instances()
+        .all()
+        .iter()
+        .find(|c| c.public && !c.is_range())
+        .map(|c| InstanceId::from(c.id.as_str()))
+        .unwrap_or(default)
+}
+
+/// The routes that take no `?instance=` (or gate themselves), which the
+/// private-default lock in `bad_instance_guard` leaves alone.
+fn instance_agnostic(path: &str) -> bool {
+    const PREFIXES: &[&str] = &[
+        "/api/auth/", "/api/instances", "/api/version", "/api/config", "/api/health",
+        "/api/wiki/pages", "/api/wiki/images", "/api/pilots", "/api/pilot/", "/api/squadrons",
+        "/api/progression/", "/api/cockpit/", "/api/range/", "/api/replay/", "/api/admin/",
+        "/api/metrics", "/api/logs/", "/ws/logs",
+    ];
+    PREFIXES.iter().any(|p| path.starts_with(p))
 }
 
 /// A front-of-chain guard that turns an unroutable `?instance=` / `?server=`
@@ -7865,11 +7919,13 @@ fn bad_instance_guard(
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(extract_session_cookie())
         .and(warp::any().map(move || db.clone()))
+        .and(websec::with_client_ip())
         .and_then(
             |full: warp::path::FullPath,
              q: std::collections::HashMap<std::string::String, std::string::String>,
              session_id: Option<Uuid>,
-             db: StatsDb| async move {
+             db: StatsDb,
+             ip: std::net::IpAddr| async move {
                 let path = full.as_str();
                 if !(path.starts_with("/api/") || path.starts_with("/ws/")) {
                     return Err(warp::reject::reject());
@@ -7877,6 +7933,20 @@ fn bad_instance_guard(
                 let by_instance = q.get("instance");
                 let named = q.get("server").or(by_instance);
                 let Some(name) = named.map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+                    // Nothing named: `with_instance` picks the instance. When
+                    // that can only be a non-public campaign (no public one
+                    // exists), it is locked exactly as if it had been named.
+                    // This machine's own callers (the Discord bot) are not.
+                    let implicit = implicit_instance(&db, session_id);
+                    let locked = db.instances().get(&implicit).map_or(false, |c| !c.public && !c.is_range())
+                        && !instance_agnostic(path)
+                        && !ip.is_loopback()
+                        && !session_is_admin(&db, session_id);
+                    if locked {
+                        return Ok(websec::error_response(&websec::not_found(
+                            "this server's campaign is not public -- log in as an admin",
+                        )));
+                    }
                     return Err(warp::reject::reject());
                 };
                 // `?instance=all` is meaningful on the aggregate routes; let

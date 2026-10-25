@@ -500,6 +500,47 @@ async fn metrics_and_log_tokens() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_private_default_is_not_served_to_the_public() {
+    // the private test server is the default, the public one is not
+    let h = harness_with(
+        serde_json::json!({
+            "default": "test",
+            "instances": [{ "id": "test", "public": false }, { "id": "live", "export_port": 9001 }],
+        }),
+        |_| (),
+    );
+    let t0 = chrono::Utc::now();
+    for (rid, inst) in [(db::RoundId(1), "test"), (db::RoundId(2), "live")] {
+        h.db.insert_test_round(rid, inst, t0);
+    }
+    let instances_of = |v: serde_json::Value| -> Vec<String> {
+        v.as_array().unwrap().iter().map(|r| r["instance"].as_str().unwrap().to_string()).collect()
+    };
+    // no ?instance=: the public gets the public campaign
+    assert_eq!(instances_of(body_json(h.get("/api/rounds", None).await)), vec!["live"]);
+    // naming the private one is still locked
+    assert_eq!(h.get("/api/rounds?instance=test", None).await.status(), 404);
+    // an admin gets the configured default either way
+    let admin = h.session(true);
+    assert_eq!(instances_of(body_json(h.get("/api/rounds", Some(&admin)).await)), vec!["test"]);
+
+    // a box with nothing public: the implicit default is locked too
+    let h = harness_with(serde_json::json!({ "instances": [{ "id": "test", "public": false }] }), |_| ());
+    assert_eq!(h.get("/api/rounds", None).await.status(), 404);
+    assert_eq!(h.get("/api/version", None).await.status(), 200);
+    let admin = h.session(true);
+    assert_eq!(h.get("/api/rounds", Some(&admin)).await.status(), 200);
+    // the bot on this machine is not locked out
+    let r = warp::test::request()
+        .method("GET")
+        .path("/api/rounds")
+        .remote_addr("127.0.0.1:4000".parse().unwrap())
+        .reply(&h.routes)
+        .await;
+    assert_eq!(r.status(), 200);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn security_headers_on_api_and_page() {
     let h = harness();
     let r = h.get("/api/version", None).await;
