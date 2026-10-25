@@ -912,7 +912,11 @@ class Updater:
                     raise RuntimeError(f"{name} in {rel['root']}: sha256 mismatch -- refusing it")
                 os.replace(dest + ".part", dest)
         else:
-            async with aiohttp.ClientSession() as http:
+            # GitHub's release-asset responses (and its error pages) can send a
+            # Content-Security-Policy header longer than aiohttp's 8190-byte
+            # default, which failed the whole check with "400, Got more than
+            # 8190 bytes when reading". Allow headers up to 64 KiB.
+            async with aiohttp.ClientSession(max_line_size=65536, max_field_size=65536) as http:
                 releases = await self._http_json(
                     http, f"{GITHUB_API}/repos/{cfg.repo}/releases?per_page=30")
                 rel = pick_github_release(releases, cfg.tag_prefix, cfg.channel, self.bad)

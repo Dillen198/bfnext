@@ -2039,7 +2039,11 @@ impl Db {
                                 }
                             },
                             Err(e) => {
-                                warn!("could not get object {gid} {e:?}");
+                                // The DCS group is gone (every unit dead) but
+                                // the handle was never dropped: nothing to
+                                // toggle. This warned every time the base woke
+                                // or slept.
+                                debug!("could not get object {gid} {e:?}");
                                 continue;
                             }
                         };
@@ -2241,7 +2245,13 @@ impl Db {
                 }
             }
         }
-        for gid in maybe!(obj.groups, &side, "side group")? {
+        // A base with no groups for the new owner (no templates for that
+        // side in the .miz) has no services to revive. That's normal, not an
+        // error: it used to log "no such side group" on every such capture.
+        let Some(groups) = obj.groups.get(&side) else {
+            return self.update_objective_status(&oid, now);
+        };
+        for gid in groups {
             let group = group_mut!(self, gid)?;
             if group.class.is_services() {
                 for uid in &group.units {

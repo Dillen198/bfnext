@@ -2860,17 +2860,22 @@ fn find_ground_template(
     side: dcso3::coalition::Side,
 ) -> Option<dcso3::String> {
     use crate::db::objective::ObjGroupClass;
-    let is_ground = |class: &ObjGroupClass| matches!(
-        class,
-        ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Sr | ObjGroupClass::Lr
-    );
+    // A special SAM site's group is built from inline units under an
+    // "@synthetic:<gid>" name, with no .miz template behind it, so it can't
+    // be copied into an ambush force ("no such template @synthetic:8").
+    let is_ground = |g: &db::group::SpawnedGroup| {
+        matches!(
+            g.class,
+            ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Sr | ObjGroupClass::Lr
+        ) && !g.template_name.starts_with("@synthetic:")
+    };
 
     // First try the requested objective's own groups
     if let Some(obj) = db.persisted.objectives.get(&objective) {
         if let Some(gids) = obj.groups().get(&side) {
             let found = gids.into_iter().find_map(|gid| {
                 db.persisted.groups.get(gid).and_then(|g| {
-                    if is_ground(&g.class) { Some(g.template_name.clone()) } else { None }
+                    if is_ground(g) { Some(g.template_name.clone()) } else { None }
                 })
             });
             if found.is_some() {
@@ -2885,7 +2890,7 @@ fn find_ground_template(
         .find_map(|(_, o)| {
             o.groups().get(&side)?.into_iter().find_map(|gid| {
                 db.persisted.groups.get(gid).and_then(|g| {
-                    if is_ground(&g.class) { Some(g.template_name.clone()) } else { None }
+                    if is_ground(g) { Some(g.template_name.clone()) } else { None }
                 })
             })
         })

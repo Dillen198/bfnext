@@ -2205,8 +2205,11 @@ impl Db {
             let instance = match instance {
                 Ok(i) => i,
                 Err(e) => {
-                    warn!(
-                        "update_unit_positions skipping invalid instance {uid}, {:?}",
+                    // Gone from DCS without a dead event (DCS skips some).
+                    // The caller handles it as a kill, so this is routine,
+                    // not a warning -- it was ~100 WARN lines a day.
+                    info!(
+                        "update_unit_positions: unit {uid} gone from DCS, handling it as dead ({:?})",
                         e
                     );
                     dead.push(id.clone());
