@@ -9,8 +9,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { Backdrop } from './Backdrop'
-import { Carrier, ChevronsLeft, ChevronsRight, LogOut, Menu, Moon, Search, Sun, X } from '@icons'
-import { MOCK } from '../api'
+import { Alert, Carrier, ChevronsLeft, ChevronsRight, LogOut, Menu, Moon, Search, Sun, X } from '@icons'
+import { useQuery } from '@tanstack/react-query'
+import { fmtUtc } from '@shared/web/status'
+import { useOffline, useOfflineText } from '@shared/web/snapshot'
+import { MOCK, rangeLastState, snapshot } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '@shared/web/theme'
 import { fmt, pad3 } from '../lib/format'
@@ -198,6 +201,33 @@ function RailLinks({ collapsed, onPick }: { collapsed: boolean; onPick?: () => v
   )
 }
 
+/** One line under the top bar while the range server is down. */
+function OfflineBanner() {
+  const { offline } = useOffline()
+  const fromSnapshot = useOfflineText()
+  const last = useQuery({
+    queryKey: ['range-last-state'],
+    queryFn: rangeLastState,
+    enabled: offline && !!snapshot,
+    refetchInterval: 60_000,
+  })
+  if (!offline || MOCK) return null
+  const since = fmtUtc(last.data?.last_seen ?? undefined)
+  const text = fromSnapshot
+    ? `${fromSnapshot}. Live range data is paused until it is back.`
+    : `Server offline${since ? ` since ${since}` : ''}: live range data is unavailable until it is back.`
+  return (
+    <div
+      role="status"
+      className="flex items-center gap-2 px-4 py-1.5 text-[12px]"
+      style={{ background: 'color-mix(in srgb, var(--wave) 12%, transparent)', borderBottom: '1px solid var(--wave)' }}
+    >
+      <Alert size={13} style={{ color: 'var(--wave)', flexShrink: 0 }} />
+      <span>{text}</span>
+    </div>
+  )
+}
+
 export function Shell({ children, bleed }: { children: ReactNode; bleed: boolean }) {
   const { theme, toggle } = useTheme()
   const [collapsed, setCollapsed] = usePref<boolean>('range.rail.collapsed', false, isBool)
@@ -281,6 +311,7 @@ export function Shell({ children, bleed }: { children: ReactNode; bleed: boolean
             </button>
           </div>
         </header>
+        <OfflineBanner />
 
         <main className={`shell-content${bleed ? ' bleed' : ''}`}>
           {!bleed && <Backdrop path={loc.pathname} />}

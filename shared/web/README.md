@@ -14,6 +14,7 @@ app keeps its own `package.json`, lockfile and Vercel deploy.
 | `LogoMark.tsx` | The campaign logo, light/dark |
 | `ErrorBoundary.tsx` | Crash screen; reloads once on a stale route chunk after a deploy |
 | `status.ts` | The hand-written status file (`bfsite/public/status.json`) and its helpers |
+| `snapshot.ts` | Fallback to bfdb's public snapshot while bfdb is down (`VITE_SNAPSHOT_URL`), the offline state and banner text; see `deploy/snapshot-fallback.md` |
 | `notifications.ts` | Notification bell read state |
 | `urls.ts` | The production `*.vectorstrike.org` addresses |
 

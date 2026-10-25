@@ -61,6 +61,7 @@ All read at build time; Vite inlines them.
 | Variable | Default | What it does |
 |----------|---------|--------------|
 | `VITE_API_BASE` | `''` (same origin) | bfdb's origin, no trailing slash. Leave unset when bfdb serves the dashboard. |
+| `VITE_SNAPSHOT_URL` | unset (off) | bfdb's public snapshot, e.g. `https://snapshot.vectorstrike.org`, read while bfdb is down. See `deploy/snapshot-fallback.md`. |
 | `VITE_STATUS_URL` | `https://www.vectorstrike.org/status.json` | The hand-written server notices (bfsite's `public/status.json`). |
 | `VITE_BFDB_URL` | `http://localhost:8880` | Dev server only: where `/api` and `/ws` are proxied. |
 

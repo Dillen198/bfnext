@@ -34,6 +34,7 @@ import type {
 } from './types'
 import { deadline, errorMessage, LONG_TIMEOUT_MS } from '@shared/web/api'
 import { VS_URLS } from '@shared/web/urls'
+import { createSnapshotSource, fetchWithSnapshot, serverLastState } from '@shared/web/snapshot'
 
 // Same-origin by default, like the other apps: `npm run dev` proxies /api to a
 // local bfdb (or production with `--mode live`), and the production API comes
@@ -45,6 +46,16 @@ export const MOCK: boolean = __RANGE_MOCK__
 export const DASHBOARD_URL: string = (import.meta.env.VITE_DASHBOARD_URL || VS_URLS.dashboard).replace(/\/+$/, '')
 
 const BASE = `${API_ROOT}/api`
+
+// bfdb's public snapshot (deploy/snapshot-fallback.md). The range's own data
+// is not in it, but the range server's last known state is, for the offline
+// banner. Unset: no fallback.
+export const snapshot = createSnapshotSource(import.meta.env.VITE_SNAPSHOT_URL)
+
+/** The range server's last known state, from the snapshot (null without one). */
+export function rangeLastState() {
+  return snapshot && RANGE_INSTANCE ? serverLastState(snapshot, RANGE_INSTANCE) : Promise.resolve(null)
+}
 
 /** Append `instance=` (only when configured) to a path that may have a query. */
 export function withInstance(path: string): string {
@@ -78,7 +89,8 @@ function qs(params: object): string {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${withInstance(path)}`, { credentials: 'include', signal: deadline() })
+  const p = withInstance(path)
+  const res = await fetchWithSnapshot(`${BASE}${p}`, `/api${p}`, { credentials: 'include', signal: deadline() }, snapshot)
   if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
   return res.json() as Promise<T>
 }

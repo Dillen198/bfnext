@@ -1,5 +1,6 @@
 import { ArrowRight } from '@icons'
 import { dashboard, wiki } from '../config/campaign'
+import { useOffline } from '@shared/web/snapshot'
 import { roundNo } from '../api'
 import { lastResult, roundDay, useTheatreLive, type ServerRow } from '../live'
 import { BrowserName, NoticeBox, StatusTag, TerritoryBar } from './Bits'
@@ -8,7 +9,9 @@ import FlagBackdrop from './Flags'
 /** One server, full width: the pitch on the left, its live state on the right, its flags behind. */
 export default function TheatreCard({ row }: { row: ServerRow }) {
   const t = row.theatre
-  const { front, frontLoading, airborne } = useTheatreLive(row.state === 'offline' ? undefined : t.instance)
+  // Offline with a snapshot: the last known front line, rather than nothing.
+  const { snapshotAt } = useOffline()
+  const { front, frontLoading, airborne } = useTheatreLive(row.state === 'offline' && !snapshotAt ? undefined : t.instance)
   const round = t.instance?.active_round
   const up = row.state === 'live' || row.state === 'standby'
   const day = round ? roundDay(round.start) : undefined

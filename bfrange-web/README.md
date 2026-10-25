@@ -86,6 +86,7 @@ All read at **build** time (Vite inlines them). See `.env.example`.
 | Variable | Default | Meaning |
 |---|---|---|
 | `VITE_API_BASE` | unset; `.env.production` sets `https://api.vectorstrike.org` | bfdb origin, no trailing slash. Unset = same-origin `/api` (the dev proxy). |
+| `VITE_SNAPSHOT_URL` | unset (off) | bfdb's public snapshot, e.g. `https://snapshot.vectorstrike.org`, for the offline banner. See `deploy/snapshot-fallback.md`. |
 | `VITE_RANGE_INSTANCE` | unset | Only set when one bfdb fronts several range servers: appended as `?instance=` to every call. Unset, bfdb picks its range instance. |
 | `VITE_DASHBOARD_URL` | `https://dashboard.vectorstrike.org` (`shared/web/urls.ts`) | The dashboard; "Web Tacview" opens its `/replay/<rec>?focus=&t=` there. |
 | `VITE_MOCK` | unset | `1` = serve everything from `src/mock/`. |

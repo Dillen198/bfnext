@@ -5,6 +5,7 @@ import {
 } from 'recharts'
 import { api, connectLiveLogs, connectEngineLogs, connectGciTranscript, type GciCall, type LogLine, type PerfRow, type PerfTimelinePoint, type BotActionResult } from '../api'
 import { useAuth } from '../context/AuthContext'
+import { useOffline } from '@shared/web/snapshot'
 import PageHeader from '../components/PageHeader'
 import CommandersPanel from '../components/CommandersPanel'
 import { useTableSort, SortTh } from '../components/SortableTh'
@@ -266,8 +267,10 @@ function LogAnalyzer() {
     return true
   })
 
-  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' ? '#f59e0b' : '#ef4444'
-  const statusLabel = wsStatus === 'open' ? 'LIVE' : wsStatus === 'connecting' ? 'CONNECTING' : wsStatus === 'closed' ? 'CLOSED' : 'ERROR'
+  // bfdb down: the stream is not coming back by itself any time soon, say so.
+  const offline = useOffline().offline && wsStatus !== 'open'
+  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' && !offline ? '#f59e0b' : '#ef4444'
+  const statusLabel = wsStatus === 'open' ? 'LIVE' : offline ? 'SERVER OFFLINE' : wsStatus === 'connecting' ? 'CONNECTING' : wsStatus === 'closed' ? 'CLOSED' : 'ERROR'
 
   return (
     <div className="vs-card" style={{ display: 'flex', flexDirection: 'column', height: 520 }}>
@@ -414,8 +417,10 @@ function EngineLogAnalyzer() {
     return true
   })
 
-  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' ? '#f59e0b' : '#ef4444'
-  const statusLabel = wsStatus === 'open' ? 'LIVE' : wsStatus === 'connecting' ? 'CONNECTING' : wsStatus === 'closed' ? 'CLOSED' : 'ERROR'
+  // bfdb down: the stream is not coming back by itself any time soon, say so.
+  const offline = useOffline().offline && wsStatus !== 'open'
+  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' && !offline ? '#f59e0b' : '#ef4444'
+  const statusLabel = wsStatus === 'open' ? 'LIVE' : offline ? 'SERVER OFFLINE' : wsStatus === 'connecting' ? 'CONNECTING' : wsStatus === 'closed' ? 'CLOSED' : 'ERROR'
 
   return (
     <div className="vs-card" style={{ display: 'flex', flexDirection: 'column', height: 520 }}>
@@ -610,8 +615,10 @@ function GciTranscriptPanel() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'auto' }) }, [calls])
 
-  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' ? '#f59e0b' : '#ef4444'
-  const statusLabel = wsStatus === 'open' ? 'LIVE' : wsStatus === 'connecting' ? 'CONNECTING' : wsStatus === 'closed' ? 'CLOSED' : 'ERROR'
+  // bfdb down: the stream is not coming back by itself any time soon, say so.
+  const offline = useOffline().offline && wsStatus !== 'open'
+  const statusCol = wsStatus === 'open' ? 'var(--accent)' : wsStatus === 'connecting' && !offline ? '#f59e0b' : '#ef4444'
+  const statusLabel = wsStatus === 'open' ? 'LIVE' : offline ? 'SERVER OFFLINE' : wsStatus === 'connecting' ? 'CONNECTING' : wsStatus === 'closed' ? 'CLOSED' : 'ERROR'
 
   return (
     <div className="vs-card" style={{ display: 'flex', flexDirection: 'column', height: 420 }}>

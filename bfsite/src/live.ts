@@ -1,5 +1,6 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
-import { api, roundNo, type Health, type ServerInstance } from './api'
+import { useOffline, type ServerLastState } from '@shared/web/snapshot'
+import { api, roundNo, snapshot, type Health, type ServerInstance } from './api'
 import { SERVERS, type ServerProfile } from './config/servers'
 import { useNotices, type Notice, type ServerState } from './status'
 
@@ -45,12 +46,16 @@ export function useTheatres() {
         blueLabel: p.blueLabel,
         redLabel: p.redLabel,
       }))
+  const net = useOffline()
   return {
     theatres,
     defaultInstance: q.data?.default,
     loading: q.isLoading,
-    /** bfdb did not answer at all: the game host, or its tunnel, is down. */
-    offline: q.isError,
+    /** bfdb did not answer at all: the game host, or its tunnel, is down.
+     *  The list may still be there, from the snapshot. */
+    offline: q.isError || net.offline,
+    /** When the snapshot being shown instead was made, if one is. */
+    snapshotAt: net.offline ? net.snapshotAt : null,
     checkedAt: Math.max(q.dataUpdatedAt, q.errorUpdatedAt) || undefined,
   }
 }
@@ -60,6 +65,8 @@ export interface ServerRow {
   state: ServerState
   notices: Notice[]
   health: Health | undefined
+  /** While bfdb is down: the server's last known state, from the snapshot. */
+  last: ServerLastState | undefined
 }
 
 const NOTICE_STATE: Partial<Record<Notice['level'], ServerState>> = {
@@ -75,13 +82,22 @@ const NOTICE_RANK: ServerState[] = ['outage', 'maintenance', 'degraded']
  * has written up yet.
  */
 export function useServerStates() {
-  const { theatres, offline, loading, checkedAt } = useTheatres()
+  const { theatres, offline, loading, checkedAt, snapshotAt } = useTheatres()
   const { notices, upcoming, forServer } = useNotices()
   const healths = useQueries({
     queries: theatres.map(t => ({
       queryKey: ['health', t.instance?.id],
       queryFn: () => api.health(t.instance?.id),
       enabled: !!t.instance && !offline,
+      refetchInterval: 60_000,
+    })),
+  })
+  // Only once bfdb is down: what each server was last seen doing.
+  const lasts = useQueries({
+    queries: theatres.map(t => ({
+      queryKey: ['last-state', t.key],
+      queryFn: () => api.lastState(t.key),
+      enabled: offline && !!snapshot,
       refetchInterval: 60_000,
     })),
   })
@@ -96,10 +112,10 @@ export function useServerStates() {
     else if (loading || !t.instance) state = 'unknown'
     else if (health && !health.engine.reachable) state = 'engine-down'
     else state = t.instance.active_round ? 'live' : 'standby'
-    return { theatre: t, state, notices: ns, health }
+    return { theatre: t, state, notices: ns, health, last: offline ? lasts[i]?.data ?? undefined : undefined }
   })
 
-  return { rows, offline, loading, notices, upcoming, checkedAt }
+  return { rows, offline, loading, notices, upcoming, checkedAt, snapshotAt }
 }
 
 export interface FrontLine {
