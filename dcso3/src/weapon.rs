@@ -11,11 +11,11 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
+use crate::object::DcsOidExt;
 use super::{as_tbl, object::Object, unit::Unit};
-use crate::{cvt_err, object::{DcsObject, DcsOid}, simple_enum, wrapped_table, LuaEnv, LuaVec3, MizLua, Position3};
+use crate::{object::{DcsObject, DcsOid}, simple_enum, wrapped_table, LuaEnv, LuaVec3, MizLua, Position3};
 use anyhow::{bail, Result};
 use mlua::{prelude::*, Value};
-use serde::Deserialize;
 use serde_derive::Serialize;
 use std::{marker::PhantomData, ops::Deref};
 
@@ -247,8 +247,7 @@ impl WeaponDesc {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ClassWeapon;
+pub use dcso3_core::weapon::ClassWeapon;
 
 impl<'lua> DcsObject<'lua> for Weapon<'lua> {
     type Class = ClassWeapon;

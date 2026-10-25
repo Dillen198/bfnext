@@ -13,23 +13,14 @@ FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::as_tbl;
 use crate::{
-    airbase::Airbase, lua_err, simple_enum_unknown, wrapped_table, LuaEnv, MizLua, String,
+    airbase::Airbase, lua_err, wrapped_table, LuaEnv, MizLua, String,
 };
 use anyhow::Result;
 use mlua::{prelude::*, Value};
-use serde_derive::{Deserialize, Serialize};
+use serde_derive::Serialize;
 use std::ops::Deref;
 
-simple_enum_unknown!(LiquidType, u8, [
-    JetFuel => 0,
-    Avgas => 1,
-    MW50 => 2,
-    Diesel => 3
-]);
-
-impl LiquidType {
-    pub const ALL: [LiquidType; 4] = [Self::Avgas, Self::Diesel, Self::JetFuel, Self::MW50];
-}
+pub use dcso3_core::warehouse::LiquidType;
 
 wrapped_table!(ItemInventory, None);
 

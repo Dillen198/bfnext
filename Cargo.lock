@@ -265,7 +265,7 @@ dependencies = [
  "bytes",
  "chrono",
  "clap",
- "dcso3",
+ "dcso3-core",
  "enumflags2",
  "env_logger",
  "flate2",
@@ -327,7 +327,6 @@ dependencies = [
  "netidx-protocols",
  "once_cell",
  "parking_lot 0.12.5",
- "paste",
  "rand 0.8.5",
  "regex",
  "schemars",
@@ -347,15 +346,13 @@ dependencies = [
  "anyhow",
  "chrono",
  "compact_str 0.8.1",
- "dcso3",
+ "dcso3-core",
  "enumflags2",
  "fxhash",
  "immutable-chunkmap",
  "indexmap",
  "log",
- "mlua",
  "netidx",
- "paste",
  "regex",
  "schemars",
  "serde",
@@ -928,6 +925,7 @@ dependencies = [
  "bytes",
  "chrono",
  "compact_str 0.8.1",
+ "dcso3-core",
  "enumflags2",
  "fixedstr",
  "fxhash",
@@ -941,6 +939,26 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "zip",
+]
+
+[[package]]
+name = "dcso3-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "compact_str 0.8.1",
+ "fixedstr",
+ "hdrhistogram",
+ "log",
+ "mlua",
+ "nalgebra",
+ "paste",
+ "schemars",
+ "serde",
+ "serde_derive",
 ]
 
 [[package]]

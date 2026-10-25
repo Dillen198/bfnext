@@ -24,19 +24,7 @@ use std::{cmp::max, collections::hash_map::Entry, ops::Deref};
 
 wrapped_table!(Weather, None);
 
-wrapped_prim!(UnitId, i64, Hash, Copy);
-
-impl Default for UnitId {
-    fn default() -> Self {
-        UnitId(0)
-    }
-}
-
-impl UnitId {
-    pub fn next(&mut self) {
-        self.0 += 1
-    }
-}
+pub use dcso3_core::env::miz::UnitId;
 
 wrapped_prim!(GroupId, i64, Hash, Copy);
 
@@ -441,7 +429,7 @@ impl<'lua> Coalition<'lua> {
                             let base = base.append(["units"]).append([i + 1]);
                             let name = unit.name()?;
                             let uid = unit.id()?;
-                            idx.max_uid = UnitId(max(idx.max_uid.0, uid.0));
+                            idx.max_uid = UnitId::from(max(idx.max_uid.inner(), uid.inner()));
                             match idx.units.entry(uid) {
                                 Entry::Occupied(_) => bail!("duplicate unit id {:?}", uid),
                                 Entry::Vacant(e) => e.insert(IndexedUnit {
@@ -560,7 +548,7 @@ impl MizIndex {
         self.by_side
             .iter()
             .fold(UnitId::default(), |muid, (_, cidx)| {
-                UnitId(max(muid.0, cidx.max_uid.0))
+                UnitId::from(max(muid.inner(), cidx.max_uid.inner()))
             })
     }
 

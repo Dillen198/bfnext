@@ -19,27 +19,19 @@ use crate::{
 use anyhow::{anyhow, bail, Result};
 use core::fmt;
 use mlua::{prelude::*, Value};
-use serde_derive::{Deserialize, Serialize};
+use serde_derive::Serialize;
 use std::{hash::Hash, marker::PhantomData, ops::Deref};
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct DcsOid<T> {
-    pub(crate) id: u64,
-    pub(crate) class: String,
-    #[serde(skip)]
-    pub(crate) t: PhantomData<T>,
+pub use dcso3_core::object::{ClassObject, DcsOid};
+
+/// `DcsOid` methods that need the Lua state. A trait because `DcsOid` now
+/// lives in dcso3-core, which knows nothing about `MizLua`.
+pub trait DcsOidExt {
+    fn check_implements(&self, lua: MizLua, class: &str) -> Result<()>;
 }
 
-impl<T> DcsOid<T> {
-    pub fn erased(&self) -> DcsOid<ClassObject> {
-        DcsOid {
-            id: self.id,
-            class: self.class.clone(),
-            t: PhantomData,
-        }
-    }
-
-    pub fn check_implements(&self, lua: MizLua, class: &str) -> Result<()> {
+impl<T> DcsOidExt for DcsOid<T> {
+    fn check_implements(&self, lua: MizLua, class: &str) -> Result<()> {
         let m = lua.inner().globals().raw_get(&**self.class)?;
         if !check_implements(&m, class) {
             bail!("{:?} is does not implement {class}", self)
@@ -47,41 +39,6 @@ impl<T> DcsOid<T> {
         Ok(())
     }
 }
-
-impl<T> fmt::Debug for DcsOid<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{{ id: {}, class: {} }}", self.id, self.class)
-    }
-}
-
-impl<T> Hash for DcsOid<T> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state)
-    }
-}
-
-impl<T> PartialEq for DcsOid<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.id.eq(&other.id)
-    }
-}
-
-impl<T> Eq for DcsOid<T> {}
-
-impl<T> PartialOrd for DcsOid<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.id.partial_cmp(&other.id)
-    }
-}
-
-impl<T> Ord for DcsOid<T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.id.cmp(&other.id)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ClassObject;
 
 pub trait DcsObject<'lua>: Sized + Deref<Target = mlua::Table<'lua>> {
     type Class: fmt::Debug + Clone;

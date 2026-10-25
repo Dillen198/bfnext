@@ -85,5 +85,5 @@ undocumented_unsafe_blocks = "warn"
 
 [workspace]
 resolver = "2"
-members = ["dcso3", "livewx", "bflib", "bfrange", "bfdb", "bfprotocols", "yats", "bfcockpit/installer", "bfcockpit/net"]
+members = ["dcso3", "dcso3-core", "livewx", "bflib", "bfrange", "bfdb", "bfprotocols", "yats", "bfcockpit/installer", "bfcockpit/net"]
 exclude = ["bftools"]

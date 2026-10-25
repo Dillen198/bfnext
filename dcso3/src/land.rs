@@ -11,12 +11,12 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use super::{as_tbl, cvt_err, LuaVec3};
+use super::{as_tbl, LuaVec3};
 use crate::{record_perf, simple_enum, wrapped_table, LuaEnv, LuaVec2, MizLua, Sequence};
 use anyhow::Result;
 use mlua::{prelude::*, Value};
 use na::Vector2;
-use serde_derive::{Deserialize, Serialize};
+use serde_derive::Serialize;
 use std::ops::Deref;
 
 simple_enum!(SurfaceType, u8, [

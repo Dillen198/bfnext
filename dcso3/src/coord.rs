@@ -18,12 +18,7 @@ use mlua::{prelude::*, Value};
 use serde_derive::{Deserialize, Serialize};
 use std::ops::Deref;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct LLPos {
-    pub latitude: f64,
-    pub longitude: f64,
-    pub altitude: f64,
-}
+pub use dcso3_core::coord::LLPos;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MGRSPos {

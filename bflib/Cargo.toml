@@ -34,7 +34,6 @@ netidx-protocols = { workspace = true }
 netidx-archive = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
-paste = { workspace = true }
 rand = { workspace = true }
 regex = { workspace = true }
 serde_derive = { workspace = true }

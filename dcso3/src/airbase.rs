@@ -11,6 +11,7 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
+use crate::object::DcsOidExt;
 use super::{as_tbl, coalition::Side, object::Object, warehouse::Warehouse, LuaVec3, String};
 use crate::{
     object::{DcsObject, DcsOid},

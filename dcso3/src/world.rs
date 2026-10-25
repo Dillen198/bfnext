@@ -129,7 +129,7 @@ atomic_id!(HandlerId);
 
 impl HandlerId {
     fn key(&self) -> String {
-        String(format_compact!("rustHandler{}", self.0))
+        String::from(format_compact!("rustHandler{}", self.0))
     }
 }
 

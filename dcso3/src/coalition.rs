@@ -14,64 +14,18 @@ FITNESS FOR A PARTICULAR PURPOSE.
 use super::{
     airbase::Airbase,
     as_tbl,
-    country::Country,
-    cvt_err, env,
+    country::Country, env,
     group::{Group, GroupCategory},
     static_object::StaticObject,
     unit::Unit,
 };
 use crate::{record_perf, simple_enum, wrapped_table, LuaEnv, MizLua, Sequence};
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, Result};
 use mlua::{prelude::*, Value};
-use serde_derive::{Deserialize, Serialize};
-use std::{fmt, ops::Deref, str::FromStr};
+use serde_derive::Serialize;
+use std::ops::Deref;
 
-simple_enum!(Side, u8, [Neutral => 0, Red => 1, Blue => 2]);
-
-impl Default for Side {
-    fn default() -> Self {
-        Side::Red
-    }
-}
-
-impl fmt::Display for Side {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_str())
-    }
-}
-
-impl FromStr for Side {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s {
-            "blue" => Side::Blue,
-            "red" => Side::Red,
-            "neutrals" => Side::Neutral,
-            s => bail!("unknown side {s}"),
-        })
-    }
-}
-
-impl Side {
-    pub const ALL: [Side; 3] = [Side::Red, Side::Blue, Side::Neutral];
-
-    pub fn to_str(&self) -> &'static str {
-        match self {
-            Side::Blue => "blue",
-            Side::Red => "red",
-            Side::Neutral => "neutrals",
-        }
-    }
-
-    pub fn opposite(&self) -> Side {
-        match self {
-            Self::Blue => Self::Red,
-            Self::Red => Self::Blue,
-            Self::Neutral => Self::Neutral,
-        }
-    }
-}
+pub use dcso3_core::coalition::Side;
 
 #[derive(Debug, Clone)]
 pub enum Static<'lua> {
