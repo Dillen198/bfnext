@@ -5001,7 +5001,7 @@ async fn api_wiki_delete(
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let who = require_role(session_id, db.clone(), admin::Role::CONTENT).await?;
-    task::block_in_place(|| db.wiki_delete_page(&body.slug))?;
+    task::block_in_place(|| db.wiki_delete_page(&body.slug, &who.discord_id))?;
     audit(&db, &who, "delete wiki page", Some(&body.slug), None);
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }

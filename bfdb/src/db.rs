@@ -1166,6 +1166,8 @@ pub(crate) struct StatsDbInner {
     news_image_count: Tree<(std::string::String, std::string::String), u32>,
     // bfwiki content, keyed by page slug (e.g. "gameplay/objectives")
     wiki_pages: Tree<std::string::String, WikiPage>,
+    /// Pages an admin deleted: slug -> (when, by whom). Seeding skips them.
+    wiki_tombstones: Tree<std::string::String, (DateTime<Utc>, std::string::String)>,
     /// Admins' commander overrides, keyed by ucid. The value is a JSON
     /// `command::GrantRecord`, not bincode, so the record can grow without
     /// breaking the tree (see the bincode schema notes).
@@ -1559,6 +1561,7 @@ impl StatsDb {
             news_image_data: Tree::open(&db, "news_image_data")?,
             news_image_count: Tree::open(&db, "news_image_count")?,
             wiki_pages: Tree::open(&db, "wiki_pages")?,
+            wiki_tombstones: Tree::open(&db, "wiki_tombstones")?,
             commander_grants: Tree::open(&db, "commander_grants")?,
             combat_log: Tree::open(&db, "combat_log")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
@@ -3589,10 +3592,15 @@ impl StatsDb {
 
     pub(crate) fn wiki_save_page(&self, slug: &str, page: WikiPage) -> Result<()> {
         self.wiki_pages.insert(&slug.to_string(), &page)?;
+        // saving a page again brings a deleted one back for good
+        self.wiki_tombstones.delete(&slug.to_string())?;
         Ok(())
     }
 
-    pub(crate) fn wiki_delete_page(&self, slug: &str) -> Result<bool> {
+    /// Delete a page and remember that it was deleted, so the seed content
+    /// does not put a built-in page back on the next start.
+    pub(crate) fn wiki_delete_page(&self, slug: &str, by: &str) -> Result<bool> {
+        self.wiki_tombstones.insert(&slug.to_string(), &(Utc::now(), by.to_string()))?;
         Ok(self.wiki_pages.remove(&slug.to_string())?.is_some())
     }
 
@@ -4018,6 +4026,10 @@ impl StatsDb {
         ];
         let mut refreshed = 0u32;
         for (slug, title, section, order, content) in seed {
+            // deleted by an admin: stays deleted
+            if self.wiki_tombstones.contains_key(&slug.to_string())? {
+                continue;
+            }
             match self.wiki_pages.get(&slug.to_string())? {
                 // admin-edited (or newer): leave it alone
                 Some(existing) if existing.updated_by != "seed" => continue,
@@ -6468,6 +6480,37 @@ impl StatsDb {
             "id": crate::instance::DEFAULT_INSTANCE,
         }))?;
         Self::new(&HashMap::new(), path, Registry::single(cfg), include, exclude)
+    }
+}
+
+#[cfg(test)]
+mod wiki_tombstone_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn deleted_seed_pages_stay_deleted() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-wiki-test-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let slug = "reference/faq";
+        assert!(db.wiki_get_page(slug).unwrap().is_some(), "seeded");
+        assert!(db.wiki_delete_page(slug, "admin").unwrap());
+        // what every restart does
+        db.seed_wiki_if_empty().unwrap();
+        assert!(db.wiki_get_page(slug).unwrap().is_none(), "a deleted page came back");
+        // an admin re-creating it lifts the tombstone
+        let page = WikiPage {
+            title: "FAQ".into(),
+            section: "Reference".into(),
+            order: 3,
+            content: "mine".into(),
+            updated_at: Utc::now(),
+            updated_by: "admin".into(),
+        };
+        db.wiki_save_page(slug, page).unwrap();
+        db.seed_wiki_if_empty().unwrap();
+        assert_eq!(db.wiki_get_page(slug).unwrap().unwrap().content, "mine");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 
