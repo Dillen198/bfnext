@@ -527,19 +527,8 @@ impl Aar {
         let (tname, ttype, method) = t
             .map(|t| (format!("{}{}", t.cfg.callsign, t.cfg.callsign_number), t.cfg.typ.clone(), t.method))
             .unwrap_or_else(|| (s.tanker.clone(), String::new(), RefuelMethod::Drogue));
-        let conn: Vec<&RelSample> = s.samples.iter().filter(|x| x.connected).collect();
-        let stat = |f: &dyn Fn(&RelSample) -> f64| -> (f64, f64) {
-            if conn.is_empty() {
-                return (0., 0.);
-            }
-            let n = conn.len() as f64;
-            let m = conn.iter().map(|x| f(x)).sum::<f64>() / n;
-            let sd = (conn.iter().map(|x| (f(x) - m).powi(2)).sum::<f64>() / n).sqrt();
-            (m, sd)
-        };
-        let (mf, sf) = stat(&|x| x.fwd_m);
-        let (mr, sr) = stat(&|x| x.right_m);
-        let (mu, su) = stat(&|x| x.up_m);
+        let stability = contact_stability(&s.samples);
+        let (sf, sr, su) = (stability.fore_aft_sd_m, stability.lateral_sd_m, stability.vertical_sd_m);
         let join = s.first_contact.map(|fc| fc - s.start);
         let mut calls = vec![];
         let (score, grade) = grading::aar_grade(
@@ -565,14 +554,7 @@ impl Aar {
             fuel_kg: s.fuel_gained,
             fuel_lbs,
             onload_rate_lbs_min: if s.time_connected > 0. { fuel_lbs / (s.time_connected / 60.) } else { 0. },
-            stability: Stability {
-                fore_aft_sd_m: sf,
-                lateral_sd_m: sr,
-                vertical_sd_m: su,
-                mean_fwd_m: mf,
-                mean_right_m: mr,
-                mean_up_m: mu,
-            },
+            stability,
             precontact_closure_kts: s.precontact_closure,
             overshoot: s.overshoot,
             alt_ft: s.alt_ft,
@@ -666,5 +648,102 @@ impl Aar {
                 )
             })
             .collect()
+    }
+}
+
+/// Mean position and its spread (population SD) in the tanker frame over
+/// the samples taken while connected; all zero with none.
+fn contact_stability(samples: &[RelSample]) -> Stability {
+    let conn: Vec<&RelSample> = samples.iter().filter(|x| x.connected).collect();
+    let stat = |f: &dyn Fn(&RelSample) -> f64| -> (f64, f64) {
+        if conn.is_empty() {
+            return (0., 0.);
+        }
+        let n = conn.len() as f64;
+        let m = conn.iter().map(|x| f(x)).sum::<f64>() / n;
+        let sd = (conn.iter().map(|x| (f(x) - m).powi(2)).sum::<f64>() / n).sqrt();
+        (m, sd)
+    };
+    let (mean_fwd_m, fore_aft_sd_m) = stat(&|x| x.fwd_m);
+    let (mean_right_m, lateral_sd_m) = stat(&|x| x.right_m);
+    let (mean_up_m, vertical_sd_m) = stat(&|x| x.up_m);
+    Stability { fore_aft_sd_m, lateral_sd_m, vertical_sd_m, mean_fwd_m, mean_right_m, mean_up_m }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 60 s behind the tanker at 2 Hz, connected from 10 s to 50 s, wobbling
+    /// `amp` metres fore-aft and sideways while connected.
+    fn session(amp: f64) -> Vec<RelSample> {
+        (0..120)
+            .map(|i| {
+                let t = i as f64 * 0.5;
+                let connected = (10. ..50.).contains(&t);
+                let w = if connected { amp * (t * 1.3).sin() } else { 0. };
+                RelSample {
+                    t,
+                    fwd_m: -25. + w,
+                    right_m: if connected { 0.5 + w } else { 8. },
+                    up_m: -6.,
+                    connected,
+                    fuel_kg: 0.,
+                    closure_kts: 0.,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stability_is_measured_while_connected_only() {
+        let st = contact_stability(&session(0.));
+        assert!((st.mean_fwd_m + 25.).abs() < 1e-9);
+        // the 8 m offset before and after the contact does not count
+        assert!((st.mean_right_m - 0.5).abs() < 1e-9);
+        assert_eq!((st.fore_aft_sd_m, st.lateral_sd_m, st.vertical_sd_m), (0., 0., 0.));
+        // a sine of amplitude a has an SD of a / sqrt 2
+        let st = contact_stability(&session(2.));
+        assert!((st.fore_aft_sd_m - 2. / 2f64.sqrt()).abs() < 0.05, "{st:?}");
+        // no contact at all
+        let none: Vec<RelSample> = session(2.).into_iter().map(|s| RelSample { connected: false, ..s }).collect();
+        let st = contact_stability(&none);
+        assert_eq!((st.mean_fwd_m, st.fore_aft_sd_m), (0., 0.));
+    }
+
+    #[test]
+    fn grades_from_a_session() {
+        let grade = |amp: f64, contacts: u32, disconnects: u32, join: Option<f64>, closure: Option<f64>, over: bool| {
+            let st = contact_stability(&session(amp));
+            let mut calls = vec![];
+            let (score, letter) = grading::aar_grade(
+                contacts,
+                disconnects,
+                join,
+                st.fore_aft_sd_m,
+                st.lateral_sd_m,
+                st.vertical_sd_m,
+                closure,
+                over,
+                &mut calls,
+            );
+            (score, letter, calls)
+        };
+        let (s, l, c) = grade(0.3, 1, 1, Some(60.), Some(2.), false);
+        assert_eq!((s, l.as_str()), (5., "A"));
+        assert_eq!(c, vec!["Smooth join and stable in contact".to_string()]);
+        // a wobbly contact (lateral SD 2.8 m) costs most of its 0.7 lateral weight
+        let (s, l, c) = grade(4., 1, 1, Some(60.), None, false);
+        assert!(s < 4.5 && s > 3.5, "{s}");
+        assert_eq!(l, "B");
+        assert_eq!(c, vec!["Unstable in contact, mostly lateral".to_string()]);
+        // slow join, three disconnects, hot and an overshoot
+        let (s, l, c) = grade(0.3, 3, 3, Some(420.), Some(9.), true);
+        assert!((s - (5. - 1. - 1. - 0.5 - 0.75)).abs() < 1e-9, "{s}");
+        assert_eq!(l, "F");
+        assert_eq!(c.len(), 4, "{c:?}");
+        // never got in
+        let (s, l, _) = grade(0., 0, 0, None, None, false);
+        assert_eq!((s, l.as_str()), (0., "F"));
     }
 }
