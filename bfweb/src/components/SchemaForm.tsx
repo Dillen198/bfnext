@@ -34,6 +34,7 @@ const BTN_DANGER: React.CSSProperties = {
 
 // ── schema resolution ────────────────────────────────────────────────────
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function resolve(schema: JsonSchema | undefined, root: JsonSchema): JsonSchema {
   if (!schema) return {}
   if (schema.$ref) {

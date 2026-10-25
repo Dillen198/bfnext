@@ -42,7 +42,7 @@ const InstanceContext = createContext<InstanceContextValue>({
 export function InstanceProvider({ children }: { children: React.ReactNode }) {
   const qc = useQueryClient()
   const { user } = useAuth()
-  const [selected, setSelected] = useState<string | undefined>(() => getInstance())
+  const [chosen, setSelected] = useState<string | undefined>(() => getInstance())
 
   // Keyed on the viewer's admin flag: bfdb omits non-public (test/staging)
   // instances from the list for anyone who isn't an admin, so an admin signing
@@ -57,6 +57,16 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
 
   const instances = useMemo(() => data?.instances ?? [], [data])
 
+  // A remembered id that is no longer configured (renamed or removed) is
+  // dropped rather than sent, which would get a 400 on every request.
+  const stale = !!data && !!chosen && !instances.some(i => i.id === chosen)
+  const selected = stale ? undefined : chosen
+  useEffect(() => {
+    if (!stale) return
+    setInstance(undefined)
+    qc.invalidateQueries()
+  }, [stale, qc])
+
   // The numbers themselves. Scoped to the selected instance by `withInstance`
   // in api.ts, so the query key has to carry the id or a switch would serve the
   // previous server's values out of cache.
@@ -66,17 +76,6 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
     staleTime: 5 * 60_000,
     retry: 1,
   })
-
-  // Drop a remembered id that is no longer configured (renamed or removed)
-  // rather than sending it and getting a 400 on every request.
-  useEffect(() => {
-    if (!data || !selected) return
-    if (!instances.some(i => i.id === selected)) {
-      setInstance(undefined)
-      setSelected(undefined)
-      qc.invalidateQueries()
-    }
-  }, [data, instances, selected, qc])
 
   const select = useCallback((id: string) => {
     if (id === selected) return
@@ -103,6 +102,7 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
   return <InstanceContext.Provider value={value}>{children}</InstanceContext.Provider>
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useInstance() {
   return useContext(InstanceContext)
 }

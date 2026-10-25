@@ -13,6 +13,7 @@ import {
   getCardinal,
   getRange,
   meterToFeet,
+  type MagModel,
 } from "./util";
 
 export interface ObjectInfoProps {
@@ -24,7 +25,7 @@ export interface ObjectInfoProps {
   objectSettings?: ObjectSettings;
   setObjectSettings?: (objectSettings: ObjectSettings) => void;
   terrain: Terrain;
-  geomagnetismModel: any;
+  geomagnetismModel: MagModel;
   useMagneticHeading: boolean;
 }
 
@@ -165,8 +166,7 @@ export default function ObjectInfo(props: ObjectInfoProps): ReactElement {
                   value={objectSettings.warningRange}
                   onChange={(e) => {
                     if (setObjectSettings !== undefined) {
-                      objectSettings.warningRange = parseRange(e.target.value);
-                      setObjectSettings(objectSettings);
+                      setObjectSettings({ ...objectSettings, warningRange: parseRange(e.target.value) });
                     }
                   }}
                 />
@@ -182,8 +182,7 @@ export default function ObjectInfo(props: ObjectInfoProps): ReactElement {
                   value={objectSettings.threatRange}
                   onChange={(e) => {
                     if (setObjectSettings !== undefined) {
-                      objectSettings.threatRange = parseRange(e.target.value);
-                      setObjectSettings(objectSettings);
+                      setObjectSettings({ ...objectSettings, threatRange: parseRange(e.target.value) });
                     }
                   }}
                 />
@@ -196,8 +195,7 @@ export default function ObjectInfo(props: ObjectInfoProps): ReactElement {
                   checked={objectSettings.watch}
                   onChange={(e) => {
                     if (setObjectSettings !== undefined) {
-                      objectSettings.watch = e.target.checked;
-                      setObjectSettings(objectSettings);
+                      setObjectSettings({ ...objectSettings, watch: e.target.checked });
                     }
                   }}
                 />

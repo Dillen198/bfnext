@@ -12,6 +12,7 @@ export type SortValue = string | number | Date | null | undefined
  * accessor for a row. Define `cols` as a module-level const (stable identity) so
  * the memoised sort doesn't recompute every render.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function useTableSort<
   T,
   C extends Record<string, (row: T) => SortValue>,

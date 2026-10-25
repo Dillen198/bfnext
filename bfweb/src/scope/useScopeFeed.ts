@@ -285,6 +285,5 @@ export function useScopeFeed(): ScopeFeed {
     }
 
     return { state, terrain, denied: false, reason: null, status, threatRanges, empty }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [picture, status, reason, objSample])
 }

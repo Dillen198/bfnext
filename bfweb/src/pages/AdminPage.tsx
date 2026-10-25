@@ -237,8 +237,8 @@ function LogAnalyzer() {
     })
   }, [])
 
+  // wsStatus starts as 'connecting', and these effects run once.
   useEffect(() => {
-    setWsStatus('connecting')
     const cleanup = connectLiveLogs(addLine, s => setWsStatus(s === 'open' ? 'open' : s === 'closed' ? 'closed' : 'error'), () => setLines([]))
     return cleanup
   }, [addLine])
@@ -388,8 +388,8 @@ function EngineLogAnalyzer() {
     })
   }, [])
 
+  // wsStatus starts as 'connecting', and these effects run once.
   useEffect(() => {
-    setWsStatus('connecting')
     const cleanup = connectEngineLogs(addLine, s => setWsStatus(s === 'open' ? 'open' : s === 'closed' ? 'closed' : 'error'), () => setLines([]))
     return cleanup
   }, [addLine])
@@ -595,8 +595,8 @@ function GciTranscriptPanel() {
     api.gciTranscript().then(r => setCalls(r ?? [])).catch(() => {})
   }, [])
 
+  // wsStatus starts as 'connecting', and these effects run once.
   useEffect(() => {
-    setWsStatus('connecting')
     return connectGciTranscript(
       c => setCalls(prev => {
         const next = [...prev, c]

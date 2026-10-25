@@ -214,3 +214,8 @@ export function toMercProj(
   ].join(" ");
   return proj4(fromProjection, [lng, lat]);
 }
+
+/** The part of a `geomagnetism` model the scope reads: declination at a point. */
+export interface MagModel {
+  point(latlon: [number, number]): { decl: number };
+}

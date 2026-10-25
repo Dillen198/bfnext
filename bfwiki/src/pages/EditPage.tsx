@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useRef, useState } from 'react'
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Image as ImageIcon,
@@ -35,20 +35,21 @@ export default function EditPage({ isNew = false }: { isNew?: boolean }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    if (existing) {
-      setTitle(existing.title)
-      setSection(existing.section)
-      setOrder(existing.order)
-      setContent(existing.content)
-    }
-  }, [existing])
+  // Load the page into the form when it arrives (or is refetched). Done while
+  // rendering rather than in an effect, so the form never paints empty first.
+  const [loaded, setLoaded] = useState<typeof existing>(undefined)
+  if (existing && existing !== loaded) {
+    setLoaded(existing)
+    setTitle(existing.title)
+    setSection(existing.section)
+    setOrder(existing.order)
+    setContent(existing.content)
+  }
 
   // Not logged in / not admin -- bounce home. Rendered after hooks so the
   // hook order stays stable across renders.
   if (!authLoading && !user?.is_admin) {
-    navigate('/login')
-    return null
+    return <Navigate to="/login" replace />
   }
 
   function insertAtCursor(text: string) {

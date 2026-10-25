@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import React, { useState, useMemo, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import QueryState from '../components/QueryState'
 import { kd, sl, fmtHours, fmtDuration } from '../lib/format'
@@ -678,25 +678,24 @@ export default function Pilots() {
     queryFn: api.leaderboard,
     refetchInterval: 60_000,
   })
-  const [selected, setSelected] = useState<string | null>(null)
-  const [search, setSearch] = useState('')
+  // What the user picked or typed; null until they do. Until then the page
+  // shows the pilot from ?ucid=, else the signed-in user's own record.
+  const [picked, setSelected] = useState<string | null>(null)
+  const [typed, setSearch] = useState<string | null>(null)
+  // Set once the user empties the box, so the default does not come back.
+  const [cleared, setCleared] = useState(false)
   const [searchFocus, setSearchFocus] = useState(false)
 
-  // Auto-select from ?ucid= URL param, then logged-in user, on first load
-  useEffect(() => {
-    if (pilots.length === 0 || selected !== null) return
-    const paramUcid = searchParams.get('ucid')
-    if (paramUcid) {
-      const p = pilots.find(p => p.ucid === paramUcid)
-      setSelected(paramUcid)
-      setSearch(p?.name ?? '')
-      return
-    }
-    if (user?.ucid) {
-      setSelected(user.ucid)
-      setSearch(pilots.find(p => p.ucid === user.ucid)?.name ?? '')
-    }
-  }, [user?.ucid, pilots.length])
+  const paramUcid = searchParams.get('ucid')
+  const auto = useMemo(() => {
+    if (pilots.length === 0) return null
+    const ucid = paramUcid ?? user?.ucid
+    return ucid ? { ucid, name: pilots.find(p => p.ucid === ucid)?.name ?? '' } : null
+  }, [pilots, paramUcid, user?.ucid])
+  const followAuto = picked === null && !cleared
+  const selected = followAuto ? auto?.ucid ?? null : picked
+  const search = typed ?? (followAuto ? auto?.name ?? '' : '')
+  const clearSelection = () => { setSelected(null); setCleared(true) }
 
   const pilot = pilots.find(p => p.ucid === selected) ?? null
   const pilotRank = pilot ? pilots.findIndex(p => p.ucid === pilot.ucid) + 1 : null
@@ -768,7 +767,7 @@ export default function Pilots() {
               type="text"
               placeholder="Search pilots by name…"
               value={search}
-              onChange={e => { setSearch(e.target.value); if (!e.target.value) setSelected(null) }}
+              onChange={e => { setSearch(e.target.value); if (!e.target.value) clearSelection() }}
               onFocus={() => setSearchFocus(true)}
               onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
               className="vs-input w-full"
@@ -871,7 +870,7 @@ export default function Pilots() {
                   </div>
                 </div>
                 <button
-                  onClick={() => { setSelected(null); setSearch('') }}
+                  onClick={() => { clearSelection(); setSearch('') }}
                   className="vs-touch-target"
                   style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.62rem', flexShrink: 0 }}
                 >

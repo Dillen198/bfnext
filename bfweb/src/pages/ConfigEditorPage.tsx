@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { api, type JsonSchema } from '../api'
@@ -22,7 +22,8 @@ export default function ConfigEditorPage() {
 
   const [search, setSearch] = useState('')
   const [activeCat, setActiveCat] = useState(CFG_CATEGORIES[0].key)
-  const [draft, setDraft] = useState<Record<string, unknown> | null>(null)
+  // The local edits; until the first one the form shows the saved config.
+  const [edited, setEdited] = useState<Record<string, unknown> | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error' | 'saved'>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -31,9 +32,7 @@ export default function ConfigEditorPage() {
   const { data: cfg, isLoading: cfgLoading, error: cfgError } =
     useQuery({ queryKey: ['admin', 'cfg'], queryFn: api.admin.cfg, retry: false })
 
-  useEffect(() => {
-    if (cfg && !draft) setDraft(cfg)
-  }, [cfg, draft])
+  const draft = edited ?? cfg ?? null
 
   const dirty = draft !== null && cfg !== undefined && JSON.stringify(draft) !== JSON.stringify(cfg)
 
@@ -100,7 +99,7 @@ export default function ConfigEditorPage() {
         schema={propSchema}
         root={root}
         value={draft?.[key]}
-        onChange={v => setDraft(d => d ? { ...d, [key]: v } : d)}
+        onChange={v => setEdited(d => { const base = d ?? cfg; return base ? { ...base, [key]: v } : null })}
         defaultOpen={defaultOpen}
       />
     )

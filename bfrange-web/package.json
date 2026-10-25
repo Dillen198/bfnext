@@ -9,6 +9,7 @@
     "dev": "vite",
     "dev:mock": "vite --mode mock",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
     "build:mock": "tsc -b && vite build --mode mock",
     "lint": "eslint .",
     "preview": "vite preview",

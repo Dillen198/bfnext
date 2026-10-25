@@ -119,6 +119,8 @@ function isNavActive(to: string, pathname: string, search: string, exact: boolea
   return toQuery ? search === `?${toQuery}` : search === ''
 }
 
+function Sep() { return <div className="topbar-sep" /> }
+
 function pad(n: number) { return String(n).padStart(2, '0') }
 function fmtDuration(s: number) {
   return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(Math.floor(s % 60))}`
@@ -366,9 +368,6 @@ export default function Layout() {
       ...(user?.is_admin ? [ADMIN_NAV, CONFIG_NAV, SERVER_OPS_NAV] : []),
     ],
   ].filter(g => g.length > 0)
-
-  const Sep = () => <div className="topbar-sep" />
-
 
   const hasCampaignSelect = rounds.length > 0 || multi
   const campaignProps = {

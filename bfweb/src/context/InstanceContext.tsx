@@ -72,7 +72,7 @@ const InstanceContext = createContext<InstanceContextValue>({
 export function InstanceProvider({ children }: { children: React.ReactNode }) {
   const qc = useQueryClient()
   const { user } = useAuth()
-  const [selected, setSelected] = useState<string | undefined>(() => getInstance())
+  const [chosen, setSelected] = useState<string | undefined>(() => getInstance())
 
   // The instance list is not instance-scoped, and changes only when bfdb is
   // restarted with a different --instances file -- but *who is asking* matters:
@@ -92,14 +92,13 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
 
   // Drop a remembered id that is no longer configured (an instance was removed
   // or renamed) rather than sending it and getting a 400 on every request.
+  const stale = !!data && !!chosen && !instances.some(i => i.id === chosen)
+  const selected = stale ? undefined : chosen
   useEffect(() => {
-    if (!data || !selected) return
-    if (!instances.some(i => i.id === selected)) {
-      setInstance(undefined)
-      setSelected(undefined)
-      qc.removeQueries({ predicate: q => !INSTANCE_AGNOSTIC.has(q.queryKey[0] as string) })
-    }
-  }, [data, instances, selected, qc])
+    if (!stale) return
+    setInstance(undefined)
+    qc.removeQueries({ predicate: q => !INSTANCE_AGNOSTIC.has(q.queryKey[0] as string) })
+  }, [stale, qc])
 
   const select = useCallback((id: string) => {
     if (id === selected) return
@@ -137,6 +136,7 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useInstance() {
   return useContext(InstanceContext)
 }

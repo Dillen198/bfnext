@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
@@ -878,20 +878,22 @@ function CarpMap({ entries, activeId, onPick }: {
     queryFn: () => api.objectives(),
     staleTime: Infinity,
   })
-  const centerRef = useRef<[number, number] | null>(null)
-  if (!centerRef.current) {
+  // The first centre we can work out, kept: the map must not jump about
+  // as more solutions come in.
+  const [firstCenter, setFirstCenter] = useState<[number, number] | null>(null)
+  if (!firstCenter) {
     const solved = entries.find(e => e.solution)?.solution
     if (solved) {
-      centerRef.current = [solved.pi_lat, solved.pi_lon]
+      setFirstCenter([solved.pi_lat, solved.pi_lon])
     } else if (objectives.length > 0) {
       const lats = objectives.map(o => o.lat), lons = objectives.map(o => o.lon)
-      centerRef.current = [
+      setFirstCenter([
         lats.reduce((a, b) => a + b, 0) / lats.length,
         lons.reduce((a, b) => a + b, 0) / lons.length,
-      ]
+      ])
     }
   }
-  const center = centerRef.current ?? [42.35, 43.5]
+  const center = firstCenter ?? [42.35, 43.5]
   const active = entries.find(e => e.id === activeId)
   const activeColor = 'var(--yellow)'
   const inactiveColor = '#6aab1f'

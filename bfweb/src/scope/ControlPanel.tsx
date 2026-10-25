@@ -83,7 +83,7 @@ export default function ControlPanel(props: ControlPanelProps): ReactElement {
           <button
             className="btn-accent btn-xs btn"
             onClick={() => {
-              (window as any).settingsModal.showModal();
+              (document.getElementById("settingsModal") as HTMLDialogElement | null)?.showModal();
             }}
           >
             <svg
@@ -117,7 +117,7 @@ export default function ControlPanel(props: ControlPanelProps): ReactElement {
             <div className="max-h-96 overflow-y-scroll">
               <ul className="menu">
                 {objects
-                  .filter(([_id, object]) =>
+                  .filter(([, object]) =>
                     makeObjectName(object)
                       .toLowerCase()
                       .includes(search.toLowerCase())

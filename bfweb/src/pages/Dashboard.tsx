@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import NewsPanel from '../components/NewsPanel'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
@@ -39,13 +39,15 @@ function classifyKill(t: string | null): { label: string; col: string } {
 }
 
 function useDelta(v: number) {
-  const prev  = useRef<number | null>(null)
-  const delta = useRef<number | null>(null)
-  useEffect(() => {
-    if (prev.current !== null && prev.current !== v) delta.current = v - prev.current
-    prev.current = v
-  }, [v])
-  return delta.current
+  const [prev, setPrev]   = useState(v)
+  const [delta, setDelta] = useState<number | null>(null)
+  // Adjusted while rendering (React's "storing information from previous
+  // renders"), so the delta shows on the same render as the new value.
+  if (prev !== v) {
+    setPrev(v)
+    setDelta(v - prev)
+  }
+  return delta
 }
 
 // ── KPI cell ──────────────────────────────────────────────────────────────────

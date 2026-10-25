@@ -13,6 +13,7 @@
 
 import GroundGlyph from './groundGlyphs'
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const SIDE = {
   Blue: '#40a6ff',
   Red: '#b84dff',
