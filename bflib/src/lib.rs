@@ -5252,17 +5252,15 @@ fn run_slow_timed_events(
     step(lua, ctx, "hq", |ctx| hq::tick(lua, ctx, perf, start_ts));
     record_perf(&mut perf.slow_timed, start_ts);
 
-    // Tick campaign events â€” active event processing (expiry, effects, escalation).
-    // New event spawning is now handled by tick_smart_commander above.
-    let events_cfg = ctx
-        .db
-        .ephemeral
-        .cfg
-        .campaign_events
-        .as_ref()
-        .filter(|c| c.enabled)
-        .cloned();
-    if let Some(events_cfg) = events_cfg {
+    // Tick campaign events: active event processing (expiry, effects,
+    // escalation). This, and the upkeep of the helo missions, CAP flights and
+    // queued effects below, runs whether or not `campaign_events.enabled` is
+    // set: the commander and the HQ launch helo missions and ambushes either
+    // way, and those must still be flown, paid off and cleaned up. Only new
+    // events are gated on `enabled` (the reactive CAP in check_air_threats;
+    // other new event spawning is done by tick_smart_commander above).
+    let events_cfg = ctx.db.ephemeral.cfg.campaign_events.clone().unwrap_or_default();
+    {
         step(lua, ctx, "campaign events", |ctx| {
             match ctx.event_scheduler.tick(&ctx.db, &events_cfg, start_ts) {
                 Ok((messages, effects)) => {
