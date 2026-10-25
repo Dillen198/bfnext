@@ -73,6 +73,18 @@ instant, with nothing stopped. The snapshots are deleted when the copy is done. 
 (it failed, or was unticked), a locked file comes out partial, and the check marks that section
 BROKEN. Stopping DCSServerBot while copying is still offered, but off by default. The zip holds the Discord token and passwords: keep it private.
 
+**Backup password (optional).** `BackupOptions.password` (8 or more characters) encrypts every
+entry with AES-256, in the WinZip AES format that 7-Zip also opens. `fowl-backup.json` stays
+readable, so a restore can show what is inside before it asks. Its `encrypted: true` tells the
+restore and **Check a backup** to ask for the password (`RestoreOptions.password`, and the
+`password` argument of `verify_backup`). A wrong password is refused with one clear error.
+Keep the password off the PC, because without it the zip can't be restored. *The BACKUP page in
+bfweb (`src/manager/Backup.tsx`) doesn't have the field yet. Until it does, backups are written
+unencrypted, as before.*
+
+For a nightly, encrypted, off-box copy of just the bot's database and config, see
+[`deploy/backups/`](../deploy/backups/README.md).
+
 **Restore** (same tab, or the button on Setup for a fresh box) shows what is missing on this PC
 (Python, PostgreSQL, DCS, SRS). It can install Python and PostgreSQL with winget, lets the admin
 move each folder somewhere else, and then:
@@ -94,7 +106,17 @@ damaging data (RAM or disk). **Check a backup** runs the same check on any zip, 
 stick. The whole log is saved as `<zip>.log` next to the zip and as `logs\<backup|verify|restore>-<time>.log`.
 
 It can't restore automatic sign-in, because Windows never hands the old password back. Turn it
-on again in Setup step 4.
+on again in Setup step 4. The same goes for the GitHub token in Settings when the PC changed:
+`manager.json` keeps it DPAPI-encrypted to the PC it was saved on (below), so on a new PC the
+restore drops it, logs a warning, and you type it in again.
+
+**The GitHub token in `manager.json`** (optional, for a private repo or rate limits) is stored as
+`github_token_dpapi`: Windows DPAPI, machine scope, plus app-specific entropy. The GUI (an
+elevated admin) and the service (LocalSystem) can both read it, but a copy of the file (in a
+backup zip, a disk image or a support upload) can't be decrypted on any other PC. On this PC the
+folder ACL (Administrators + SYSTEM, `agent::restrict_data_dir`) still decides who can read it.
+A token that an older version saved in plain text is encrypted the first time the GUI or the
+service loads the file. If you downgrade to a version older than this one, it won't see the token.
 
 `cargo test --lib e2e -- --ignored` (with `FOWL_E2E_DIR` set to a scratch folder) runs a full
 backup, wipe and restore round trip on a fake box.
@@ -125,7 +147,40 @@ with `%USERPROFILE%\.tauri\fowl-manager.key`, and publishes the installer and it
 installers signed by the matching private key. If the key is lost, no installed copy
 accepts an update again until it is reinstalled by hand. Back up
 `%USERPROFILE%\.tauri\fowl-manager.key`. For the GitHub Action, store it as the
-`TAURI_SIGNING_PRIVATE_KEY` secret.
+`TAURI_SIGNING_PRIVATE_KEY` secret. The password, offline backup and rotation steps for
+this key and the other release keys are in
+[`deploy/signing-keys.md`](../deploy/signing-keys.md).
+
+### Authenticode (code signing): not set up yet
+
+The minisign/Tauri signature above protects **updates**. The first install is a different matter:
+`Fowl Engine Manager_<version>_x64-setup.exe` and `FowlEngineManager.exe` carry no Authenticode
+signature. SmartScreen warns about an unknown publisher, and nothing proves who built the
+installer that was downloaded. Fixing that needs a code-signing certificate, which costs money
+and requires identity checks, so it hasn't been done. When there is one:
+
+1. **Get a certificate.** One of:
+   - **Azure Trusted Signing** (Microsoft, pay-monthly, cloud HSM). It is the cheapest option and
+     needs no hardware token. Identity validation takes days. Signing goes through
+     `signtool` + the Trusted Signing dlib, or the `azure/trusted-signing-action` in CI.
+   - **An OV or EV certificate** from a CA (DigiCert, Sectigo, SSL.com, ...). Since 2023 these
+     keys must live in a hardware token or a cloud HSM (e.g. SSL.com eSigner), so plan CI around
+     that HSM. EV no longer skips SmartScreen's reputation building: both types earn it over time.
+2. **Sign in the build.** Tauri signs the exe and the NSIS installer when
+   `bundle.windows.signCommand` is set in `src-tauri/tauri.conf.json`. Point it at a script that
+   calls `signtool sign /fd sha256 /tr http://timestamp.digicert.com /td sha256 ... %1`, or at
+   the Trusted Signing equivalent. Always timestamp, or signatures die when the certificate
+   expires.
+3. **CI.** In `.github/workflows/manager-release.yml`, the signing credentials go on the
+   `manager-release` environment (required reviewers), like the Tauri key. Authenticode signing
+   has to happen *before* the Tauri updater signature is made, because the `.sig` covers the
+   bytes of the signed installer. So sign inside the build via `signCommand`, not after it.
+   `release.ps1 -NoSign` then has to leave Authenticode on.
+4. **Check** with `Get-AuthenticodeSignature '.\Fowl Engine Manager_*_x64-setup.exe'`
+   (Status `Valid`) and in the file's Properties → Digital Signatures.
+
+The same applies to `bfcockpit-install.exe` and the engine binaries if they are ever offered as
+downloads.
 
 ## Install on the server
 
