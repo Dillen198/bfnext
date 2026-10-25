@@ -63,7 +63,7 @@ use dcso3::{
     hooks::UserHooks,
     lfs::Lfs,
     net::{Net, PlayerId, Ucid},
-    object::{DcsObject, DcsOid},
+    object::{ClassObject, DcsObject, DcsOid},
     timer::Timer,
     trigger::{SmokeColor, Trigger},
     unit::{ClassUnit, Unit, UnitCategory},
@@ -160,8 +160,13 @@ struct Ctx {
 
 impl Ctx {
     /// Single-threaded by construction: DCS runs both Lua states on one
-    /// thread and never re-enters a callback, the same reasoning as bflib's
-    /// `Context::get_mut`.
+    /// thread. It does re-enter us in one way: some events fire
+    /// synchronously inside the API call that caused them (Birth inside
+    /// `coalition.addGroup`, Dead inside `destroy`). Every mission-side entry
+    /// point therefore goes through `with_ctx`, and `on_event` queues instead
+    /// of taking a second reference while one is live (see `DeferEvents`).
+    /// Callers outside `with_ctx` are the hooks-state callbacks, which DCS
+    /// never runs inside a mission-side call.
     unsafe fn get() -> &'static mut Ctx {
         static mut CTX: Option<Ctx> = None;
         #[allow(static_mut_refs)]
@@ -170,6 +175,155 @@ impl Ctx {
                 CTX = Some(Ctx::default());
             }
             CTX.as_mut().unwrap()
+        }
+    }
+}
+
+thread_local! {
+    /// Greater than zero while something holds `&mut Ctx` (see `with_ctx`).
+    static DEFER_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// Events that arrived while `DEFER_DEPTH > 0`, in arrival order.
+    static DEFERRED: std::cell::RefCell<Vec<Deferred>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// An event that arrived while the context was borrowed, reduced to owned
+/// data. Objects that still exist (a newborn unit) are kept by object id and
+/// re-resolved; objects that are going away (the subject of a Dead fired
+/// inside our own `destroy`) are kept by the name read while they existed.
+#[derive(Debug)]
+enum Deferred {
+    Birth(DcsOid<ClassObject>),
+    PlayerLeaveUnit(DcsOid<ClassUnit>),
+    /// Dead, Crash, PilotDead, UnitLost
+    Dead(std::string::String),
+    Ejection(std::string::String),
+    Kill {
+        target: Option<std::string::String>,
+        target_type: std::string::String,
+        shooter: Option<std::string::String>,
+        weapon_name: Option<std::string::String>,
+    },
+}
+
+impl Deferred {
+    /// Reduce an event to owned data, reading the Lua objects now. `None`
+    /// for events that carry nothing the range acts on when deferred.
+    fn of(ev: &Event) -> Option<Self> {
+        let name = |o: Option<&dcso3::object::Object>| o.and_then(|o| o.get_name().ok()).map(|n| n.to_string());
+        match ev {
+            Event::Birth(b) => b.initiator.as_ref().and_then(|o| o.object_id().ok()).map(Deferred::Birth),
+            Event::PlayerLeaveUnit(l) => l.initiator.clone().map(Deferred::PlayerLeaveUnit),
+            Event::Dead(e) | Event::Crash(e) | Event::PilotDead(e) | Event::UnitLost(e) => {
+                name(e.initiator.as_ref()).map(Deferred::Dead)
+            }
+            Event::Ejection(e) => name(e.initiator.as_ref()).map(Deferred::Ejection),
+            Event::Kill(k) => Some(Deferred::Kill {
+                target: name(k.target.as_ref()),
+                target_type: k.target.as_ref().and_then(|o| o.get_type_name().ok()).map(|s| s.to_string()).unwrap_or_default(),
+                shooter: name(k.initiator.as_ref()),
+                weapon_name: k.weapon_name.as_ref().map(|w| w.to_string()),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// While one of these is alive `on_event` queues instead of touching the
+/// context. Without it, a Birth fired inside `coalition.addGroup` (which
+/// the ticks call with `&mut Ctx` in hand) ran `on_event`, which took a
+/// second `&mut Ctx` and mutated through it: two live mutable references,
+/// undefined behaviour however careful the code on either side is. The
+/// same pattern as bflib's `DeferEvents`, extended to the Dead family:
+/// bfrange's handlers for those need only the unit's name, which is read
+/// while the object still exists.
+///
+/// Events the simulation causes (a player slotting in, a shot, a landing)
+/// never arrive inside our calls and are handled at once as before. One
+/// that did arrive while deferred and is not in `Deferred` is logged and
+/// dropped, never handled against a borrowed context.
+struct DeferEvents;
+
+impl DeferEvents {
+    fn begin() -> Self {
+        DEFER_DEPTH.with(|d| d.set(d.get().saturating_add(1)));
+        DeferEvents
+    }
+
+    fn active() -> bool {
+        DEFER_DEPTH.with(|d| d.get()) > 0
+    }
+}
+
+impl Drop for DeferEvents {
+    fn drop(&mut self) {
+        DEFER_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
+/// Run `f` with the context, then handle the events it caused. Every
+/// mission-side entry point (timers, the event handler, F10 callbacks)
+/// goes through here.
+fn with_ctx<R>(lua: MizLua, f: impl FnOnce(&mut Ctx) -> R) -> R {
+    // SAFETY: see `Ctx::get`. While the guard is alive nothing else takes
+    // the context: `on_event` queues, and nested `with_ctx` cannot happen
+    // because the only re-entry DCS does is through events.
+    let ctx = unsafe { Ctx::get() };
+    let r = {
+        let _defer = DeferEvents::begin();
+        f(&mut *ctx)
+    };
+    drain_deferred(lua, ctx);
+    r
+}
+
+/// Handle the queued events. Handlers can spawn in turn (queueing more), so
+/// keep going until the queue stays empty, bounded in case something spawns
+/// on every birth.
+fn drain_deferred(lua: MizLua, ctx: &mut Ctx) {
+    for _ in 0..16 {
+        let evs = DEFERRED.with(|q| std::mem::take(&mut *q.borrow_mut()));
+        if evs.is_empty() {
+            return;
+        }
+        let _defer = DeferEvents::begin();
+        let now = now_of(lua);
+        for ev in evs {
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle_deferred(lua, ctx, ev, now)));
+            match r {
+                Ok(Ok(())) => (),
+                Ok(Err(e)) => error!("deferred event: {e:?}"),
+                Err(_) => error!("deferred event panicked"),
+            }
+        }
+    }
+    warn!("deferred events still arriving after 16 passes, leaving the rest for the next drain");
+}
+
+fn handle_deferred(lua: MizLua, ctx: &mut Ctx, ev: Deferred, now: f64) -> Result<()> {
+    if !ctx.started {
+        return Ok(());
+    }
+    match ev {
+        Deferred::Birth(oid) => match dcso3::object::Object::get_instance(lua, &oid) {
+            Ok(o) => handle_birth(lua, ctx, &o, now),
+            // spawned and removed again within the same tick
+            Err(_) => Ok(()),
+        },
+        Deferred::PlayerLeaveUnit(oid) => {
+            handle_leave(lua, ctx, &oid, now);
+            Ok(())
+        }
+        Deferred::Dead(name) => {
+            handle_dead(lua, ctx, &name, now);
+            Ok(())
+        }
+        Deferred::Ejection(name) => {
+            handle_ejection(lua, ctx, &name, now);
+            Ok(())
+        }
+        Deferred::Kill { target, target_type, shooter, weapon_name } => {
+            handle_kill(lua, ctx, target.as_deref(), &target_type, shooter.as_deref(), None, weapon_name.as_deref(), now);
+            Ok(())
         }
     }
 }
@@ -286,7 +440,10 @@ fn read_sortie(lua: MizLua) -> std::string::String {
 }
 
 fn delayed_init(lua: MizLua) -> Result<()> {
-    let ctx = unsafe { Ctx::get() };
+    with_ctx(lua, |ctx| delayed_init_inner(lua, ctx))
+}
+
+fn delayed_init_inner(lua: MizLua, ctx: &mut Ctx) -> Result<()> {
     harvest::bombs_from_mission(lua);
     let sortie = read_sortie(lua);
     let cfg_path = ctx.write_dir.join(format!("{sortie}_RANGE"));
@@ -517,8 +674,135 @@ fn player_out(lua: MizLua, ctx: &mut Ctx, unit: &str, died: bool, now: f64) {
 
 // ------------------------------------------------------------------ events
 
+fn handle_birth(lua: MizLua, ctx: &mut Ctx, init: &dcso3::object::Object, now: f64) -> Result<()> {
+    let Ok(u) = init.as_unit() else {
+        // DCS dynamic cargo arrives as a static object's birth
+        if let Ok(n) = init.get_name() {
+            ctx.helo.static_born(lua, n.as_str(), now);
+        }
+        return Ok(());
+    };
+    let Ok(Some(pname)) = u.get_player_name() else { return Ok(()) };
+    let pname = pname.to_string();
+    let Some(ucid) = ucid_for_name(lua, ctx, &pname) else {
+        warn!("birth of {pname}: no ucid known");
+        return Ok(());
+    };
+    let unit_name = u.get_name()?.to_string();
+    let g = u.get_group()?;
+    let gid = g.id()?;
+    let cat = u.get_category().unwrap_or(UnitCategory::Airplane);
+    let pos = u.get_point()?.0;
+    ctx.players.born(
+        ucid,
+        pname.clone(),
+        unit_name.clone(),
+        u.id()?,
+        g.get_name()?.to_string(),
+        gid,
+        u.get_type_name()?.to_string(),
+        u.get_coalition().unwrap_or(Side::Blue),
+        cat == UnitCategory::Helicopter,
+        matches!(cat, UnitCategory::GroundUnit | UnitCategory::Ship),
+        pos,
+        now,
+    );
+    if let Ok(oid) = u.object_id() {
+        ctx.oids.insert(oid, unit_name);
+    }
+    if !ctx.menus.contains(&gid) && !ctx.menu_queue.contains(&gid) {
+        ctx.menu_queue.push(gid);
+    }
+    let welcome = ctx.cfg.welcome.clone().unwrap_or_else(|| {
+        format!(
+            "Welcome to {}, {pname}. F10 > Range for ranges, set-ups, tankers and drills. Missile trainer is ON. Debriefs: range.vectorstrike.org",
+            ctx.cfg.name
+        )
+    });
+    records::to_group(lua, gid, &welcome, 15);
+    Ok(())
+}
+
+fn handle_leave(lua: MizLua, ctx: &mut Ctx, oid: &DcsOid<ClassUnit>, now: f64) {
+    if let Some(name) = ctx.oids.remove(oid) {
+        player_out(lua, ctx, &name, false, now);
+    }
+}
+
+fn handle_dead(lua: MizLua, ctx: &mut Ctx, name: &str, now: f64) {
+    ctx.aa.unit_dead(name);
+    ctx.ag.object_dead(name, now);
+    ctx.iads.unit_dead(name, now);
+    ctx.hz.unit_dead(name, now);
+    ctx.ew.unit_dead(lua, name, now);
+    if ctx.players.flying.contains_key(name) {
+        player_out(lua, ctx, name, true, now);
+    }
+}
+
+fn handle_ejection(lua: MizLua, ctx: &mut Ctx, name: &str, now: f64) {
+    ctx.aa.unit_dead(name);
+    if ctx.players.flying.contains_key(name) {
+        player_out(lua, ctx, name, true, now);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_kill(
+    lua: MizLua,
+    ctx: &mut Ctx,
+    target: Option<&str>,
+    target_type: &str,
+    shooter: Option<&str>,
+    weapon: Option<&dcso3::weapon::Weapon>,
+    weapon_name: Option<&str>,
+    now: f64,
+) {
+    let Some(t) = target else { return };
+    ctx.ag.object_dead(t, now);
+    let cfg = ctx.cfg.clone();
+    ctx.iads.on_kill(lua, &cfg, &mut ctx.rec, &ctx.players, shooter, t, weapon, weapon_name, now);
+    ctx.hz.on_kill(shooter, t, target_type, now);
+    ctx.ew.unit_dead(lua, t, now);
+    if let Some(s) = shooter {
+        if let Some(f) = ctx.players.flying.get(s).cloned() {
+            if f.is_ground {
+                ctx.ground.lane_event(&ctx.ag, &f, t, true, now);
+            }
+        }
+    }
+}
+
 fn on_event(lua: MizLua, ev: Event) -> Result<()> {
-    let ctx = unsafe { Ctx::get() };
+    if DeferEvents::active() {
+        // Something up the stack holds the context: this event fired inside
+        // one of our own DCS calls. Queue it; that caller handles it once it
+        // lets go. See DeferEvents.
+        match Deferred::of(&ev) {
+            Some(d) => DEFERRED.with(|q| q.borrow_mut().push(d)),
+            None => match &ev {
+                Event::Shot(_)
+                | Event::ShootingStart(_)
+                | Event::ShootingEnd(_)
+                | Event::Hit(_)
+                | Event::Takeoff(_)
+                | Event::Land(_)
+                | Event::RunwayTouch(_)
+                | Event::RunwayTakeoff(_)
+                | Event::Refueling(_)
+                | Event::RefuelingStop(_)
+                | Event::LandingQualityMark(_) => {
+                    warn!("event while the range state was borrowed, not handled: {ev:?}")
+                }
+                _ => (),
+            },
+        }
+        return Ok(());
+    }
+    with_ctx(lua, |ctx| handle_event(lua, ctx, ev))
+}
+
+fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
     if !ctx.started {
         return Ok(());
     }
@@ -526,81 +810,21 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
     match ev {
         Event::Birth(b) => {
             let Some(init) = b.initiator else { return Ok(()) };
-            let Ok(u) = init.as_unit() else {
-                // DCS dynamic cargo arrives as a static object's birth
-                if let Ok(n) = init.get_name() {
-                    ctx.helo.static_born(lua, n.as_str(), now);
-                }
-                return Ok(());
-            };
-            let Ok(Some(pname)) = u.get_player_name() else { return Ok(()) };
-            let pname = pname.to_string();
-            let Some(ucid) = ucid_for_name(lua, ctx, &pname) else {
-                warn!("birth of {pname}: no ucid known");
-                return Ok(());
-            };
-            let unit_name = u.get_name()?.to_string();
-            let g = u.get_group()?;
-            let gid = g.id()?;
-            let cat = u.get_category().unwrap_or(UnitCategory::Airplane);
-            let pos = u.get_point()?.0;
-            ctx.players.born(
-                ucid,
-                pname.clone(),
-                unit_name.clone(),
-                u.id()?,
-                g.get_name()?.to_string(),
-                gid,
-                u.get_type_name()?.to_string(),
-                u.get_coalition().unwrap_or(Side::Blue),
-                cat == UnitCategory::Helicopter,
-                matches!(cat, UnitCategory::GroundUnit | UnitCategory::Ship),
-                pos,
-                now,
-            );
-            if let Ok(oid) = u.object_id() {
-                ctx.oids.insert(oid, unit_name);
-            }
-            if !ctx.menus.contains(&gid) && !ctx.menu_queue.contains(&gid) {
-                ctx.menu_queue.push(gid);
-            }
-            let welcome = ctx.cfg.welcome.clone().unwrap_or_else(|| {
-                format!(
-                    "Welcome to {}, {pname}. F10 > Range for ranges, set-ups, tankers and drills. Missile trainer is ON. Debriefs: range.vectorstrike.org",
-                    ctx.cfg.name
-                )
-            });
-            records::to_group(lua, gid, &welcome, 15);
+            handle_birth(lua, ctx, &init, now)?;
         }
         Event::PlayerLeaveUnit(l) => {
             if let Some(oid) = l.initiator {
-                if let Some(name) = ctx.oids.remove(&oid) {
-                    player_out(lua, ctx, &name, false, now);
-                }
+                handle_leave(lua, ctx, &oid, now);
             }
         }
         Event::Dead(e) | Event::Crash(e) | Event::PilotDead(e) | Event::UnitLost(e) => {
-            if let Some(o) = e.initiator {
-                if let Ok(name) = o.get_name() {
-                    let name = name.to_string();
-                    ctx.aa.unit_dead(&name);
-                    ctx.ag.object_dead(&name, now);
-                    ctx.iads.unit_dead(&name, now);
-                    ctx.hz.unit_dead(&name, now);
-                    ctx.ew.unit_dead(lua, &name, now);
-                    if ctx.players.flying.contains_key(&name) {
-                        player_out(lua, ctx, &name, true, now);
-                    }
-                }
+            if let Some(name) = e.initiator.and_then(|o| o.get_name().ok()) {
+                handle_dead(lua, ctx, name.as_str(), now);
             }
         }
         Event::Ejection(e) => {
             if let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) {
-                let name = name.to_string();
-                ctx.aa.unit_dead(&name);
-                if ctx.players.flying.contains_key(&name) {
-                    player_out(lua, ctx, &name, true, now);
-                }
+                handle_ejection(lua, ctx, name.as_str(), now);
             }
         }
         Event::Shot(s) => {
@@ -695,21 +919,17 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
         Event::Kill(k) => {
             let target = k.target.as_ref().and_then(|t| t.get_name().ok()).map(|s| s.to_string());
             let shooter = k.initiator.as_ref().and_then(|t| t.get_name().ok()).map(|s| s.to_string());
-            if let Some(t) = &target {
-                ctx.ag.object_dead(t, now);
-                let cfg = ctx.cfg.clone();
-                let ttype = k.target.as_ref().and_then(|o| o.get_type_name().ok()).map(|s| s.to_string()).unwrap_or_default();
-                ctx.iads.on_kill(lua, &cfg, &mut ctx.rec, &ctx.players, shooter.as_deref(), t, k.weapon.as_ref(), k.weapon_name.as_ref().map(|w| w.as_str()), now);
-                ctx.hz.on_kill(shooter.as_deref(), t, &ttype, now);
-                ctx.ew.unit_dead(lua, t, now);
-                if let Some(s) = &shooter {
-                    if let Some(f) = ctx.players.flying.get(s).cloned() {
-                        if f.is_ground {
-                            ctx.ground.lane_event(&ctx.ag, &f, t, true, now);
-                        }
-                    }
-                }
-            }
+            let ttype = k.target.as_ref().and_then(|o| o.get_type_name().ok()).map(|s| s.to_string()).unwrap_or_default();
+            handle_kill(
+                lua,
+                ctx,
+                target.as_deref(),
+                &ttype,
+                shooter.as_deref(),
+                k.weapon.as_ref(),
+                k.weapon_name.as_ref().map(|w| w.as_str()),
+                now,
+            );
         }
         Event::Takeoff(e) => {
             if let Some(name) = e.initiator.as_ref().and_then(|o| o.get_name().ok()) {
@@ -784,8 +1004,7 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
 // ------------------------------------------------------------------ ticks
 
 fn fast_tick(lua: MizLua, now: f64) -> f64 {
-    let ctx = unsafe { Ctx::get() };
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fast_tick_inner(lua, ctx, now)));
+    let r = with_ctx(lua, |ctx| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fast_tick_inner(lua, ctx, now))));
     match r {
         Ok(Ok(next)) => next,
         Ok(Err(e)) => {
@@ -906,8 +1125,7 @@ fn strafe_tick(lua: MizLua, ctx: &mut Ctx, now: f64) {
 }
 
 fn slow_tick(lua: MizLua, now: f64) {
-    let ctx = unsafe { Ctx::get() };
-    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slow_tick_inner(lua, ctx, now)))
+    if let Err(e) = with_ctx(lua, |ctx| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slow_tick_inner(lua, ctx, now))))
         .map_err(|_| anyhow!("panicked"))
         .and_then(|r| r)
     {
@@ -1418,7 +1636,10 @@ fn spawn_ground(
 // ------------------------------------------------------------------ F10
 
 pub(crate) fn on_menu(lua: MizLua, gid: GroupId, action: &str) -> Result<()> {
-    let ctx = unsafe { Ctx::get() };
+    with_ctx(lua, |ctx| on_menu_inner(lua, ctx, gid, action))
+}
+
+fn on_menu_inner(lua: MizLua, ctx: &mut Ctx, gid: GroupId, action: &str) -> Result<()> {
     let now = now_of(lua);
     let Some(f) = ctx.players.by_group(gid).cloned() else {
         records::to_group(lua, gid, "Range: slot in first.", 5);
