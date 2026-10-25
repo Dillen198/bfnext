@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useContext, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Navigate } from 'react-router-dom'
+import { OpsTargetContext } from '../context/OpsTarget'
 import {
   api,
   type OpsStatus, type OpsServer, type OpsPending, type OpsUpdateConfig, type OpsApplyPolicy,
@@ -71,17 +72,25 @@ function ConfirmBtn({ label, icon, confirm, onConfirm, danger = true, disabled }
   label: string; icon?: React.ReactNode; confirm: string; onConfirm: () => void; danger?: boolean; disabled?: boolean
 }) {
   const [asking, setAsking] = useState(false)
+  // Fowl Engine Manager driving more than one box: say which one, loudly
+  const target = useContext(OpsTargetContext)
   if (!asking) return <Btn danger={danger} disabled={disabled} onClick={() => setAsking(true)}>{icon}{label}</Btn>
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '0.25rem 0.5rem',
       background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 3,
     }}>
+      {target && (
+        <span style={{
+          fontFamily: 'var(--font-display)', fontSize: '0.78rem', letterSpacing: '0.08em', color: AMBER,
+          border: `1px solid ${AMBER}`, padding: '0 6px', borderRadius: 2,
+        }}>ON {target}</span>
+      )}
       <span style={{ fontSize: '0.64rem', color: danger ? RED : 'var(--text)' }}>{confirm}</span>
       <button onClick={() => { setAsking(false); onConfirm() }} style={{
         fontSize: '0.62rem', color: '#fff', background: danger ? RED : 'var(--accent-dim)', border: 'none',
         padding: '0.2rem 0.6rem', borderRadius: 3, cursor: 'pointer',
-      }}>Confirm</button>
+      }}>{target ? `Confirm on ${target}` : 'Confirm'}</button>
       <button onClick={() => setAsking(false)} style={{
         fontSize: '0.62rem', color: 'var(--text-dim)', background: 'none', border: '1px solid var(--border)',
         padding: '0.2rem 0.6rem', borderRadius: 3, cursor: 'pointer',

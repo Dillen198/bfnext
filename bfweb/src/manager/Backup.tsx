@@ -82,7 +82,7 @@ function ReportView({ r }: { r: VerifyReport }) {
 }
 
 /** The job's whole log, filterable, with its file on disk. */
-function LogView({ job }: { job: BackupJob }) {
+function LogView({ job, remote }: { job: BackupJob; remote?: boolean }) {
   const [show, setShow] = useState(false)
   const [onlyWarn, setOnlyWarn] = useState(false)
   const lines = onlyWarn ? job.log.filter(l => /WARNING|!!|! |corrupt|failed|BROKEN/i.test(l)) : job.log
@@ -100,7 +100,7 @@ function LogView({ job }: { job: BackupJob }) {
         {job.log_file && (
           <span className="ml-auto flex items-center gap-2" style={{ fontSize: '0.62rem', color: 'var(--text-dim)', ...MONO }}>
             {job.log_file}
-            <Btn onClick={() => { void mgr.revealBackup(job.log_file!) }}>Open log file</Btn>
+            {!remote && <Btn onClick={() => { void mgr.revealBackup(job.log_file!) }}>Open log file</Btn>}
           </span>
         )}
       </div>
@@ -114,15 +114,18 @@ function LogView({ job }: { job: BackupJob }) {
   )
 }
 
-export function JobPanel({ job }: { job: BackupJob }) {
+/** A backup / check / restore job: this PC's, or (with `remote`) one a
+ *  remote box's Manager service is running -- then `onCancel` asks it to
+ *  stop and the Explorer buttons are left out. */
+export function JobPanel({ job, remote, onCancel }: { job: BackupJob; remote?: string; onCancel?: () => void }) {
   const pct = job.total_bytes > 0 ? Math.min(100, (job.done_bytes / job.total_bytes) * 100) : 0
   const failed = !!job.error
   const title = job.kind === 'backup' ? 'Backup' : job.kind === 'verify' ? 'Backup check' : job.kind === 'newbox' ? 'New box' : 'Restore'
   return (
     <Card
       icon={job.running ? <RotateCcw size={13} style={{ color: AMBER }} /> : failed || job.report?.ok === false ? <X size={13} style={{ color: RED }} /> : <CheckCircle2 size={13} style={{ color: OK }} />}
-      title={`${title} ${job.running ? 'running' : failed ? 'failed' : 'finished'}`}
-      badge={job.running ? <Btn danger onClick={() => { void mgr.backupCancel() }}>Cancel</Btn> : undefined}
+      title={`${title}${remote ? ` on ${remote}` : ''} ${job.running ? 'running' : failed ? 'failed' : 'finished'}`}
+      badge={job.running ? <Btn danger onClick={onCancel ?? (() => { void mgr.backupCancel() })}>Cancel</Btn> : undefined}
     >
       <div className="space-y-3">
         <div style={{ fontSize: '0.74rem' }}>{job.phase}</div>
@@ -141,7 +144,7 @@ export function JobPanel({ job }: { job: BackupJob }) {
         {job.output && (
           <Note tone={job.report?.ok === false ? 'warn' : 'ok'}>
             {job.kind === 'backup' ? 'Saved ' : ''}<span style={MONO}>{job.output}</span>
-            {job.zip_path && <> <Btn onClick={() => { void mgr.revealBackup(job.zip_path!) }}>Show in Explorer</Btn></>}
+            {job.zip_path && !remote && <> <Btn onClick={() => { void mgr.revealBackup(job.zip_path!) }}>Show in Explorer</Btn></>}
           </Note>
         )}
         {job.report && !job.running && <ReportView r={job.report} />}
@@ -159,9 +162,33 @@ export function JobPanel({ job }: { job: BackupJob }) {
             </ol>
           </div>
         )}
-        <LogView job={job} />
+        <LogView job={job} remote={!!remote} />
       </div>
     </Card>
+  )
+}
+
+/** A backup password and its repeat; `onChange` gets the password once
+ *  both match (null = none, or not usable yet). */
+export function PasswordPair({ onChange }: { onChange: (pw: string | null, problem: string | null) => void }) {
+  const [a, setA] = useState('')
+  const [b, setB] = useState('')
+  const set = (x: string, y: string) => {
+    setA(x)
+    setB(y)
+    const problem = !x ? null : x.length < 8 ? 'at least 8 characters' : x !== y ? "the two don't match" : null
+    onChange(x && !problem ? x : null, problem)
+  }
+  const problem = !a ? null : a.length < 8 ? 'at least 8 characters' : a !== b ? "the two don't match" : null
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+      <Field label="Password (optional)" hint="Encrypts every file in the zip (AES-256; 7-Zip opens it too). Without it the zip can't be restored -- keep it somewhere safe.">
+        <input style={input} type="password" autoComplete="new-password" value={a} onChange={e => set(e.target.value, b)} />
+      </Field>
+      <Field label="Password again" hint={problem ? <span style={{ color: RED }}>{problem}</span> : a ? <span style={{ color: OK }}>✓ the zip will be encrypted</span> : 'Blank = not encrypted.'}>
+        <input style={input} type="password" autoComplete="new-password" value={b} disabled={!a} onChange={e => set(a, e.target.value)} />
+      </Field>
+    </div>
   )
 }
 
@@ -171,10 +198,11 @@ function CheckCard({ busy }: { busy: boolean }) {
   const act = useAction()
   const qc = useQueryClient()
   const [zip, setZip] = useState('')
+  const [pw, setPw] = useState('')
   const [found, setFound] = useState<FoundBackup[] | null>(null)
   useEffect(() => { mgr.findBackups().then(setFound).catch(() => setFound([])) }, [])
   const start = (p: string) => act.run('verify', async () => {
-    await mgr.verifyBackup(p)
+    await mgr.verifyBackup(p, pw || null)
     qc.invalidateQueries({ queryKey: ['mgr', 'backup-job'] })
     return 'checking -- the report appears at the top'
   })
@@ -204,6 +232,11 @@ function CheckCard({ busy }: { busy: boolean }) {
           </div>
           <Btn disabled={busy || !zip.trim()} onClick={() => start(zip.trim().replace(/^"|"$/g, ''))}>Check</Btn>
         </div>
+        <div style={{ maxWidth: 320 }}>
+          <Field label="Its password (only for an encrypted backup)">
+            <input style={input} type="password" autoComplete="off" value={pw} onChange={e => setPw(e.target.value)} />
+          </Field>
+        </div>
       </div>
     </Card>
   )
@@ -223,6 +256,7 @@ function BackupCard({ busy }: { busy: boolean }) {
   const [shadow, setShadow] = useState(true)
   const [dest, setDest] = useState('')
   const [extra, setExtra] = useState('')
+  const [password, setPassword] = useState<{ pw: string | null; problem: string | null }>({ pw: null, problem: null })
 
   async function scan() {
     setScanning(true)
@@ -331,8 +365,10 @@ function BackupCard({ busy }: { busy: boolean }) {
             )}
             {plan.warnings.length > 0 && <Note tone="warn">{plan.warnings.map((w, i) => <div key={i}>• {w}</div>)}</Note>}
 
+            <PasswordPair onChange={(pw, problem) => setPassword({ pw, problem })} />
+
             <div className="flex items-center gap-3">
-              <Btn primary disabled={busy || picked.size === 0 || !dest.trim()} onClick={() => act.run('backup', async () => {
+              <Btn primary disabled={busy || picked.size === 0 || !dest.trim() || !!password.problem} onClick={() => act.run('backup', async () => {
                 await mgr.backupStart({
                   dest_dir: dest.trim(),
                   roots: [...picked],
@@ -340,6 +376,7 @@ function BackupCard({ busy }: { busy: boolean }) {
                   database: db,
                   stop_bot: stopBot && plan.bot_running,
                   shadow_copy: shadow,
+                  password: password.pw,
                 })
                 qc.invalidateQueries({ queryKey: ['mgr', 'backup-job'] })
                 return 'backup started'
@@ -370,6 +407,7 @@ function RestoreCard({ busy, state }: { busy: boolean; state: AppState }) {
   const [instSvc, setInstSvc] = useState(true)
   const [user, setUser] = useState('')
   const [confirm, setConfirm] = useState(false)
+  const [zipPw, setZipPw] = useState('')
 
   useEffect(() => { mgr.findBackups().then(setFound).catch(() => setFound([])) }, [])
 
@@ -435,6 +473,13 @@ function RestoreCard({ busy, state }: { busy: boolean; state: AppState }) {
               manager {prev.manifest.manager_version}
               {prev.manifest.warnings.length > 0 && <span style={{ color: AMBER }}> · {prev.manifest.warnings.length} warning(s) when it was made</span>}
             </div>
+            {prev.manifest.encrypted && (
+              <div style={{ maxWidth: 360 }}>
+                <Field label="Backup password" hint={<>This backup is encrypted (AES-256). Without its password it can't be restored.</>}>
+                  <input style={input} type="password" autoComplete="off" value={zipPw} onChange={e => setZipPw(e.target.value)} />
+                </Field>
+              </div>
+            )}
             {prev.hostname_changed && (
               <Note tone="warn">
                 This PC is called <b>{prev.hostname_now}</b>, the old one <b>{prev.manifest.hostname}</b>. The restore renames the node in
@@ -520,7 +565,7 @@ function RestoreCard({ busy, state }: { busy: boolean; state: AppState }) {
             </label>
 
             {!confirm ? (
-              <Btn primary disabled={busy || (needPw && !pgPw) || false} onClick={() => setConfirm(true)}>
+              <Btn primary disabled={busy || (needPw && !pgPw) || (!!prev.manifest.encrypted && !zipPw) || false} onClick={() => setConfirm(true)}>
                 <Upload size={11} />Restore…
               </Btn>
             ) : (
@@ -537,6 +582,7 @@ function RestoreCard({ busy, state }: { busy: boolean; state: AppState }) {
                     install_postgres: instPg,
                     install_service: instSvc,
                     desktop_user: user.trim() || null,
+                    password: prev.manifest.encrypted ? zipPw : null,
                   })
                   qc.invalidateQueries({ queryKey: ['mgr', 'backup-job'] })
                   return 'restore started'
@@ -560,7 +606,8 @@ export default function Backup({ state }: { state: AppState }) {
     refetchIntervalInBackground: true,
     retry: false,
   })
-  const busy = !!job?.running
+  const remoteJob = state.remote_backup?.job
+  const busy = !!job?.running || !!remoteJob?.running
   return (
     <div className="p-5 space-y-4" style={{ maxWidth: 980 }}>
       <div>
@@ -570,6 +617,9 @@ export default function Backup({ state }: { state: AppState }) {
           The zip holds secrets (Discord token, passwords, API keys) -- <Pill color={AMBER}>keep it private</Pill>
         </div>
       </div>
+      {remoteJob?.running && (
+        <Note tone="warn">A {remoteJob.kind} a controller PC asked for is running in this box's Fowl Engine service ({remoteJob.phase}) -- wait for it before starting another.</Note>
+      )}
       {job && <JobPanel job={job} />}
       <BackupCard busy={busy} />
       <CheckCard busy={busy} />

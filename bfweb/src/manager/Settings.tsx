@@ -12,7 +12,7 @@ export default function Settings({ state: s }: { state: AppState }) {
   const set = <K extends keyof ManagerConfig>(k: K, v: ManagerConfig[K]) => setDraft({ ...draft, [k]: v })
   const dirty = JSON.stringify(draft) !== JSON.stringify(s.config)
   const busy = act.busy !== null
-  const check = (k: 'sync_plugin' | 'auto_update' | 'start_with_windows', label: string) => (
+  const check = (k: 'sync_plugin' | 'auto_update' | 'start_with_windows' | 'controller_only' | 'remote_backups', label: string) => (
     <label className="flex items-center gap-2" style={{ fontSize: '0.72rem', cursor: 'pointer' }}>
       <input type="checkbox" checked={draft[k]} onChange={e => set(k, e.target.checked)} /> {label}
     </label>
@@ -60,6 +60,18 @@ export default function Settings({ state: s }: { state: AppState }) {
               <input style={input} type="password" value={draft.github_token ?? ''} autoComplete="off"
                      onChange={e => set('github_token', e.target.value || null)} />
             </Field>
+          </div>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }} className="space-y-2">
+            <div style={{ fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>Remote control (Tailscale)</div>
+            {check('controller_only', 'This PC only controls other server boxes (no DCSServerBot here) -- Setup stops asking for one')}
+            {check('remote_backups', 'Let a controller PC start, list and check backups of this box through its OPS API (never restore)')}
+            {draft.remote_backups && !draft.desktop_user && (
+              <Note tone="warn">Set the desktop user the bot runs as (Setup → step 3): the bot's account is given access to the remote-backup folder, and only it.</Note>
+            )}
+            <div style={{ fontSize: '0.62rem', color: 'var(--text-dim)', lineHeight: 1.6 }}>
+              The servers this PC controls are under ALL SERVERS. Opening this box to a controller is in <span style={MONO}>deploy/manager-remote.md</span>:
+              off by default; nothing is reachable from other PCs until you follow it.
+            </div>
           </div>
           <div className="flex gap-2">
             <Btn primary disabled={!dirty || busy} onClick={() => act.run('save', async () => {
