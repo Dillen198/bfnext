@@ -33,8 +33,19 @@ use chrono::prelude::*;
 use dcso3::{coalition::Side, net::Ucid, String};
 use serde_derive::{Deserialize, Serialize};
 
+/// The save format this build writes. Bump it whenever a change to
+/// `Persisted` (or anything inside it) means an older engine would read a new
+/// save wrongly or drop data from it -- not for a plain `#[serde(default)]`
+/// addition, which older engines already ignore. Saves from before this
+/// field existed load as version 0.
+pub const SAVE_SCHEMA_VERSION: u32 = 1;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Persisted {
+    /// The `SAVE_SCHEMA_VERSION` of the engine that wrote this save (0 for
+    /// saves older than the field). Set on every snapshot.
+    #[serde(default)]
+    pub schema_version: u32,
     pub groups: Map<GroupId, SpawnedGroup>,
     pub units: Map<UnitId, SpawnedUnit>,
     pub groups_by_name: Map<String, GroupId>,
@@ -184,6 +195,21 @@ pub struct Persisted {
     pub hq: crate::hq::HqSaved,
 }
 
+impl Persisted {
+    /// What to say about a loaded save's schema version, if anything: a save
+    /// from a newer engine still loads (unknown fields are ignored), but
+    /// whatever that engine added is lost at the next save, and anything it
+    /// changed may be misread.
+    pub fn schema_warning(&self) -> Option<std::string::String> {
+        (self.schema_version > SAVE_SCHEMA_VERSION).then(|| {
+            format!(
+                "the save file was written by a newer engine (save schema {}, this build                  understands up to {SAVE_SCHEMA_VERSION}). It is loaded anyway, but anything                  that engine added will be dropped at the next save and anything it changed                  may be misread. Roll forward to the newer engine, or restore a backup from                  before the upgrade, to be safe.",
+                self.schema_version
+            )
+        })
+    }
+}
+
 /// Backward compatibility: saves written before the per-ship rework stored
 /// `navaids` as `MapS<ObjectiveId, Navaid>` (one navaid per objective), and
 /// the `Navaid` struct itself has changed shape a few times. Read the field
@@ -240,5 +266,74 @@ impl Persisted {
         };
         *t = (*t + delta).max(0);
         *t
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Value;
+
+    /// A save in the format written before `schema_version` existed.
+    const V0: &str = include_str!("testdata/persisted_v0.json");
+
+    #[test]
+    fn old_save_loads_as_schema_0() {
+        let p: Persisted = serde_json::from_str(V0).unwrap();
+        assert_eq!(p.schema_version, 0);
+        assert!(p.schema_warning().is_none());
+        assert_eq!((p.oid, p.gid, p.uid), (2, 10, 20));
+        assert_eq!((p.blue_treasury, p.red_treasury), (1000, 900));
+        assert!(p.migrated_v0);
+        let obj = p.objectives.get(&ObjectiveId::from(1)).unwrap();
+        assert_eq!((obj.name.as_str(), obj.owner, obj.points), ("Batumi", Side::Blue, 250));
+        let ucid: Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
+        let player = p.players.get(&ucid).unwrap();
+        assert_eq!((player.name.as_str(), player.points, player.sorties), ("Test Pilot", 42, 7));
+        assert_eq!(p.funds_seeded, vec![Side::Blue, Side::Red]);
+    }
+
+    /// Every field in the golden file comes back out exactly as it went in.
+    /// A rename, a changed representation or a dropped field fails here; a
+    /// new `#[serde(default)]` field only adds a key, which is allowed.
+    #[test]
+    fn golden_round_trip() {
+        let golden: Value = serde_json::from_str(V0).unwrap();
+        let p: Persisted = serde_json::from_str(V0).unwrap();
+        let out = serde_json::to_value(&p).unwrap();
+        fn check(path: &str, want: &Value, got: &Value) {
+            match (want, got) {
+                (Value::Object(w), Value::Object(g)) => {
+                    for (k, wv) in w {
+                        let gv = g.get(k).unwrap_or_else(|| panic!("{path}.{k} missing after round trip"));
+                        check(&format!("{path}.{k}"), wv, gv);
+                    }
+                }
+                (w, g) => assert_eq!(w, g, "{path} changed in the round trip"),
+            }
+        }
+        check("save", &golden, &out);
+        // and what we write reads back to the same thing
+        let again: Persisted = serde_json::from_value(out.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&again).unwrap(), out);
+    }
+
+    #[test]
+    fn snapshot_stamps_the_current_schema() {
+        let mut p: Persisted = serde_json::from_str(V0).unwrap();
+        p.schema_version = SAVE_SCHEMA_VERSION;
+        let out = serde_json::to_value(&p).unwrap();
+        assert_eq!(out["schema_version"], Value::from(SAVE_SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn newer_save_still_loads_with_a_warning() {
+        let mut v: Value = serde_json::from_str(V0).unwrap();
+        v["schema_version"] = Value::from(SAVE_SCHEMA_VERSION + 1);
+        v["a_field_from_the_future"] = Value::from(true);
+        let p: Persisted = serde_json::from_value(v).unwrap();
+        assert_eq!(p.schema_version, SAVE_SCHEMA_VERSION + 1);
+        assert!(p.schema_warning().unwrap().contains("newer engine"));
+        assert_eq!(p.blue_treasury, 1000);
     }
 }

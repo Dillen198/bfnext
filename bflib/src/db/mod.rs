@@ -405,6 +405,17 @@ impl Db {
                 }
             }
         };
+        if let Some(w) = persisted.schema_warning() {
+            log::error!("!!! {w}");
+            crate::bg::fallback_log(format!("bflib: {w}
+").as_bytes());
+        } else if persisted.schema_version < persisted::SAVE_SCHEMA_VERSION {
+            log::info!(
+                "save file is schema {}, it will be written back as schema {}",
+                persisted.schema_version,
+                persisted::SAVE_SCHEMA_VERSION
+            );
+        }
         let mut db = Db {
             persisted,
             ephemeral: Ephemeral::default(),
@@ -476,6 +487,7 @@ impl Db {
     /// that are already taken.
     pub fn snapshot(&mut self) -> Persisted {
         self.ephemeral.take_dirty();
+        self.persisted.schema_version = persisted::SAVE_SCHEMA_VERSION;
         self.persisted.oid = ObjectiveId::seq();
         self.persisted.gid = GroupId::seq();
         self.persisted.uid = UnitId::seq();
