@@ -1686,9 +1686,27 @@ impl Default for RangeCfg {
 }
 
 impl RangeCfg {
+    /// Load and log every key serde ignored. Unknown keys are dropped
+    /// silently otherwise (unknown fields are allowed so old configs keep
+    /// loading), so a typo just ran the setting at its default.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let txt = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&txt)?)
+        let (cfg, unknown) = Self::parse(&txt)?;
+        for key in unknown {
+            log::warn!("range config {path:?}: unknown key {key} is ignored (typo, or removed setting?)")
+        }
+        Ok(cfg)
+    }
+
+    /// Parse a config, returning it and the keys serde ignored.
+    pub fn parse(txt: &str) -> anyhow::Result<(Self, Vec<String>)> {
+        let cfg: Self = serde_json::from_str(txt)?;
+        let mut unknown = vec![];
+        match serde_json::from_str::<serde_json::Value>(txt).and_then(|raw| Ok((raw, serde_json::to_value(&cfg)?))) {
+            Ok((raw, known)) => unknown_keys(&raw, &known, &mut String::new(), &mut unknown),
+            Err(e) => log::warn!("range config: could not check for unknown keys: {e}"),
+        }
+        Ok((cfg, unknown))
     }
 
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
@@ -1855,9 +1873,66 @@ impl RangeCfg {
     }
 }
 
+/// The object keys in `raw` (the config as written) with no counterpart in
+/// `known` (the parsed config serialized back): the keys serde ignored. Only
+/// descends where both sides have the same shape. A local copy of the
+/// campaign config's helper (`cfg::unknown_keys`, private there), plus:
+/// an explicit `null` is not reported, since `Option` fields skip
+/// serializing `None`.
+fn unknown_keys(raw: &serde_json::Value, known: &serde_json::Value, path: &mut String, out: &mut Vec<String>) {
+    use serde_json::Value as J;
+    match (raw, known) {
+        (J::Object(r), J::Object(k)) => {
+            for (key, rv) in r {
+                // `_note`-style keys are comments by convention
+                if key.starts_with('_') {
+                    continue;
+                }
+                let len = path.len();
+                if !path.is_empty() {
+                    path.push('.');
+                }
+                path.push_str(key);
+                match k.get(key) {
+                    None if rv.is_null() => (),
+                    None => out.push(path.clone()),
+                    Some(kv) => unknown_keys(rv, kv, path, out),
+                }
+                path.truncate(len);
+            }
+        }
+        (J::Array(r), J::Array(k)) if r.len() == k.len() => {
+            for (i, (rv, kv)) in r.iter().zip(k).enumerate() {
+                let len = path.len();
+                path.push_str(&format!("[{i}]"));
+                unknown_keys(rv, kv, path, out);
+                path.truncate(len);
+            }
+        }
+        _ => (),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_keys_are_reported() {
+        let txt = r#"{"name": "R", "_note": "a comment", "netidx_bind": null,
+            "spawn": {"max_active_per_player": 2, "max_activ_per_player": 9},
+            "messag_s": 5}"#;
+        let (c, unknown) = RangeCfg::parse(txt).unwrap();
+        assert_eq!(c.spawn.max_active_per_player, 2);
+        assert_eq!(unknown, vec!["messag_s".to_string(), "spawn.max_activ_per_player".to_string()]);
+    }
+
+    #[test]
+    fn default_config_has_no_unknown_keys() {
+        let txt = serde_json::to_string(&RangeCfg::default()).unwrap();
+        let (_, unknown) = RangeCfg::parse(&txt).unwrap();
+        assert!(unknown.is_empty(), "{unknown:?}");
+    }
 
     #[test]
     fn empty_config_has_defaults() {
@@ -1907,8 +1982,8 @@ mod tests {
 
     #[test]
     fn sample_config_parses_and_validates() {
-        let c: RangeCfg =
-            serde_json::from_str(include_str!("../../../bfrange/RANGE_CFG.sample.json")).unwrap();
+        let (c, unknown) = RangeCfg::parse(include_str!("../../../bfrange/RANGE_CFG.sample.json")).unwrap();
+        assert!(unknown.is_empty(), "unknown keys in the sample: {unknown:?}");
         c.validate().unwrap();
         assert_eq!(c.carriers[0].recovery_tanker.as_ref().unwrap().typ, "A6E");
         assert!(c.stations.iter().any(|s| s.kind == StationKind::StrafePit));
