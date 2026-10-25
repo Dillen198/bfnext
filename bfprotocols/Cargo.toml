@@ -2,6 +2,10 @@
 name = "bfprotocols"
 version = "0.1.0"
 edition = "2021"
+# No license file of its own (see NOTICE): it is upstream's code and is
+# linked into bflib, so it is distributed under bflib's AGPL-3.0-or-later.
+license = "AGPL-3.0-or-later"
+publish = false
 
 [dependencies]
 anyhow = { workspace = true }
@@ -23,3 +27,6 @@ serde_derive = { workspace = true }
 serde_json = { workspace = true }
 serde = { workspace = true }
 smallvec = { workspace = true }
+
+[lints]
+workspace = true

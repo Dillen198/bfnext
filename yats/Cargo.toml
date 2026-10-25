@@ -9,3 +9,6 @@ bincode = { workspace = true }
 pin-project = { workspace = true }
 sled = { workspace = true }
 anyhow = { workspace = true }
+
+[lints]
+workspace = true

@@ -65,6 +65,20 @@ warp = { version = "0.3", features = ["tls"] }
 zip = { version = "0.6.6" }
 zstd = { version = "0.13" }
 
+# Shared lint levels. Everything here is `warn`, never `deny`, so a new hit
+# cannot break a build; crates opt in with `[lints] workspace = true`.
+# The clippy entries only fire under `cargo clippy`.
+[workspace.lints.rust]
+# `unsafe fn` bodies must still mark each unsafe operation (the 2024 edition
+# default): an unsafe fn is a contract for the caller, not a licence for the
+# whole body.
+unsafe_op_in_unsafe_fn = "warn"
+static_mut_refs = "warn"
+
+[workspace.lints.clippy]
+# Every `unsafe {}` block says why it is sound.
+undocumented_unsafe_blocks = "warn"
+
 [workspace]
 resolver = "2"
 members = ["dcso3", "livewx", "bflib", "bfrange", "bfdb", "bfprotocols", "yats", "bfcockpit/installer", "bfcockpit/net"]
