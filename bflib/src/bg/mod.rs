@@ -33,7 +33,7 @@ use crossbeam::queue::SegQueue;
 use dcso3::perf::{Perf as ApiPerf, PerfStat as ApiPerfStat};
 use futures::FutureExt;
 use fxhash::FxHashMap;
-use log::{error, info, Level, Log, Metadata, Record};
+use log::{debug, error, info, Level, Log, Metadata, Record};
 use logpub::LogPublisher;
 use netidx::{
     chars::Chars,
@@ -57,7 +57,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicI64, Ordering},
+        atomic::{AtomicI64, AtomicUsize, Ordering},
     },
     thread,
 };
@@ -127,6 +127,16 @@ pub(super) fn heartbeat_age(now: DateTime<Utc>) -> Option<i64> {
     }
 }
 
+/// The most log lines waiting for the background thread. Logs share its
+/// queue with the saves, so a stalled log sink (a hung netidx publisher, a
+/// slow disk) used to grow that queue without limit. Past this, lines are
+/// dropped and counted; the next line that gets through says how many.
+const MAX_QUEUED_LOG_LINES: usize = 20_000;
+/// Log lines queued and not yet written.
+static LOG_QUEUED: AtomicUsize = AtomicUsize::new(0);
+/// Log lines dropped because the queue was full, not yet reported.
+static LOG_DROPPED: AtomicUsize = AtomicUsize::new(0);
+
 struct LogHandle(UnboundedSender<Task>);
 
 impl io::Write for LogHandle {
@@ -134,8 +144,25 @@ impl io::Write for LogHandle {
         LOGBUF.with_borrow_mut(|lbuf| {
             lbuf.extend_from_slice(buf);
             if lbuf.len() > 0 && lbuf[lbuf.len() - 1] == 0xA {
-                let line = lbuf.split().freeze();
+                let mut line = lbuf.split().freeze();
+                if LOG_QUEUED.load(Ordering::Relaxed) >= MAX_QUEUED_LOG_LINES {
+                    LOG_DROPPED.fetch_add(1, Ordering::Relaxed);
+                    return Ok(buf.len());
+                }
+                let dropped = LOG_DROPPED.swap(0, Ordering::Relaxed);
+                if dropped > 0 {
+                    let mut b = BytesMut::from(
+                        format!(
+                            "WARN [bflib] log queue full: {dropped} log line(s) dropped\n"
+                        )
+                        .as_bytes(),
+                    );
+                    b.extend_from_slice(&line);
+                    line = b.freeze();
+                }
+                LOG_QUEUED.fetch_add(1, Ordering::Relaxed);
                 if let Err(e) = self.0.send(Task::WriteLog(line)) {
+                    LOG_QUEUED.fetch_sub(1, Ordering::Relaxed);
                     // The background thread is gone. Don't return an error --
                     // the logger would just drop the line -- write it where it
                     // can still be read.
@@ -341,7 +368,9 @@ async fn save(path: PathBuf, encoded: Bytes) -> Result<()> {
             .truncate(true)
             .create(true)
             .open(&tmp)?;
-        let mut file = zstd::stream::Encoder::new(file, 9)?;
+        // Level 3 (zstd's default): a large campaign compressed at 9 took
+        // seconds of CPU per save for a few percent of size.
+        let mut file = zstd::stream::Encoder::new(file, 3)?;
         io::copy(&mut &*encoded, &mut file)?;
         // finish and sync by hand. auto_finish throws away the error from
         // the final flush, which silently truncates the zstd frame, and
@@ -373,6 +402,78 @@ async fn save(path: PathBuf, encoded: Bytes) -> Result<()> {
         Ok(())
     })
     .await?
+}
+
+/// Writes saves off the background loop, newest first.
+///
+/// One thread used to encode and write every save in line with the logs,
+/// the stats and the netidx RPCs, so a large save held all of them up --
+/// and saves queued behind a slow one were each written in turn, though
+/// only the newest matters. Now `Task::SaveState` just parks the snapshot
+/// here and a worker task writes it; a newer snapshot that arrives before
+/// the worker gets to the last one replaces it.
+#[derive(Default)]
+pub(super) struct Saver {
+    /// The newest snapshot not yet being written.
+    pending: Mutex<Option<(PathBuf, Persisted)>>,
+    wake: tokio::sync::Notify,
+    /// Held while a snapshot is encoded and written. `flush` and `cancel`
+    /// take it to wait for that.
+    writing: tokio::sync::Mutex<()>,
+}
+
+impl Saver {
+    fn submit(&self, path: PathBuf, db: Persisted) {
+        if self.pending.lock().replace((path, db)).is_some() {
+            debug!("a newer save replaced one that was still waiting to be written");
+        }
+        self.wake.notify_one();
+    }
+
+    /// Write whatever is pending, while holding `writing`.
+    async fn write_pending(&self) {
+        let Some((path, db)) = self.pending.lock().take() else { return };
+        let encoded = match task::spawn_blocking(move || encode(&db).map(|b| b.freeze())).await {
+            Ok(Ok(encoded)) => encoded,
+            Ok(Err(e)) => {
+                error!("failed to encode save state {e:?}");
+                return;
+            }
+            Err(e) => {
+                error!("encoding the save state panicked {e:?}");
+                return;
+            }
+        };
+        if let Err(e) = save(path.clone(), encoded).await {
+            error!("failed to save state to {path:?}, {e:?}")
+        }
+    }
+
+    /// The worker: write each snapshot as it arrives.
+    async fn run(self: Arc<Self>) {
+        loop {
+            self.wake.notified().await;
+            let _w = self.writing.lock().await;
+            self.write_pending().await;
+        }
+    }
+
+    /// Wait until every snapshot submitted so far is on disk.
+    async fn flush(&self) {
+        let _w = self.writing.lock().await;
+        self.write_pending().await;
+    }
+
+    /// Drop any snapshot not yet written and wait for one being written to
+    /// finish, then run `f` before another can start. A campaign reset uses
+    /// this: a save landing after it would bring the old round back.
+    async fn cancel_then<R>(&self, f: impl FnOnce() -> R) -> R {
+        let _w = self.writing.lock().await;
+        if self.pending.lock().take().is_some() {
+            info!("campaign reset: dropped a save that was still waiting to be written");
+        }
+        f()
+    }
 }
 
 /// `Task::ResetState`: drop the live save so the next start is a new round,
@@ -752,6 +853,7 @@ impl Logs {
 
 struct Background<'a> {
     write_dir: &'a Path,
+    saver: Arc<Saver>,
     logs: Logs,
     rpcs: Option<Rpcs>,
     // The netidx publisher's lifetime has to outlive the CfgLoaded arm and
@@ -894,22 +996,13 @@ impl<'a> Background<'a> {
                 self.cfg_loaded(replay, fresh).await
             }
             Task::SaveState(path, db) => {
-                let encoded = match encode(&db) {
-                    Ok(encoded) => encoded.freeze(),
-                    Err(e) => {
-                        error!("failed to encode save state {e:?}");
-                        return;
-                    }
-                };
-                drop(db); // don't hold the db reference any longer than necessary
-                if let Err(e) = save(path.clone(), encoded).await {
-                    error!("failed to save state to {path:?}, {e:?}")
-                }
+                // written by the save worker (see `Saver`)
+                self.saver.submit(path, db);
                 if let Err(e) = self.logs.flush_stats() {
                     error!("failed to flush stats {e:?}")
                 }
             }
-            Task::ResetState(path) => match reset_state(&path) {
+            Task::ResetState(path) => match self.saver.cancel_then(|| reset_state(&path)).await {
                 Ok(()) => (),
                 Err(e) => error!("failed to reset state {path:?}, {e:?}"),
             },
@@ -954,6 +1047,8 @@ impl<'a> Background<'a> {
                     .await;
             }
             Task::Shutdown(_) => {
+                // the final save has to be on disk before the mission exits
+                self.saver.flush().await;
                 println!("starting netidx shutdown");
                 self.logs.shutdown().await;
                 println!("netidx shutdown complete");
@@ -978,10 +1073,15 @@ async fn background_loop(
     write_dir: &Path,
     rx: &mut UnboundedReceiver<Task>,
     last_cfg: &mut Option<CfgReplay>,
+    saver: &Arc<Saver>,
 ) {
     let replay = last_cfg.clone();
+    let worker = task::spawn(Arc::clone(saver).run());
+    // a snapshot left pending by a loop that died gets written now
+    saver.wake.notify_one();
     let mut bg = Background {
         write_dir,
+        saver: Arc::clone(saver),
         logs: Logs::new(write_dir).await,
         rpcs: None,
         publisher: None,
@@ -999,6 +1099,9 @@ async fn background_loop(
             _ => None,
         };
         let kind = msg.kind();
+        if let Task::WriteLog(_) = &msg {
+            LOG_QUEUED.fetch_sub(1, Ordering::Relaxed);
+        }
         if let Err(e) = AssertUnwindSafe(bg.handle(msg)).catch_unwind().await {
             let m = panic_msg(&e);
             fallback_log(format!("bflib: background task {kind} panicked: {m}\n").as_bytes());
@@ -1017,6 +1120,7 @@ async fn background_loop(
             break;
         }
     }
+    worker.abort();
 }
 
 static TXCOM: OnceCell<mpsc::UnboundedSender<Task>> = OnceCell::new();
@@ -1098,6 +1202,8 @@ pub(super) fn init(write_dir: PathBuf) -> UnboundedSender<Task> {
                 // a fresh runtime instead of leaving the mission with no saves,
                 // no log and no stats for the rest of the session.
                 let mut last_cfg: Option<CfgReplay> = None;
+                // outlives a restart of the loop, with any save still pending
+                let saver = Arc::new(Saver::default());
                 let mut restarts: u32 = 0;
                 loop {
                     let rt = match Builder::new_multi_thread().enable_all().build() {
@@ -1112,7 +1218,7 @@ pub(super) fn init(write_dir: PathBuf) -> UnboundedSender<Task> {
                         }
                     };
                     let res = catch_unwind(AssertUnwindSafe(|| {
-                        rt.block_on(background_loop(&write_dir, &mut rx, &mut last_cfg))
+                        rt.block_on(background_loop(&write_dir, &mut rx, &mut last_cfg, &saver))
                     }));
                     match res {
                         Ok(()) => break,
@@ -1146,6 +1252,49 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn treasury_on_disk(path: &Path) -> i64 {
+        let raw = zstd::stream::decode_all(&fs::read(path).unwrap()[..]).unwrap();
+        serde_json::from_slice::<Persisted>(&raw).unwrap().blue_treasury as i64
+    }
+
+    fn snapshot(treasury: i64) -> Persisted {
+        let mut p = Persisted::default();
+        p.blue_treasury = treasury as _;
+        p
+    }
+
+    #[test]
+    fn saver_writes_newest_and_reset_cancels_pending() {
+        let dir = scratch("saver");
+        let live = dir.join("campaign");
+        let rt = Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let saver = Arc::new(Saver::default());
+            // two snapshots before anything is written: only the newer one is
+            saver.submit(live.clone(), snapshot(1));
+            saver.submit(live.clone(), snapshot(2));
+            saver.flush().await;
+            assert_eq!(treasury_on_disk(&live), 2);
+            // the worker writes on its own
+            let worker = task::spawn(Arc::clone(&saver).run());
+            saver.submit(live.clone(), snapshot(3));
+            for _ in 0..200 {
+                if live.exists() && treasury_on_disk(&live) == 3 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            assert_eq!(treasury_on_disk(&live), 3);
+            // a reset drops a snapshot still waiting; nothing brings it back
+            worker.abort();
+            saver.submit(live.clone(), snapshot(4));
+            saver.cancel_then(|| reset_state(&live)).await.unwrap();
+            saver.flush().await;
+            assert!(!live.exists());
+        });
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
