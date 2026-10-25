@@ -164,6 +164,19 @@ struct Args {
     /// Discord role ID that grants admin access
     #[arg(long)]
     discord_admin_role_id: Option<String>,
+    /// Optional Discord role ID whose members get only the `ops` admin role:
+    /// the OPS page, DCSServerBot start/stop, the engine config editor, perf
+    /// and logs. The admin role above always has every role.
+    #[arg(long)]
+    discord_ops_role_id: Option<String>,
+    /// Optional Discord role ID for the `content` admin role: editing the
+    /// wiki and redrawing war-diary pictures.
+    #[arg(long)]
+    discord_content_role_id: Option<String>,
+    /// Optional Discord role ID for the `moderation` admin role: bans, side
+    /// switches, commander grants, recon intel purges.
+    #[arg(long)]
+    discord_moderation_role_id: Option<String>,
     /// Path to campaign config JSON (e.g. campaign.json).
     /// Served at GET /api/config so the web UI can brand itself.
     #[arg(long)]
@@ -497,6 +510,8 @@ struct AuthConfig {
     redirect_uri:  String,
     guild_id:      String,
     admin_role_id: String,
+    /// Discord roles granting a single admin role (`admin::Role`).
+    roles:         admin::DiscordRoles,
 }
 
 #[derive(Debug, Clone)]
@@ -3051,31 +3066,32 @@ async fn api_auth_callback(
         .await
         .map_err(|e| anyhow::anyhow!("user parse failed: {e}"))?;
 
-    // Check guild role for admin
-    let is_admin = match http
+    // Guild roles: the admin role makes a full admin, the optional
+    // --discord-*-role-id ones a single admin role each.
+    let member_roles: Vec<String> = match http
         .get(format!("https://discord.com/api/users/@me/guilds/{}/member", cfg.guild_id))
         .bearer_auth(&token_res.access_token)
         .send()
         .await
     {
-        Ok(r) => r.json::<GuildMember>().await.ok()
-            .map(|m| m.roles.contains(&cfg.admin_role_id))
-            .unwrap_or(false),
-        Err(_) => false,
+        Ok(r) => r.json::<GuildMember>().await.ok().map(|m| m.roles).unwrap_or_default(),
+        Err(_) => Vec::new(),
     };
+    let is_admin = member_roles.contains(&cfg.admin_role_id);
+    let roles = cfg.roles.roles_for(&cfg.admin_role_id, &member_roles);
 
     let session_id = Uuid::new_v4();
     // Admin rights are read from the Discord role once, here -- so an admin
     // session is kept short (see ADMIN_SESSION_SECS) to bound how long a
     // removed role keeps working.
-    let lifetime = if is_admin { ADMIN_SESSION_SECS } else { PLAYER_SESSION_SECS };
+    let lifetime = if roles != 0 { ADMIN_SESSION_SECS } else { PLAYER_SESSION_SECS };
     let session = SessionData {
         discord_id: user.id.clone(),
         username:   user.username.clone(),
         avatar:     user.avatar.clone(),
         is_admin,
         expires:    chrono::Utc::now() + chrono::Duration::seconds(lifetime),
-        roles:      if is_admin { admin::Role::ALL } else { 0 },
+        roles,
     };
     task::block_in_place(|| db.create_session(session_id, session))?;
 
@@ -3119,6 +3135,9 @@ async fn api_auth_me(
             "username":   s.username,
             "avatar":     s.avatar,
             "is_admin":   s.is_admin,
+            // The admin roles this session holds (see admin.rs); every one
+            // for a full admin.
+            "roles":      admin::role_names(if s.is_admin { admin::Role::ALL } else { s.roles }),
             "ucid":       ucid.map(|u| u.to_string()),
             "side":       side,
         }
@@ -3226,16 +3245,77 @@ async fn api_auth_local_login(
 
 // ── Admin handlers ───────────────────────────────────────────────────
 
+/// A full admin: the Discord admin role, or the local password login. Kept
+/// for what no narrower role covers (campaign resets, sessions, the audit
+/// log, shutdown).
 async fn require_admin(session_id: Option<Uuid>, db: StatsDb) -> std::result::Result<SessionData, Error> {
-    let Some(id) = session_id else {
-        return Err(websec::unauthorized("not logged in").into());
-    };
-    let session = task::block_in_place(|| db.get_session(id))?
-        .ok_or_else(|| websec::unauthorized("session expired"))?;
+    let session = require_session(session_id, &db)?;
     if !session.is_admin {
         return Err(websec::forbidden("forbidden").into());
     }
     Ok(session)
+}
+
+/// A full admin, or a session holding `role` (see `admin::Role` and the
+/// `--discord-*-role-id` flags). Every existing admin has every role, so for
+/// them nothing changed.
+async fn require_role(session_id: Option<Uuid>, db: StatsDb, role: u8) -> std::result::Result<SessionData, Error> {
+    let session = require_session(session_id, &db)?;
+    if !admin::has_role(&session, role) {
+        return Err(websec::forbidden("forbidden").into());
+    }
+    Ok(session)
+}
+
+fn require_session(session_id: Option<Uuid>, db: &StatsDb) -> std::result::Result<SessionData, Error> {
+    let Some(id) = session_id else {
+        return Err(websec::unauthorized("not logged in").into());
+    };
+    Ok(task::block_in_place(|| db.get_session(id))?.ok_or_else(|| websec::unauthorized("session expired"))?)
+}
+
+/// Record an admin action: the `ADMIN:` log line it always had, plus a row
+/// in the persistent audit log (`GET /api/admin/audit`).
+fn audit(db: &StatsDb, who: &SessionData, action: &str, target: Option<&str>, inst: Option<&str>) {
+    log::info!(
+        "ADMIN: {} ({}) {action}{}{}",
+        who.username,
+        who.discord_id,
+        target.map(|t| format!(" {t}")).unwrap_or_default(),
+        inst.map(|i| format!(" [{i}]")).unwrap_or_default(),
+    );
+    let entry = db::AuditEntry {
+        at: chrono::Utc::now(),
+        who: who.discord_id.clone(),
+        username: who.username.clone(),
+        action: action.to_string(),
+        target: target.map(str::to_string),
+        instance: inst.map(str::to_string),
+    };
+    if let Err(e) = task::block_in_place(|| db.audit_put(&entry)) {
+        log::warn!("audit log write failed: {e:#}");
+    }
+}
+
+/// GET /api/admin/audit?limit=&before= -- the admin audit log, newest first.
+/// `before` is an RFC 3339 time (the `at` of the last row of the previous page).
+async fn api_admin_audit(
+    session_id: Option<Uuid>,
+    q: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let limit = q.get("limit").and_then(|s| s.parse::<usize>().ok()).unwrap_or(200).clamp(1, 1000);
+    let before = match q.get("before") {
+        Some(b) => Some(
+            chrono::DateTime::parse_from_rfc3339(b)
+                .map_err(|_| websec::bad_request("before: not an RFC 3339 time"))?
+                .with_timezone(&chrono::Utc),
+        ),
+        None => None,
+    };
+    let rows = task::block_in_place(|| db.audit_list(limit, before))?;
+    Ok(warp::reply::json(&rows))
 }
 
 // ── Cockpit UI handlers ──────────────────────────────────────────────
@@ -3753,11 +3833,7 @@ async fn api_admin_revoke_sessions(
     let who = require_admin(session_id, db.clone()).await?;
     let target = body.discord_id.as_deref().filter(|s| !s.is_empty());
     let n = task::block_in_place(|| db.revoke_sessions(target))?;
-    log::warn!(
-        "ADMIN: {} revoked {n} session(s) ({})",
-        who.discord_id,
-        target.unwrap_or("all users")
-    );
+    audit(&db, &who, &format!("revoke {n} session(s)"), Some(target.unwrap_or("all users")), None);
     Ok(warp::reply::json(&serde_json::json!({ "ok": true, "revoked": n })))
 }
 
@@ -3884,7 +3960,7 @@ async fn api_admin_reset(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_admin(session_id, db.clone()).await?;
     // On a range-only box the range is the default, and with one instance a
     // reset takes the whole-database path: every pilot and round gone.
     if inst.cfg.is_range() {
@@ -3894,7 +3970,7 @@ async fn api_admin_reset(
         ))));
     }
     task::block_in_place(|| db.reset_campaign_data_for(&inst))?;
-    log::info!("ADMIN: campaign data reset by admin");
+    audit(&db, &who, "reset campaign", None, Some(&inst.id));
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -3905,9 +3981,9 @@ async fn api_admin_reset_lives_all(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let reply = call_engine_rpc_str(&db, &inst, "reset-lives-all", vec![]).await?;
-    log::info!("ADMIN: reset all player lives: {reply}");
+    audit(&db, &who, "reset all lives", Some(&reply), Some(&inst.id));
     Ok(warp::reply::json(
         &serde_json::json!({"ok": true, "message": reply}),
     ))
@@ -3931,7 +4007,7 @@ async fn api_admin_side_switch(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     use netidx::publisher::Value;
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     // The engine parses sides as DCS spells them: lowercase.
     let side = match body.side.to_ascii_lowercase().as_str() {
         "blue" => "blue",
@@ -3953,7 +4029,7 @@ async fn api_admin_side_switch(
         vec![("player", Value::from(player.to_string())), ("side", Value::from(side.to_string()))],
     )
     .await?;
-    log::info!("ADMIN: [{}] side switch {player} -> {side}: {reply}", inst.id);
+    audit(&db, &who, "side switch", Some(&format!("{player} -> {side}: {reply}")), Some(&inst.id));
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "message": reply})))
 }
 
@@ -3966,13 +4042,13 @@ async fn api_admin_merge_rounds(
     session_id: Option<Uuid>,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_admin(session_id, db.clone()).await?;
     let dry_run = query
         .get("dry_run")
         .map(|v| v != "false" && v != "0")
         .unwrap_or(true);
     let msg = task::block_in_place(|| db.merge_all_rounds(dry_run))?;
-    log::warn!("ADMIN: merge-rounds (dry_run={dry_run}): {msg}");
+    audit(&db, &who, if dry_run { "merge rounds (dry run)" } else { "merge rounds" }, Some(&msg), None);
     Ok(warp::reply::json(&serde_json::json!({ "ok": true, "dry_run": dry_run, "message": msg })))
 }
 
@@ -3985,9 +4061,9 @@ async fn api_admin_rebuild_stats(
     session_id: Option<Uuid>,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_admin(session_id, db.clone()).await?;
     task::block_in_place(|| db.request_jsonl_rebuild())?;
-    log::warn!("ADMIN: in-process stats rebuild queued");
+    audit(&db, &who, "rebuild stats", None, None);
     Ok(warp::reply::json(&serde_json::json!({
         "ok": true,
         "message": "rebuild queued -- bfdb will wipe derived stats and re-ingest the log over the next few minutes"
@@ -4003,7 +4079,7 @@ async fn api_admin_bot_status(
     bot_cfg: Arc<Option<BotLinkConfig>>,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let info = fetch_bot_server_info(&bot_cfg, &inst).await;
     Ok(warp::reply::json(&serde_json::json!({
         "configured": bot_cfg.is_some(),
@@ -4021,12 +4097,12 @@ async fn api_admin_bot_action(
     inst: Inst,
     path: &'static str,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
     // Admin-only, and the admin needs to know why the bot said no.
     let body = bot_instance_action(&bot_cfg, &inst, path)
         .await
         .map_err(|e| Error(websec::unavailable(format!("{e:#}"))))?;
-    log::info!("ADMIN: DCSServerBot {path} triggered on instance {:?}", inst.id);
+    audit(&db, &who, "DCSServerBot", Some(path), Some(&inst.id));
     Ok(warp::reply::json(&body))
 }
 
@@ -4109,7 +4185,7 @@ async fn api_admin_ops_proxy(
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<warp::reply::Response, Error> {
     use warp::http::StatusCode;
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let path = tail.as_str();
     let json_err = |status: StatusCode, msg: String| {
         warp::reply::with_status(warp::reply::json(&serde_json::json!({ "error": msg })), status)
@@ -4175,7 +4251,7 @@ async fn api_admin_ops_proxy(
         ));
     }
     if method == warp::http::Method::POST {
-        log::info!("ADMIN: OPS {path} -> {status}");
+        audit(&db, &who, "OPS", Some(&format!("{path} -> {status}")), None);
     }
     let mut out = warp::reply::Response::new(data.to_vec().into());
     *out.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -4196,7 +4272,7 @@ async fn api_admin_cfg_get(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let path: Arc<Option<PathBuf>> = Arc::new(inst.cfg.engine_config.clone());
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let path = path
         .as_ref()
         .clone()
@@ -4215,7 +4291,7 @@ async fn api_admin_cfg_schema(
     session_id: Option<Uuid>,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let schema = schemars::schema_for!(bfprotocols::cfg::Cfg);
     Ok(warp::reply::json(&schema))
 }
@@ -4238,7 +4314,7 @@ async fn api_admin_cfg_post(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let path: Arc<Option<PathBuf>> = Arc::new(inst.cfg.engine_config.clone());
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let path = path
         .as_ref()
         .clone()
@@ -4261,7 +4337,7 @@ async fn api_admin_cfg_post(
             .map_err(|e| anyhow::anyhow!("writing {:?}: {e}", path))?;
         Ok(())
     })?;
-    log::info!("ADMIN: engine config saved");
+    audit(&db, &who, "save engine config", path.to_str(), Some(&inst.id));
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -4508,7 +4584,7 @@ async fn api_admin_news_regenerate_image(
     images: Option<Arc<news_image::ImageCfg>>,
 ) -> std::result::Result<warp::reply::Response, Error> {
     use warp::Reply;
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::CONTENT).await?;
     let Some(cfg) = images else {
         return Err(websec::unavailable(
             "dispatch pictures are not configured (--news-image-url / --news-image-key)",
@@ -4533,6 +4609,7 @@ async fn api_admin_news_regenerate_image(
         )
         .into());
     }
+    audit(&db, &who, "regenerate news image", Some(&day), Some(&inst.id));
     let inst_cfg = inst.cfg.clone();
     let inst_id = inst.id.clone();
     let day2 = day.clone();
@@ -4647,7 +4724,7 @@ async fn api_wiki_save(
     body: SaveWikiPageBody,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let session = require_admin(session_id, db.clone()).await?;
+    let session = require_role(session_id, db.clone(), admin::Role::CONTENT).await?;
     let slug = slug.as_str().to_string();
     if !valid_wiki_slug(&slug) {
         return Err(websec::bad_request(
@@ -4661,10 +4738,10 @@ async fn api_wiki_save(
         order:      body.order,
         content:    body.content,
         updated_at: chrono::Utc::now(),
-        updated_by: session.discord_id,
+        updated_by: session.discord_id.clone(),
     };
     task::block_in_place(|| db.wiki_save_page(&slug, page))?;
-    log::info!("ADMIN: wiki page '{}' saved", slug);
+    audit(&db, &session, "save wiki page", Some(&slug), None);
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -4681,9 +4758,9 @@ async fn api_wiki_delete(
     body: DeleteWikiPageBody,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::CONTENT).await?;
     task::block_in_place(|| db.wiki_delete_page(&body.slug))?;
-    log::info!("ADMIN: wiki page '{}' deleted", body.slug);
+    audit(&db, &who, "delete wiki page", Some(&body.slug), None);
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -4699,7 +4776,7 @@ async fn api_wiki_upload_image(
     body: bytes::Bytes,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let session = require_admin(session_id, db.clone()).await?;
+    let session = require_role(session_id, db.clone(), admin::Role::CONTENT).await?;
     // Judged by the bytes, not the claimed type: an SVG (script and all) or
     // HTML labelled image/png is refused.
     let Some(sniffed) = websec::sniff_image(&body) else {
@@ -4713,10 +4790,10 @@ async fn api_wiki_upload_image(
         content_type: sniffed.to_string(),
         data: body.to_vec(),
         uploaded_at: chrono::Utc::now(),
-        uploaded_by: session.discord_id,
+        uploaded_by: session.discord_id.clone(),
     };
     task::block_in_place(|| db.wiki_save_image(id, image))?;
-    log::info!("ADMIN: wiki image {id} uploaded");
+    audit(&db, &session, "upload wiki image", Some(&id.to_string()), None);
     Ok(warp::reply::json(&serde_json::json!({
         "id": id.to_string(),
         "url": format!("/api/wiki/images/{id}"),
@@ -5124,7 +5201,7 @@ async fn api_intel_purge(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     task::block_in_place(|| -> Result<()> {
         if db.instances().is_single() {
             db.intel_purge_all()
@@ -5134,7 +5211,7 @@ async fn api_intel_purge(
             db.intel_purge_all_for(&rounds)
         }
     })?;
-    log::info!("[{}] ADMIN: recon intel purged", inst.id);
+    audit(&db, &who, "purge recon intel", None, Some(&inst.id));
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -5367,7 +5444,7 @@ async fn api_admin_perf(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
 
     // Prefer a live snapshot from the running engine (query-perf, added
     // alongside query-objectives) over the last *completed* session's
@@ -5664,7 +5741,7 @@ async fn api_admin_commanders(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     let cfg = command::command_cfg(&inst);
     let roster = task::block_in_place(|| command::roster(&db, &inst))?;
     Ok(json_response(
@@ -5695,7 +5772,7 @@ async fn api_admin_commander_grant(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let session = require_admin(session_id, db.clone()).await?;
+    let session = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     let ucid: dcso3::net::Ucid = match body.ucid.trim().parse() {
         Ok(u) => u,
         Err(_) => return Err(websec::bad_request("not a ucid").into()),
@@ -5707,7 +5784,7 @@ async fn api_admin_commander_grant(
     });
     task::block_in_place(|| db.set_commander_grant(&ucid, rec.as_ref()))?;
     command::invalidate();
-    log::info!("ADMIN: {} set commander access for {ucid} to {:?}", session.username, body.grant);
+    audit(&db, &session, "commander access", Some(&format!("{ucid} -> {:?}", body.grant)), Some(&inst.id));
     let ids: Vec<InstanceId> = db.instances().all().iter().map(|c| Arc::from(c.id.as_str())).collect();
     for id in ids {
         let st = db.state(&id);
@@ -5733,7 +5810,7 @@ async fn api_admin_pilot_sides(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     let data = task::block_in_place(|| -> Result<String> {
         let mut pilots: Vec<serde_json::Value> = db
             .all_pilot_sides(&inst.id)?
@@ -5762,7 +5839,7 @@ async fn api_admin_banned(
     session_id: Option<Uuid>,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     let data = task::block_in_place(|| -> Result<String> {
         let web_bans = db.list_admin_bans()?;
         let cfg_bans = db.session_bans_from_cfg()?;
@@ -5800,7 +5877,7 @@ async fn api_admin_engine_errors(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let lines = db.engine_error_snapshot(&inst);
     Ok(json_response(serde_json::to_string(&lines).map_err(|e| Error(e.into()))?))
 }
@@ -5981,7 +6058,7 @@ async fn api_admin_ban(
     body: BanBody,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     let ucid = body.ucid.parse::<dcso3::net::Ucid>()
         .map_err(|e| Error(websec::bad_request(format!("invalid ucid: {e}"))))?;
     let until = body.until.as_deref()
@@ -5996,7 +6073,7 @@ async fn api_admin_ban(
         reason: body.reason.clone(),
     };
     task::block_in_place(|| db.ban_player(ucid, record))?;
-    log::info!("ADMIN: banned {} ({})", body.name, body.ucid);
+    audit(&db, &who, "ban", Some(&format!("{} ({})", body.name, body.ucid)), None);
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -6011,11 +6088,11 @@ async fn api_admin_unban2(
     body: UnbanBody2,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     let ucid = body.ucid.parse::<dcso3::net::Ucid>()
         .map_err(|e| Error(websec::bad_request(format!("invalid ucid: {e}"))))?;
     let removed = task::block_in_place(|| db.unban_player(&ucid))?;
-    log::info!("ADMIN: unbanned {}", body.ucid);
+    audit(&db, &who, "unban", Some(&body.ucid), None);
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "was_banned": removed})))
 }
 
@@ -6035,8 +6112,8 @@ async fn api_commander_spawn(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
-    log::info!("COMMANDER: spawning {} at {}", body.item_type, body.airbase);
+    let who = require_admin(session_id, db.clone()).await?;
+    audit(&db, &who, "spawn", Some(&format!("{} at {}", body.item_type, body.airbase)), Some(&inst.id));
 
     use netidx::publisher::Value;
 
@@ -6074,13 +6151,13 @@ async fn api_admin_priority(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_admin(session_id, db.clone()).await?;
     use netidx::publisher::Value;
     call_engine_rpc_str(&db, &inst, "set-objective-priority", vec![
         ("objective", Value::from(body.objective.clone())),
         ("priority", Value::from(body.priority)),
     ]).await?;
-    log::info!("ADMIN: set priority={} on objective {}", body.priority, body.objective);
+    audit(&db, &who, "objective priority", Some(&format!("{} = {}", body.objective, body.priority)), Some(&inst.id));
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "priority": body.priority})))
 }
 
@@ -6089,7 +6166,7 @@ async fn api_admin_perf_history(
     session_id: Option<Uuid>,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let data = task::block_in_place(|| -> Result<String> {
         let history = db.session_perf_history(50)?;
         fn row(s: &dcso3::perf::HistStat) -> serde_json::Value {
@@ -6284,7 +6361,10 @@ fn admin_ws_gate(
     session_id: Option<Uuid>,
     ip: std::net::IpAddr,
 ) -> std::result::Result<websec::WsSlot, Response> {
-    if !session_is_admin(db, session_id) {
+    let ops = session_id
+        .and_then(|id| task::block_in_place(|| db.get_session(id)).ok().flatten())
+        .map_or(false, |s| admin::has_role(&s, admin::Role::OPS));
+    if !ops {
         return Err(websec::ws_refused(warp::http::StatusCode::FORBIDDEN, "admin only"));
     }
     websec::ws_slot(ip).ok_or_else(|| {
@@ -8144,6 +8224,11 @@ async fn main() -> Result<()> {
                 redirect_uri:  uri,
                 guild_id:      guild,
                 admin_role_id: role,
+                roles:         admin::DiscordRoles {
+                    ops: args.discord_ops_role_id.clone(),
+                    content: args.discord_content_role_id.clone(),
+                    moderation: args.discord_moderation_role_id.clone(),
+                },
             })
         }
         _ => {
@@ -9060,6 +9145,12 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .map(move || json_response(format!(r#"{{"enabled":{}}}"#, local_admin_enabled)))
         .boxed();
 
+    let admin_audit = warp::path!("api" / "admin" / "audit")
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .then(api_admin_audit);
+
     let admin_sessions = warp::path!("api" / "admin" / "sessions")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
@@ -9765,6 +9856,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(auth_me)
         .or(auth_local_enabled)
         .or(admin_sessions)
+        .or(admin_audit)
         .or(admin_perf)
         .or(admin_perf_history)
         .or(admin_pilot_sides)

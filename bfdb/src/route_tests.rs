@@ -91,6 +91,11 @@ pub(crate) fn harness_with(instances: serde_json::Value, tweak: impl FnOnce(&mut
 impl Harness {
     /// A logged-in session; returns its cookie header value.
     pub(crate) fn session(&self, admin: bool) -> String {
+        self.session_with(admin, if admin { admin::Role::ALL } else { 0 })
+    }
+
+    /// A session holding just `roles` (not a full admin unless `admin`).
+    pub(crate) fn session_with(&self, admin: bool, roles: u8) -> String {
         let id = Uuid::new_v4();
         self.db
             .create_session(
@@ -101,7 +106,7 @@ impl Harness {
                     avatar: None,
                     is_admin: admin,
                     expires: chrono::Utc::now() + chrono::Duration::hours(1),
-                    roles: if admin { admin::Role::ALL } else { 0 },
+                    roles,
                 },
             )
             .unwrap();
@@ -370,6 +375,40 @@ async fn unknown_instance_is_a_400_on_gets_and_posts() {
     assert_eq!(r.status(), 400);
     let r = h.get("/api/rounds?instance=b", None).await;
     assert_eq!(r.status(), 200);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn admin_roles_split_the_admin_api() {
+    let h = harness();
+    let ops = h.session_with(false, admin::Role::OPS);
+    let content = h.session_with(false, admin::Role::CONTENT);
+    // the engine config editor is ops: past the gate there is no config here
+    assert_eq!(h.get("/api/admin/cfg", Some(&ops)).await.status(), 404);
+    assert_eq!(h.get("/api/admin/cfg", Some(&content)).await.status(), 403);
+    // the ban list is moderation
+    assert_eq!(h.get("/api/admin/banned", Some(&ops)).await.status(), 403);
+    // wiki deletes are content
+    let r = h.post_json("/api/wiki/delete", Some(&ops), Some(DASH), r#"{"slug":"nope"}"#).await;
+    assert_eq!(r.status(), 403);
+    let r = h.post_json("/api/wiki/delete", Some(&content), Some(DASH), r#"{"slug":"nope"}"#).await;
+    assert_eq!(r.status(), 200);
+    // full-admin only actions stay that way
+    assert_eq!(h.get("/api/admin/sessions", Some(&ops)).await.status(), 403);
+    assert_eq!(h.get("/api/admin/audit", Some(&content)).await.status(), 403);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn admin_actions_land_in_the_audit_log() {
+    let h = harness();
+    let admin = h.session(true);
+    let r = h.post_json("/api/admin/merge-rounds", Some(&admin), Some(DASH), "{}").await;
+    assert_eq!(r.status(), 200);
+    let r = h.get("/api/admin/audit", Some(&admin)).await;
+    assert_eq!(r.status(), 200);
+    let rows = body_json(r);
+    let row = &rows.as_array().unwrap()[0];
+    assert_eq!(row["action"], "merge rounds (dry run)");
+    assert_eq!(row["username"], "tester");
 }
 
 #[tokio::test(flavor = "multi_thread")]

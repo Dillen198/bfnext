@@ -348,6 +348,21 @@ pub(crate) fn session_key(id: Uuid) -> [u8; 32] {
     crate::websec::sha256(&buf)
 }
 
+/// One admin action in the audit log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AuditEntry {
+    pub(crate) at: DateTime<Utc>,
+    /// Discord id, or `local:<user>` for the password login.
+    pub(crate) who: std::string::String,
+    pub(crate) username: std::string::String,
+    pub(crate) action: std::string::String,
+    pub(crate) target: Option<std::string::String>,
+    pub(crate) instance: Option<std::string::String>,
+}
+
+/// The audit log keeps at most this many rows; the oldest go first.
+pub(crate) const AUDIT_KEEP: usize = 50_000;
+
 /// Trees a backup leaves out: live credentials. Restoring a backup just
 /// means everyone logs in again.
 pub(crate) const BACKUP_EXCLUDED_TREES: &[&str] = &["auth_sessions", "auth_sessions_h", "auth_states"];
@@ -1126,6 +1141,8 @@ pub(crate) struct StatsDbInner {
     aircraft_sorties: Tree<(RoundId, std::string::String), (u32, f32)>,
     // Admin-managed ban list (bfdb-native, separate from bflib's cfg.banned)
     admin_bans: Tree<Ucid, BanRecord>,
+    /// Admin actions, keyed (unix micros, random) so they sort by time.
+    admin_audit: Tree<(i64, u32), AuditEntry>,
     // Daily war news, keyed (RoundId, "YYYY-MM-DD"). Generated from the
     // event stream by news.rs; see that module for why it is stored rather
     // than computed per request (the trend comparisons and the
@@ -1532,6 +1549,7 @@ impl StatsDb {
             deploys: Tree::open(&db, "deploys")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
+            admin_audit: Tree::open(&db, "admin_audit")?,
             // Named apart from the original bincode `news` tree: rows written
             // before the switch cannot be read as JSON, and silently dropping
             // them is better than a decode error on every pass. The old tree is
@@ -5511,6 +5529,42 @@ impl StatsDb {
     /// How many OAuth login states are outstanding -- the per-IP limit on
     /// `/api/auth/login` keeps one client from filling the tree, this keeps
     /// all of them together from doing so.
+    // ── Admin audit log ──────────────────────────────────────────────
+
+    pub(crate) fn audit_put(&self, e: &AuditEntry) -> Result<()> {
+        self.admin_audit.insert(&(e.at.timestamp_micros(), Uuid::new_v4().as_u128() as u32), e)?;
+        Ok(())
+    }
+
+    /// Up to `limit` entries older than `before` (all of them without it),
+    /// newest first.
+    pub(crate) fn audit_list(&self, limit: usize, before: Option<DateTime<Utc>>) -> Result<Vec<AuditEntry>> {
+        let end = before.map_or(i64::MAX, |b| b.timestamp_micros());
+        let mut out = Vec::new();
+        for r in self.admin_audit.range(..(end, 0u32))?.rev() {
+            let (_, e) = r?;
+            out.push(e);
+            if out.len() >= limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Trim the audit log to `AUDIT_KEEP` rows. Returns how many went.
+    pub(crate) fn audit_prune(&self) -> Result<usize> {
+        let n = self.admin_audit.len();
+        if n <= AUDIT_KEEP {
+            return Ok(0);
+        }
+        let old: Vec<(i64, u32)> =
+            self.admin_audit.iter().keys_only().take(n - AUDIT_KEEP).filter_map(|k| k.ok()).collect();
+        for k in &old {
+            self.admin_audit.delete(k)?;
+        }
+        Ok(old.len())
+    }
+
     pub(crate) fn oauth_state_count(&self) -> usize {
         self.auth_states.len()
     }

@@ -370,6 +370,7 @@ pub(crate) fn spawn_sweeps(db: StatsDb) {
                 let (s, o) = d.sweep_auth()?;
                 let cutoff = chrono::Utc::now().timestamp() - TRAIL_KEEP_SECS;
                 let t = d.prune_trail_points(cutoff)?;
+                d.audit_prune()?;
                 Ok((s, o, t))
             })
             .await;
