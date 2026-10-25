@@ -11,9 +11,10 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
+use crate::simple_enum_unknown;
 use super::{as_tbl, coalition::Side, String};
 use crate::{
-    simple_enum, wrapped_prim, wrapped_table, LuaEnv, Sequence,
+    wrapped_prim, wrapped_table, LuaEnv, Sequence,
 };
 use anyhow::Result;
 use core::fmt;
@@ -21,7 +22,7 @@ use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
 use std::{ops::Deref, str::FromStr};
 
-simple_enum!(PlayerStat, u8, [
+simple_enum_unknown!(PlayerStat, u8, [
     Car => 2,
     Crash => 1,
     Eject => 7,

@@ -11,6 +11,7 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
+use crate::simple_enum_unknown;
 use super::{
     airbase::Airbase,
     as_tbl,
@@ -19,7 +20,7 @@ use super::{
     static_object::StaticObject,
     unit::Unit,
 };
-use crate::{record_perf, simple_enum, wrapped_table, LuaEnv, MizLua, Sequence};
+use crate::{record_perf, wrapped_table, LuaEnv, MizLua, Sequence};
 use anyhow::{anyhow, Result};
 use mlua::{prelude::*, Value};
 use serde_derive::Serialize;
@@ -33,7 +34,7 @@ pub enum Static<'lua> {
     Static(StaticObject<'lua>),
 }
 
-simple_enum!(Service, u8, [Atc => 0, Awacs => 1, Fac => 3, Tanker => 2]);
+simple_enum_unknown!(Service, u8, [Atc => 0, Awacs => 1, Fac => 3, Tanker => 2]);
 wrapped_table!(Coalition, None);
 
 impl<'lua> Coalition<'lua> {
