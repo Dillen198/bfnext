@@ -58,11 +58,12 @@ if PKG.exists():
 PKG.mkdir()
 (PKG / "__init__.py").write_text("")
 for name in ("autoupdate.py", "opsapi.py", "loganalyzer.py", "procman.py", "upload.py", "rangefeed.py",
-             "minisign.py", "icons.py"):
+             "minisign.py", "icons.py", "heartbeat.py"):
     shutil.copy(PLUGIN / name, PKG / name)
 sys.path.insert(0, str(HERE))
 
 from fe import autoupdate as au  # noqa: E402
+from fe import heartbeat as hb  # noqa: E402
 from fe import loganalyzer as la  # noqa: E402
 from fe import minisign as ms  # noqa: E402
 from fe import opsapi as oa  # noqa: E402
@@ -1212,6 +1213,50 @@ def test_ops_api_rest_key_fallback_and_require_own_key(world):
     world.cfg["ops_api"] = {"require_own_key": True, "api_key": "OPSKEY"}
     assert oa.OpsApi(world.cog)._api_key() == "OPSKEY"
     assert client().get(f"{base}/status", headers={"X-API-Key": "KEY123"}).status_code == 403
+
+
+# ---- heartbeat ---------------------------------------------------------------------------
+
+
+def test_heartbeat_settings_and_targets():
+    assert hb.settings({}) is None
+    assert hb.settings({"heartbeat": {"url": ""}}) is None
+    assert hb.settings({"heartbeat": {"url": "https://x/1", "enabled": False}}) is None
+    assert "error" in hb.settings({"heartbeat": {"url": "ftp://x/1"}})
+    s = hb.settings({"heartbeat": {"url": "https://hc-ping.com/abc/", "interval_seconds": 1}})
+    assert s["url"] == "https://hc-ping.com/abc" and s["interval"] == hb.MIN_INTERVAL
+    assert hb.ping_target(s, False, False) == ("https://hc-ping.com/abc", "bot up")
+    assert hb.ping_target(s, True, True)[0] == "https://hc-ping.com/abc"
+    assert hb.ping_target(s, True, False) == ("https://hc-ping.com/abc/fail", "bot up, bfdb DOWN")
+    s["fail_when_bfdb_down"] = False
+    assert hb.ping_target(s, True, False)[0] == "https://hc-ping.com/abc"
+
+
+def test_heartbeat_tick_paces_and_survives_errors():
+    sent = []
+
+    class PM:
+        enabled = True
+
+        def is_running(self):
+            return False
+
+    cog = types.SimpleNamespace(procman=PM(),
+                                get_config=lambda: {"heartbeat": {"url": "https://hc/x", "interval_seconds": 60}})
+    h = hb.Heartbeat(cog, log)
+
+    async def post(url, body, timeout):
+        sent.append((url, body))
+        if len(sent) == 2:
+            raise OSError("network down")
+
+    h._post = post
+    run = asyncio.run
+    assert run(h.tick(now=1000)) == "https://hc/x/fail"
+    assert run(h.tick(now=1030)) is None             # not due yet
+    assert run(h.tick(now=1061)) == "https://hc/x/fail" and h._failing   # error swallowed
+    assert run(h.tick(now=1122)) and not h._failing
+    assert sent[0] == ("https://hc/x/fail", "bot up, bfdb DOWN") and len(sent) == 3
 
 
 # ---- procman: redaction, restart folding, loopback defaults ---------------------------

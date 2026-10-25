@@ -19,6 +19,7 @@ from urllib.parse import quote
 from .procman import Procman, BFDB_HEALTH_CHECK_SECS, sha256_of, effective_instance_gci
 from .autoupdate import Updater
 from .opsapi import OpsApi
+from .heartbeat import Heartbeat
 from .loganalyzer import LogAnalyzer
 from .upload import (handle_bfbinary_upload, engine_binaries, ENGINE_DLLS, is_remote_node,
                      BFTOOLS, SWAPPED_AT_START, bftools_path_of)
@@ -579,6 +580,8 @@ class FowlEngine(Plugin):
         self.opsapi: OpsApi | None = None
         # Log analyzer: log files -> fingerprinted issues (loganalyzer.py).
         self.issues: LogAnalyzer | None = None
+        # Optional dead man's switch to an outside monitor (heartbeat.py).
+        self.heartbeat = Heartbeat(self, self.log)
         # Vector Strike custom emoji. Empty until refresh() runs and until an
         # admin has actually installed them -- every icon has a unicode
         # stand-in, so embeds render correctly either way.
@@ -755,6 +758,7 @@ class FowlEngine(Plugin):
         utils.safe_start(self.autoupdate_loop)
         utils.safe_start(self.status_watch)
         utils.safe_start(self.stage_apply_watch)
+        utils.safe_start(self.heartbeat_loop)
         self._warn_shared_channels()
 
     # Channels that must not be shared between DCS servers: each carries a
@@ -856,6 +860,7 @@ class FowlEngine(Plugin):
         await utils.safe_cancel(self.autoupdate_loop)
         await utils.safe_cancel(self.status_watch)
         await utils.safe_cancel(self.stage_apply_watch)
+        await utils.safe_cancel(self.heartbeat_loop)
         if self.opsapi:
             try:
                 self.opsapi.unregister()
@@ -913,6 +918,16 @@ class FowlEngine(Plugin):
 
     @autoupdate_loop.before_loop
     async def before_autoupdate_loop(self):
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(seconds=5.0)
+    async def heartbeat_loop(self):
+        """Ping heartbeat.url when one is set (it paces itself by
+        heartbeat.interval_seconds)."""
+        await self.heartbeat.tick()
+
+    @heartbeat_loop.before_loop
+    async def before_heartbeat_loop(self):
         await self.bot.wait_until_ready()
 
     @tasks.loop(seconds=1.0)

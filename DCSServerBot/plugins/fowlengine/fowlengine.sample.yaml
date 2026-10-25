@@ -605,6 +605,22 @@ DEFAULT:
     # require_own_key: false       # true = never fall back to the RestAPI key
 
   # ---------------------------------------------
+  # Heartbeat  (heartbeat.py -- optional outside monitoring)
+  # ---------------------------------------------
+  # The bot can't report its own death. Set url to a push/heartbeat check at
+  # healthchecks.io (or Uptime Kuma's "Push" monitor, Better Stack, ...) and
+  # the bot pings it every interval_seconds; if the bot or the box dies the
+  # pings stop and that service alerts you. While procman's bfdb is down the
+  # ping goes to <url>/fail instead (healthchecks.io's convention) -- set
+  # fail_when_bfdb_down: false for a service without it. Pair it with an
+  # outside check of https://api.vectorstrike.org/api/health -- see
+  # deploy/monitoring.md.
+  # heartbeat:
+  #   url: "https://hc-ping.com/<your-check-uuid>"
+  #   interval_seconds: 60
+  #   fail_when_bfdb_down: true
+
+  # ---------------------------------------------
   # Training range site
   # ---------------------------------------------
   # Where /range me, the range status embed and the results feed link to.
