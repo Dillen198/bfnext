@@ -16,7 +16,9 @@
 //!
 //! `update(version, write_dir)` fetches the installer for a newer plugin
 //! version and starts it hidden; it waits for DCS to close before installing
-//! (see `update` below). Its result comes back through `poll()` like a request.
+//! (see `update` below). The installer runs only if its signature verifies
+//! against the release key compiled into this DLL (`RELEASE_PUBKEY`). Its
+//! result comes back through `poll()` like a request.
 //!
 //! Requests run on a few background threads; results queue up until the next
 //! `poll()`. Nothing here touches Lua outside those two calls, so no Lua state
@@ -47,6 +49,20 @@ const RELEASES: &str = "https://github.com/Dillen198/bfnext/releases/download";
 const INSTALLER: &str = "VectorStrike-Cockpit-Install.exe";
 /// The installer is ~6 MB; anything far bigger is not it.
 const MAX_INSTALLER: u64 = 64 * 1024 * 1024;
+/// Its minisign signature, published next to it as `<installer>.minisig`
+/// (bfcockpit/release.ps1). A signature file is a few hundred bytes.
+const SIG_SUFFIX: &str = ".minisig";
+const MAX_SIG: u64 = 4096;
+
+/// The public half of the cockpit release key, `fowl-cockpit.key.pub` as
+/// `tauri signer generate` wrote it (or a plain minisign `.pub`). A release
+/// installer is run only if it verifies against this, so whoever can publish
+/// a GitHub release still can't run anything on a player's PC without the
+/// private key. Empty until that key exists: a DLL built so refuses every
+/// update, and bfcockpit/release.ps1 refuses to publish one.
+const RELEASE_PUBKEY: &str = include_str!("../updater.pub");
+const NO_KEY: &str = "this bfcockpit_net.dll was built without the release key, so it can't check \
+                      an update -- install the new version by hand";
 
 enum Work {
     Http { method: String, url: String, body: Option<String>, timeout: Duration },
@@ -151,29 +167,73 @@ fn http(agent: &ureq::Agent, id: u64, method: &str, url: &str, body: Option<Stri
     }
 }
 
-/// Download the installer for `version` and start it hidden with
-/// `--auto-update --write-dir <profile>`. It installs once DCS has let go of
-/// this DLL -- that is, after the player closes DCS -- and then exits.
+/// A minisign key or signature file, as it is ("untrusted comment: ...") or
+/// base64-wrapped the way `tauri signer` writes both.
+fn minisign_text(s: &str) -> Result<String, String> {
+    use base64::Engine;
+    let s = s.trim();
+    if s.starts_with("untrusted comment:") {
+        return Ok(s.to_string());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(s)
+        .map_err(|_| "neither a minisign file nor base64 of one".to_string())?;
+    String::from_utf8(bytes).map_err(|_| "not a minisign file".to_string())
+}
+
+/// Check `data` against a minisign signature with `pubkey`.
+fn verify(data: &[u8], sig: &str, pubkey: &str) -> Result<(), String> {
+    if pubkey.trim().is_empty() {
+        return Err(NO_KEY.into());
+    }
+    let pk = minisign_verify::PublicKey::decode(&minisign_text(pubkey)?)
+        .map_err(|e| format!("bad release key: {e}"))?;
+    let sig = minisign_verify::Signature::decode(&minisign_text(sig)?)
+        .map_err(|e| format!("bad signature: {e}"))?;
+    pk.verify(data, &sig, false).map_err(|e| format!("signature does not match: {e}"))
+}
+
+fn download(agent: &ureq::Agent, url: &str, max: u64) -> Result<Vec<u8>, String> {
+    let resp = agent
+        .get(url)
+        .timeout(Duration::from_secs(300))
+        .call()
+        .map_err(|e| format!("downloading {url}: {e}"))?;
+    let mut bytes = Vec::new();
+    resp.into_reader()
+        .take(max + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("downloading {url}: {e}"))?;
+    if bytes.len() as u64 > max {
+        return Err(format!("{url} is too big to be what it should be"));
+    }
+    Ok(bytes)
+}
+
+/// Download the installer for `version`, verify its signature, and start it
+/// hidden with `--auto-update --write-dir <profile>`. It installs once DCS
+/// has let go of this DLL -- that is, after the player closes DCS -- and then
+/// exits.
 fn update_now(agent: &ureq::Agent, version: &str, write_dir: &Path) -> Result<String, String> {
+    // before downloading anything: without the key nothing could be run anyway
+    if RELEASE_PUBKEY.trim().is_empty() {
+        return Err(NO_KEY.into());
+    }
     let dir = std::env::temp_dir().join("VectorStrikeCockpit");
     std::fs::create_dir_all(&dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
     let exe = dir.join(format!("VectorStrike-Cockpit-Install-{version}.exe"));
     let part = dir.join(format!("VectorStrike-Cockpit-Install-{version}.part"));
 
     let url = format!("{RELEASES}/cockpit-v{version}/{INSTALLER}");
-    let resp = agent
-        .get(&url)
-        .timeout(Duration::from_secs(300))
-        .call()
-        .map_err(|e| format!("downloading {url}: {e}"))?;
-    let mut bytes = Vec::new();
-    resp.into_reader()
-        .take(MAX_INSTALLER + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| format!("downloading {url}: {e}"))?;
-    if bytes.len() as u64 > MAX_INSTALLER || !bytes.starts_with(b"MZ") {
+    let sig_url = format!("{url}{SIG_SUFFIX}");
+    let sig = String::from_utf8(download(agent, &sig_url, MAX_SIG)?)
+        .map_err(|_| format!("{sig_url} is not a signature"))?;
+    let bytes = download(agent, &url, MAX_INSTALLER)?;
+    if !bytes.starts_with(b"MZ") {
         return Err(format!("{url} is not the installer ({} bytes)", bytes.len()));
     }
+    verify(&bytes, &sig, RELEASE_PUBKEY)
+        .map_err(|e| format!("refusing {url}: it isn't signed by the cockpit release key ({e})"))?;
     std::fs::write(&part, &bytes).map_err(|e| format!("saving {}: {e}", part.display()))?;
     // An installer for this version may already be waiting from an earlier
     // session. It is running, so it can't be replaced -- and it will do the job.
@@ -185,6 +245,14 @@ fn update_now(agent: &ureq::Agent, version: &str, write_dir: &Path) -> Result<St
         }
         return Err(format!("saving {}: {e}", exe.display()));
     }
+    // Once more from disk, immediately before it runs: what runs must be what
+    // was verified.
+    let on_disk = std::fs::read(&exe).map_err(|e| format!("reading {}: {e}", exe.display()))?;
+    if let Err(e) = verify(&on_disk, &sig, RELEASE_PUBKEY) {
+        let _ = std::fs::remove_file(&exe);
+        return Err(format!("{} changed on disk since it was verified -- not running it ({e})", exe.display()));
+    }
+    drop(on_disk);
     spawn_detached(&exe, write_dir).map_err(|e| format!("starting {}: {e}", exe.display()))?;
     Ok("waiting for DCS to close".into())
 }
@@ -338,4 +406,70 @@ fn bfcockpit_net(lua: &Lua) -> LuaResult<LuaTable<'_>> {
     m.set("update", lua.create_function(update)?)?;
     m.set("version", env!("CARGO_PKG_VERSION"))?;
     Ok(m)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+
+    // Fowl Engine Manager's fixture, signed with its release key by `tauri
+    // signer`: the same tool and format the cockpit's releases are signed with.
+    const DATA: &[u8] = include_bytes!("../../../bfmanager/src-tauri/tests/fixture.bin");
+    const SIG: &str = include_str!("../../../bfmanager/src-tauri/tests/fixture.bin.sig");
+    const PUB: &str = include_str!("../../../bfmanager/src-tauri/updater.pub");
+
+    fn unwrap_b64(s: &str) -> String {
+        String::from_utf8(base64::engine::general_purpose::STANDARD.decode(s.trim()).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn verifies_tauri_and_plain_minisign_forms() {
+        verify(DATA, SIG, PUB).expect("base64 .sig + base64 .pub");
+        // what release.ps1 publishes: the .sig unwrapped into a .minisig
+        verify(DATA, &unwrap_b64(SIG), PUB).expect(".minisig + base64 .pub");
+        verify(DATA, &unwrap_b64(SIG), &unwrap_b64(PUB)).expect(".minisig + plain .pub");
+    }
+
+    #[test]
+    fn rejects_tampering_and_garbage() {
+        let mut bad = DATA.to_vec();
+        bad[0] ^= 1;
+        assert!(verify(&bad, SIG, PUB).is_err(), "tampered file must fail");
+        assert!(verify(DATA, "", PUB).is_err(), "no signature");
+        assert!(verify(DATA, "not a signature", PUB).is_err());
+        assert!(verify(DATA, SIG, "not a key").is_err());
+    }
+
+    #[test]
+    fn no_key_compiled_in_refuses_everything() {
+        let err = verify(DATA, SIG, "  \n").unwrap_err();
+        assert!(err.contains("without the release key"), "{err}");
+    }
+
+    /// The key compiled into this build is a real minisign public key (or
+    /// empty, before the key exists).
+    #[test]
+    fn compiled_in_key_parses() {
+        if !RELEASE_PUBKEY.trim().is_empty() {
+            minisign_verify::PublicKey::decode(&minisign_text(RELEASE_PUBKEY).unwrap())
+                .expect("bfcockpit/net/updater.pub is not a minisign public key");
+        }
+    }
+
+    /// `BFCOCKPIT_VERIFY=<installer.exe> cargo test --release -p bfcockpit-net
+    /// verify_release_file -- --ignored` checks a built installer against its
+    /// `.minisig` with the key compiled into this build.
+    #[test]
+    #[ignore]
+    fn verify_release_file() {
+        let path = std::env::var("BFCOCKPIT_VERIFY").expect("set BFCOCKPIT_VERIFY to an installer path");
+        let data = std::fs::read(&path).unwrap();
+        let sig = std::fs::read_to_string(format!("{path}{SIG_SUFFIX}")).unwrap();
+        verify(&data, &sig, RELEASE_PUBKEY).expect("signature must verify");
+        let mut bad = data.clone();
+        let n = bad.len() / 2;
+        bad[n] ^= 0x55;
+        assert!(verify(&bad, &sig, RELEASE_PUBKEY).is_err());
+    }
 }

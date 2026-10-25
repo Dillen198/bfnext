@@ -1,0 +1,145 @@
+# Builds the Vector Strike cockpit plugin on a Windows runner and publishes
+# GitHub release cockpit-v<version> (bfcockpit/release.ps1): the installer and
+# the zip, each with a .minisig. Installed copies (bfcockpit_net.dll) run a
+# downloaded installer only if it verifies against the key in
+# bfcockpit/net/updater.pub. Manual only.
+#
+# Three jobs, as in release.yml: `build` has no secrets and a read-only token;
+# `sign` runs on a fresh runner on the `cockpit-release` environment, which
+# holds FOWL_COCKPIT_SIGNING_KEY (the contents of fowl-cockpit.key) and
+# FOWL_COCKPIT_SIGNING_PASSWORD, and runs only the signer, from this
+# workflow's own commit; `publish` alone can write to the repo. Give the
+# environment required reviewers and limit its deployment branches to vector
+# and main (bfcockpit/README.md, "Releasing").
+name: Cockpit release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch or cockpit-v* tag to build (vector, main or cockpit-v<version>)
+        default: vector
+      notes:
+        description: "Release notes (default: version and commit)"
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      # the committed lua.lib (setup-build.ps1); not expanded inside `env:`
+      # without the expression syntax
+      LUA_LIB: ${{ github.workspace }}
+      LUA_LINK: dylib
+      LUA_LIB_NAME: lua
+    steps:
+      - name: Check the ref
+        shell: pwsh
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          if ($env:REF -notmatch '^(vector|main|cockpit-v[0-9]+(\.[0-9]+){1,3})$') {
+            throw "ref '$($env:REF)' is not vector, main or a cockpit-v<version> tag"
+          }
+      # actions pinned to commit SHAs (the tag each one was, in the comment)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Build (no secrets)
+        shell: pwsh
+        run: ./bfcockpit/release.ps1 -DryRun -NoSign -OutDir (Join-Path $env:RUNNER_TEMP 'cockpit-out')
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cockpit-release-unsigned
+          path: ${{ runner.temp }}/cockpit-out/
+          if-no-files-found: error
+          retention-days: 3
+
+  sign:
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 20
+    environment: cockpit-release
+    permissions:
+      contents: read
+    steps:
+      # this workflow's own commit, not inputs.ref (see release.yml)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cockpit-release-unsigned
+          path: ${{ runner.temp }}/cockpit-out
+      - name: Install the signer (no install scripts)
+        shell: pwsh
+        run: |
+          npm --prefix bfmanager ci --no-audit --no-fund --ignore-scripts
+          if ($LASTEXITCODE) { throw "npm ci (bfmanager) failed" }
+      - name: Sign
+        shell: pwsh
+        env:
+          SIGNING_KEY: ${{ secrets.FOWL_COCKPIT_SIGNING_KEY }}
+          FOWL_COCKPIT_SIGNING_PASSWORD: ${{ secrets.FOWL_COCKPIT_SIGNING_PASSWORD }}
+        run: |
+          if (-not $env:SIGNING_KEY) { throw "no FOWL_COCKPIT_SIGNING_KEY secret on the cockpit-release environment" }
+          $key = Join-Path $env:RUNNER_TEMP 'fowl-cockpit.key'
+          Set-Content -Path $key -Value $env:SIGNING_KEY -NoNewline
+          try {
+            ./bfcockpit/release.ps1 -DryRun -NoBuild -OutDir (Join-Path $env:RUNNER_TEMP 'cockpit-out') -KeyPath $key
+          } finally {
+            Remove-Item $key -Force -ErrorAction SilentlyContinue
+          }
+      - name: Remove the signing key
+        if: always()
+        shell: pwsh
+        run: Remove-Item (Join-Path $env:RUNNER_TEMP 'fowl-cockpit.key') -Force -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cockpit-release-signatures
+          path: ${{ runner.temp }}/cockpit-out/*.minisig
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [build, sign]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cockpit-release-unsigned
+          path: ${{ runner.temp }}/cockpit-out
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cockpit-release-signatures
+          path: ${{ runner.temp }}/cockpit-out
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: ${{ inputs.notes }}
+        run: |
+          $a = @{ NoBuild = $true; NoSign = $true; Repo = $env:GITHUB_REPOSITORY
+                  OutDir = (Join-Path $env:RUNNER_TEMP 'cockpit-out') }
+          if ($env:RELEASE_NOTES) { $a.Notes = $env:RELEASE_NOTES }
+          ./bfcockpit/release.ps1 @a
