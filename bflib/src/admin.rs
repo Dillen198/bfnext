@@ -60,7 +60,7 @@ use smallvec::{SmallVec, smallvec};
 use std::{
     str::FromStr,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 use tokio::sync::oneshot;
 
@@ -1295,10 +1295,8 @@ pub(super) fn admin_shutdown(
     } else {
         return_lives(lua, ctx, DateTime::<Utc>::MAX_UTC);
         ctx.db.close_open_sorties();
-        ctx.do_bg_task(Task::SaveState(
-            ctx.miz_state_path.clone(),
-            ctx.db.persisted.clone(),
-        ));
+        let snap = ctx.db.snapshot();
+        ctx.do_bg_task(Task::SaveState(ctx.miz_state_path.clone(), snap));
         ctx.do_bg_task(Task::Stat(se));
     }
     if let Some(cfg) = ctx.db.ephemeral.cfg.live_weather.clone() {
@@ -1308,13 +1306,11 @@ pub(super) fn admin_shutdown(
         }
     }
     ctx.do_bg_task(Task::Shutdown(Arc::clone(&wait)));
-    let start = Instant::now();
-    let wait_for = Duration::from_secs(60);
-    let &(ref lock, ref cvar) = &*wait;
-    let mut synced = lock.lock();
-    while !*synced && start.elapsed() < wait_for {
-        cvar.wait_for(&mut synced, wait_for - start.elapsed());
-    }
+    // Don't block the DCS main thread waiting for the background thread to
+    // write the save: the server froze for as long as that took (up to the
+    // 60 s limit). The 1 s tick polls this before calling exitProcess
+    // (`try_exit_dcs`).
+    ctx.shutdown_wait = Some((wait, Instant::now()));
     Ok(AdminResult::Shutdown)
 }
 

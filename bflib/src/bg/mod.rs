@@ -961,7 +961,7 @@ async fn background_loop(
         BG_HEARTBEAT.store(Utc::now().timestamp(), Ordering::Relaxed);
         if let Some(a) = shutdown {
             // signalled even if the shutdown itself panicked -- the mission
-            // thread is blocked on this condvar
+            // thread polls this flag before it exits DCS
             let &(ref lock, ref cvar) = &*a;
             let mut synced = lock.lock();
             *synced = true;

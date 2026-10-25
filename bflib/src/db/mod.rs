@@ -459,33 +459,45 @@ impl Db {
         }
     }
 
+    /// A copy of the campaign to save, if anything changed since the last one.
     pub fn maybe_snapshot(&mut self) -> Option<Persisted> {
         if self.ephemeral.take_dirty() {
-            self.persisted.oid = ObjectiveId::seq();
-            self.persisted.gid = GroupId::seq();
-            self.persisted.uid = UnitId::seq();
-            self.persisted.last_stand_state = self.ephemeral.last_stand_state;
-            // Only the entries still inside the capture cooldown matter; the
-            // rest would just grow the save by one line per base ever flipped.
-            let cooldown = self
-                .ephemeral
-                .cfg
-                .campaign_events
-                .as_ref()
-                .map(|c| c.capture_cooldown_secs as i64)
-                .unwrap_or(120);
-            let now = chrono::Utc::now();
-            self.persisted.last_owner_change = self
-                .ephemeral
-                .last_owner_change
-                .iter()
-                .filter(|(_, ts)| (now - **ts).num_seconds() < cooldown)
-                .map(|(oid, ts)| (*oid, *ts))
-                .collect();
-            Some(self.persisted.clone())
+            Some(self.snapshot())
         } else {
             None
         }
+    }
+
+    /// A copy of the campaign to save, unconditionally. Every save must go
+    /// through here (or `maybe_snapshot`): it copies the id sequences and the
+    /// session state that only lives in `Ephemeral` into `persisted` first. A
+    /// save of a bare `persisted.clone()` carries the sequences as they were
+    /// at the last snapshot, and after a reload new objects can be handed ids
+    /// that are already taken.
+    pub fn snapshot(&mut self) -> Persisted {
+        self.ephemeral.take_dirty();
+        self.persisted.oid = ObjectiveId::seq();
+        self.persisted.gid = GroupId::seq();
+        self.persisted.uid = UnitId::seq();
+        self.persisted.last_stand_state = self.ephemeral.last_stand_state;
+        // Only the entries still inside the capture cooldown matter; the
+        // rest would just grow the save by one line per base ever flipped.
+        let cooldown = self
+            .ephemeral
+            .cfg
+            .campaign_events
+            .as_ref()
+            .map(|c| c.capture_cooldown_secs as i64)
+            .unwrap_or(120);
+        let now = chrono::Utc::now();
+        self.persisted.last_owner_change = self
+            .ephemeral
+            .last_owner_change
+            .iter()
+            .filter(|(_, ts)| (now - **ts).num_seconds() < cooldown)
+            .map(|(oid, ts)| (*oid, *ts))
+            .collect();
+        self.persisted.clone()
     }
 
     /// Get convoy origin/destination if a group ID belongs to an active supply convoy

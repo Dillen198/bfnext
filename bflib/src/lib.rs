@@ -476,6 +476,10 @@ struct Context {
     /// the attempts to call `DCS.exitProcess`. Nothing may save after this --
     /// a campaign reset has already removed the save file on purpose.
     exit_attempts: Option<u32>,
+    /// After a shutdown: the background thread's "save and logs flushed"
+    /// flag, and when we started waiting for it. `try_exit_dcs` holds off
+    /// exiting until it is set (or `SHUTDOWN_WAIT` has passed).
+    shutdown_wait: Option<(Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>, std::time::Instant)>,
     last_bg_check: DateTime<Utc>,
 }
 
@@ -1629,10 +1633,8 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 info!("mission ending, saving the campaign");
                 return_lives(lua, ctx, DateTime::<Utc>::MAX_UTC);
                 ctx.db.close_open_sorties();
-                ctx.do_bg_task(Task::SaveState(
-                    ctx.miz_state_path.clone(),
-                    ctx.db.persisted.clone(),
-                ));
+                let snap = ctx.db.snapshot();
+                ctx.do_bg_task(Task::SaveState(ctx.miz_state_path.clone(), snap));
             }
             Context::reset();
             Perf::reset();
@@ -5652,13 +5654,28 @@ fn install_panic_hook() {
 /// called: a server that looked up but saved nothing and never restarted.
 fn try_exit_dcs(lua: MizLua, ctx: &mut Context) -> bool {
     const GIVE_UP_AFTER: u32 = 10;
-    let attempt = ctx.exit_attempts.map(|n| n.saturating_add(1)).unwrap_or(1);
-    ctx.exit_attempts = Some(attempt);
+    // The longest we wait for the background thread to finish writing the
+    // save and flushing the logs before exiting regardless.
+    const SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+    // Nothing should touch the state once it has been written out.
     if let Some(id) = ctx.event_handler_id.take() {
         if let Err(e) = World::singleton(lua).and_then(|w| w.remove_event_handler(id)) {
             error!("shutdown: could not remove the event handler {e:?}")
         }
     }
+    if let Some((wait, since)) = &ctx.shutdown_wait {
+        let done = *wait.0.lock();
+        if !done && since.elapsed() < SHUTDOWN_WAIT {
+            // ask again on the next tick
+            return true;
+        }
+        if !done {
+            error!("shutdown: the background thread did not finish in {SHUTDOWN_WAIT:?}, exiting anyway");
+        }
+        ctx.shutdown_wait = None;
+    }
+    let attempt = ctx.exit_attempts.map(|n| n.saturating_add(1)).unwrap_or(1);
+    ctx.exit_attempts = Some(attempt);
     match Net::singleton(lua).and_then(|net| {
         net.dostring_in(
             DcsLuaEnvironment::Server,
