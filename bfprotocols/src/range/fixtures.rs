@@ -572,6 +572,66 @@ fn pattern_leg_fixtures() {
     );
 }
 
+// ------------------------------------------------------------ JSON Schema
+
+/// The JSON Schema of every range wire type, which bfrange-web's
+/// `types.schema.test.ts` checks `types.ts` against: the TypeScript is still
+/// written by hand (with its comments), but a field added, removed, renamed
+/// or retyped on one side only fails a test.
+#[test]
+fn wire_schema() {
+    use super::*;
+    let mut g = schemars::gen::SchemaSettings::draft07().into_generator();
+    macro_rules! roots {
+        ($($t:ty),* $(,)?) => { $( let _ = g.subschema_for::<$t>(); )* };
+    }
+    roots!(
+        AarResult, AirdropRelease, AirdropResult, AntiShipResult, AtmoLayer, BombQuality,
+        BombResult, CasResult, CatalogItem, CsarOutcome, CsarResult, DefenseSummary,
+        EngagementOutcome, EngagementResult, EngineGrade, FieldLandingOutcome, FieldLandingResult,
+        FieldPattern, FieldTaxi, GateTime, GeoPt, GradeSource, GrooveSample, GunneryResult,
+        HotZoneOutcome, HotZoneResult, LandingResult, LaunchGeom, LiveArena, LiveCarrier, LiveCsar,
+        LiveHotZone, LiveIads, LiveJammer, LivePlayer, LiveSamSite, LiveShipDeck, LiveSpawn,
+        LiveStation, LiveTanker, LowLevelResult, MissileOutcome, MissileResult, ParamKind,
+        ParamOption, ParamSpec, PassOutcome, PatternSummary, PilotRef, PrecisionQuality, RangeLive,
+        RangeRecord, RangeResult, RefuelMethod, RelSample, Release, SeadResult, SkyInfo,
+        SlingResult, SpawnCatalog, SpawnCategory, SpawnReply, SpawnRequest, Stability, StationKind,
+        StrafeQuality, StrafeResult, TankerState, Track, TrackPt, TrapResult, TroopResult,
+        WeaponBallistics, WeaponClass, WeaponDb, WindInfo,
+        cfg::SectorCfg,
+    );
+    // the shape only: a doc comment edited in mod.rs is not a change
+    fn strip(v: &mut Value) {
+        match v {
+            Value::Object(o) => {
+                for k in ["description", "format", "minimum", "maximum"] {
+                    o.remove(k);
+                }
+                for (k, x) in o.iter_mut() {
+                    match (k.as_str(), x) {
+                        // field names, not schema keywords: keep the keys
+                        ("properties", Value::Object(p)) => p.values_mut().for_each(strip),
+                        (_, x) => strip(x),
+                    }
+                }
+            }
+            Value::Array(a) => a.iter_mut().for_each(strip),
+            _ => (),
+        }
+    }
+    let mut defs = serde_json::to_value(g.definitions()).unwrap();
+    if let Value::Object(d) = &mut defs {
+        d.values_mut().for_each(strip);
+    }
+    check(
+        "range.schema.json",
+        json!({
+            "_note": note("the range wire types (bfprotocols/src/range/mod.rs, plus the sector types from cfg.rs)"),
+            "definitions": defs,
+        }),
+    );
+}
+
 #[test]
 fn compare_tolerates_float_noise_only() {
     assert!(same(&json!({"a": 1.0, "b": null}), &json!({"a": 1.0 + 1e-12}), "x").is_ok());

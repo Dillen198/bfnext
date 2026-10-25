@@ -31,7 +31,7 @@ pub struct Loc {
 }
 
 /// A point on the map, degrees.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LatLon {
     pub lat: f64,
     pub lon: f64,
@@ -39,7 +39,7 @@ pub struct LatLon {
 
 /// What a sector of the theatre is for. The mission draws each kind in its
 /// own colour on the F10 map; the engine names it when a player flies in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SectorKind {
     AirToGround,
@@ -91,7 +91,7 @@ impl SectorKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SectorCircle {
     pub lat: f64,
     pub lon: f64,
@@ -100,7 +100,7 @@ pub struct SectorCircle {
 
 /// A tanker race-track: the leg starts at `lat`/`lon` and runs `leg_m` along
 /// `heading_deg`; the sector is everything within `width_m / 2` of that leg.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SectorTrack {
     pub lat: f64,
     pub lon: f64,
@@ -111,7 +111,7 @@ pub struct SectorTrack {
 
 /// Exactly one of the three. A struct of options rather than an enum for the
 /// same reason as [`Loc`].
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SectorShape {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub polygon: Option<Vec<LatLon>>,
@@ -150,7 +150,7 @@ impl SectorShape {
 /// tanker track, the carrier's operating area... The mission draws the same
 /// sectors on the F10 map; the engine lists them on F10 > Range > Sectors and
 /// tells a player what a sector is for when they fly into it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SectorCfg {
     /// `[a-z0-9-]`, e.g. "r-1".
     pub id: String,
