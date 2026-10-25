@@ -207,7 +207,7 @@ The root `Cargo.toml` workspace has 9 members: `dcso3`, `livewx`, `bflib`,
 | `bfmanager/` | Fowl Engine Manager: Tauri installer, Windows service and auto-updater for a server box |
 | `DCSServerBot/plugins/fowlengine/` | DCSServerBot plugin: Discord status, alerts, ops commands, binary staging and auto-update. The cog is `commands.py` plus `cog_*.py` mixins (layout in its README). Related extensions are in `DCSServerBot/extensions/`; optional pip deps in `DCSServerBot/requirements-plugins.txt` |
 | `user-guide/` | Player guide (mdBook) |
-| `deploy/` | Deployment docs (server setup, auto-update, multi-instance, range, `backups/`, `monitoring.md`, `signing-keys.md`), Caddy config and `publish-release.ps1` |
+| `deploy/` | Deployment docs (server setup, auto-update, multi-instance, range, `backups/`, `monitoring.md`, `signing-keys.md`, `manager-remote.md`: controlling the boxes from another PC over Tailscale), Caddy config and `publish-release.ps1` |
 
 ## Data Flow
 
