@@ -19,3 +19,8 @@ crate-type = ["cdylib"]
 [dependencies]
 mlua = { version = "0.9.9", features = ["lua51", "module"] }
 ureq = { workspace = true }
+# An update's installer is run only if it verifies against the release key
+# compiled in from updater.pub -- the same minisign check (and the same key
+# format, `tauri signer`) as Fowl Engine Manager's updater.
+minisign-verify = "0.2"
+base64 = { workspace = true }

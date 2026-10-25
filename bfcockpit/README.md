@@ -52,8 +52,11 @@ From 3.2 the plugin updates itself (**Update automatically** on the Special
 page, on by default). When the server's bfdb ships a newer version
 (`/api/cockpit/plugin/version`), `bfcockpit_net.dll` downloads that version's
 installer from its GitHub release (`cockpit-v<version>`; the address is fixed
-in the DLL, the server only supplies the version number) into
-`%TEMP%\VectorStrikeCockpit\` and starts it hidden with
+in the DLL, the server only supplies the version number) and its
+`.minisig`, checks the signature against the cockpit release key compiled into
+the DLL, and refuses to run anything that doesn't verify. A verified installer
+goes into `%TEMP%\VectorStrikeCockpit\`, is checked once more from disk, and
+is started hidden with
 `--auto-update --write-dir <profile>`. It waits until DCS has let go of the
 DLL, i.e. until DCS is closed, installs into that one profile, logs to
 `Logs\bfcockpit-update.log` and exits. It never installs an older version
@@ -278,6 +281,64 @@ warns at build time and refuses to install.
 cargo build --release -p bfcockpit-net
 cargo build --release -p bfcockpit-installer
 ```
+
+### Releasing
+
+`bfcockpit/release.ps1` builds both crates (`--locked`), signs, and publishes
+GitHub release `cockpit-v<BFCOCKPIT_VERSION>` with
+`VectorStrike-Cockpit-Install.exe`, `VectorStrike-Cockpit-<version>.zip` and a
+`.minisig` for each. The **Cockpit release** Action
+(`.github/workflows/cockpit-release.yml`) does the same in three jobs -- build
+with no secrets, sign on the `cockpit-release` environment, publish -- like the
+engine's (`deploy/auto-update.md`, "The Engine release GitHub Action").
+
+```
+.\bfcockpit\release.ps1 -DryRun     # build + sign into %TEMP%\fowl-cockpit-release
+.\bfcockpit\release.ps1             # build + sign + publish
+```
+
+`bfcockpit_net.dll` runs an update only if its `.minisig` verifies against
+`net/updater.pub`, compiled in. A DLL built while that file is empty refuses
+every update, and `release.ps1` won't build one. The key is a `tauri signer`
+(minisign) key of its own: not the engine's, not the Manager's, since this one
+decides what runs on players' PCs.
+
+**One-time key setup (user action; nothing here makes or commits a private key):**
+
+1. Make the key, with a password, on the PC you release from:
+   ```
+   cd bfmanager; npm ci --ignore-scripts
+   npx tauri signer generate -w "$env:USERPROFILE\.tauri\fowl-cockpit.key"
+   ```
+   Back up `fowl-cockpit.key` and its password off that PC. Lose it and no
+   installed copy will take an update again until players reinstall by hand.
+2. Copy `fowl-cockpit.key.pub` over `bfcockpit/net/updater.pub` (the whole
+   file as written; a plain minisign `.pub` works too), check that
+   `cargo test --release -p bfcockpit-net` passes, and commit it.
+3. For the Action: **Settings -> Environments -> `cockpit-release`**, add
+   required reviewers, limit deployment branches to `vector` and `main`, and
+   add the secrets `FOWL_COCKPIT_SIGNING_KEY` (the contents of
+   `fowl-cockpit.key`) and `FOWL_COCKPIT_SIGNING_PASSWORD`. Locally, put the
+   password in `$env:FOWL_COCKPIT_SIGNING_PASSWORD` instead.
+
+**The first signed release.** Copies from before this change (3.3.0 and
+older) don't check signatures, so the first release with the new DLL reaches
+them unverified, as every release has until now. Copies from that release on
+verify every update after it. In order:
+
+1. Bump `BFCOCKPIT_VERSION`, commit (with `updater.pub`), push.
+2. Publish `cockpit-v<that version>` with `release.ps1` or the Action. Check
+   that both `.minisig` assets are on the release.
+3. Only then deploy the bfdb built from that commit. bfdb advertises the
+   version embedded in it (`/api/cockpit/plugin/version`), so players start
+   fetching as soon as it runs, and a release that isn't there yet just fails.
+
+To check a built installer against the compiled-in key:
+`$env:BFCOCKPIT_VERIFY = "<path>\VectorStrike-Cockpit-Install.exe"; cargo test --release -p bfcockpit-net verify_release_file -- --ignored`.
+
+Rotating the key: ship one release whose DLL carries the NEW `updater.pub`,
+signed with the OLD key (`release.ps1 -Rotating`), then sign everything after
+it with the new key.
 
 **Why native widgets.** Version 1 hosted a web page in DCS's embedded Chromium
 (`WebViewWidget`). When that browser comes up changed between DCS builds, and a

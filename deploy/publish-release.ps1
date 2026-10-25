@@ -6,6 +6,7 @@
 #   .\deploy\publish-release.ps1 -Channel beta -Notes "try the new CAP"
 #   .\deploy\publish-release.ps1 -Folder \\server\fowl-releases   # LAN folder source
 #   .\deploy\publish-release.ps1 -DryRun                # build + manifest only, publish nothing
+#   .\deploy\publish-release.ps1 -DryRun -NoSign -OutDir <d>   # build only, never touch the key
 #   .\deploy\publish-release.ps1 -SignOnly -OutDir <d>    # sign what a -DryRun left in <d>
 #   .\deploy\publish-release.ps1 -PublishOnly -OutDir <d> -Channel <c>   # publish it (must be signed)
 #   .\deploy\publish-release.ps1 -Campaigns deploy\campaigns.json        # + one campaign pack per server
@@ -26,6 +27,12 @@
 #
 # Needs: git, cargo (the MSVC toolchain), node/npm (bfdb embeds the dashboard
 # and the site), and gh (GitHub CLI, logged in) unless -Folder is used.
+#
+# Dependencies are exactly the committed ones: Cargo.lock and bftools/Cargo.lock
+# are in git and every cargo build here is --locked (a lockfile that doesn't
+# match Cargo.toml fails the build instead of being re-resolved), and npm ci
+# installs package-lock.json with --ignore-scripts, so no package's install
+# script runs.
 #
 # Signing: manifest.json (which holds every file's sha256) is signed with the
 # ENGINE release key -- a minisign key made by `tauri signer generate`, default
@@ -59,7 +66,9 @@ param(
     [string]$OutDir,
     [string]$SigningKey = (Join-Path $env:USERPROFILE ".tauri\fowl-engine.key"),
     [switch]$SignOnly,
-    [switch]$PublishOnly
+    [switch]$PublishOnly,
+    # with -DryRun: leave manifest.json unsigned even if a key is at -SigningKey
+    [switch]$NoSign
 )
 
 # "Continue", not "Stop": Windows PowerShell 5.1 turns any stderr line from a
@@ -278,11 +287,6 @@ try {
         $worktree = Join-Path $env:TEMP "fowl-release-src-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
         Run "git worktree add $worktree ($short)" { git -C $repoRoot worktree add --detach $worktree $commit }
         $src = $worktree
-        # Cargo.lock is gitignored: without these the worktree would resolve
-        # every dependency afresh and ship something the dev tree never ran
-        foreach ($lock in @("Cargo.lock", "bftools\Cargo.lock")) {
-            if (Test-Path (Join-Path $repoRoot $lock)) { Copy-Item (Join-Path $repoRoot $lock) (Join-Path $worktree $lock) -ErrorAction Stop }
-        }
     }
 
     $want = @{}
@@ -304,7 +308,7 @@ try {
             foreach ($app in @("bfweb", "bfsite")) {
                 Push-Location (Join-Path $src $app)
                 try {
-                    Run "npm ci ($app)" { npm ci --no-audit --no-fund }
+                    Run "npm ci ($app)" { npm ci --no-audit --no-fund --ignore-scripts }
                     Run "npm run build ($app)" { npm run build }
                 } finally { Pop-Location }
             }
@@ -315,12 +319,12 @@ try {
         if ($want["bfdb.exe"]) { $pkgs += "-p", "bfdb" }
         if ($pkgs.Count) {
             Push-Location $src
-            try { Run "cargo build --release $($pkgs -join ' ')" { cargo build --release @pkgs } } finally { Pop-Location }
+            try { Run "cargo build --release --locked $($pkgs -join ' ')" { cargo build --release --locked @pkgs } } finally { Pop-Location }
         }
         if ($want["bftools.exe"]) {
             $env:CARGO_TARGET_DIR = "$TargetDir-bftools"
             Push-Location (Join-Path $src "bftools")
-            try { Run "cargo build --release (bftools)" { cargo build --release } } finally { Pop-Location }
+            try { Run "cargo build --release --locked (bftools)" { cargo build --release --locked } } finally { Pop-Location }
             $env:CARGO_TARGET_DIR = $TargetDir
         }
         if ($want["netidx.exe"]) {
@@ -428,7 +432,10 @@ try {
 
     # ---- sign + publish --------------------------------------------------------------
 
-    if (Test-Path $SigningKey) {
+    if ($NoSign -and -not $DryRun) { throw "-NoSign is only for -DryRun: servers refuse an unsigned release" }
+    if ($NoSign) {
+        Say "-NoSign -- manifest.json left unsigned (sign it with -SignOnly -OutDir $OutDir)" "Yellow"
+    } elseif (Test-Path $SigningKey) {
         Sign-Manifest $manifestPath
     } elseif ($DryRun) {
         Say "no signing key at $SigningKey -- dry run left manifest.json UNSIGNED (servers would refuse it)" "Yellow"

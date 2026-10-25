@@ -117,16 +117,44 @@ npx tauri signer generate -w "$env:USERPROFILE\.tauri\fowl-engine.key"   # give 
   bot. The OPS page shows the pinned key's id under the update settings.
 - `publish-release.ps1 -SigningKey <path>` for a key somewhere else. Without a
   key it refuses to publish (a `-DryRun` just warns).
-- For the **Engine release** GitHub Action, the key and password become
-  secrets on a protected environment (see the notes on `release.yml` in the
-  ops security review).
+- For the **Engine release** GitHub Action, the key and password are secrets
+  on a protected environment (below), never plain repository secrets.
 
 Rotating the key: generate a new one, publish with it, and update
 `public_key` on every server at the same time -- a server only trusts the key
 it has pinned.
-The GitHub Action **Engine release** runs the same script on a Windows runner.
-It is manual-dispatch only, and **beta** is the safer channel for it: `Cargo.lock`
-is gitignored, so CI resolves dependencies fresh.
+
+Dependencies are the committed ones: `Cargo.lock` and `bftools/Cargo.lock` are
+in git and every build is `cargo build --locked` (a lockfile that no longer
+matches `Cargo.toml` fails the build rather than being re-resolved), and
+`npm ci --ignore-scripts` installs exactly `package-lock.json` without running
+any package's install script. To take a dependency update, change the lockfile
+in a commit of its own.
+
+### The Engine release GitHub Action
+
+`.github/workflows/release.yml` runs the same script on Windows runners,
+manual dispatch only, in three jobs so the signing key and the GitHub token
+never share a runner with a dependency's code:
+
+1. **build** -- no secrets, read-only token: `npm ci --ignore-scripts`, cargo
+   `--locked`, `publish-release.ps1 -DryRun -NoSign`. The run page's summary
+   lists the tag, commit and every file's sha256.
+2. **sign** -- a fresh runner on the **`engine-release` environment**; it
+   checks out the workflow's own commit (not the `ref` input), installs only
+   bfmanager's `tauri signer` (`--ignore-scripts`) and runs
+   `publish-release.ps1 -SignOnly`. The key file is deleted when it ends.
+3. **publish** -- the only job with `contents: write`; it never sees the key
+   and runs `publish-release.ps1 -PublishOnly`.
+
+`ref` must be `vector`, `main` or an `engine-*` tag. One-time setup (user
+action): **Settings -> Environments -> New environment `engine-release`**,
+add yourself under **Required reviewers**, set **Deployment branches** to
+*Selected branches*: `vector` and `main`, and add the environment secrets
+`FOWL_ENGINE_SIGNING_KEY` (the whole contents of `fowl-engine.key`) and, if
+the key has one, `FOWL_ENGINE_SIGNING_PASSWORD`. Delete any repository-level
+secrets of the same names. Dispatch it from the branch you build:
+`gh workflow run release.yml --ref vector -f ref=vector -f channel=beta`.
 
 ### Campaign packs
 
