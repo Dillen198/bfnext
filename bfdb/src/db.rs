@@ -509,6 +509,12 @@ impl Pilots {
         F: FnMut(&mut Pilot),
         G: FnMut(&mut Aggregates),
     {
+        // The all-zero ucid is "no player": groups nobody deployed (ground
+        // war formations, AI commander spawns) carried it, and their kills
+        // landed on a pilot named "00000000000000000000000000000000".
+        if ucid == Ucid::default() {
+            return Ok(());
+        }
         let slot = self.round_info.get(&(ucid, round))?.and_then(|ri| ri.slot);
         let vehicle = match slot {
             Some(Slot { vehicle: Some(v), .. }) => v,
@@ -2845,6 +2851,9 @@ impl StatsDb {
                 let mut entries = Vec::new();
                 for r in self.pilots.pilots.iter() {
                     let (ucid, pilot) = r?;
+                    // Rows the all-zero "no player" ucid earned before it
+                    // was filtered out at ingest.
+                    if ucid == Ucid::default() { continue; }
                     let name = pilot.name.last().map(|s| s.clone()).unwrap_or_default();
                     entries.push((ucid, name, pilot.total));
                 }
@@ -2858,7 +2867,7 @@ impl StatsDb {
                 let mut map: std::collections::HashMap<Ucid, Aggregates> = std::collections::HashMap::new();
                 for r in self.pilots.aggregates.iter() {
                     let ((ucid, _vehicle, round_id), agg) = r?;
-                    if round_id != rid { continue; }
+                    if round_id != rid || ucid == Ucid::default() { continue; }
                     let e = map.entry(ucid).or_insert_with(Aggregates::default);
                     e.air_kills       += agg.air_kills;
                     e.ground_kills    += agg.ground_kills;
@@ -6389,7 +6398,7 @@ mod merge_rounds_tests {
             db.seq.insert(&(scen.clone(), rid), &start).unwrap();
         }
 
-        let ucid = Ucid::default();
+        let ucid: Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
         let veh = Vehicle(String::from("F-16C_50"));
         for (rid, ak) in [(r1, 2u32), (r2, 3), (r3, 5)] {
             db.pilots
@@ -6543,7 +6552,7 @@ mod off_slot_credit_tests {
     async fn combined_arms_kill_counts_in_round() {
         let tmp = std::env::temp_dir().join(format!("bfdb-ca-test-{}", Uuid::new_v4()));
         let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
-        let ucid = Ucid::default();
+        let ucid: Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
         let rid = RoundId(7);
         db.pilots.saw_pilot(ucid, String::from("blueshack")).unwrap();
         let slot = |id, vehicle: Option<&'static str>| {

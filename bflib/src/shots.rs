@@ -23,6 +23,7 @@ use bfprotocols::cfg::UnitTag;
 use dcso3::{
     String,
     event::Shot as ShotEvent,
+    net::Ucid,
     object::{DcsObject, DcsOid},
     unit::{ClassUnit, Unit, UnitCategory},
 };
@@ -68,16 +69,24 @@ fn who(db: &Db, id: DcsOid<ClassUnit>) -> Option<Who> {
             gid: u.group,
             uid: *uid,
             unit: id,
-            ucid: db.group(&u.group).ok().and_then(|g| match &g.origin {
-                DeployKind::Action { player, .. } => *player,
-                DeployKind::Deployed { player, .. } => Some(*player),
-                DeployKind::Troop { player, .. } => Some(*player),
-                DeployKind::Crate { .. }
-                | DeployKind::Objective { .. }
-                | DeployKind::ObjectiveDeprecated
-                | DeployKind::Dismount { .. }
-                | DeployKind::DownedPilot { .. } => None,
-            }),
+            ucid: db
+                .group(&u.group)
+                .ok()
+                .and_then(|g| match &g.origin {
+                    DeployKind::Action { player, .. } => *player,
+                    DeployKind::Deployed { player, .. } => Some(*player),
+                    DeployKind::Troop { player, .. } => Some(*player),
+                    DeployKind::Crate { .. }
+                    | DeployKind::Objective { .. }
+                    | DeployKind::ObjectiveDeprecated
+                    | DeployKind::Dismount { .. }
+                    | DeployKind::DownedPilot { .. } => None,
+                })
+                // Groups no player deployed (ground war formations, AI
+                // commander and admin spawns) carry the all-zero ucid. Their
+                // kills belong to nobody; crediting them put a pilot named
+                // "00000000000000000000000000000000" on the stats.
+                .filter(|ucid| *ucid != Ucid::default()),
         }),
         None => db
             .ephemeral
