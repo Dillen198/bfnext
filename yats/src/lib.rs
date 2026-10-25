@@ -8,6 +8,7 @@
 //!   maintain an ergonomic interface
 
 pub mod envelope;
+pub mod export;
 pub mod transaction;
 
 use anyhow::Result;
