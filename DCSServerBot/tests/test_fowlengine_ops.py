@@ -1795,6 +1795,48 @@ def test_news_image_flags_and_key_stay_off_argv(world):
     assert oa.is_secret_key("news_image_key") and oa.is_protected_key("news_image_url")
 
 
+def test_snapshot_flags_from_the_yaml_and_keys_stay_off_argv(world, monkeypatch):
+    for var in ("BFDB_SNAPSHOT_ACCESS_KEY_ID", "BFDB_SNAPSHOT_SECRET_ACCESS_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    pm = world.cog.procman
+    # Nothing set: no flag, no variable -- bfdb's publisher stays off.
+    assert not any(a.startswith("--snapshot") for a in pm._build_args("pw", False))
+    env = pm._bfdb_env()
+    assert "BFDB_SNAPSHOT_ACCESS_KEY_ID" not in env and "BFDB_SNAPSHOT_SECRET_ACCESS_KEY" not in env
+    world.cfg["bfdb"].update({
+        "snapshot_endpoint": "https://acc.r2.cloudflarestorage.com",
+        "snapshot_bucket": "vs-snapshot",
+        "snapshot_public_url": "https://snapshot.vectorstrike.org",
+        "snapshot_interval": 90,
+        "snapshot_prefix": "prod/",
+        "snapshot_access_key_id": "AKID-not-real",
+        "snapshot_secret_access_key": "secret-not-real",
+    })
+    pm.reload_config(world.cfg)
+    for instances_file in (None, "instances.json"):   # process-wide, so both shapes
+        args = pm._build_args("pw", False, instances_file)
+        flag = lambda f: args[args.index(f) + 1]  # noqa: E731
+        assert (flag("--snapshot-endpoint"), flag("--snapshot-bucket"), flag("--snapshot-public-url"),
+                flag("--snapshot-interval"), flag("--snapshot-prefix")) == \
+            ("https://acc.r2.cloudflarestorage.com", "vs-snapshot", "https://snapshot.vectorstrike.org",
+             "90", "prod/")
+        assert "--snapshot-region" not in args        # unset -> bfdb's default (auto)
+        line = " ".join(args)
+        assert "AKID-not-real" not in line and "secret-not-real" not in line
+        assert "--snapshot-access-key-id-file" not in args
+    env = pm._bfdb_env()
+    assert env["BFDB_SNAPSHOT_ACCESS_KEY_ID"] == "AKID-not-real"
+    assert env["BFDB_SNAPSHOT_SECRET_ACCESS_KEY"] == "secret-not-real"
+    # The dashboard masks both keys and cannot re-point them at another server.
+    assert oa.is_secret_key("snapshot_access_key_id") and oa.is_secret_key("snapshot_secret_access_key")
+    assert oa.is_protected_key("snapshot_endpoint") and oa.is_protected_key("snapshot_public_url")
+    new = {"bfdb": {"snapshot_endpoint": "https://evil.example", "snapshot_secret_access_key": oa.SECRET_MASK}}
+    old = {"bfdb": {"snapshot_endpoint": "https://acc.r2.cloudflarestorage.com",
+                    "snapshot_secret_access_key": "secret-not-real"}}
+    with pytest.raises(ValueError):
+        oa.unmask_secrets(new, old)
+
+
 def test_free_image_providers_reach_bfdb_and_the_token_stays_off_argv(world):
     pm = world.cog.procman
     # Pollinations with an account key: two keys.

@@ -145,11 +145,32 @@ a flag wins:
 | `--snapshot-dir` | `BFDB_SNAPSHOT_DIR` | instead of a bucket, write to a local folder (testing, or another static host) |
 
 **bfdb started by DCSServerBot (`bfdb.manage: true`).** The `fowlengine`
-plugin builds bfdb's command line from `fowlengine.yaml` and has no
-`snapshot` settings yet. It does pass its own environment on to bfdb, so use
-the environment variables. Set them for the Windows account the bot runs
-under (a user variable, so other accounts on the box can't read the secret),
-then restart the bot so it and bfdb pick them up:
+plugin builds bfdb's command line from `fowlengine.yaml`. Add the settings
+under `bfdb:` there (the sample has them commented out):
+
+```yaml
+  bfdb:
+    snapshot_endpoint: "https://<account id>.r2.cloudflarestorage.com"
+    snapshot_bucket: "vs-snapshot"
+    snapshot_public_url: "https://snapshot.vectorstrike.org"
+    snapshot_access_key_id: "..."        # the Access Key ID
+    snapshot_secret_access_key: "..."    # the Secret Access Key
+    # optional: snapshot_interval: 60, snapshot_prefix: "prod/", snapshot_region: ""
+```
+
+The endpoint, bucket, public URL, interval, prefix and region become the
+`--snapshot-*` flags. The two keys are handed to bfdb as
+`BFDB_SNAPSHOT_ACCESS_KEY_ID` / `BFDB_SNAPSHOT_SECRET_ACCESS_KEY` in its
+environment, never on its command line, and the dashboard's config editor
+shows them masked. `snapshot_endpoint` can only be changed on the box, not
+from the dashboard, so a dashboard login can't point the saved keys at another
+server. Restart bfdb (or the bot) to apply.
+
+Older bots without these settings pass their own environment on to bfdb, so
+the environment variables work there too, and still do with the YAML keys left
+out. Set them for the Windows account the bot runs under (a user variable, so
+other accounts on the box can't read the secret), then restart the bot so it
+and bfdb pick them up:
 
 ```powershell
 # run as the account DCSServerBot runs under; values are examples
