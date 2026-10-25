@@ -3,6 +3,7 @@
 // opens at a moment (both are what the share button copies).
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import QueryState from '../components/QueryState'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Play, Pause, ChevronLeft, Link as LinkIcon, Eye, EyeOff, Download } from '@icons'
@@ -23,13 +24,11 @@ const SPEEDS = [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64]
 export default function ReplayPage() {
   const { rec = '' } = useParams<{ rec: string }>()
   const meta = useQuery({ queryKey: ['replay-meta', rec], queryFn: () => fetchMeta(rec), staleTime: Infinity, retry: 1 })
-  if (meta.isLoading) return <div className="rp-state">Loading recording…</div>
-  if (meta.isError || !meta.data) {
+  if (meta.isLoading || meta.isError || !meta.data) {
     return (
       <div className="rp-state">
-        <div className="rp-state-head">Recording not available</div>
-        <div>{String((meta.error as Error)?.message ?? 'unknown error')}</div>
-        <Link to="/replay" className="rp-btn">All recordings</Link>
+        <QueryState isLoading={meta.isLoading} isError={meta.isError || !meta.data} error={meta.error ?? 'Recording not available'} what="recording" onRetry={() => meta.refetch()} />
+        {!meta.isLoading && <Link to="/replay" className="rp-btn">All recordings</Link>}
       </div>
     )
   }

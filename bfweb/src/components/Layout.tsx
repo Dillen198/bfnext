@@ -10,6 +10,7 @@ import { useInstance } from '../context/InstanceContext'
 import { LogoMark } from '@shared/web/LogoMark'
 import Backdrop from './Backdrop'
 import StatusBanner from './StatusBanner'
+import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 import NotificationBell from './NotificationBell'
 import { useWireframe } from '../lib/wireframe'
 import { getDevUser } from '../lib/devAuth'
@@ -672,7 +673,10 @@ export default function Layout() {
         {/* MAIN */}
         <main className="vs-main" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <StatusBanner />
-          <Outlet />
+          {/* A crashed page keeps the navigation; moving to another page resets it. */}
+          <ErrorBoundary key={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
 
       </div>

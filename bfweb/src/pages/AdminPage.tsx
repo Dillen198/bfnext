@@ -8,7 +8,7 @@ import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
 import CommandersPanel from '../components/CommandersPanel'
 import { useTableSort, SortTh } from '../components/SortableTh'
-import { useNavigate } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import {
   Admin,
   Shield,
@@ -754,7 +754,6 @@ function ServerControlPanel() {
 
 export default function AdminPage() {
   const { user, loading } = useAuth()
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
 
   const [livesConfirm,  setLivesConfirm]  = useState(false)
@@ -792,8 +791,8 @@ export default function AdminPage() {
   // flight, and redirecting on that transient state kicked an already-logged
   // -in admin back to /login every time they reloaded this page.
   if (loading) return null
-  if (!user) { navigate('/login'); return null }
-  if (!user.is_admin) { navigate('/'); return null }
+  if (!user) return <Navigate to="/login" replace />
+  if (!user.is_admin) return <Navigate to="/" replace />
 
   async function handleReset() {
     setResetLoading(true)

@@ -12,6 +12,7 @@ import Logs from './Logs'
 import BotConfig from './BotConfig'
 import Backup from './Backup'
 import NewBox from './NewBox'
+import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 
 // The dashboard's own OPS page, unchanged, over the local transport.
 const OpsPage = lazy(() => import('../pages/OpsPage'))
@@ -134,9 +135,11 @@ export default function ManagerApp() {
                 </div>
               </div>
             ) : (
-              <Suspense fallback={<div className="p-6" style={DIM}>Loading…</div>}>
-                <OpsPage />
-              </Suspense>
+              <ErrorBoundary>
+                <Suspense fallback={<div className="p-6" style={DIM}>Loading…</div>}>
+                  <OpsPage />
+                </Suspense>
+              </ErrorBoundary>
             )
           )}
         </div>

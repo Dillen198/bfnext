@@ -8,6 +8,7 @@
 // figures here are "shots at targets that died", never a true hit rate.
 
 import React, { useMemo } from 'react'
+import QueryState from '../components/QueryState'
 import { useQuery } from '@tanstack/react-query'
 import { Link as RouterLink } from 'react-router-dom'
 import type { FlightRow } from '../replay/data'
@@ -217,18 +218,15 @@ export default function SortieDetail({ ucid, sortieId, replay, debriefLink = tru
   replay?: FlightRow
   debriefLink?: boolean
 }) {
-  const { data: d, isLoading, isError } = useQuery({
+  const { data: d, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['pilot-sortie', ucid, sortieId],
     queryFn: () => api.pilotSortie(ucid, sortieId),
     staleTime: 60_000,
   })
   const evs = useMemo(() => (d ? events(d) : []), [d])
 
-  if (isLoading) {
-    return <div style={{ padding: '12px 16px', fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.14em' }}>LOADING SORTIE…</div>
-  }
-  if (isError || !d) {
-    return <div style={{ padding: '12px 16px', fontSize: '0.67rem', color: '#f87171' }}>Couldn't load this sortie.</div>
+  if (isLoading || isError || !d) {
+    return <QueryState isLoading={isLoading} isError={isError || !d} error={error ?? 'No such sortie'} what="sortie" onRetry={() => refetch()} />
   }
 
   const kills = d.air_kills + d.ground_kills

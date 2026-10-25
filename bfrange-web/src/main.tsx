@@ -4,6 +4,8 @@ import { BrowserRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App'
+import { ErrorBoundary } from '@shared/web/ErrorBoundary'
+import { installChunkReload } from '@shared/web/chunkReload'
 import { ThemeProvider, type ThemeOptions } from '@shared/web/theme'
 import { AuthProvider } from './context/AuthContext'
 import { ToastProvider } from './context/ToastContext'
@@ -29,8 +31,12 @@ const queryClient = new QueryClient({
   },
 })
 
+// A tab left open across a deploy asks for route chunks that are gone.
+installChunkReload()
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider options={THEME}>
         <AuthProvider>
@@ -42,5 +48,6 @@ createRoot(document.getElementById('root')!).render(
         </AuthProvider>
       </ThemeProvider>
     </QueryClientProvider>
+    </ErrorBoundary>
   </StrictMode>,
 )

@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect } from 'react'
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { Shell } from './components/Shell'
 import { Loading } from './components/States'
+import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 import LivePage from './pages/LivePage'
 import { AFTER_LOGIN_KEY, useAuth } from './context/AuthContext'
 
@@ -53,6 +54,7 @@ export default function App() {
       <ReturnAfterLogin />
       {/* range control is the one full-bleed page: the map fills the frame */}
       <Shell bleed={loc.pathname === '/'}>
+        <ErrorBoundary key={loc.pathname}>
         <Suspense fallback={<Loading />}>
           <Routes>
             <Route path="/" element={<LivePage />} />
@@ -70,6 +72,7 @@ export default function App() {
             <Route path="*" element={<NotFound />} />
           </Routes>
         </Suspense>
+        </ErrorBoundary>
       </Shell>
     </>
   )

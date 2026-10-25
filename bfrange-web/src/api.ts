@@ -32,6 +32,7 @@ import type {
   Summary,
   WeaponsResponse,
 } from './types'
+import { deadline, errorMessage, LONG_TIMEOUT_MS } from '@shared/web/api'
 
 // A dev build talks to a local bfdb unless told otherwise: pointing `npm run
 // dev` at production by default meant every local experiment hit the live API.
@@ -66,15 +67,6 @@ export class ApiError extends Error {
   }
 }
 
-async function errorMessage(res: Response): Promise<string> {
-  try {
-    const j = await res.json()
-    if (j && typeof j.error === 'string') return j.error
-    if (j && typeof j.message === 'string') return j.message
-  } catch { /* not JSON */ }
-  return `HTTP ${res.status}`
-}
-
 function qs(params: object): string {
   const u = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) {
@@ -86,7 +78,7 @@ function qs(params: object): string {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${withInstance(path)}`, { credentials: 'include' })
+  const res = await fetch(`${BASE}${withInstance(path)}`, { credentials: 'include', signal: deadline() })
   if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
   return res.json() as Promise<T>
 }
@@ -97,6 +89,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     credentials: 'include',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    signal: deadline(),
   })
   if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
   return res.json() as Promise<T>
@@ -162,6 +155,7 @@ const realApi: RangeApi = {
   tacview: async id => {
     const res = await fetch(`${BASE}${withInstance(`/range/tacview/${encodeURIComponent(id)}`)}`, {
       credentials: 'include',
+      signal: deadline(LONG_TIMEOUT_MS),
     })
     if (res.status === 404) return null
     if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
@@ -170,7 +164,7 @@ const realApi: RangeApi = {
   clip: id => get(`/range/result/${encodeURIComponent(id)}/clip`),
   replayLink: id => get(`/range/result/${encodeURIComponent(id)}/replay`),
   clipAcmi: async id => {
-    const res = await fetch(`${BASE}${withInstance(`/range/result/${encodeURIComponent(id)}/clip.acmi`)}`, { credentials: 'include' })
+    const res = await fetch(`${BASE}${withInstance(`/range/result/${encodeURIComponent(id)}/clip.acmi`)}`, { credentials: 'include', signal: deadline(LONG_TIMEOUT_MS) })
     if (res.status === 404) return null
     if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
     return res.blob()
@@ -178,7 +172,7 @@ const realApi: RangeApi = {
   cardUrl: (id, fmt) => apiUrl(`/api/range/result/${encodeURIComponent(id)}/card.${fmt}`),
   loginUrl: () => `${BASE}/auth/login?return_to=${encodeURIComponent(window.location.origin + '/')}`,
   logout: async () => {
-    await fetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include' })
+    await fetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include', signal: deadline() })
   },
 }
 

@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import './index.css'
 import App from './App'
+import { ErrorBoundary } from '@shared/web/ErrorBoundary'
+import { installChunkReload } from '@shared/web/chunkReload'
 import { ThemeProvider, type ThemeOptions } from '@shared/web/theme'
 
 // Only an explicit choice is remembered; until then the site follows the OS.
@@ -19,8 +21,12 @@ const queryClient = new QueryClient({
   },
 })
 
+// A tab left open across a deploy asks for route chunks that are gone.
+installChunkReload()
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <ErrorBoundary>
     <QueryClientProvider client={queryClient}>
       <ThemeProvider options={THEME}>
         {/* BASE_URL keeps routes working when bfdb serves the build under /site/. */}
@@ -29,5 +35,6 @@ createRoot(document.getElementById('root')!).render(
         </BrowserRouter>
       </ThemeProvider>
     </QueryClientProvider>
+    </ErrorBoundary>
   </StrictMode>,
 )

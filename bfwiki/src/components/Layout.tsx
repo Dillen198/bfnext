@@ -1,5 +1,5 @@
 import React from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   LogOut,
@@ -13,6 +13,7 @@ import { api, type WikiPageMeta } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { ThemeToggle } from '@shared/web/theme'
 import InstanceSelect from './InstanceSelect'
+import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 import { LogoMark } from '@shared/web/LogoMark'
 
 function groupBySection(pages: WikiPageMeta[]) {
@@ -28,6 +29,7 @@ function groupBySection(pages: WikiPageMeta[]) {
 export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const [query, setQuery] = React.useState('')
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
 
@@ -142,7 +144,10 @@ export default function Layout() {
 
         {/* MAIN */}
         <main className="wiki-main">
-          <Outlet />
+          {/* A crashed page keeps the navigation; moving to another page resets it. */}
+          <ErrorBoundary key={pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>

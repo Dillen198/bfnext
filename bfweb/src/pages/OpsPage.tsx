@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import {
   api,
   type OpsStatus, type OpsServer, type OpsPending, type OpsUpdateConfig, type OpsApplyPolicy,
@@ -1108,7 +1108,6 @@ function LogsCard() {
 
 export default function OpsPage() {
   const { user, loading } = useAuth()
-  const navigate = useNavigate()
   const { data, error, dataUpdatedAt, isFetching } = useQuery({
     queryKey: ['ops', 'status'],
     queryFn: api.ops.status,
@@ -1118,8 +1117,8 @@ export default function OpsPage() {
   })
 
   if (loading) return null
-  if (!user) { navigate('/login'); return null }
-  if (!user.is_admin) { navigate('/'); return null }
+  if (!user) return <Navigate to="/login" replace />
+  if (!user.is_admin) return <Navigate to="/" replace />
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">

@@ -29,6 +29,8 @@ export interface QueryStateProps {
   onRetry?: () => void
   /** Render as a full-width table row with this many columns. */
   colSpan?: number
+  /** A line under a failure on what usually causes it here. */
+  hint?: ReactNode
 }
 
 /** Network failures surface as a bare TypeError, which is useless to read.
@@ -59,7 +61,7 @@ function describe(error: unknown): { headline: string; detail: string | null } {
 }
 
 export default function QueryState({
-  isLoading, isError, error, isEmpty, what, emptyText, onRetry, colSpan,
+  isLoading, isError, error, isEmpty, what, emptyText, onRetry, colSpan, hint,
 }: QueryStateProps) {
   let body: ReactNode = null
 
@@ -76,6 +78,11 @@ export default function QueryState({
         {detail && (
           <span style={{ color: 'var(--text-dim)', fontSize: '0.68rem', maxWidth: 380, lineHeight: 1.5 }}>
             {detail}
+          </span>
+        )}
+        {hint && (
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem', maxWidth: 420, lineHeight: 1.5 }}>
+            {hint}
           </span>
         )}
         {onRetry && (

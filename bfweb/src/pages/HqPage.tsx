@@ -4,6 +4,7 @@
 // controls to take command. Everything comes from /api/hq, which the engine
 // builds for the viewer's own side from what that side can see.
 import { useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import QueryState from '../components/QueryState'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Map, { Marker, type MapRef } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -151,7 +152,7 @@ export default function HqPage(): ReactElement {
   // Dev builds only: `?mock` renders from a fixture and never calls the API.
   const mock = import.meta.env.DEV && new URLSearchParams(location.search).has('mock')
 
-  const { data: v, error, isLoading } = useQuery<HqView>({
+  const { data: v, error, isLoading, refetch } = useQuery<HqView>({
     queryKey: ['hq', sideParam],
     queryFn: () => (mock ? Promise.resolve(hqMock) : api.hq.view(sideParam)),
     retry: false,
@@ -179,16 +180,8 @@ export default function HqPage(): ReactElement {
   }, [!!v])
   const flyTo = (p: LatLon, zoom = 10) => mapRef.current?.flyTo({ center: [p[1], p[0]], zoom, duration: 800 })
 
-  if (isLoading) return <div style={{ padding: 24, ...label }}>CONTACTING HQ…</div>
-  if (error || !v) {
-    return (
-      <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', letterSpacing: '0.12em', color: 'var(--text)' }}>
-          HQ UNAVAILABLE
-        </div>
-        {(error as Error | null)?.message ?? 'No answer from the game server.'}
-      </div>
-    )
+  if (isLoading || error || !v) {
+    return <QueryState isLoading={isLoading} isError={!!error || !v} error={error ?? 'No answer from the game server.'} what="the theatre HQ" onRetry={() => refetch()} />
   }
   if (!v.enabled) {
     return (
