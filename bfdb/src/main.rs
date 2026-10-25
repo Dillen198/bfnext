@@ -264,6 +264,14 @@ struct Args {
     /// entirely. Use a long random value and only expose it over TLS.
     #[arg(long = "log-read-token")]
     log_read_token: Option<String>,
+    /// A token for `GET /api/metrics` alone, so a metrics scraper does not
+    /// need the one that reads the logs. The log-read token keeps working
+    /// there too. Also --metrics-token-file or $BFDB_METRICS_TOKEN.
+    #[arg(long = "metrics-token")]
+    metrics_token: Option<String>,
+    /// File holding the --metrics-token (first line).
+    #[arg(long = "metrics-token-file")]
+    metrics_token_file: Option<PathBuf>,
     /// One-off maintenance: clear the `session` tree (per-round Cfg
     /// snapshot + perf history) and exit immediately without starting the
     /// server. Use this to recover from old Session records that predate a
@@ -313,6 +321,10 @@ struct Args {
     /// Falls back to $BFDB_NEWS_LLM_KEY, then $OPENAI_API_KEY.
     #[arg(long = "news-llm-key")]
     news_llm_key: Option<String>,
+    /// File holding the --news-llm-key (first line), to keep it off the
+    /// command line.
+    #[arg(long = "news-llm-key-file")]
+    news_llm_key_file: Option<PathBuf>,
     /// Model id for --news-llm-url (default gpt-4o-mini). The volume is a
     /// dozen or two short calls a day at the top end, so the cheap tier is the
     /// right one. Falls back to $BFDB_NEWS_LLM_MODEL.
@@ -325,8 +337,12 @@ struct Args {
     /// its own rules.
     #[arg(long = "hq-llm-url")]
     hq_llm_url: Option<String>,
+    /// API key for --hq-llm-url. Also --hq-llm-key-file or $BFDB_HQ_LLM_KEY.
     #[arg(long = "hq-llm-key")]
     hq_llm_key: Option<String>,
+    /// File holding the --hq-llm-key (first line).
+    #[arg(long = "hq-llm-key-file")]
+    hq_llm_key_file: Option<PathBuf>,
     #[arg(long = "hq-llm-model")]
     hq_llm_model: Option<String>,
     /// Minutes between strategist reviews, per instance (two model calls each,
@@ -4067,8 +4083,9 @@ async fn api_admin_shutdown(
 async fn api_metrics(
     q: std::collections::HashMap<std::string::String, std::string::String>,
     auth_header: Option<std::string::String>,
-    expected: Arc<Option<std::string::String>>,
+    tokens: Arc<(Option<std::string::String>, Option<std::string::String>)>,
     db: StatsDb,
+    ip: std::net::IpAddr,
 ) -> Response {
     use std::fmt::Write as _;
     let text = |status: warp::http::StatusCode, body: std::string::String| {
@@ -4080,11 +4097,13 @@ async fn api_metrics(
             .unwrap()
             .into_response()
     };
-    let Some(expected) = expected.as_deref() else {
-        return text(warp::http::StatusCode::NOT_FOUND, "metrics disabled (no --log-read-token)\n".into());
-    };
-    if !bearer_or_query_token(&q, auth_header.as_deref(), expected) {
-        return text(warp::http::StatusCode::UNAUTHORIZED, "bad or missing token\n".into());
+    // --metrics-token, or the log-read token as before.
+    let accepted: Vec<&str> = [tokens.0.as_deref(), tokens.1.as_deref()].into_iter().flatten().collect();
+    if accepted.is_empty() {
+        return text(warp::http::StatusCode::NOT_FOUND, "metrics disabled (no --metrics-token or --log-read-token)\n".into());
+    }
+    if let Err((status, why)) = check_static_token(&q, auth_header.as_deref(), &accepted, ip) {
+        return text(status, why.into());
     }
     let mut out = std::string::String::new();
     let size = db.sled().size_on_disk().unwrap_or(0);
@@ -4130,19 +4149,47 @@ fn ingest_lag_secs(st: &InstanceState) -> Option<i64> {
 static DB_PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// A static token from `?token=` or `Authorization: Bearer`, compared in
-/// constant time. The query form stays: WebFetch-style tooling cannot set
-/// headers.
+/// constant time against each accepted one. The query form stays:
+/// WebFetch-style tooling cannot set headers.
 fn bearer_or_query_token(
     q: &std::collections::HashMap<std::string::String, std::string::String>,
     auth_header: Option<&str>,
-    expected: &str,
+    accepted: &[&str],
 ) -> bool {
     let provided = q.get("token").cloned().or_else(|| {
         auth_header
             .and_then(|h| h.strip_prefix("Bearer ").or_else(|| h.strip_prefix("bearer ")))
             .map(|s| s.trim().to_string())
     });
-    provided.as_deref().map_or(false, |p| websec::ct_eq(p, expected))
+    provided.as_deref().map_or(false, |p| {
+        // every candidate is compared, so which one matched takes no less time
+        accepted.iter().fold(false, |ok, want| websec::ct_eq(p, want) | ok)
+    })
+}
+
+/// Wrong log/metrics tokens per client IP: 20 in ten minutes locks that
+/// address out of both for ten minutes.
+static TOKEN_FAILS: std::sync::LazyLock<websec::RateLimiter<std::net::IpAddr>> =
+    std::sync::LazyLock::new(|| {
+        websec::RateLimiter::new(20, std::time::Duration::from_secs(600), std::time::Duration::from_secs(600))
+    });
+
+/// `bearer_or_query_token`, rate limited per client IP.
+fn check_static_token(
+    q: &std::collections::HashMap<std::string::String, std::string::String>,
+    auth_header: Option<&str>,
+    accepted: &[&str],
+    ip: std::net::IpAddr,
+) -> std::result::Result<(), (warp::http::StatusCode, &'static str)> {
+    if TOKEN_FAILS.blocked(&ip).is_some() {
+        return Err((warp::http::StatusCode::TOO_MANY_REQUESTS, "too many bad tokens -- try again later\n"));
+    }
+    if bearer_or_query_token(q, auth_header, accepted) {
+        return Ok(());
+    }
+    TOKEN_FAILS.hit(&ip);
+    log::warn!("bad or missing log/metrics token from {ip}");
+    Err((warp::http::StatusCode::UNAUTHORIZED, "bad or missing token\n"))
 }
 
 /// Largest JSON body any route accepts, unless it sets its own limit. Every
@@ -6098,6 +6145,7 @@ async fn api_logs(
     bfdb_log: LogHistory,
     inst: Inst,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    ip: std::net::IpAddr,
 ) -> Response {
     fn text(status: warp::http::StatusCode, body: impl Into<String>) -> Response {
         warp::http::Response::builder()
@@ -6113,8 +6161,8 @@ async fn api_logs(
     };
     // `?token=` is kept on purpose (tooling that cannot set headers relies on
     // it); bfdb writes no access log, so it never lands in one of ours.
-    if !bearer_or_query_token(&q, auth_header.as_deref(), expected) {
-        return text(warp::http::StatusCode::UNAUTHORIZED, "bad or missing token\n");
+    if let Err((status, why)) = check_static_token(&q, auth_header.as_deref(), &[expected.as_str()], ip) {
+        return text(status, why);
     }
 
     // Sources the DCSServerBot plugin owns (loganalyzer.py / opsapi.py):
@@ -8187,7 +8235,37 @@ async fn main() -> Result<()> {
         let _ = COCKPIT_VERSION_OVERRIDE.set(v.trim().to_string());
     }
 
-    // Secrets may come from a file or the environment instead of argv.
+    // Secrets may come from a file or the environment instead of argv. On
+    // the command line they still work, with a warning: on Windows any local
+    // process can read another's arguments.
+    let secrets_on_argv: Vec<&'static str> = [
+        ("--admin-password", args.admin_password.is_some()),
+        ("--dcsserverbot-api-key", args.dcsserverbot_api_key.is_some()),
+        ("--discord-client-secret", args.discord_client_secret.is_some()),
+        ("--log-read-token", args.log_read_token.is_some()),
+        ("--metrics-token", args.metrics_token.is_some()),
+        ("--shutdown-token", args.shutdown_token.is_some()),
+        ("--ops-api-key", args.ops_api_key.is_some()),
+        ("--export-secret", args.export_secret.is_some()),
+        ("--news-image-key", args.news_image_key.is_some()),
+        ("--news-llm-key", args.news_llm_key.is_some()),
+        ("--hq-llm-key", args.hq_llm_key.is_some()),
+    ]
+    .into_iter()
+    .filter(|(_, on)| *on)
+    .map(|(n, _)| n)
+    .collect();
+    args.news_llm_key = secret_from(
+        args.news_llm_key.take(),
+        args.news_llm_key_file.as_deref(),
+        "BFDB_NEWS_LLM_KEY",
+    )?;
+    args.hq_llm_key = secret_from(args.hq_llm_key.take(), args.hq_llm_key_file.as_deref(), "BFDB_HQ_LLM_KEY")?;
+    args.metrics_token = secret_from(
+        args.metrics_token.take(),
+        args.metrics_token_file.as_deref(),
+        "BFDB_METRICS_TOKEN",
+    )?;
     args.admin_password = secret_from(
         args.admin_password.take(),
         args.admin_password_file.as_deref(),
@@ -8294,6 +8372,12 @@ async fn main() -> Result<()> {
         BUILD_GIT,
         build_info_json()["built"].as_str().unwrap_or("unknown")
     );
+    for flag in &secrets_on_argv {
+        log::warn!(
+            "{flag} was given on the command line, where other local processes can read it -- \
+             use {flag}-file or its BFDB_* environment variable instead"
+        );
+    }
     let registry = registry_from_args(&args)?;
     // True when *any* instance has a live engine to talk to.
     let has_engine = registry.all().iter().any(|i| i.base.is_some());
@@ -8784,6 +8868,7 @@ async fn main() -> Result<()> {
         listen_port: args.listen_address.port(),
         local_login_from: args.local_login_from.clone(),
         log_read_token: args.log_read_token.clone(),
+        metrics_token: args.metrics_token.clone(),
         shutdown_token: args.shutdown_token.clone(),
         get_limits: websec::GetLimits { per_min: args.public_get_rate, heavy_per_min: args.heavy_get_rate },
     });
@@ -8856,6 +8941,7 @@ struct RouteCtx {
     listen_port: u16,
     local_login_from: Vec<websec::IpNet>,
     log_read_token: Option<String>,
+    metrics_token: Option<String>,
     shutdown_token: Option<String>,
     get_limits: websec::GetLimits,
 }
@@ -8885,6 +8971,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         listen_port,
         local_login_from,
         log_read_token,
+        metrics_token,
         shutdown_token,
         get_limits,
     } = rc;
@@ -9540,6 +9627,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(warp::any().map(move || logs_hist_api.clone()))
         .and(with_instance(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(websec::with_client_ip())
         .then(api_logs);
 
     let admin_ban_route = warp::path!("api" / "admin" / "ban")
@@ -10119,13 +10207,14 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_db(db.clone()))
         .then(api_admin_revoke_sessions);
 
-    let metrics_token = Arc::new(log_read_token.clone());
+    let metrics_tokens = Arc::new((metrics_token.clone(), log_read_token.clone()));
     let metrics_route = warp::path!("api" / "metrics")
         .and(warp::get())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(warp::header::optional::<std::string::String>("authorization"))
-        .and(warp::any().map(move || metrics_token.clone()))
+        .and(warp::any().map(move || metrics_tokens.clone()))
         .and(with_db(db.clone()))
+        .and(websec::with_client_ip())
         .then(api_metrics);
 
     let origin_policy = websec::OriginPolicy::new(

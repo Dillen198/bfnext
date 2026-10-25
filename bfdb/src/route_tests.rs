@@ -83,6 +83,7 @@ pub(crate) fn harness_with(instances: serde_json::Value, tweak: impl FnOnce(&mut
         listen_port: 8880,
         local_login_from: Vec::new(),
         log_read_token: None,
+        metrics_token: None,
         shutdown_token: None,
         get_limits: websec::GetLimits { per_min: 1800, heavy_per_min: 120 },
     };
@@ -472,6 +473,30 @@ async fn public_health_keeps_internals_for_admins() {
     let ops = h.session_with(false, admin::Role::OPS);
     let v = body_json(h.get("/api/admin/health", Some(&ops)).await);
     assert!(v["db"].is_object() && v["build"].is_object() && v["ingest"].is_object());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metrics_and_log_tokens() {
+    let h = harness_with(serde_json::json!({ "instances": [{ "id": "default" }] }), |rc| {
+        rc.log_read_token = Some("logs-secret".into());
+        rc.metrics_token = Some("metrics-secret".into());
+    });
+    let get = |path: &str, addr: SocketAddr| warp::test::request().method("GET").path(path).remote_addr(addr);
+    let me = peer();
+    assert_eq!(get("/api/metrics?token=metrics-secret", me).reply(&h.routes).await.status(), 200);
+    assert_eq!(get("/api/metrics?token=logs-secret", me).reply(&h.routes).await.status(), 200);
+    let r = get("/api/metrics", me).header("authorization", "Bearer metrics-secret").reply(&h.routes).await;
+    assert_eq!(r.status(), 200);
+    // the metrics token does not read logs
+    assert_eq!(get("/api/logs/bfdb?token=metrics-secret", me).reply(&h.routes).await.status(), 401);
+    assert_eq!(get("/api/logs/bfdb?token=logs-secret", me).reply(&h.routes).await.status(), 200);
+    // guessing gets an address locked out of both
+    let guesser = peer();
+    for _ in 0..21 {
+        get("/api/metrics?token=nope", guesser).reply(&h.routes).await;
+    }
+    assert_eq!(get("/api/metrics?token=metrics-secret", guesser).reply(&h.routes).await.status(), 429);
+    assert_eq!(get("/api/metrics?token=metrics-secret", peer()).reply(&h.routes).await.status(), 200);
 }
 
 #[tokio::test(flavor = "multi_thread")]
