@@ -465,13 +465,20 @@ fn update_log(profile: &Path, msg: &str) {
 /// `bfcockpit_net.dll`) with this installer freshly downloaded. It waits for
 /// the player to close DCS, installs into that one profile and exits.
 ///
+/// How often it looks: every 5 s at first -- a player who closes DCS right
+/// after the update was fetched gets it straight away -- then less and less
+/// often, up to once a minute, so one left waiting through a long session
+/// costs next to nothing. `max_wait` bounds the whole wait; the plugin starts
+/// a fresh installer next session if this one gave up.
+///
 /// Several can be waiting at once (an older one from an earlier session, say):
 /// they take turns on a lock file, and each checks right before installing
 /// that it is still newer than what is there -- so whichever order they run
 /// in, the newest version is what ends up installed, never an older one.
 pub fn auto_update(profile: &Path, max_wait: std::time::Duration) -> Result<String> {
-    use std::{thread::sleep, time::{Duration, Instant}};
+    use std::{thread::sleep, time::Instant};
     let deadline = Instant::now() + max_wait;
+    let mut pause = UPDATE_POLL_FIRST;
     let lock_dir = std::env::temp_dir().join("VectorStrikeCockpit");
     fs::create_dir_all(&lock_dir).ok();
     let lock_path = lock_dir.join("update.lock");
@@ -507,7 +514,8 @@ pub fn auto_update(profile: &Path, max_wait: std::time::Duration) -> Result<Stri
             if Instant::now() >= deadline {
                 anyhow::bail!("gave up waiting for DCS to close");
             }
-            sleep(Duration::from_secs(5));
+            sleep(pause);
+            pause = next_pause(pause);
         }
     })();
     match &result {
@@ -515,6 +523,14 @@ pub fn auto_update(profile: &Path, max_wait: std::time::Duration) -> Result<Stri
         Err(e) => update_log(profile, &format!("failed: {e:#}")),
     }
     result
+}
+
+const UPDATE_POLL_FIRST: std::time::Duration = std::time::Duration::from_secs(5);
+const UPDATE_POLL_MAX: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// 5 s, 7.5 s, 11 s, ... up to a minute.
+fn next_pause(p: std::time::Duration) -> std::time::Duration {
+    (p * 3 / 2).min(UPDATE_POLL_MAX)
 }
 
 pub fn uninstall_one(profile: &Path) -> Result<Option<String>> {
@@ -536,7 +552,20 @@ pub fn uninstall_one(profile: &Path) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{api_origin, is_newer};
+    use super::{api_origin, is_newer, next_pause, UPDATE_POLL_FIRST, UPDATE_POLL_MAX};
+
+    #[test]
+    fn update_poll_backs_off_to_a_minute() {
+        let mut p = UPDATE_POLL_FIRST;
+        let mut waited = std::time::Duration::ZERO;
+        for _ in 0..12 {
+            waited += p;
+            p = next_pause(p);
+        }
+        assert_eq!(p, UPDATE_POLL_MAX);
+        assert!(waited < std::time::Duration::from_secs(10 * 60), "{waited:?}");
+        assert_eq!(next_pause(UPDATE_POLL_MAX), UPDATE_POLL_MAX);
+    }
 
     #[test]
     fn versions() {

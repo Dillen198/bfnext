@@ -4,7 +4,7 @@ Runs the real plugin files (copied into a throwaway package) against fakes of
 DCSServerBot's `core`, its servers and the cog -- no bot, Discord or DCS needed.
 
     python -m venv .venv
-    .venv/Scripts/pip install pytest fastapi httpx ruamel.yaml aiohttp psutil
+    .venv/Scripts/pip install -r DCSServerBot/tests/requirements.txt
     cd DCSServerBot/tests
     ../../.venv/Scripts/python -m pytest -q
 """
@@ -58,11 +58,12 @@ if PKG.exists():
 PKG.mkdir()
 (PKG / "__init__.py").write_text("")
 for name in ("autoupdate.py", "opsapi.py", "loganalyzer.py", "procman.py", "upload.py", "rangefeed.py",
-             "minisign.py", "icons.py"):
+             "minisign.py", "icons.py", "heartbeat.py"):
     shutil.copy(PLUGIN / name, PKG / name)
 sys.path.insert(0, str(HERE))
 
 from fe import autoupdate as au  # noqa: E402
+from fe import heartbeat as hb  # noqa: E402
 from fe import loganalyzer as la  # noqa: E402
 from fe import minisign as ms  # noqa: E402
 from fe import opsapi as oa  # noqa: E402
@@ -1190,6 +1191,74 @@ def test_config_post_refuses_protected_edit(world):
     assert "powershell" not in cfgfile.read_text()
 
 
+def test_ops_api_rest_key_fallback_and_require_own_key(world):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    base = "/stats/fowlengine/ops"
+
+    def client():
+        app = FastAPI()
+        oa.OpsApi(world.cog).mount(app)
+        return TestClient(app)
+
+    # default: no ops_api.api_key -> the RestAPI key still works
+    world.cfg["ops_api"] = {}
+    assert oa.OpsApi(world.cog)._api_key() == "KEY123"
+    assert client().get(f"{base}/status", headers={"X-API-Key": "KEY123"}).status_code != 403
+    # opt-in: refuse the fallback, so nothing is accepted until api_key is set
+    world.cfg["ops_api"] = {"require_own_key": True}
+    assert oa.OpsApi(world.cog)._api_key() is None
+    assert client().get(f"{base}/status", headers={"X-API-Key": "KEY123"}).status_code == 403
+    world.cfg["ops_api"] = {"require_own_key": True, "api_key": "OPSKEY"}
+    assert oa.OpsApi(world.cog)._api_key() == "OPSKEY"
+    assert client().get(f"{base}/status", headers={"X-API-Key": "KEY123"}).status_code == 403
+
+
+# ---- heartbeat ---------------------------------------------------------------------------
+
+
+def test_heartbeat_settings_and_targets():
+    assert hb.settings({}) is None
+    assert hb.settings({"heartbeat": {"url": ""}}) is None
+    assert hb.settings({"heartbeat": {"url": "https://x/1", "enabled": False}}) is None
+    assert "error" in hb.settings({"heartbeat": {"url": "ftp://x/1"}})
+    s = hb.settings({"heartbeat": {"url": "https://hc-ping.com/abc/", "interval_seconds": 1}})
+    assert s["url"] == "https://hc-ping.com/abc" and s["interval"] == hb.MIN_INTERVAL
+    assert hb.ping_target(s, False, False) == ("https://hc-ping.com/abc", "bot up")
+    assert hb.ping_target(s, True, True)[0] == "https://hc-ping.com/abc"
+    assert hb.ping_target(s, True, False) == ("https://hc-ping.com/abc/fail", "bot up, bfdb DOWN")
+    s["fail_when_bfdb_down"] = False
+    assert hb.ping_target(s, True, False)[0] == "https://hc-ping.com/abc"
+
+
+def test_heartbeat_tick_paces_and_survives_errors():
+    sent = []
+
+    class PM:
+        enabled = True
+
+        def is_running(self):
+            return False
+
+    cog = types.SimpleNamespace(procman=PM(),
+                                get_config=lambda: {"heartbeat": {"url": "https://hc/x", "interval_seconds": 60}})
+    h = hb.Heartbeat(cog, log)
+
+    async def post(url, body, timeout):
+        sent.append((url, body))
+        if len(sent) == 2:
+            raise OSError("network down")
+
+    h._post = post
+    run = asyncio.run
+    assert run(h.tick(now=1000)) == "https://hc/x/fail"
+    assert run(h.tick(now=1030)) is None             # not due yet
+    assert run(h.tick(now=1061)) == "https://hc/x/fail" and h._failing   # error swallowed
+    assert run(h.tick(now=1122)) and not h._failing
+    assert sent[0] == ("https://hc/x/fail", "bot up, bfdb DOWN") and len(sent) == 3
+
+
 # ---- procman: redaction, restart folding, loopback defaults ---------------------------
 
 
@@ -1242,12 +1311,17 @@ def test_archive_source_cannot_escape():
 
 def _apply_roles_fn():
     import ast
-    src = (PLUGIN / "commands.py").read_text(encoding="utf-8")
+    src = (PLUGIN / "cog_coalition.py").read_text(encoding="utf-8")
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, ast.AsyncFunctionDef) and n.name == "_apply_coalition_roles")
     fake = types.SimpleNamespace(Forbidden=type("Forbidden", (Exception,), {}))
-    ns = {"discord": fake, "REVOKE_MIN_PER_TICK": 10, "REVOKE_MAX_FRACTION": 0.25}
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), "commands.py", "exec"), ns)
+    # ROLE_KINDS[0] is the default `kind`; its `fetch` is never called here.
+    coalition = {"label": "coalition", "keys": (("Blue", "blue"), ("Red", "red")), "fetch": None,
+                 "endpoint": "/api/admin/pilot-sides", "granted": "registered coalition",
+                 "revoked": "no matching coalition registration", "empty_ok": False}
+    ns = {"discord": fake, "REVOKE_MIN_PER_TICK": 10, "REVOKE_MAX_FRACTION": 0.25,
+          "ROLE_KINDS": [coalition]}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "cog_coalition.py", "exec"), ns)
     return ns["_apply_coalition_roles"]
 
 
@@ -1314,10 +1388,10 @@ def test_incomplete_roster_never_revokes():
 # ---- persistent Discord embeds are edited in place, never re-posted per tick -------
 
 def _upsert_embed_fn():
-    """commands.py's _upsert_embed on its own (the module itself needs discord
+    """cog_range.py's _upsert_embed on its own (the module itself needs discord
     and DCSServerBot), with stand-in discord exceptions."""
     import ast
-    src = (PLUGIN / "commands.py").read_text(encoding="utf-8")
+    src = (PLUGIN / "cog_range.py").read_text(encoding="utf-8")
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, ast.AsyncFunctionDef) and n.name == "_upsert_embed")
     fn.decorator_list = []
@@ -1328,7 +1402,7 @@ def _upsert_embed_fn():
     fake.NotFound = type("NotFound", (fake.HTTPException,), {})
     fake.Forbidden = type("Forbidden", (fake.HTTPException,), {})
     ns = {"discord": fake}
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), "commands.py", "exec"), ns)
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "cog_range.py", "exec"), ns)
     return ns["_upsert_embed"], fake
 
 

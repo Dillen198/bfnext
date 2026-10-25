@@ -147,6 +147,10 @@ pub struct Manifest {
     pub service_installed: bool,
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// Every entry but this manifest is AES-256 encrypted with a password
+    /// (BackupOptions::password); restore and verify need it.
+    #[serde(default)]
+    pub encrypted: bool,
 }
 
 // ---- the background job ---------------------------------------------------------------
@@ -1286,6 +1290,11 @@ pub fn backup_plan() -> Result<BackupPlan> {
 #[derive(Debug, Clone, Deserialize)]
 pub struct BackupOptions {
     pub dest_dir: String,
+    /// Optional: encrypt every entry (AES-256, the WinZip AES format 7-Zip
+    /// also opens) with this password. The manifest stays readable, so a
+    /// restore can show what is inside before asking for it. Off when empty.
+    #[serde(default)]
+    pub password: Option<String>,
     /// Root ids from the plan to include.
     pub roots: Vec<String>,
     /// More folders to include, typed by the admin.
@@ -1414,6 +1423,7 @@ pub fn start_backup(opts: BackupOptions) -> Result<()> {
     if !dest.is_absolute() {
         bail!("pick a full folder path for the backup, like D:\\FowlEngineBackups");
     }
+    backup_password(&opts.password)?;
     spawn("backup", move || run_backup(opts, dest))
 }
 
@@ -1451,13 +1461,65 @@ fn stored(name: &str) -> bool {
         .any(|e| n.ends_with(e))
 }
 
-fn file_opts(name: &str, size: u64) -> zip::write::SimpleFileOptions {
+fn file_opts<'a>(name: &str, size: u64, password: Option<&'a str>) -> zip::write::FileOptions<'a, ()> {
     let o = zip::write::SimpleFileOptions::default().large_file(size >= 0xF000_0000);
-    if stored(name) {
+    let o = if stored(name) {
         o.compression_method(zip::CompressionMethod::Stored)
     } else {
         o.compression_method(zip::CompressionMethod::Deflated).compression_level(Some(3))
+    };
+    match password {
+        // the manifest stays readable: it says the rest needs a password
+        Some(pw) if name != MANIFEST => o.with_aes_encryption(zip::AesMode::Aes256, pw),
+        _ => o,
     }
+}
+
+/// The password a backup is written with: None when not asked for.
+fn backup_password(p: &Option<String>) -> Result<Option<&str>> {
+    match p.as_deref().filter(|p| !p.is_empty()) {
+        None => Ok(None),
+        Some(p) if p.chars().count() < 8 => bail!("the backup password must be at least 8 characters"),
+        Some(p) => Ok(Some(p)),
+    }
+}
+
+/// Entry `i`, decrypting it with `password` when there is one (zip ignores
+/// the password for an entry that isn't encrypted).
+fn entry_at<'a>(a: &'a mut zip::ZipArchive<File>, i: usize, password: Option<&str>) -> zip::result::ZipResult<zip::read::ZipFile<'a>> {
+    match password {
+        Some(pw) => a.by_index_decrypt(i, pw.as_bytes()),
+        None => a.by_index(i),
+    }
+}
+
+fn entry_named<'a>(a: &'a mut zip::ZipArchive<File>, name: &str, password: Option<&str>) -> zip::result::ZipResult<zip::read::ZipFile<'a>> {
+    match password {
+        Some(pw) => a.by_name_decrypt(name, pw.as_bytes()),
+        None => a.by_name(name),
+    }
+}
+
+/// For a password-protected backup: the password, checked against its first
+/// encrypted entry, so a wrong one is one clear error rather than every file
+/// reading back as damaged.
+fn unlock<'a>(m: &Manifest, a: &mut zip::ZipArchive<File>, password: Option<&'a str>) -> Result<Option<&'a str>> {
+    let password = password.filter(|p| !p.is_empty());
+    if !m.encrypted {
+        return Ok(None);
+    }
+    let Some(pw) = password else {
+        bail!("this backup is password protected -- type its password");
+    };
+    let first = (0..a.len()).find(|&i| a.by_index_raw(i).map(|e| e.encrypted()).unwrap_or(false));
+    if let Some(i) = first {
+        match a.by_index_decrypt(i, pw.as_bytes()) {
+            Err(zip::result::ZipError::InvalidPassword) => bail!("wrong password for this backup"),
+            Err(e) => return Err(e.into()),
+            Ok(_) => {}
+        }
+    }
+    Ok(Some(pw))
 }
 
 fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
@@ -1582,10 +1644,11 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
         let f = File::create(&partial).with_context(|| format!("creating {}", partial.display()))?;
         let mut z = zip::ZipWriter::new(std::io::BufWriter::with_capacity(1 << 20, f));
         let cfg = ManagerConfig::load();
+        let pw = backup_password(&opts.password)?;
 
         // this app's settings
         if let Ok(b) = std::fs::read(config::config_path()) {
-            z.start_file("manager/manager.json", file_opts("manager.json", b.len() as u64))?;
+            z.start_file("manager/manager.json", file_opts("manager.json", b.len() as u64, pw))?;
             z.write_all(&b)?;
         }
 
@@ -1623,7 +1686,7 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
                         continue;
                     }
                 };
-                z.start_file(name.as_str(), file_opts(&name, fe.size))?;
+                z.start_file(name.as_str(), file_opts(&name, fe.size, pw))?;
                 let copied = std::io::copy(&mut Counting { inner: file }, &mut z);
                 match copied {
                     Ok(c) => {
@@ -1659,7 +1722,7 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
                             let entry = format!("database/{}.dump", slug(&d.name));
                             let size = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
                             with_job(|j| j.total_bytes += size);
-                            z.start_file(entry.as_str(), file_opts(&entry, size))?;
+                            z.start_file(entry.as_str(), file_opts(&entry, size, pw))?;
                             std::io::copy(&mut Counting { inner: File::open(&tmp)? }, &mut z)?;
                             let _ = std::fs::remove_file(&tmp);
                             note(format!("  database dump {}", fmt_bytes(size)));
@@ -1719,9 +1782,10 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
             python: find_python().map(|(_, v)| v),
             service_installed: plan.service_running,
             warnings: job_status().map(|j| j.warnings).unwrap_or_default(),
+            encrypted: pw.is_some(),
         };
         let mj = serde_json::to_vec_pretty(&m)?;
-        z.start_file(MANIFEST, file_opts(MANIFEST, mj.len() as u64))?;
+        z.start_file(MANIFEST, file_opts(MANIFEST, mj.len() as u64, None))?;
         z.write_all(&mj)?;
         let mut w = z.finish()?;
         w.flush()?;
@@ -1742,7 +1806,8 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
     with_job(|j| j.zip_path = Some(disp(&final_path)));
     // the bot can come back while the zip is read through
     drop(restart);
-    let mut report = verify_zip(&final_path).context("checking the finished zip")?;
+    let pw = backup_password(&opts.password)?;
+    let mut report = verify_zip(&final_path, pw).context("checking the finished zip")?;
     // a file that doesn't read back: copy it again, up to three times
     let mut tries = 0;
     while !report.corrupt_names.is_empty() && tries < 3 {
@@ -1752,8 +1817,8 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
             report.corrupt_names.len(),
             report.corrupt_names.join(", ")
         ));
-        repair_zip(&final_path, &m, &report.corrupt_names).context("rewriting the files that didn't read back")?;
-        report = verify_zip(&final_path).context("checking the repaired zip")?;
+        repair_zip(&final_path, &m, &report.corrupt_names, pw).context("rewriting the files that didn't read back")?;
+        report = verify_zip(&final_path, pw).context("checking the repaired zip")?;
         if report.corrupt_names.is_empty() {
             note(format!("  the repaired zip reads back clean (took {tries} rewrite(s))"));
             warn(format!(
@@ -1780,7 +1845,11 @@ fn run_backup(opts: BackupOptions, dest: PathBuf) -> Result<String> {
         "Copy {} OFF this PC (USB stick, another drive, cloud) before reinstalling Windows.",
         disp(&final_path)
     ));
-    next_step("Keep it private: it holds the bot's Discord token, database password and API keys.".into());
+    if pw.is_some() {
+        next_step("It is password protected (AES-256): keep the password somewhere other than this PC -- without it the backup can't be restored.".into());
+    } else {
+        next_step("Keep it private: it holds the bot's Discord token, database password and API keys. (A backup password encrypts it.)".into());
+    }
     if m.database.as_ref().and_then(|d| d.dump.as_ref()).is_none() && m.database.is_some() {
         next_step("The bot's database is not in this backup (see the warnings) -- back it up by hand if you need its stats.".into());
     }
@@ -1893,14 +1962,14 @@ impl VerifyReport {
     }
 }
 
-pub fn start_verify(zip: String) -> Result<()> {
+pub fn start_verify(zip: String, password: Option<String>) -> Result<()> {
     let p = PathBuf::from(zip.trim().trim_matches('"'));
     if !p.is_file() {
         bail!("{} not found", disp(&p));
     }
     spawn("verify", move || {
         with_job(|j| j.zip_path = Some(disp(&p)));
-        let r = verify_zip(&p)?;
+        let r = verify_zip(&p, password.as_deref())?;
         let ok = r.ok;
         let n = r.problems.len() + r.corrupt.len();
         with_job(|j| j.report = Some(r));
@@ -1911,10 +1980,11 @@ pub fn start_verify(zip: String) -> Result<()> {
 /// Read every entry of a backup back (zip checks each one's CRC as it
 /// reads), then compare with what its manifest says went in, and look for
 /// the files a restore can't do without.
-pub fn verify_zip(zip_path: &Path) -> Result<VerifyReport> {
+pub fn verify_zip(zip_path: &Path, password: Option<&str>) -> Result<VerifyReport> {
     phase("Checking the zip: reading every file back");
     let (m, zip_bytes) = read_manifest(zip_path)?;
     let mut a = zip::ZipArchive::new(File::open(zip_path)?)?;
+    let pw = unlock(&m, &mut a, password)?;
     let total: u64 = (0..a.len()).filter_map(|i| a.by_index_raw(i).ok().map(|e| e.size())).sum();
     DONE.store(0, Ordering::Relaxed);
     with_job(|j| j.total_bytes = total);
@@ -1927,7 +1997,7 @@ pub fn verify_zip(zip_path: &Path) -> Result<VerifyReport> {
     let dump_entry = m.database.as_ref().and_then(|d| d.dump.clone());
     for i in 0..a.len() {
         cancelled()?;
-        let mut e = a.by_index(i)?;
+        let mut e = entry_at(&mut a, i, pw)?;
         if e.is_dir() {
             continue;
         }
@@ -2155,7 +2225,8 @@ pub fn verify_zip(zip_path: &Path) -> Result<VerifyReport> {
 /// source files: every other entry is copied across as it is (no
 /// recompression), then the whole thing replaces the old zip. The database
 /// dump can't be redone here (its temp file is gone) -- that one stays bad.
-fn repair_zip(zip_path: &Path, m: &Manifest, bad: &[String]) -> Result<()> {
+fn repair_zip(zip_path: &Path, m: &Manifest, bad: &[String], password: Option<&str>) -> Result<()> {
+    let pw = password.filter(|_| m.encrypted);
     let size = std::fs::metadata(zip_path)?.len();
     if let Some(free) = free_space(zip_path) {
         if free < size + size / 10 {
@@ -2181,7 +2252,7 @@ fn repair_zip(zip_path: &Path, m: &Manifest, bad: &[String]) -> Result<()> {
         for name in bad {
             if name == MANIFEST {
                 let mj = serde_json::to_vec_pretty(m)?;
-                w.start_file(MANIFEST, file_opts(MANIFEST, mj.len() as u64))?;
+                w.start_file(MANIFEST, file_opts(MANIFEST, mj.len() as u64, None))?;
                 w.write_all(&mj)?;
                 continue;
             }
@@ -2198,7 +2269,7 @@ fn repair_zip(zip_path: &Path, m: &Manifest, bad: &[String]) -> Result<()> {
             let file = File::open(&src).with_context(|| format!("reading {} again", disp(&src)))?;
             let len = file.metadata().map(|md| md.len()).unwrap_or(0);
             note(format!("  writing {} again", disp(&src)));
-            w.start_file(name.as_str(), file_opts(name, len))?;
+            w.start_file(name.as_str(), file_opts(name, len, pw))?;
             std::io::copy(&mut Counting { inner: file }, &mut w)?;
         }
         let mut b = w.finish()?;
@@ -2476,6 +2547,9 @@ pub struct RestoreTarget {
 #[derive(Debug, Clone, Deserialize)]
 pub struct RestoreOptions {
     pub zip: String,
+    /// The backup's password, when it was made with one.
+    #[serde(default)]
+    pub password: Option<String>,
     pub targets: Vec<RestoreTarget>,
     #[serde(default)]
     pub restore_database: bool,
@@ -2708,6 +2782,7 @@ fn run_restore(opts: RestoreOptions) -> Result<String> {
     // unpack
     let f = File::open(&zip_path)?;
     let mut a = zip::ZipArchive::new(f)?;
+    let pw = unlock(&m, &mut a, opts.password.as_deref())?;
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
     let mut restored: Vec<PathBuf> = Vec::new();
     let mut pairs: Vec<(String, String)> = Vec::new();
@@ -2738,7 +2813,7 @@ fn run_restore(opts: RestoreOptions) -> Result<String> {
         let mut n = 0u64;
         for i in 0..a.len() {
             cancelled()?;
-            let mut e = a.by_index(i)?;
+            let mut e = entry_at(&mut a, i, pw)?;
             let Some(rel) = e.name().strip_prefix(&prefix).map(String::from) else { continue };
             if e.is_dir() || rel.is_empty() {
                 continue;
@@ -2831,7 +2906,7 @@ fn run_restore(opts: RestoreOptions) -> Result<String> {
 
     // this app's settings
     phase("Restoring Fowl Engine Manager's settings");
-    let mut cfg: ManagerConfig = match a.by_name("manager/manager.json") {
+    let mut cfg: ManagerConfig = match entry_named(&mut a, "manager/manager.json", pw) {
         Ok(mut e) => {
             let mut s = String::new();
             e.read_to_string(&mut s)?;
@@ -2859,7 +2934,7 @@ fn run_restore(opts: RestoreOptions) -> Result<String> {
     if opts.restore_database {
         if let Some(d) = m.database.as_ref().filter(|d| d.dump.is_some()) {
             phase(&format!("Loading the bot's database {}", d.name));
-            match restore_database(&mut a, d, bot_to.as_deref(), opts.pg_password.as_deref().unwrap_or("")) {
+            match restore_database(&mut a, d, bot_to.as_deref(), opts.pg_password.as_deref().unwrap_or(""), pw) {
                 Ok(msg) => {
                     note(format!("  {msg}"));
                     db_ok = Some(true);
@@ -2928,7 +3003,13 @@ pub(crate) fn sql_ident(s: &str) -> String {
     format!("\"{}\"", s.replace('"', "\"\""))
 }
 
-fn restore_database(a: &mut zip::ZipArchive<File>, d: &DbInfo, bot: Option<&Path>, superpw: &str) -> Result<String> {
+fn restore_database(
+    a: &mut zip::ZipArchive<File>,
+    d: &DbInfo,
+    bot: Option<&Path>,
+    superpw: &str,
+    password: Option<&str>,
+) -> Result<String> {
     if !is_local_host(&d.host) {
         bail!("the database was on another machine ({}) -- restore it there", d.host);
     }
@@ -2995,7 +3076,7 @@ fn restore_database(a: &mut zip::ZipArchive<File>, d: &DbInfo, bot: Option<&Path
     // the dump, out of the zip
     let tmp = config::data_dir().join("restore-db.dump");
     {
-        let mut e = a.by_name(d.dump.as_deref().unwrap_or_default())?;
+        let mut e = entry_named(a, d.dump.as_deref().unwrap_or_default(), password)?;
         let mut out = File::create(&tmp)?;
         std::io::copy(&mut Counting { inner: &mut e }, &mut out)?;
     }
@@ -3155,6 +3236,7 @@ mod tests {
             database: false,
             stop_bot: false,
             shadow_copy: false,
+            password: Some("correct horse".into()),
         })
         .unwrap();
         let j = wait();
@@ -3194,14 +3276,14 @@ mod tests {
         bytes[at + 2] = b'X';
         let bad = base.join("corrupt.zip");
         std::fs::write(&bad, bytes).unwrap();
-        let rep = verify_zip(&bad).unwrap();
+        let rep = verify_zip(&bad, None).unwrap();
         assert!(!rep.ok && rep.corrupt.iter().any(|c| c.contains("a.miz")), "{}", rep.to_text());
         assert!(rep.sections.iter().any(|s| s.status == "bad"), "{}", rep.to_text());
         assert!(!rep.problems.iter().any(|p| p.contains("not in the zip")), "a corrupt entry is not also 'missing': {}", rep.to_text());
         // ...and a repair writes it again from the source and checks clean
         let (m, _) = read_manifest(&bad).unwrap();
-        repair_zip(&bad, &m, &rep.corrupt_names).unwrap();
-        let rep = verify_zip(&bad).unwrap();
+        repair_zip(&bad, &m, &rep.corrupt_names, None).unwrap();
+        let rep = verify_zip(&bad, None).unwrap();
         assert!(rep.ok, "{}", rep.to_text());
         assert_eq!(rep.entries as usize, names.len(), "same entries after the repair");
 
@@ -3218,6 +3300,7 @@ mod tests {
         assert!(prev.mappings.iter().any(|m| lower(&m.to) == lower(&disp(&new_home))), "{:?}", prev.mappings);
         start_restore(RestoreOptions {
             zip: disp(&zip),
+            password: Some("correct horse".into()),
             targets: prev.mappings.iter().map(|m| RestoreTarget { id: m.id.clone(), to: m.to.clone() }).collect(),
             restore_database: false,
             pg_password: None,
@@ -3276,19 +3359,62 @@ mod tests {
             let m = Manifest {
                 format: FORMAT, created: now(), hostname: "H".into(), manager_version: "t".into(), desktop_user: None,
                 profile: None, bot_dir: None, roots: vec![r], database: None, programs: vec![], python: None,
-                service_installed: false, warnings: vec![],
+                service_installed: false, warnings: vec![], encrypted: false,
             };
             z.start_file(MANIFEST, o).unwrap();
             z.write_all(&serde_json::to_vec(&m).unwrap()).unwrap();
             z.finish().unwrap();
         };
         write(root(vec!["bfdb/db (only partly read: locked)".into()], 0));
-        let r = verify_zip(&zp).unwrap();
+        let r = verify_zip(&zp, None).unwrap();
         assert_eq!(r.sections[0].status, "bad", "{}", r.to_text());
         write(root(vec![], 2));
-        let r = verify_zip(&zp).unwrap();
+        let r = verify_zip(&zp, None).unwrap();
         assert_eq!(r.sections[0].status, "ok", "{}", r.to_text());
         assert!(r.to_text().contains("--  2 temporary file(s) disappeared"), "{}", r.to_text());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A password-protected backup: entries are AES-256, the manifest is not;
+    /// verify needs the right password and says so clearly otherwise.
+    #[test]
+    fn password_protected_zip() {
+        let dir = std::env::temp_dir().join(format!("fowl-pw-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zp = dir.join("b.zip");
+        let pw = Some("correct horse");
+        let mut z = zip::ZipWriter::new(File::create(&zp).unwrap());
+        for (n, d) in [("roots/bot-x/run.py", "print()"), ("roots/bot-x/config/.secret/discord.pkl", "TOKEN-123"),
+                       ("manager/manager.json", "{}")] {
+            z.start_file(n, file_opts(n, d.len() as u64, pw)).unwrap();
+            z.write_all(d.as_bytes()).unwrap();
+        }
+        let m = Manifest {
+            format: FORMAT, created: now(), hostname: "H".into(), manager_version: "t".into(), desktop_user: None,
+            profile: None, bot_dir: None, roots: vec![], database: None, programs: vec![], python: None,
+            service_installed: false, warnings: vec![], encrypted: true,
+        };
+        let mj = serde_json::to_vec(&m).unwrap();
+        z.start_file(MANIFEST, file_opts(MANIFEST, mj.len() as u64, pw)).unwrap();
+        z.write_all(&mj).unwrap();
+        z.finish().unwrap();
+
+        let raw = std::fs::read(&zp).unwrap();
+        assert!(!raw.windows(9).any(|w| w == b"TOKEN-123"), "the secret is not in the zip in the clear");
+        // the manifest reads without a password (restore shows what's inside first)
+        assert!(read_manifest(&zp).unwrap().0.encrypted);
+        let e = verify_zip(&zp, None).unwrap_err().to_string();
+        assert!(e.contains("password protected"), "{e}");
+        let e = verify_zip(&zp, Some("wrong horse")).unwrap_err().to_string();
+        assert!(e.contains("wrong password"), "{e}");
+        let r = verify_zip(&zp, pw).unwrap();
+        assert!(r.corrupt.is_empty() && r.entries == 4, "{}", r.to_text());
+        let mut a = zip::ZipArchive::new(File::open(&zp).unwrap()).unwrap();
+        let mut s = String::new();
+        entry_named(&mut a, "roots/bot-x/config/.secret/discord.pkl", pw).unwrap().read_to_string(&mut s).unwrap();
+        assert_eq!(s, "TOKEN-123");
+        assert!(backup_password(&Some("short".into())).is_err());
+        assert_eq!(backup_password(&Some(String::new())).unwrap(), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

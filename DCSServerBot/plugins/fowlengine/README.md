@@ -1,6 +1,6 @@
-# Vector Strike DCSServerBot Plugin
+# Fowl Engine DCSServerBot plugin (`fowlengine`)
 
-The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaign to Discord. It features a continuously updating live campaign status, objective capture alerts, killstreak achievements, and interactive Discord slash commands for player stats and commander logistics.
+The Fowl Engine plugin for DCSServerBot bridges your DCS Vector Strike campaign to Discord. It features a continuously updating live campaign status, objective capture alerts, killstreak achievements, and interactive Discord slash commands for player stats and commander logistics.
 
 ## Features
 
@@ -16,7 +16,7 @@ The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaig
 - **Server Performance Embed:** Posts and edits a live CPU/RAM/GPU/disk/temp + DCS frame-time embed every 5 minutes, pulled from bfdb's admin-only `/api/admin/perf`.
 - **Dual-Login Dashboard:** Supports both standard Discord OAuth web-login and securely generated HMAC bot-tokens to seamlessly bridge the `bfweb` dashboard.
 - **Interactive Commander Terminal:** A UI terminal (`/fe_terminal`) to drop crates/infantry at airbases **and** set objective priority, directly from Discord.
-- **bfdb + netidx Process Ownership:** With `bfdb.manage: true` the plugin runs `bfdb.exe` and the netidx resolver as child processes of the bot: renders `gci.json` from YAML, builds bfdb's arg list, health-checks it, and relaunches on crash/hang. Replaces `bfsystem.ps1`. Combined with running the bot as a Windows service (`deploy/windows-service/`), a reboot brings the whole stack back with no RDP.
+- **bfdb + netidx Process Ownership:** With `bfdb.manage: true` the plugin runs `bfdb.exe` and the netidx resolver as child processes of the bot: renders `gci.json` from YAML, builds bfdb's arg list, health-checks it, and relaunches on crash/hang. Replaces `bfsystem.ps1` (now a legacy manual fallback). Combined with running the bot as a Windows service (Fowl Engine Manager, `bfmanager/`; or the legacy NSSM scripts in `deploy/windows-service/`), a reboot brings the whole stack back with no RDP.
 - **GCI from YAML:** the `gci:` block in `fowlengine.yaml` is rendered to `<bfdb.home>\gci.json` on every bfdb start (bfdb reads it only at startup). `/feops gci_show` prints the effective config with secrets masked; `/feops bfdb_restart` reloads it.
 - **GCI transcript relay:** set `gci_transcript_channel` and the bot tails bfdb's `/ws/gci`, posting every AWACS call to that channel prefixed 🔵/🔴 (replaces the raw `discord_webhook_url`).
 - **War diary feed:** set `news_channel` (per server) and each newly *filed* daily dispatch of the war diary (bfdb's `GET /api/news`, filed a little after 00:00 UTC) is posted once: headline, the dispatch, a "Read more" link to the dashboard's War Diary, and the day's picture attached when bfdb draws them (`bfdb.news_image_*`). A picture still being drawn is waited for up to 10 minutes, then the dispatch goes out without one. Posted ids live in the state file, so restarts never repost; switching it on posts only the latest dispatch.
@@ -26,13 +26,25 @@ The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaig
 
 ## Installation
 
-1. Copy the `vectorstrike` folder into your `DCSServerBot\plugins` directory.
-2. Ensure you have the `vectorstrike.yaml` configuration file set up (see Configuration below).
-3. Restart your DCSServerBot instance so it loads the plugin.
+**With Fowl Engine Manager** (`bfmanager/`): Setup → **Install plugin**. The Manager copies
+this folder, the community plugins and the `bf*` extensions into the bot, and keeps them
+current on every service start.
+
+**By hand:**
+
+1. Copy this `fowlengine` folder into your `DCSServerBot\plugins` directory, and add
+   `fowlengine` to `opt_plugins` in the bot's `config\main.yaml`.
+2. Copy `fowlengine.sample.yaml` to `config\plugins\fowlengine.yaml` and fill it in (see
+   Configuration below).
+3. Optional dependencies for the community plugins, and for faster signature checks:
+   `pip install -r requirements-plugins.txt` in the bot's venv. The file is in this repo's
+   `DCSServerBot/` folder.
+4. Restart DCSServerBot so it loads the plugin.
 
 ## Configuration
 
-In your DCSServerBot `config/plugins/` folder, create a file named `vectorstrike.yaml` and populate it with your channel IDs and secrets:
+In your DCSServerBot `config/plugins/` folder, create `fowlengine.yaml` (start from
+`fowlengine.sample.yaml`) with your channel IDs and secrets. The essentials:
 
 ```yaml
 DEFAULT:
@@ -49,7 +61,7 @@ DEFAULT:
   dashboard_url: "https://bfweb.your-domain.com"
 
   # The base URL to your bfdb REST API
-  api_url: "http://localhost:8765"
+  api_url: "http://localhost:8880"
 
   # (Optional) Discord channel for the live engine log relay. Omit to disable.
   engine_log_channel: 123456789012345678
@@ -184,3 +196,26 @@ silently drops back to unicode until the new name is installed).
   [`deploy/multi-instance.md`](../../deploy/multi-instance.md).
 
 `lua/callbacks.lua` / `lua/commands.lua` are unwired legacy stubs.
+
+### Code layout
+
+DCSServerBot loads `plugins.fowlengine.commands` and calls its `setup()`. The cog,
+`FowlEngine`, is one class assembled from mixins, one module per area. discord.py
+finds each part's slash commands, `/feops` and `/range` groups, task loops and listeners
+through the MRO.
+
+| Module | What |
+|---|---|
+| `commands.py` | `FowlEngine`: config, load/unload, the status / perf / server-info embeds, staged-binary apply, rank sync, GCI, welcome |
+| `cog_events.py` | engine-log relay, capture / neutral / kill-streak alerts, round results, theatre rotation |
+| `cog_coalition.py` | per-coalition briefings, `/fe_briefing`, the Discord roles mirrored from the engine |
+| `cog_player.py` | `/fe_*` player and admin commands, the Commander Terminal |
+| `cog_ops.py` | `/feops` |
+| `cog_range.py` | training-range status embed, results feed, `/range` |
+| `cog_news.py` | the war diary feed |
+| `common.py`, `views.py` | shared constants and bfdb helpers; the Discord views |
+| `procman.py`, `autoupdate.py`, `opsapi.py`, `loganalyzer.py`, `heartbeat.py`, ... | the services the cog owns (unchanged) |
+
+Like every module here, a changed part takes effect when the bot restarts, not on a plugin
+reload. `tests/test_fowlengine_cog_wiring.py` checks that every part is wired in and that
+no member is defined twice.

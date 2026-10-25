@@ -1,8 +1,10 @@
 # Hosting bfweb/bfsite separately from bfdb
 
 By default `bfdb.exe` embeds and serves `bfweb` (the dashboard) and `bfsite`
-(the public site) itself, all on one origin — that's how `bfsystem.ps1` runs
-today, and nothing about that changes unless you opt in below.
+(the public site) itself, all on one origin. That is the default, and
+nothing about it changes unless you opt in below. (Production runs the split
+below, with the frontends on Vercel and `api.vectorstrike.org` in front of
+bfdb; `Caddyfile.vectorstrike` is its Caddy config.)
 
 This setup instead splits things in two:
 
@@ -22,23 +24,26 @@ This setup instead splits things in two:
         │            │
         │            │  fetch/WebSocket, cross-origin, credentials: include
         │            ▼
-        └──► https://api.example.com  ──►  Caddy (TLS) ──►  bfdb.exe:8765 (localhost)
+        └──► https://api.example.com  ──►  Caddy (TLS) ──►  bfdb.exe:8880 (localhost)
                                                                    on the game server machine
 ```
 
 ## 1. Backend (bfdb, on the game server machine)
 
-1. Bind `bfdb` to localhost only — Caddy will be the public-facing TLS
-   endpoint. In `bfsystem.ps1`, change:
-   ```powershell
-   $listenAddress = "127.0.0.1:8765"
+1. Keep `bfdb` on localhost only, because Caddy is the public-facing TLS
+   endpoint. That is already the default: bfdb listens on `127.0.0.1:8880`,
+   and so does the bot's procman (`bfdb.listen_address` in `fowlengine.yaml`).
+2. Add a `--cors-origin` for each origin that calls the API with
+   credentials, i.e. your dashboard and your site. With the bot running bfdb
+   (`bfdb.manage: true`), put them in `config/plugins/fowlengine.yaml`:
+   ```yaml
+   bfdb:
+     cors_origins:
+       - https://dashboard.example.com
+       - https://example.com
    ```
-2. Add the new `--cors-origin` flag (repeat it for each origin that needs to
-   call the API with credentials — your dashboard and your site):
-   ```powershell
-   $argList += "--cors-origin", "https://dashboard.example.com"
-   $argList += "--cors-origin", "https://example.com"
-   ```
+   (With the legacy `bfsystem.ps1`, add `--cors-origin <url>` to its
+   `$argList` instead.)
    This does two things: it switches CORS from same-origin-only to an
    explicit allow-list, and it switches the session cookie from
    `SameSite=Lax` to `SameSite=None; Secure` (required for a cross-site
@@ -53,7 +58,8 @@ This setup instead splits things in two:
    ```
    Caddy handles Let's Encrypt automatically — no manual cert management,
    and no need to pass `--cert`/`--key` to `bfdb` itself.
-5. Restart `bfdb` (re-run `bfsystem.ps1`) with the updated args.
+5. Restart bfdb with the new flags: `/feops bfdb_restart`, or the OPS page,
+   or by restarting the bot.
 
 Discord OAuth, if you use it: update `--discord-redirect-uri` to
 `https://api.example.com/api/auth/callback` (bfdb handles the OAuth
@@ -106,6 +112,7 @@ with room to spare (a few GB per active round); back it up alongside the
 
 ## Reverting to embedded mode
 
-Just don't pass `--cors-origin`, keep `--listen-address 0.0.0.0:<port>`,
-and keep using the embedded `bfweb`/`bfsite` bundles that ship inside
+Just don't pass `--cors-origin`, listen where players can reach bfdb
+(`--listen-address 0.0.0.0:<port>`, or put Caddy in front as above), and keep
+using the embedded `bfweb`/`bfsite` bundles that ship inside
 `bfdb.exe` — nothing above is required for that to keep working.

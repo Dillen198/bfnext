@@ -44,7 +44,7 @@ const BOT_LOG_ROTATE_BYTES: u64 = 20 * 1024 * 1024;
 /// FowlEngine plugin for a clean shutdown -- cogs unload, bfdb is stopped
 /// without tearing its DB, state files are written -- before the bot's
 /// processes are killed. Must match SHUTDOWN_REQUEST_FILE in the plugin's
-/// commands.py.
+/// common.py.
 const SHUTDOWN_REQUEST_FILE: &str = "fowl-shutdown.request";
 /// How long a clean shutdown may take before the bot is killed anyway: the
 /// plugin gives bfdb up to 15 s for Ctrl-Break and 15 s more for its

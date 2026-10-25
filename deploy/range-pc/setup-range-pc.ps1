@@ -43,6 +43,11 @@ param(
     [string]$ShareUser    = "fowlread",
     # The range mission's sortie; the config is <SavedGames>\<Sortie>_RANGE.
     [string]$Sortie       = "VSRANGE",
+    # Opt-in: pin the engine's netidx publisher to this one TCP port and open
+    # only it to the main PC, instead of netidx's whole 5000-32767 range.
+    # Writes "netidx_bind": "<RangePcIp>:<port>" into the range config.
+    # 0 (the default) keeps today's behaviour. See deploy/range.md.
+    [ValidateRange(0, 65535)][int]$PublisherPort = 0,
     [switch]$SkipShare,
     [switch]$SkipFirewall
 )
@@ -123,6 +128,12 @@ if (-not (Test-PrivateIp $MainPcIp) -or -not (Test-PrivateIp $RangePcIp)) {
 }
 $subnet = "{0}/{1}" -f (Get-NetworkBase $RangePcIp $prefix), $prefix
 Write-Ok "main PC $MainPcIp, this PC $RangePcIp, subnet $subnet"
+if ($PublisherPort -ne 0) {
+    if ($PublisherPort -lt 1024 -or $PublisherPort -in @($ResolverPort, $ExportPort, $DcsPort, $SrsPort)) {
+        throw "-PublisherPort ${PublisherPort}: pick a free port of 1024 or above that isn't the resolver, Export, DCS or SRS port"
+    }
+    Write-Ok "engine RPC publisher pinned to $RangePcIp`:$PublisherPort"
+}
 if ((Get-NetIPInterface -AddressFamily IPv4 -InterfaceIndex ($local | Where-Object { $_.IPAddress -eq $RangePcIp } | Select-Object -First 1).InterfaceIndex).Dhcp -eq "Enabled") {
     Write-Warn "this PC gets its address from DHCP. Give it a fixed address (a DHCP reservation on the router) -- the resolver and the main PC's config name it."
 }
@@ -235,8 +246,11 @@ if ($SkipFirewall) {
 } else {
     Write-Step "Firewall (rule group 'Fowl Range')"
     Set-FowlRule "Fowl Range - netidx resolver"          "TCP" "$ResolverPort" $MainPcIp
-    # the engine's RPC publisher takes a free port in netidx's range
-    Set-FowlRule "Fowl Range - engine RPCs (netidx)"     "TCP" "5000-32767" $MainPcIp
+    # the engine's RPC publisher takes a free port in netidx's range, unless
+    # -PublisherPort pinned it (netidx_bind in the range config)
+    $rpcPorts = "5000-32767"
+    if ($PublisherPort -ne 0) { $rpcPorts = "$PublisherPort" }
+    Set-FowlRule "Fowl Range - engine RPCs (netidx)"     "TCP" $rpcPorts $MainPcIp
     if (-not $SkipShare) {
         Set-FowlRule "Fowl Range - log shares (SMB)"     "TCP" "445" $MainPcIp
     }
@@ -305,25 +319,38 @@ if (-not (Test-Path $rangeCfg)) {
     Write-Warn ("  `"netidx_config`": `"{0}`"," -f $clientFwd)
 } else {
     $txt = [IO.File]::ReadAllText($rangeCfg)
-    $line = '"netidx_config": "{0}"' -f $clientFwd
-    if ($txt -match '"netidx_config"\s*:\s*("[^"]*"|null)') {
-        $new = ([regex]'"netidx_config"\s*:\s*("[^"]*"|null)').Replace($txt, $line, 1)
-    } elseif ($txt -match '"netidx_base"\s*:\s*"[^"]*"\s*,') {
-        $nl = "`n"
-        if ($txt.Contains("`r`n")) { $nl = "`r`n" }
-        $new = ([regex]'("netidx_base"\s*:\s*"[^"]*"\s*,)').Replace($txt, ('$1' + $nl + '  ' + $line + ','), 1)
-    } else {
-        $new = $null
-        Write-Warn "$rangeCfg has no netidx_base, so the engine publishes nothing: add both, e.g."
-        Write-Warn '  "netidx_base": "/local/fowl/range",'
-        Write-Warn ("  {0}," -f $line)
+    # "key": "value" in the range config: replaced where it is, else added
+    # right after netidx_base. $null when there is no netidx_base to add to.
+    function Set-CfgString([string]$txt, [string]$key, [string]$value) {
+        $line = '"{0}": "{1}"' -f $key, $value
+        $re = [regex]('"{0}"\s*:\s*("[^"]*"|null)' -f $key)
+        if ($re.IsMatch($txt)) { return $re.Replace($txt, $line, 1) }
+        if ($txt -match '"netidx_base"\s*:\s*"[^"]*"\s*,') {
+            $nl = "`n"
+            if ($txt.Contains("`r`n")) { $nl = "`r`n" }
+            return ([regex]'("netidx_base"\s*:\s*"[^"]*"\s*,)').Replace($txt, ('$1' + $nl + '  ' + $line + ','), 1)
+        }
+        return $null
     }
-    if ($new -and $new -ne $txt) {
+    $wanted = [ordered]@{ netidx_config = $clientFwd }
+    if ($PublisherPort -ne 0) { $wanted.netidx_bind = "{0}:{1}" -f $RangePcIp, $PublisherPort }
+    $new = $txt
+    foreach ($k in $wanted.Keys) {
+        if ($null -ne $new) { $new = Set-CfgString $new $k $wanted[$k] }
+    }
+    if ($null -eq $new) {
+        Write-Warn "$rangeCfg has no netidx_base, so the engine publishes nothing: add it and these, e.g."
+        Write-Warn '  "netidx_base": "/local/fowl/range",'
+        foreach ($k in $wanted.Keys) { Write-Warn ('  "{0}": "{1}",' -f $k, $wanted[$k]) }
+    } elseif ($new -ne $txt) {
         Copy-Item $rangeCfg ("{0}.bak-{1}" -f $rangeCfg, (Get-Date -Format "yyyyMMdd-HHmmss"))
         Write-Utf8NoBom $rangeCfg $new
-        Write-Ok "set netidx_config in $rangeCfg (backup next to it); applies on the next mission start"
-    } elseif ($new) {
-        Write-Ok "netidx_config already set"
+        Write-Ok "set $($wanted.Keys -join ' and ') in $rangeCfg (backup next to it); applies on the next mission start"
+    } else {
+        Write-Ok "$($wanted.Keys -join ' and ') already set"
+    }
+    if ($PublisherPort -eq 0 -and $txt -match '"netidx_bind"\s*:\s*"[^"/]*:\d+"') {
+        Write-Warn "$rangeCfg pins netidx_bind to one port from an earlier -PublisherPort run; the firewall now opens 5000-32767 again. Remove netidx_bind, or run with -PublisherPort."
     }
 }
 

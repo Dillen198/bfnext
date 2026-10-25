@@ -1,6 +1,15 @@
 # Fowl Engine Roadmap
 
-This document tracks potential features, improvements, and technical debt for the BFNEXT project.
+This document tracks open features, improvements and technical debt for the BFNEXT project.
+
+- **Open work** is everything above the "Done" section. A **Partly done** item starts with a line that says what has shipped and what remains.
+- **Done** items are listed at the bottom, before "Contributing", with where they live in the code.
+- "(status unverified)" means the item has not been checked against the current code.
+- Paths, counts and line numbers are as of the last review.
+
+TODO.md is the short version of this list.
+
+*Last reviewed: 2026-10-25*
 
 ---
 
@@ -13,7 +22,7 @@ This document tracks potential features, improvements, and technical debt for th
 #### 1. Public Lua API for External Tools
 
 - **Priority**: High
-- **Status**: Mostly done. `bflib/src/api.rs` registers a `vector_strike` Lua global with 10 functions: `get_objectives`, `get_objective`, `get_players`, `get_player`, `get_groups`, `get_campaign_state`, `spawn_deployable`, `spawn_troop`, `move_group` and `add_points`, plus an `on_event` callback hook. `bfprotocols/src/api.rs` holds the shared types, and the netidx RPCs in `bflib/src/bg/rpcs.rs` feed bfdb and the bot. **Still open:** AI orders beyond `move_group` (missions, tasking) and triggering actions (tanker, AWACS, CAP, etc.) from the API.
+- **Status**: Partly done. Done: `bflib/src/api.rs` registers a `vector_strike` Lua global with 10 functions (`get_objectives`, `get_objective`, `get_players`, `get_player`, `get_groups`, `get_campaign_state`, `spawn_deployable`, `spawn_troop`, `move_group` and `add_points`) and an `on_event` callback hook. `bfprotocols/src/api.rs` holds the shared types, and the netidx RPCs in `bflib/src/bg/rpcs.rs` feed bfdb and the bot. **Remaining:** AI orders beyond `move_group` (missions, tasking), triggering actions (tanker, AWACS, CAP, etc.) from the API, and the rest of the netidx RPC interface.
 - **Description**: Enable external tools (Discord bots, web interfaces) to interact with the campaign
 
 **Capabilities needed**:
@@ -83,25 +92,18 @@ pub struct TriggerAction {
 #### 2. Enhanced Ground AI
 
 - **Priority**: Medium
-- **Status**: Partial. Ground routes are checked for interdiction (`route_interdicted` in `bflib/src/db/logistics.rs`), ground convoys despawn on delivery, and the AI commander (`bflib/src/commander.rs`) spends points on barrages, convoy ambushes and similar actions. Players can pay to move ground units, and AI helo missions use a terrain-aware route planner (`plan_helo_route`). **Still open:** coordinated AI ground offensives, A* ground pathfinding with threat avoidance, formations, defensive positioning, and retreat/reinforcement logic.
+- **Status**: Partly done. Done:
+  - Ground formations raised from base garrisons, which move, fight and go home (`bflib/src/db/formation.rs`, `bflib/src/db/battle.rs`).
+  - An AI ground commander per side. It pushes along the offensive axis, counter-attacks threatened bases and pulls battered formations back (`bflib/src/groundwar/ai.rs`). Players can order any formation from F10 > Ground Forces.
+  - Garrisons that drive out to meet an intruder (`bflib/src/db/garrison.rs`), and the Reinforce action, a road convoy of replacement vehicles (`bflib/src/db/reinforce.rs`).
+  - Interdiction checks on ground routes (`route_interdicted` in `bflib/src/db/logistics.rs`), road routing for convoys, and threat-aware routes for AI helo missions (`bflib/src/db/helo_route.rs`).
+
+  **Remaining:** A* ground pathfinding that avoids known threats, as sketched below. Ground routes follow the road network but do not route around air defence or the front.
 - **Description**: Improve ground unit behavior and logistics
 
-**Features**:
-- Convoy pathfinding (currently no actual pathfinding)
+**Features still open**:
+- Convoy pathfinding that avoids threats (routes follow the roads today)
 - Dynamic route selection based on threats
-- Ground unit formations
-- Defensive positioning AI
-- Retreat/reinforcement logic
-
-**Current convoy implementation** (`bflib/src/db/logistics.rs:1650-1750`):
-```rust
-// Current: Convoys spawn and move point-to-point with no pathfinding
-// They use direct waypoints between objectives
-fn spawn_convoy(...) {
-    // Creates waypoints as direct line between source and destination
-    // No terrain awareness, no threat avoidance
-}
-```
 
 **Implementation Details**:
 
@@ -196,21 +198,14 @@ fn spawn_convoy(db: &mut Db, from: ObjectiveId, to: ObjectiveId) -> Result<()> {
 #### 3. Naval Warfare System
 
 - **Priority**: Medium
-- **Status**: Partial. Carrier groups exist (`CarrierCfg`) and can be moved with a `CarrierWaypoint` action. Carriers and amphibious flat-tops get auto-generated TACAN, ICLS, ACLS and Link-4 (`bflib/src/navaids.rs`), and sea logistics routes exist (`spawn_sea_logistics_route`). **Still open:** amphibious operations, shore bombardment, and anti-ship missions with proper tracking. Player aircraft spawn on carriers fine (verified in game, Oct 2026).
+- **Status**: Partly done. Done: carrier groups (`CarrierCfg`) that move with a `CarrierWaypoint` action; auto-generated TACAN, ICLS, ACLS and Link-4 for carriers and amphibious flat-tops (`bflib/src/navaids.rs`); sea logistics routes (`spawn_sea_logistics_route` in `bflib/src/db/logistics.rs`); a naval cruise missile strike action (`ActionKind::NavalCruiseMissileStrike`), which the AI HQ also uses (`bflib/src/hq/planner.rs`); and sea-drone raids on enemy ships (`bflib/src/modern_war/boats.rs`). Player aircraft spawn on carriers (see Done). **Remaining:** amphibious operations, shore bombardment beyond the cruise missile strike, and anti-ship missions with proper tracking.
 - **Description**: Expand naval operations
 
-**Features**:
-- Naval logistics and resupply
+**Features still open**:
+- Naval resupply of carrier groups (sea logistics routes exist; carrier resupply status unverified)
 - Amphibious operations
 - Shore bombardment missions
 - Anti-ship missions with proper tracking
-
-**Current carrier implementation** (`bflib/src/admin.rs:800-900`):
-```rust
-// Carrier repair/respawn
-pub fn repair_carrier(...) { ... }
-pub fn respawn_carrier(...) { ... }
-```
 
 **Implementation Details**:
 
@@ -246,7 +241,6 @@ fn tick_naval_logistics(db: &mut Db) -> Result<()> {
 ```
 
 **Files to modify**:
-- `bflib/src/spawnctx.rs` - Carrier spawn fixes
 - `bfprotocols/src/db/objective.rs` - New objective kinds
 - `bflib/src/db/logistics.rs` - Naval supply routes
 - `bflib/src/db/objective.rs` - Carrier group movement
@@ -257,203 +251,32 @@ fn tick_naval_logistics(db: &mut Db) -> Result<()> {
 #### 4. Client-Side Plugin/UI
 
 - **Priority**: Medium
-- **Status**: In progress. The pieces so far:
-  - `bfcockpit/`: a client-side DCS hook plus a Win32 installer. Version 2 draws the panel with DCS's
-    own dxgui widgets instead of the embedded browser, and calls the bfdb API over HTTPS through
-    `bfcockpit_net.dll`. It mirrors the F10 menu and has CARGO, STATUS, EWR and LOG tabs, plus a Flow-style radial wheel
-    (head, mouse or keys; VR). The installer is published as GitHub release `cockpit-v<version>`.
+- **Status**: Partly done. Done:
+  - `bfcockpit/`: the Vector Strike cockpit plugin (3.3.0), a client-side DCS hook drawn with DCS's own dxgui widgets, plus a Win32 installer. It calls the bfdb API over HTTPS through `bfcockpit_net.dll`, mirrors the F10 menu, and has CARGO, STATUS, EWR and LOG tabs and a radial wheel (head, mouse or keys; VR). Its settings are on an Options -> Special page. The installer is the GitHub release `cockpit-v<version>`, and from 3.2 the plugin updates itself.
+  - F10 answers reach the plugin through the message queue feed (`/api/cockpit/messages` in `bfdb/src/main.rs`).
   - A fog-of-war tactical map fed by `/ws/tacmap` (`bfprotocols/src/tacmap.rs`).
-  - Two bfweb pages, `CockpitPage` and `KneeboardTab`.
-  - The web dashboard, which already covers the territory map, logistics, points and briefing.
+  - The bfweb pages `CockpitPage`, `KneeboardTab` and `BriefingPage`, and the web dashboard, which covers the territory map, logistics, points and briefing.
 
-  The F10 menu has not been replaced yet.
-- **Description**: Dedicated UI beyond F10 radio menus
-
-**Features**:
-- Real-time territory map overlay
-- Logistics status dashboard
-- Point balance and transaction history
-- JTAC target visualization
-- Mission briefing display
-
-**Implementation options**: DCS Scratchpad integration, external overlay app, or web-based
-
-**Implementation Details**:
-
-**Option A: DCS Scratchpad Integration** (Easiest)
-```lua
--- Scratchpad displays text, we can format campaign data as text
--- In bflib, expose data via trigger.action.outText or custom Lua global
-
--- Add to lib.rs Lua initialization:
-lua.globals().set("FOWL_ENGINE", lua.create_table()?)?;
-
--- Periodically update the global table with campaign state:
-fn update_lua_globals(lua: &Lua, db: &Db) -> Result<()> {
-    let fowl = lua.globals().get::<_, Table>("FOWL_ENGINE")?;
-
-    // Player's current points
-    fowl.set("my_points", player.points)?;
-
-    // Nearby objectives as formatted string
-    fowl.set("objectives_text", format_objectives(db, player.pos)?)?;
-
-    // JTAC targets
-    fowl.set("jtac_text", format_jtac_targets(db, player.side)?)?;
-
-    Ok(())
-}
-```
-
-**Option B: External Overlay App** (Most powerful)
-```rust
-// New crate: bfoverlay/
-// Connects to bfdb web server, renders overlay using egui or similar
-
-// bfdb already has a web server, add WebSocket endpoint for real-time updates:
-// In bfdb/src/main.rs:
-
-async fn campaign_ws(
-    ws: warp::ws::Ws,
-    db: Arc<Database>,
-) -> impl Reply {
-    ws.on_upgrade(|socket| async move {
-        let (mut tx, mut rx) = socket.split();
-
-        // Send initial state
-        let state = db.get_campaign_state().await;
-        tx.send(Message::text(serde_json::to_string(&state)?)).await?;
-
-        // Subscribe to updates
-        let mut updates = db.subscribe_updates();
-        while let Some(update) = updates.next().await {
-            tx.send(Message::text(serde_json::to_string(&update)?)).await?;
-        }
-    })
-}
-
-// Overlay client renders:
-// - Mini-map with objectives (colored by ownership)
-// - Frontline visualization
-// - Player position and nearby threats
-// - Point balance
-// - Active missions
-```
-
-**Option C: Web-based Dashboard** (Most accessible)
-```rust
-// Extend bfdb web server with a full SPA dashboard
-// Already has warp server, add:
-
-// Static file serving for React/Vue app
-let static_files = warp::path("dashboard")
-    .and(warp::fs::dir("./dashboard/dist"));
-
-// API endpoints for dashboard
-let api = warp::path("api")
-    .and(
-        campaign_state()
-            .or(player_stats())
-            .or(objective_details())
-            .or(logistics_status())
-    );
-```
-
-**Files to create/modify**:
-- `bfdb/src/web/` - New web module with dashboard routes
-- `bfdb/dashboard/` - Frontend SPA (React/Vue/Svelte)
-- `bflib/src/lib.rs` - Expose Lua globals for Scratchpad
-- `bfoverlay/` - Optional: Native overlay application
+  **Remaining:** deploy the bflib and bfdb the plugin needs, and do a final in-game pass. The F10 menu has not been replaced. JTAC target visualization in the plugin (status unverified).
+- **Description**: Dedicated UI beyond F10 radio menus. The first design options (Scratchpad globals, an external overlay app, a web dashboard) are in git history; the cockpit plugin and bfweb took their place.
 
 ---
 
 #### 5. Weather & Time Effects
 
 - **Priority**: Low
-- **Status**: Mostly done. `LiveWeatherConfig` pulls real-world METAR from CheckWX into the mission (`bflib/src/bg/live_weather.rs`). `TimeOfDayEffectsCfg` sets the night kill bonus (`bflib/src/db/player.rs`). `WeatherEffectsCfg` sets the convoy speed multipliers for rain, storm and snow (`bflib/src/db/logistics.rs`). **Gaps:**
+- **Status**: Partly done. Done: real-world weather and time from CheckWX METAR and open-meteo, written into the mission before it next loads (the `livewx` crate, started from `bflib/src/bg/mod.rs`; `LiveWeatherConfig`). `TimeOfDayEffectsCfg` sets the night kill bonus (`bflib/src/db/player.rs`). `WeatherEffectsCfg` sets the convoy speed multipliers for rain, storm and snow (`bflib/src/db/logistics.rs`). **Remaining:**
   - Three `WeatherEffectsCfg` fields are parsed but never read by bflib, so today they are config-only: `min_visibility_fixed_wing`, `no_helo_in_thunderstorm` and `ewr_weather_range_multiplier`.
   - Seasonal campaign progression has not been started.
 - **Description**: Environmental effects on gameplay
 
-**Features**:
-- Logistics affected by weather (slower convoys in bad weather)
-- Night operations bonuses/penalties
-- Seasonal campaign progression
+**Features still open**:
 - Weather-dependent spawn restrictions
+- Weather-reduced EWR range
+- Seasonal campaign progression
 
-**Implementation Details**:
-
-**Weather data extraction** (from DCS mission):
+**Spawn restriction sketch** (for the config-only fields):
 ```rust
-// In dcso3/src/env.rs, add weather queries:
-
-impl Env {
-    pub fn get_weather(&self) -> Result<Weather> {
-        let weather_table = self.lua.globals()
-            .get::<_, Table>("env")?
-            .get::<_, Table>("mission")?
-            .get::<_, Table>("weather")?;
-
-        Ok(Weather {
-            cloud_density: weather_table.get("clouds")?.get("density")?,
-            cloud_base: weather_table.get("clouds")?.get("base")?,
-            precipitation: weather_table.get("type_weather")?,
-            visibility: weather_table.get("visibility")?.get("distance")?,
-            wind_speed: weather_table.get("wind")?.get("atGround")?.get("speed")?,
-            fog_enabled: weather_table.get("fog")?.get("enabled")?,
-            fog_visibility: weather_table.get("fog")?.get("visibility")?,
-        })
-    }
-
-    pub fn get_mission_time(&self) -> Result<MissionTime> {
-        let env = self.lua.globals().get::<_, Table>("env")?;
-        Ok(MissionTime {
-            elapsed: env.call_function("getValueDictByKey", "time")?,
-            start_time: env.get::<_, Table>("mission")?.get("start_time")?,
-        })
-    }
-}
-
-pub struct Weather {
-    pub cloud_density: u8,      // 0-10
-    pub cloud_base: f64,        // meters
-    pub precipitation: u8,      // 0=clear, 1=rain, 2=thunderstorm, 3=snow
-    pub visibility: f64,        // meters
-    pub wind_speed: f64,        // m/s
-    pub fog_enabled: bool,
-    pub fog_visibility: f64,    // meters
-}
-```
-
-**Weather effects on logistics**:
-```rust
-// In bflib/src/db/logistics.rs:
-
-fn calculate_convoy_speed(base_speed: f64, weather: &Weather) -> f64 {
-    let mut multiplier = 1.0;
-
-    // Rain/snow slows convoys
-    multiplier *= match weather.precipitation {
-        0 => 1.0,      // Clear
-        1 => 0.8,      // Rain
-        2 => 0.6,      // Thunderstorm
-        3 => 0.5,      // Snow
-        _ => 1.0,
-    };
-
-    // Low visibility slows convoys
-    if weather.visibility < 5000.0 {
-        multiplier *= weather.visibility / 5000.0;
-    }
-
-    // Fog
-    if weather.fog_enabled && weather.fog_visibility < 1000.0 {
-        multiplier *= 0.7;
-    }
-
-    base_speed * multiplier.max(0.3)  // Minimum 30% speed
-}
-
 fn can_spawn_aircraft(weather: &Weather, aircraft_type: &Vehicle) -> bool {
     // Helicopters can't fly in thunderstorms
     if aircraft_type.is_helicopter() && weather.precipitation == 2 {
@@ -469,62 +292,20 @@ fn can_spawn_aircraft(weather: &Weather, aircraft_type: &Vehicle) -> bool {
 }
 ```
 
-**Night operations**:
-```rust
-// Add to configuration (bfprotocols/src/cfg/mod.rs):
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TimeOfDayEffects {
-    /// Points multiplier for night kills
-    pub night_kill_bonus: f64,  // e.g., 1.5 for 50% bonus
-    /// Hour when "night" begins (0-23)
-    pub night_start_hour: u8,
-    /// Hour when "night" ends
-    pub night_end_hour: u8,
-    /// Disable certain actions at night
-    pub night_restricted_actions: Vec<String>,
-}
-
-// In points calculation:
-fn calculate_kill_points(base_points: i32, time: &MissionTime, cfg: &TimeOfDayEffects) -> i32 {
-    let hour = (time.start_time + time.elapsed) / 3600 % 24;
-    let is_night = if cfg.night_start_hour > cfg.night_end_hour {
-        // Night spans midnight (e.g., 22:00 - 06:00)
-        hour >= cfg.night_start_hour || hour < cfg.night_end_hour
-    } else {
-        hour >= cfg.night_start_hour && hour < cfg.night_end_hour
-    };
-
-    if is_night {
-        (base_points as f64 * cfg.night_kill_bonus) as i32
-    } else {
-        base_points
-    }
-}
-```
-
 **Files to modify**:
-- `dcso3/src/env.rs` - Weather/time queries
-- `bfprotocols/src/cfg/mod.rs` - Weather effect config
-- `bflib/src/db/logistics.rs` - Weather-modified convoy speed
-- `bflib/src/db/actions.rs` - Weather spawn restrictions
-- `bflib/src/db/player.rs` - Night kill bonuses
+- `bfprotocols/src/cfg/mod.rs` - `WeatherEffectsCfg`
+- `bflib/src/ewr.rs` - Weather range multiplier
+- The slot-entry checks in bflib - Weather spawn restrictions (location unverified)
 
 ---
 
 #### 6. Mission Planning Tools
 
 - **Priority**: Low
-- **Status**: Partial. What exists:
-  - A per-coalition auto briefing and sitrep (`bflib/src/situation.rs`), with a server-wide comms plan.
-  - The F10 tasking board with CAP/CAS/CAPTURE/SUPPLY tasks (`bflib/src/db/tasks.rs`).
-  - The bfweb `BriefingPage`.
-
-  **Still open:** strike package assembly, multi-flight coordination, waypoint sharing and time-on-target coordination.
+- **Status**: Partly done. Done: a per-coalition auto briefing and sitrep with a server-wide comms plan (`bflib/src/situation.rs`); the F10 tasking board with CAP/CAS/CAPTURE/SUPPLY tasks (`bflib/src/db/tasks.rs`); paid tasking, which gives each pilot a task zone at slot entry (`bflib/src/db/tasking.rs`); and the bfweb `BriefingPage`. **Remaining:** strike package assembly for players, multi-flight coordination, waypoint sharing and time-on-target coordination.
 - **Description**: Coordinated mission support
 
-**Features**:
-- Pre-flight briefing system
+**Features still open**:
 - Coordinated multi-flight missions
 - Strike package assembly
 - Waypoint sharing between flights
@@ -689,75 +470,16 @@ fn share_waypoints_to_player(
 #### 7. Advanced Logistics
 
 - **Priority**: Medium
-- **Status**: Mostly done. What exists:
-  - Supply interdiction: interdicted ground routes, plus points for convoy kills (`convoy_interdiction_points`).
-  - The materiel war economy, storage depth and front-line supply routing.
-  - Supply-transfer crates for fuel.
-  - AI helo resource delivery.
-  - Air and sea logistics routes.
-
-  **Still open:** ammunition types affecting availability. **Also not implemented:** the fuel pipeline system described below. No pipeline code exists in bflib or bfprotocols.
+- **Status**: Partly done. Done: supply interdiction (interdicted ground routes, and points for convoy kills via `convoy_interdiction_points`); the materiel war economy, storage depth and front-line supply routing; supply-transfer crates for fuel; AI helo resource delivery; air and sea logistics routes; the emergency repair crate (`bflib/src/db/emergency_repair.rs`); and finite SAM magazines (`bflib/src/modern_war/sam_stock.rs`). **Remaining:** the fuel pipeline system (no pipeline code exists in bflib or bfprotocols), player emergency resupply missions, and ammunition types affecting availability beyond SAM magazines.
 - **Description**: Deeper supply chain mechanics
 
-**Features**:
-- Multiple supply sources with different capabilities
-- Supply interdiction (destroy convoys to affect enemy)
+**Features still open**:
+- Multiple supply sources with different capabilities (status unverified)
 - Emergency resupply missions
 - Fuel pipeline system for forward bases
 - Ammunition types affecting availability
 
 **Implementation Details**:
-
-**Supply interdiction tracking**:
-```rust
-// Track convoy destruction and its effects
-// In bflib/src/db/logistics.rs:
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConvoyState {
-    pub id: ConvoyId,
-    pub from: ObjectiveId,
-    pub to: ObjectiveId,
-    pub cargo: WarehouseContents,
-    pub group_id: GroupId,
-    pub spawn_time: f64,
-    pub expected_arrival: f64,
-}
-
-// In shots.rs or a new interdiction.rs:
-pub fn on_convoy_destroyed(db: &mut Db, convoy_id: ConvoyId, killer: Option<Ucid>) -> Result<()> {
-    let convoy = db.ephemeral.active_convoys.remove(&convoy_id)
-        .ok_or_else(|| anyhow!("Convoy not found"))?;
-
-    // Award points to killer
-    if let Some(ucid) = killer {
-        let points = calculate_interdiction_points(&convoy.cargo);
-        award_points(db, &ucid, points, "Convoy interdiction")?;
-    }
-
-    // The supplies are lost - destination doesn't receive them
-    // Log for statistics
-    db.stats.convoys_destroyed += 1;
-    db.stats.supplies_interdicted += convoy.cargo.total_value();
-
-    // Potentially trigger emergency resupply if destination critically low
-    let dest = db.persisted.objectives.get(&convoy.to)?;
-    if dest.warehouse.is_critically_low() {
-        trigger_emergency_resupply(db, convoy.to)?;
-    }
-
-    Ok(())
-}
-
-fn calculate_interdiction_points(cargo: &WarehouseContents) -> i32 {
-    // Points based on cargo value
-    let mut points = 0;
-    points += cargo.fuel as i32 / 1000;  // 1 point per 1000L fuel
-    points += cargo.ammo as i32 / 100;   // 1 point per 100 rounds
-    points += cargo.equipment.len() as i32 * 10;  // 10 points per vehicle
-    points
-}
-```
 
 **Fuel pipeline system**:
 ```rust
@@ -874,10 +596,10 @@ pub fn request_emergency_resupply(
 #### 8. Dynamic Campaign Events
 
 - **Priority**: Low
-- **Status**: Partial. `bflib/src/db/events.rs` runs these events: artillery barrages, convoy ambushes, reactive enemy CAP and helo patrols. `CampaignEventsCfg` already contains `vip_reward_points` and `evacuation_reward_per_civilian`. **Still open:** VIP extraction and civilian evacuation are config-only, because nothing in bflib reads those fields. Time-limited high-value targets and counter-offensive events have not been started.
+- **Status**: Partly done. Done: `bflib/src/db/events.rs` runs artillery barrages, missile strikes, convoy ambushes, reactive enemy CAP and helo patrols, and commander CAP. Counter-attacks on threatened bases come from the AI ground commander (`bflib/src/groundwar/ai.rs`), and reinforcement convoys from the Reinforce action (`bflib/src/db/reinforce.rs`). **Remaining:** VIP extraction and civilian evacuation are config-only: `CampaignEventsCfg` has `vip_reward_points` and `evacuation_reward_per_civilian`, but nothing in bflib reads them. Time-limited high-value targets, scheduled reinforcement waves and counter-offensive events have not been started.
 - **Description**: Random/scheduled events that affect gameplay
 
-**Features**:
+**Features still open**:
 - Civilian evacuation missions
 - VIP extraction/insertion
 - Time-limited high-value targets
@@ -888,7 +610,7 @@ pub fn request_emergency_resupply(
 
 **Event system architecture**:
 ```rust
-// New file: bflib/src/db/events.rs
+// Sketch: the new event kinds, extending bflib/src/db/events.rs
 
 use rand::Rng;
 
@@ -1037,24 +759,11 @@ fn on_troops_loaded(db: &mut Db, player: &Player, troops: &[TroopId]) -> Result<
 ```
 
 **Files to create/modify**:
-- `bflib/src/db/events.rs` - New event system
+- `bflib/src/db/events.rs` - New event kinds
 - `bflib/src/db/mod.rs` - Add EventScheduler to Db
 - `bflib/src/lib.rs` - Call event tick in slow_timed_events
 - `bflib/src/db/cargo.rs` - VIP pickup detection
-
 - `bfprotocols/src/cfg/mod.rs` - Event configuration
-
----
-
-## Known Issues & Incomplete Features
-
-| Feature | Status | Priority | Location | Notes |
-|---------|--------|----------|----------|-------|
-| Default JTAC laser codes | Done | - | `bfprotocols/src/cfg/mod.rs`, `bflib/src/jtac.rs` | `default_laser_code` (serde default 1688), applied when a JTAC spawns |
-| JTAC settings persistence | Done | - | `bflib/src/db/cargo.rs` | `InternalTroop.jtac` carries the `JtacState` through troop load/unload |
-| Troop carrier system | Done | - | `bflib/src/db/cargo.rs` | Mechanized infantry: troops ride IFVs/APCs (`GroundVehiclePassengers`) |
-| Points message spam | Done | - | `bflib/src/db/player.rs` | Points message/stat only sent when `amount != 0` |
-| C-130 internal crates blocking | Done | - | `bflib/src/db/cargo.rs` | `spawn_crate` only counts the player's ground crates (`max_crates`) and free space; internally loaded crates no longer block spawning |
 
 ---
 
@@ -1064,28 +773,12 @@ fn on_troops_loaded(db: &mut Db, player: &Player, troops: &[TroopId]) -> Result<
 
 ---
 
-#### 1. Frontline Voronoi Calculation
+#### 1. Frontline Calculation
 
-- **Location**: `bflib/src/db/frontline.rs:96-124`
-- **Current complexity**: O(grid_size² × num_objectives)
-- **Impact**: At 100×100 grid with 50 objectives = ~500,000 distance calculations
-- **Improvement**: Use spatial indexing (R-tree or KD-tree) for nearest-objective lookup
-- **Expected gain**: O(grid_size² × log(num_objectives))
+- **Status**: Partly done. Done: the frontline is now an influence field contoured with marching squares (`bfprotocols/src/frontline.rs`, drawn by `bflib/src/frontline.rs`). It is recomputed only when an objective changes hands, and the F10 redraw is simplified to at most 250 segments. **Remaining:** the field still sums every objective and pressure point for each cell of a 160×160 grid, O(grid² × points), with no spatial index. `rstar` is declared in `bflib/Cargo.toml`, but no code uses it. There is no incremental update.
+- **Improvement**: Use a spatial index (R-tree or KD-tree) so each cell visits only the points within the 3σ cutoff, and recompute only the cells near a changed objective.
 
-**Current code** (simplified):
-```rust
-for x in 0..grid_width {
-    for y in 0..grid_height {
-        let pos = grid_to_world(x, y);
-        // O(n) scan through all objectives
-        let nearest = objectives.iter()
-            .min_by_key(|obj| distance_squared(pos, obj.pos));
-        grid[x][y] = nearest.side;
-    }
-}
-```
-
-**Optimized implementation**:
+**Spatial index sketch** (written for the old nearest-objective grid; the same tree serves a radius query):
 ```rust
 use rstar::{RTree, AABB};
 
@@ -1108,11 +801,6 @@ for x in 0..grid_width {
         grid[x][y] = nearest.side;
     }
 }
-```
-
-**Dependencies to add** (`bflib/Cargo.toml`):
-```toml
-rstar = "0.11"
 ```
 
 **Incremental update optimization**:
@@ -1146,6 +834,7 @@ fn update_frontline_incremental(
 
 #### 2. JTAC Contact Scanning
 
+- **Status**: Open (status unverified)
 - **Location**: `bflib/src/jtac.rs`
 - **Current complexity**: O(num_jtacs × num_ground_units)
 - **Impact**: Scales poorly with large unit counts
@@ -1229,6 +918,7 @@ fn update_unit_position(db: &mut Db, unit_id: UnitId, new_pos: Vector2<f64>) {
 
 #### 3. Logistics Warehouse Sync
 
+- **Status**: Open (status unverified)
 - **Location**: `bflib/src/db/logistics.rs`
 - **Current complexity**: Potential O(n²) for transfers between objectives
 - **Impact**: Slow with many objectives
@@ -1327,6 +1017,7 @@ fn find_nearest_source(db: &Db, dest: &Objective) -> Option<ObjectiveId> {
 
 #### 4. Unit Position Updates
 
+- **Status**: Open (status unverified)
 - **Location**: `bflib/src/db/group.rs`, `bflib/src/db/player.rs`
 - **Current**: Incremental updates (good), but still iterates all units
 - **Improvement**: Dirty flag system, batch Lua calls
@@ -1393,6 +1084,7 @@ fn init_lua_helpers(lua: &Lua) -> Result<()> {
 
 #### 5. Reduce SmallVec/CompactString Churn
 
+- **Status**: Open
 - **Issue**: Frequent small allocations create GC pressure
 - **Locations**: Throughout codebase, especially in hot paths
 
@@ -1437,7 +1129,8 @@ impl Drop for PooledVec {
 
 #### 6. Expand Lua API Caching
 
-- **Current**: LandCache exists for terrain data
+- **Status**: Open
+- **Current**: `LandCache` exists for terrain data (`bflib/src/landcache.rs`)
 - **Location**: `bflib/src/db/ephemeral.rs`
 
 **Additional caching**:
@@ -1508,72 +1201,26 @@ fn get_unit_position(db: &Db, unit_id: UnitId, time: f64) -> Result<Vector3<f64>
 
 | Improvement | Effort | Impact | Location | Implementation |
 |-------------|--------|--------|----------|----------------|
-| ~~Skip zero-point change messages~~ (done) | Low | Low | `bflib/src/db/player.rs` | `if amount != 0` guard in place |
-| ~~Add default JTAC laser codes~~ (done) | Low | Medium | `bfprotocols/src/cfg/mod.rs` | `default_laser_code` with serde default |
-| Profiling instrumentation | Low | High | `bflib/src/lib.rs` | Add timing around `slow_timed_events` |
-| Incremental frontline updates | Medium | High | `bflib/src/db/frontline.rs` | Track changed objectives, update locally |
-| Batch message queue processing | Low | Medium | `bflib/src/msgq.rs` | Process N messages per frame instead of 1 |
-
-**Profiling instrumentation example**:
-```rust
-// In lib.rs, wrap slow_timed_events:
-
-fn run_slow_timed_events(db: &mut Db) -> Result<()> {
-    let start = std::time::Instant::now();
-
-    let t0 = std::time::Instant::now();
-    tick_logistics(db)?;
-    let logistics_time = t0.elapsed();
-
-    let t1 = std::time::Instant::now();
-    update_frontline(db)?;
-    let frontline_time = t1.elapsed();
-
-    let t2 = std::time::Instant::now();
-    update_jtac_contacts(db)?;
-    let jtac_time = t2.elapsed();
-
-    // ... other operations ...
-
-    let total = start.elapsed();
-
-    // Log if any operation takes too long
-    if total.as_millis() > 100 {
-        log::warn!(
-            "slow_timed_events took {}ms (logistics: {}ms, frontline: {}ms, jtac: {}ms)",
-            total.as_millis(),
-            logistics_time.as_millis(),
-            frontline_time.as_millis(),
-            jtac_time.as_millis(),
-        );
-    }
-
-    // Publish to perf stats
-    db.perf.slow_events_time = total;
-    db.perf.logistics_time = logistics_time;
-    db.perf.frontline_time = frontline_time;
-    db.perf.jtac_time = jtac_time;
-
-    Ok(())
-}
-```
+| Incremental frontline updates | Medium | High | `bfprotocols/src/frontline.rs` | Track changed objectives, update locally (see Frontline Calculation) |
 
 ---
 
 ## Technical Debt
 
-### Error Handling (67 `unwrap()` calls)
+### Error Handling (`unwrap()` calls)
+
+- **Status**: Partly done. The files named in the first audit are clean outside tests: `bflib/src/db/cargo.rs` has 2 (`partial_cmp(..).unwrap()` in sorts), and `bflib/src/db/actions.rs`, `bflib/src/admin.rs` and `bflib/src/bg/logpub.rs` have none. bflib has about 64 non-test `unwrap()` calls in all, most of them in newer code. (Counted 2026-10-25, up to each file's first `#[cfg(test)]`.)
 
 **Risk Level**: High for production stability
 
-**Key files requiring attention**:
+**Files with the most non-test `unwrap()` calls**:
 
 | File | Count | Risk Areas |
 |------|-------|------------|
-| `bflib/src/db/cargo.rs` | 12+ | Crate operations, map lookups |
-| `bflib/src/db/actions.rs` | 8+ | Waypoint calculations, group spawning |
-| `bflib/src/admin.rs` | 10+ | Admin command parsing |
-| `bflib/src/bg/logpub.rs` | 2 | UTF-8 byte conversion |
+| `bflib/src/db/formation.rs` | 26 | `formations.get_mut_cow(&id).unwrap()` after a lookup |
+| `bflib/src/db/player.rs` | 8 | Not reviewed |
+| `bflib/src/menu/cargo.rs` | 7 | Not reviewed |
+| `bflib/src/db/group.rs` | 4 | Not reviewed |
 
 **Systematic fix approach**:
 ```rust
@@ -1598,14 +1245,15 @@ if let Some(obj) = db.objectives.get(&obj_id) {
 ```
 
 **Priority order for fixes**:
-1. `cargo.rs` - Affects player interactions
-2. `actions.rs` - Affects mission spawning
-3. `admin.rs` - Affects server administration
-4. `logpub.rs` - Affects logging reliability
+1. `formation.rs` - Runs on every ground war tick
+2. `menu/cargo.rs` and `player.rs` - Affect player interactions
+3. `group.rs` - Affects group spawning and tracking
 
 ---
 
 ### Data Consistency
+
+- **Status**: Open (status unverified)
 
 **Issue**: Multi-step operations can leave corrupted state if interrupted
 
@@ -1654,13 +1302,18 @@ fn transfer_supplies(db: &mut Db, from: ObjectiveId, to: ObjectiveId, amount: u3
 
 ### Code Organization
 
+- **Status**: Open. The large files have grown since the first audit (line counts from 2026-10-25).
+
 **Large files needing refactoring**:
 
 | File | Lines | Suggested Split |
 |------|-------|-----------------|
-| `logistics.rs` | 2082 | `logistics/warehouse.rs`, `logistics/convoy.rs`, `logistics/transfer.rs` |
-| `objective.rs` | 1526 | `objective/capture.rs`, `objective/spawning.rs`, `objective/state.rs` |
-| `jtac.rs` | 1813 | `jtac/targeting.rs`, `jtac/laser.rs`, `jtac/reports.rs` |
+| `bflib/src/db/logistics.rs` | 8051 | `logistics/warehouse.rs`, `logistics/convoy.rs`, `logistics/transfer.rs` |
+| `bflib/src/db/cargo.rs` | 5601 | Not planned yet |
+| `bflib/src/db/actions.rs` | 5009 | Not planned yet |
+| `bflib/src/db/objective.rs` | 4654 | `objective/capture.rs`, `objective/spawning.rs`, `objective/state.rs` |
+| `bflib/src/admin.rs` | 4123 | Not planned yet |
+| `bflib/src/jtac.rs` | 2997 | `jtac/targeting.rs`, `jtac/laser.rs`, `jtac/reports.rs` |
 
 **Refactoring approach**:
 ```rust
@@ -1689,6 +1342,8 @@ pub fn tick_logistics(db: &mut Db) -> Result<()> {
 
 ## Scalability Testing Needed
 
+- **Status**: Open (status unverified). No load test results are recorded.
+
 | Scenario | Target | Current Status | Test Method | Concerns |
 |----------|--------|----------------|-------------|----------|
 | Objectives | 100+ | Untested | Create test mission with 100 objectives | Frontline calculation, O(n²) transfers |
@@ -1697,106 +1352,75 @@ pub fn tick_logistics(db: &mut Db) -> Result<()> {
 | Campaign duration | 24h+ | Unknown | Run campaign for extended period | Memory leaks, state bloat, save file growth |
 | Save file size | Large campaigns | Unknown | Monitor `.state` file size over time | Load/save performance, disk usage |
 
-**Profiling setup**:
-```rust
-// Add to lib.rs for basic profiling:
-
-#[cfg(feature = "profiling")]
-mod profiling {
-    use std::time::{Duration, Instant};
-    use std::collections::HashMap;
-
-    thread_local! {
-        static TIMINGS: RefCell<HashMap<&'static str, Vec<Duration>>> = RefCell::new(HashMap::new());
-    }
-
-    pub fn record(name: &'static str, duration: Duration) {
-        TIMINGS.with(|t| {
-            t.borrow_mut().entry(name).or_default().push(duration);
-        });
-    }
-
-    pub fn report() -> String {
-        TIMINGS.with(|t| {
-            let timings = t.borrow();
-            let mut report = String::new();
-            for (name, durations) in timings.iter() {
-                let avg = durations.iter().sum::<Duration>() / durations.len() as u32;
-                let max = durations.iter().max().unwrap_or(&Duration::ZERO);
-                report.push_str(&format!("{}: avg={:?}, max={:?}, samples={}\n",
-                    name, avg, max, durations.len()));
-            }
-            report
-        })
-    }
-}
-
-macro_rules! timed {
-    ($name:expr, $body:expr) => {{
-        let start = std::time::Instant::now();
-        let result = $body;
-        #[cfg(feature = "profiling")]
-        profiling::record($name, start.elapsed());
-        result
-    }};
-}
-
-// Usage:
-fn slow_timed_events(db: &mut Db) -> Result<()> {
-    timed!("logistics", tick_logistics(db)?);
-    timed!("frontline", update_frontline(db)?);
-    timed!("jtac", update_jtac_contacts(db)?);
-    Ok(())
-}
-```
+**Profiling**: per-stage timings already exist. `bfprotocols/src/perf.rs` keeps HDR histograms for the frame, slow timed events, the logistics phases, JTAC contacts, the frontline and more, and `bflib/src/bg/perf.rs` publishes them over netidx. Use them to measure these scenarios.
 
 ---
 
 ## Implementation Priority
 
-### Phase 1: Stability & Polish
-1. Fix carrier aircraft spawning - High impact for naval operations
-2. ~~Add default JTAC laser codes~~ - Done
-3. ~~Fix JTAC settings persistence~~ - Done
-4. Replace critical `unwrap()` calls - Production stability
-5. ~~Skip zero-point messages~~ - Done
+Open work only. Done items are in the Done section.
+
+### Phase 1: Stability
+1. Replace critical `unwrap()` calls - Production stability (see Technical Debt)
 
 ### Phase 2: Performance
-1. Add profiling instrumentation - Needed to measure improvements
-2. Optimize frontline calculation - Add R-tree spatial index
-3. Implement JTAC spatial partitioning - Add spatial grid
-4. Expand caching - Position extrapolation, group caching
+1. Frontline: spatial index and incremental updates
+2. Implement JTAC spatial partitioning - Add spatial grid
+3. Expand caching - Position extrapolation, group caching
 
 ### Phase 3: Features
-1. Complete public Lua API - Enables external tool ecosystem
-2. Enhanced ground AI pathfinding - Major gameplay improvement
-3. Naval warfare improvements - Expand gameplay options
-4. Advanced logistics features - Deeper gameplay
+1. Finish the public Lua API - AI orders and actions
+2. Ground pathfinding with threat avoidance
+3. Naval warfare - Amphibious ops, shore bombardment, anti-ship tracking
+4. Advanced logistics - Pipelines, emergency resupply, ammunition types
 
 ### Phase 4: Polish & Expansion
-1. Client-side UI plugin - Better user experience
-2. Mission planning tools - Multiplayer coordination
-3. Weather effects - Immersion and variety
-4. Dynamic campaign events - Replayability
+1. Cockpit plugin - Deploy, final in-game pass
+2. Mission planning tools - Strike packages, TOT, waypoint sharing
+3. Weather effects - The config-only fields, seasons
+4. Dynamic campaign events - VIP, evacuation, high-value targets
 
 ---
 
 ## Audit Sept 2026
 
-These new ideas came out of the September 2026 audit. None of them is started.
+These ideas came out of the September 2026 audit. The ones that shipped are in the Done section.
 
-- **Engine-generated contracts**: the engine posts paid jobs (such as "deliver 4 crates to X" or "kill the SA-11 at Y") from what the campaign needs.
-- **Underdog balancing**: scale income, costs or AI support by team size and territory, so a losing side can still act.
-- **Off-peak protection**: slow down or pause captures when one side has nobody online.
-- **SEAD/assist credit**: share kill and capture credit with players who suppressed the defences or helped with the kill.
-- **Contested consolidation**: enemy presence in the zone pauses or reverses post-capture consolidation progress.
-- **Rookie mode**: new pilots get cheaper sorties, no life loss, and guided first tasks.
-- **Sortie debrief**: a per-sortie summary on landing or slot-out (kills, points, cargo, damage), in game and on the dashboard.
-- **Squadrons**: player groups with a shared roster, stats, a home base and a tag.
+- **Engine-generated contracts**: Partly done. Paid tasking gives each pilot a task zone at slot entry, with a points multiplier inside it (`bflib/src/db/tasking.rs`). Remaining: posted jobs with a fixed payout (such as "deliver 4 crates to X" or "kill the SA-11 at Y"), built from what the campaign needs.
+- **SEAD/assist credit**: Partly done. Kill points are split by weight among everyone who hit the target, with a bonus for the killing blow (`bflib/src/db/player.rs`). Remaining: credit for players who suppressed the defences without hitting the target, and shared capture credit.
+- **Contested consolidation**: enemy presence in the zone pauses or reverses post-capture consolidation progress. Today progress pauses only when the holding troops leave, and it is never rolled back (`capture_hold_progress` in `bflib/src/db/objective.rs`).
+- **Rookie mode**: Partly done. A pilot with fewer than 5 sorties gets a safer task and a pointer to the getting-started help in the slot briefing (`ROOKIE_SORTIES` in `bflib/src/db/player.rs`, used by `bflib/src/situation.rs`). Remaining: cheaper sorties and no life loss.
+- **Squadrons**: Partly done. bfdb has squadrons with a tag, a name, an owner, a member roster, squadron XP and a leaderboard (`bfdb/src/squadrons.rs`, `/api/squadrons`). Remaining: a home base (status unverified).
 - **Package planner**: build a strike package with roles, a TOT and shared waypoints (see Mission Planning).
 - **VIP/evac events**: wire the existing `CampaignEventsCfg` VIP and evacuation fields to real events.
 - **Amphibious ops**: landing craft or helo assault from the sea to capture coastal objectives.
-- **AI ground offensives**: the commander AI plans multi-group pushes against weak enemy objectives.
+
+---
+
+## Done
+
+Shipped items, each with where it lives in the code. The design sketches these items used to carry are in git history (`git log -p -- ROADMAP.md`).
+
+### From Known Issues
+
+- **Default JTAC laser codes**: `default_laser_code` (serde default 1688) is applied when a JTAC spawns. `bfprotocols/src/cfg/mod.rs`, `bflib/src/jtac.rs`.
+- **JTAC settings persistence**: `InternalTroop.jtac` carries the `JtacState` through troop load and unload. `bflib/src/db/cargo.rs`.
+- **Troop carrier system**: mechanized infantry ride IFVs and APCs (`GroundVehiclePassengers`). `bflib/src/db/cargo.rs`.
+- **Points message spam**: the points message and stat are sent only when `amount != 0`. `bflib/src/db/player.rs`.
+- **C-130 internal crates blocking**: `spawn_crate` counts only the player's ground crates (`max_crates`) and free space, so internally loaded crates no longer block spawning. `bflib/src/db/cargo.rs`.
+- **Carrier aircraft spawning**: player aircraft spawn on carriers. The evidence is an in-game check (Oct 2026), not a specific code change.
+
+### Performance
+
+- **Profiling instrumentation**: per-stage HDR histograms (frame, slow timed events, logistics phases, JTAC contacts, frontline and more), published over netidx. `bfprotocols/src/perf.rs`, `bflib/src/bg/perf.rs`.
+- **Batch message queue processing**: each pass drains up to `max_msgs_per_second` commands, with a share kept for F10 markup so it is not starved. `take_batch` in `bflib/src/msgq.rs`.
+
+### From the Sept 2026 audit
+
+- **Off-peak protection**: while a base's owner has fewer than `min_defenders` players in a slot, a capture there takes longer (`Cfg::population_scaling`). `bflib/src/db/balance.rs`.
+- **Underdog balancing**: underdog pay raises a side's earnings by head count and territory (`underdog_max_bonus`, `underdog_territory_weight`). `bfprotocols/src/cfg/economy.rs`, `bflib/src/db/economy.rs`.
+- **Sortie debrief**: a per-flight tally (kills, contributions, weapons fired) shown on landing, and a full-page debrief on the dashboard. `SortieTally` in `bflib/src/db/player.rs`, `bfweb/src/lib/sortie.ts`.
+- **AI ground offensives**: each side's AI ground commander raises formations near the front, sends them along the offensive axis, counter-attacks threatened bases and pulls battered formations back. `bflib/src/groundwar/ai.rs`, `bflib/src/db/formation.rs`, `bflib/src/hq/`.
 
 ---
 
@@ -1811,4 +1435,4 @@ When working on items from this roadmap:
 
 ---
 
-*Last updated: September 2026*
+*Last reviewed: 2026-10-25*

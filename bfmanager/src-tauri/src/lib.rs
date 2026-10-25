@@ -546,8 +546,8 @@ async fn restore_start(opts: backup::RestoreOptions) -> CmdResult<()> {
 }
 
 #[tauri::command]
-async fn verify_backup(zip: String) -> CmdResult<()> {
-    blocking(move || backup::start_verify(zip)).await
+async fn verify_backup(zip: String, password: Option<String>) -> CmdResult<()> {
+    blocking(move || backup::start_verify(zip, password)).await
 }
 
 #[tauri::command]

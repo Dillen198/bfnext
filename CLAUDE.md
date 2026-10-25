@@ -64,13 +64,26 @@ mdbook serve  # View at http://localhost:3000
 
 ### Testing
 
-CI (`.github/workflows/build.yml`, Windows runner) runs about 450 Rust tests
-across the whole workspace, plus a separate check of the excluded bftools:
+CI (`.github/workflows/build.yml`) runs these jobs on every push and PR:
+
+| Job | Runner | What |
+|---|---|---|
+| `check` | Windows | `cargo check` + `cargo test --workspace --locked` (about 450 Rust tests), `cargo check` of bftools |
+| `rust-lint` | Windows | `cargo fmt --all --check` and `cargo clippy --workspace --all-targets`, **report-only** (`continue-on-error`) until the tree is clean |
+| `manager` | Windows | `cargo test` for `bfmanager/src-tauri` (own Cargo.lock), after staging a placeholder `bfmanager/dist` and the bundled resources |
+| `frontend` | Ubuntu | bfweb, bfsite, bfwiki, bfrange-web: `npm ci --ignore-scripts`, then `typecheck`/`lint`/`test`/`build` (each `--if-present`), Node 22 |
+| `bot` | Windows | `compileall` over `DCSServerBot/`, then pytest in `DCSServerBot/tests` |
+
+Locally:
 
 ```bash
 cargo check --workspace --locked
 cargo test --workspace --locked
 cargo check --locked --manifest-path bftools/Cargo.toml
+cargo test --locked --manifest-path bfmanager/src-tauri/Cargo.toml   # see notes
+npm --prefix bfweb test        # vitest
+npm --prefix bfrange-web test  # vitest
+pip install -r DCSServerBot/tests/requirements.txt && python -m pytest -q   # in DCSServerBot/tests
 ```
 
 Notes:
@@ -78,18 +91,14 @@ Notes:
   `PATH` (CI adds `$GITHUB_WORKSPACE`; locally, source `setup-build.ps1`).
 - bfdb embeds `bfweb/dist` and `bfsite/dist` with RustEmbed and will not
   compile if they are missing. Build the frontends first, or create empty
-  directories (CI stubs `bfweb/dist`).
+  directories (CI stubs both).
+- bfmanager's build needs `bfmanager/dist` (any `index.html` will do for
+  tests) and the bundles from `node bfmanager/scripts/stage-bot.mjs` and
+  `stage-range.mjs`. `tauri build` makes them all for real.
+- The bot tests' requirements leave out discord.py on purpose: the icon
+  tests check the plain-unicode fallback. With discord.py installed,
+  `test_fowlengine_cog_wiring.py` also imports the real cog.
 - No test needs DCS, a netidx resolver or the network.
-
-Frontend and bot tests run separately:
-
-```bash
-npm --prefix bfweb test        # vitest
-npm --prefix bfrange-web test  # vitest
-```
-
-The DCSServerBot plugin has offline pytest suites in `DCSServerBot/tests/`;
-the header of `test_fowlengine_ops.py` gives the venv setup.
 
 Gameplay is still verified in DCS: `TESTING.md` is the in-game checklist.
 
@@ -150,7 +159,8 @@ The root `Cargo.toml` workspace has 9 members: `dcso3`, `livewx`, `bflib`,
 ### bfdb - Database & Web Server
 - **Purpose**: Stats database, persistence and the HTTP/websocket backend for
   every web app (warp). Embeds the `bfweb` and `bfsite` builds
-- **Type**: Binaries `bfdb` (server), `test` (DB test utility), `migrate`
+- **Type**: Binary `bfdb` (server). The old `test` and `migrate` helper
+  binaries were removed
 - **Location**: `bfdb/src/`
 - **Key files**: `main.rs` (routes), `db.rs` (Sled database), `db_id.rs`,
   `range/` (training range API), `news*.rs`, `gci.rs`, `milatc/`, `voice/`, `replay/`
@@ -195,9 +205,9 @@ The root `Cargo.toml` workspace has 9 members: `dcso3`, `livewx`, `bflib`,
 | `bfwiki/` | Player wiki (React + Vite); content lives in bfdb, seeded from `bfdb/seed_wiki/` |
 | `bfrange-web/` | Training range dashboard (React + Vite) |
 | `bfmanager/` | Fowl Engine Manager: Tauri installer, Windows service and auto-updater for a server box |
-| `DCSServerBot/plugins/fowlengine/` | DCSServerBot plugin: Discord status, alerts, ops commands, binary staging and auto-update. Related extensions are in `DCSServerBot/extensions/` |
+| `DCSServerBot/plugins/fowlengine/` | DCSServerBot plugin: Discord status, alerts, ops commands, binary staging and auto-update. The cog is `commands.py` plus `cog_*.py` mixins (layout in its README). Related extensions are in `DCSServerBot/extensions/`; optional pip deps in `DCSServerBot/requirements-plugins.txt` |
 | `user-guide/` | Player guide (mdBook) |
-| `deploy/` | Deployment docs, Caddy config and `publish-release.ps1` |
+| `deploy/` | Deployment docs (server setup, auto-update, multi-instance, range, `backups/`, `monitoring.md`, `signing-keys.md`), Caddy config and `publish-release.ps1` |
 
 ## Data Flow
 

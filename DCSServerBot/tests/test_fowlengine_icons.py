@@ -331,12 +331,16 @@ def test_no_raw_emoji_in_plugin_strings():
 
 
 def test_message_template_defaults_use_icon_placeholders():
-    for name in ("commands.py", "listener.py"):
-        src = (PLUGIN / name).read_text(encoding="utf-8")
+    # the cog is split over commands.py and its cog_*.py parts
+    found = 0
+    for path in sorted(PLUGIN.glob("*.py")):
+        name = path.name
+        src = path.read_text(encoding="utf-8")
         defaults = re.findall(r"messages\.get\('\w+', \"([^\"]*)\"\)", src)
-        assert defaults, name
+        found += len(defaults)
         for d in defaults:
             assert d.startswith("{icon:"), f"{name}: {d}"
+    assert found, "no messages.get(...) defaults found in the plugin"
 
 
 # ---- the community plugins ------------------------------------------------------------

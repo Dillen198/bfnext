@@ -28,7 +28,7 @@ except ImportError as e:
     HAS_YTDLP = False
     print(f"\n==========================================================")
     print(f"RADIO WARNING: Missing yt-dlp! ({e})")
-    print(f"Run `pip install yt-dlp PyNaCl` in the bot's venv, then restart.")
+    print(f"Install requirements-plugins.txt (yt-dlp, PyNaCl, davey) in the bot's venv, then restart.")
     print(f"==========================================================\n")
 
 ytdl_format_options = {
@@ -96,7 +96,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
     @classmethod
     async def from_url(cls, url, *, loop=None, stream=False, audio_filter=None, override_title=None):
         if not HAS_YTDLP:
-            raise Exception("yt-dlp is not installed in the bot's venv -- run `pip install yt-dlp PyNaCl` and restart.")
+            raise Exception("yt-dlp is not installed in the bot's venv -- install requirements-plugins.txt (yt-dlp, PyNaCl, davey) and restart.")
         loop = loop or asyncio.get_event_loop()
         try:
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))

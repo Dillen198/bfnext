@@ -4,10 +4,16 @@ The training range is a separate DCS server running `bfrange.dll` (the range
 engine) instead of `bflib.dll` (the campaign engine). To bfdb and
 DCSServerBot it is one more bfdb instance, of `kind: range`.
 
-It can run on the same PC as the campaign servers (everything below as
-written) or on **another PC on the same network**: then follow
-[Range on a second PC](#range-on-a-second-pc) first, which changes only the
-networking and where a few files live.
+Three layouts:
+
+* **A standalone range box** (how the live range runs): its own PC with its
+  own bot, database, bfdb and resolver, set up by Fowl Engine Manager's
+  **New box** wizard. The campaign box isn't touched. See
+  [Standalone range box](#standalone-range-box).
+* **The same PC as the campaign servers**: everything below, as written.
+* **A second PC that hangs off the campaign box's bot** (agent node, shared
+  database, read-only shares): [Range on a second PC](#range-on-a-second-pc).
+  This layout is older, and the live range doesn't use it.
 
 ## Setup, start to finish
 
@@ -107,7 +113,79 @@ A 20-minute smoke test that exercises every part of the chain:
 
 ---
 
+## Standalone range box
+
+The live range runs on a PC of its own, on the same LAN as the campaign box,
+and **shares nothing with the campaign stack**: no database, no bot, no
+resolver, no config. The campaign box needs no range instance and no range
+channels in its YAML, and it can't restart, update or reconfigure the range.
+Only the public DNS records sit side by side.
+
+```
+ RANGE BOX                                          CAMPAIGN BOX (untouched)
+ ┌───────────────────────────────────────────┐      ┌─────────────────────────┐
+ │ FowlEngine service (Fowl Engine Manager)  │      │ its own Manager, bot,   │
+ │  └─ DCSServerBot (own Discord app/token)  │      │ PostgreSQL, bfdb,       │
+ │      ├─ PostgreSQL (own database)         │      │ resolver, Caddy for     │
+ │      ├─ DCS.range + bfrange.dll           │      │ api.vectorstrike.org    │
+ │      └─ procman: bfdb (kind: range only)  │      └─────────────────────────┘
+ │               + netidx resolver (loopback)│
+ │ SRS, Tacview, range ATC (whisper + Piper) │
+ └───────────────────────────────────────────┘
+   ▲ players: DCS, SRS        range-api.vectorstrike.org → bfdb :8880
+```
+
+**Setting one up.** Install Fowl Engine Manager on a fresh Windows PC and
+run **New box** (range profile, `bfmanager/src-tauri/src/newbox.rs`). One
+job installs Python and PostgreSQL, the bot's database, DCSServerBot, the
+Discord channels (optional, with the new bot's token), the `DCS.range`
+instance with the range mission and config, the signed engine binaries
+(`bfrange.dll`, `bfdb.exe`, `netidx.exe`, checked against
+`bfmanager/src-tauri/engine.pub`), the range ATC's speech (whisper.cpp,
+Piper), the bot config, the Fowl Engine plugin, the firewall rules, SRS,
+DCS World Server, Tacview, and the FowlEngine service. Every step skips
+whatever is already there, so you can run the job again after fixing what
+stopped it. Then it lists what it can't do for you:
+
+1. **DCS:** sign in to the ED account in the DCS dialog.
+2. **Discord:** a separate bot application for the range (its own token,
+   its own `#range-*` channels in the same guild). Invite it to the guild,
+   and set its OAuth redirect to
+   `https://range-api.vectorstrike.org/api/auth/callback`.
+3. **Router:** forward the range server's DCS and SRS ports to this PC.
+4. **Public API:** `range-api.vectorstrike.org` must reach this box's bfdb
+   on port 8880. Two ways:
+   * the campaign box's Caddy proxies it to the range PC's LAN address,
+     which is the wizard's suggestion (`range-api.vectorstrike.org {
+     reverse_proxy <range PC>:8880 }`, with bfdb listening on the LAN);
+   * or a front door on the range PC itself, for example a Cloudflare
+     Tunnel to `http://localhost:8880` when ports 80/443 on its public
+     address are taken. bfdb then stays on loopback.
+
+   Either way, leave `api.vectorstrike.org` and the campaign's other
+   records alone.
+5. **Site:** the `bfrange-web` Vercel project, built with
+   `VITE_API_BASE=https://range-api.vectorstrike.org`, served at
+   `range.vectorstrike.org` (CNAME to Vercel). Add that origin to the range
+   bfdb's `cors_origins`.
+
+**Updates.** The range box's bot checks engine releases against its own
+`autoupdate.public_key` (the wizard pins the release key), so it only
+installs signed releases. The campaign box keeps its own key and its own
+auto-update settings, so a range release never lands there by accident.
+Fowl Engine Manager updates itself from `manager-v*` releases on its own
+channel; the stable campaign box doesn't take beta Manager builds.
+
+**Backups and monitoring** are per box: run `deploy/backups/backup-bot.ps1`
+on each one, and watch `https://range-api.vectorstrike.org/api/health` on
+its own (`deploy/monitoring.md`).
+
 ## Range on a second PC
+
+> The older layout: the range PC is an agent node of the campaign box's
+> bot. The live range uses the [standalone box](#standalone-range-box)
+> instead. This section and `deploy/range-pc/` are kept for anyone who
+> wants a single bot across both PCs.
 
 The range DCS server runs on its own PC; bfdb, the bot's Discord side, the
 database and the campaign servers stay on the main PC. Two scripts in
@@ -140,7 +218,7 @@ reaches the range instance through it (`netidx_resolver` below).
 | 1 | router | Give both PCs **fixed LAN addresses** (DHCP reservations). Everything below names them. |
 | 2 | range PC | Install DCS World Server, SRS and Tacview. Copy `netidx.exe` from the main PC (`(Get-Command netidx).Source` there) to `C:\fowl-range\netidx.exe`. |
 | 3 | range PC | Create `DCS.range` exactly as in "DCSServerBot" steps 1-6 below (Saved Games folder, hooks, `Export.lua`, the `_RANGE` config, Tacview), on this PC. |
-| 4 | range PC | Elevated PowerShell: `.\setup-range-pc.ps1 -MainPcIp 192.168.1.10`. It asks for a password for the new `fowlread` account. It starts the range's resolver (a scheduled task, back after every reboot), opens the firewall (resolver/RPCs/shares for the main PC only, DCS and SRS for everyone), shares `Logs` and `Tacview` read-only, points `Export.lua` at the main PC and sets `netidx_config` in `VSRANGE_RANGE`. Re-run it any time; it replaces what it made. |
+| 4 | range PC | Elevated PowerShell: `.\setup-range-pc.ps1 -MainPcIp 192.168.1.10`. It asks for a password for the new `fowlread` account. It starts the range's resolver (a scheduled task, back after every reboot), opens the firewall (resolver/RPCs/shares for the main PC only, DCS and SRS for everyone), shares `Logs` and `Tacview` read-only, points `Export.lua` at the main PC and sets `netidx_config` in `VSRANGE_RANGE`. Re-run it any time; it replaces what it made. Optional: `-PublisherPort 5050` pins the engine's netidx publisher to that one port (`netidx_bind` in `VSRANGE_RANGE`) and opens only it to the main PC instead of 5000-32767. See `docs/plans/netidx-auth.md` for that caveat and for authenticated netidx. |
 | 5 | main PC | Elevated PowerShell, logged in as the bot's account (ATPAdmin): `.\setup-main-pc.ps1 -RangePcIp 192.168.1.60`. It checks the range PC answers, opens UDP 42004 and PostgreSQL to the range PC only, saves the `fowlread` login for bfdb (type the same password) and prints the YAML to paste. Add `-ConfigurePostgres` to let it make the two PostgreSQL edits; it never restarts PostgreSQL itself. |
 | 6 | main PC | If step 5 changed PostgreSQL: `Restart-Service postgresql-x64-*` at a quiet moment (the bot reconnects; DCS keeps running). |
 | 7 | range PC | Install DCSServerBot as an **agent node** of the same cluster: run its installer, point it at the main PC's database (`postgres://...@192.168.1.10:5432/...`), and put `DCS.range` (with `BFBinaries` and `Tacview`, see `SAMPLE-range-server.md` section 1) in **this PC's** section of its `nodes.yaml`, plus `cluster: no_master: true` so it never takes over the Discord side. `BFBinaries` needs an explicit `staging_dir` here. |

@@ -1,6 +1,11 @@
 # ==========================================================
-# FOWL ENGINE SERVICE STARTER  --  MANUAL FALLBACK ONLY
+# FOWL ENGINE SERVICE STARTER  --  LEGACY, MANUAL FALLBACK ONLY
 # ==========================================================
+# Superseded by procman (DCSServerBot/plugins/fowlengine/procman.py, which
+# runs bfdb + netidx for the bot) and Fowl Engine Manager (bfmanager/, which
+# runs the bot as a service). Kept, unmaintained beyond keeping it working,
+# for a dev PC or a box whose bot is down. New flags land in procman first.
+#
 # In production the DCSServerBot `fowlengine` plugin owns bfdb.exe + the netidx
 # resolver as child processes (set `bfdb.manage: true` in fowlengine.yaml, and
 # see deploy/windows-service/ for running the bot itself as a service). When

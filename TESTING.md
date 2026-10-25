@@ -3,7 +3,26 @@
 **How to use this document**
 - Each item has: **Steps** (how to trigger it) and **Expected** (what correct behavior looks like)
 - Mark items `[x]` as you go, add notes in the Notes column of the sign-off table at the end
+- Run the [automated tests](#automated-tests) first. The tables then cover what only shows in DCS, in Discord, on the websites or on the server box
+- Sections 1-25 are the campaign engine (bflib). 26 is the training range, 27 the cockpit plugin, 28 auto-update and server ops
 - All testing is done in-game on a live DCS server unless otherwise noted
+
+---
+
+## Automated tests
+
+These need no DCS, no netidx resolver and no network. CI (`.github/workflows/build.yml`) runs all of them.
+
+| What | Command | Notes |
+|------|---------|-------|
+| Rust workspace (bflib, bfrange, bfdb, bfprotocols, dcso3, livewx, yats, cockpit net and installer) | `cargo test --workspace --locked` | The repo root must be on `PATH` for `lua.dll` (`. .\setup-build.ps1` does it). `bfweb/dist` and `bfsite/dist` must exist: build the frontends or create empty folders |
+| bftools (not a workspace member) | `cargo check --locked --manifest-path bftools/Cargo.toml` | Check only |
+| Fowl Engine Manager | `cargo test --manifest-path bfmanager/src-tauri/Cargo.toml` | Needs `bfmanager/dist` (a placeholder `index.html` will do) and the bundled resources: `node bfmanager/scripts/stage-bot.mjs` and `node bfmanager/scripts/stage-range.mjs` |
+| Dashboard and Manager UI | `npm --prefix bfweb test` | vitest |
+| Range site | `npm --prefix bfrange-web test` | vitest |
+| DCSServerBot plugin | `pip install -r DCSServerBot/tests/requirements.txt`, then `python -m pytest -q` in `DCSServerBot/tests` | Fakes of the bot's core: no bot, Discord, DCS or database |
+
+They do not cover the DCS runtime (spawns, events, F10 menus, slots), real Discord posts, the Windows service or real GitHub releases. The tables below do.
 
 ---
 
@@ -16,8 +35,8 @@
 | P3 | Load mission | Start DCS server, load mission | Server reaches "Running" state, no Lua errors in `dcs.log` | |
 | P4 | Admin account | Log in with known-admin UCID | Admin commands accepted in chat | |
 | P5 | Regular account | Second client connects as regular player | Connects without admin privileges | |
-| P6 | Logs active | Check log file path from config | Log file exists and is being written to | |
-| P7 | bfdb connected | Start bfdb, check netidx connection | bfdb shows connected, no timeout errors | |
+| P6 | Logs active | Check `Logs\bfnext.txt` in the server's Saved Games folder | Log file exists and is being written to | |
+| P7 | bfdb connected | Start the bot (with `bfdb.manage: true` it runs bfdb and netidx), check bfdb's log | `/api/health` answers; no netidx timeout errors | |
 
 ---
 
@@ -29,7 +48,7 @@
 | 1.2 | Objectives load | After load, open F10 map | All named objectives appear at correct map positions | |
 | 1.3 | Objective sides | Check F10 map objective colors | Blue objectives show blue, red show red, neutral show neutral | |
 | 1.4 | Units spawn | Watch server log after load | Ground units and objective defenders appear in DCS without errors | |
-| 1.5 | Warehouse init | Run `/admin query_warehouse <objective>` | Shows non-zero fuel and ammo for supply-capable objectives | |
+| 1.5 | Warehouse init | Run `-admin log-warehouse objective <airbase>` | Warehouse written to `bfnext.txt` with non-zero fuel and ammo for supply-capable objectives | |
 | 1.6 | Config validates | Check log on startup | No `[ERROR]` lines related to cfg parsing; no unknown fields warned | |
 | 1.7 | F10 markings | Open F10 map as blue/red player | Objective labels, health/supply indicators visible on map | |
 | 1.8 | Netidx publish | Start bfdb, watch its output | Stats data flows; no "publisher disconnected" errors in first 60s | |
@@ -42,16 +61,17 @@
 | # | Item | Steps | Expected | Pass |
 |---|------|-------|----------|------|
 | 2.1 | New player connect | Connect fresh client (no prior UCID in DB) | Player appears in server, `on_player_try_connect` fires | |
-| 2.2 | Register command | Type `/register` in chat | Server replies with confirmation; player marked `registered=true` in DB | |
-| 2.3 | Double register | Type `/register` again after already registered | Server replies with "already registered" message, no crash | |
-| 2.4 | Side switch blue | Type `/blue` in chat | Player side set to Blue; server confirms in chat | |
-| 2.5 | Side switch red | Type `/red` in chat | Player side set to Red; server confirms in chat | |
-| 2.6 | Side switch while in slot | Occupy a slot, then type `/blue` | Server rejects or forces deslot before switching | |
-| 2.7 | Whitelist enforced | Set `Rule::Whitelist` in config, connect non-listed UCID | Connection rejected or player restricted to spectator | |
-| 2.8 | Blacklist enforced | Set `Rule::Blacklist` with test UCID, attempt connect | Connection rejected with appropriate message | |
-| 2.9 | Ban on connect | Ban player via `/admin ban <name> 1h`, reconnect | Server refuses connection, logs ban reason | |
-| 2.10 | Admin privileges | Connect admin UCID | `/admin` commands accepted; non-admin commands blocked for regular players | |
-| 2.11 | Name change cooldown | Change pilot name in DCS, reconnect | If within cooldown window, server warns or restricts; after cooldown, accepted | |
+| 2.2 | Register on first slot | New player takes a Blue slot | Player registered to Blue; chat shows "<name> has joined Blue team"; slot granted | |
+| 2.3 | Switch to same side | Registered Blue player types `-switch blue` in spectators | "you are already on the requested side"; no crash | |
+| 2.4 | Side switch blue | Red player in spectators types `-switch blue` | Side set to Blue; chat shows "<name> has switched to Blue" | |
+| 2.5 | Side switch red | Blue player in spectators types `-switch red` | Side set to Red; chat confirms | |
+| 2.6 | Side switch while in slot | Occupy a slot, then type `-switch red` | Refused: "you must be in spectators to switch sides" | |
+| 2.6a | Switch limit | Use up the configured side switches, switch again | "you can't switch sides again this round" | |
+| 2.7 | Whitelist rule | Set `rules.cargo` to `Whitelist` in the config, slot in with a UCID not on it | No cargo menu for that player; listed UCIDs get it | |
+| 2.8 | Blacklist rule | `-admin blacklist cargo <player>` | That player loses the cargo menu; `-admin whitelist cargo <player>` gives it back | |
+| 2.9 | Ban on connect | `-admin ban 1h <player>`, reconnect | Connection refused: "you are banned until ..." | |
+| 2.10 | Admin privileges | Connect admin UCID (listed in the config's `admins`) | `-admin` commands accepted; a regular player's `-admin` gets no reply and does nothing | |
+| 2.11 | Name filter | Set `name_filter` in the config, connect with a name that doesn't match | Connection refused: "name must match ..." | |
 | 2.12 | Reconnect same UCID | Disconnect and reconnect same player | Player data persists (points, side, registration) | |
 
 ---
@@ -61,7 +81,7 @@
 | # | Item | Steps | Expected | Pass |
 |---|------|-------|----------|------|
 | 3.1 | Take free slot | Select any empty slot | Player spawns in cockpit; `on_player_try_change_slot` fires | |
-| 3.2 | Slot type in ephemeral | After spawning, run `/admin query_player_details <name>` | Shows correct vehicle type for occupied slot | |
+| 3.2 | Slot type in ephemeral | After spawning, call the `query-player` RPC for that player | Shows correct vehicle type for occupied slot | |
 | 3.3 | Occupied slot blocked | Player A takes slot; Player B tries same slot | Player B rejected with "slot occupied" message | |
 | 3.4 | Admin takes occupied | Admin tries slot already held by another player | Admin bypasses check and occupies; original player deslotted | |
 | 3.5 | Dynamic slot approved | If dynamic slots configured, request slot approval | Slot approved after server processes request | |
@@ -69,7 +89,7 @@
 | 3.7 | Wrong-side slot | Player set to Blue tries Red slot | Slot access denied; player stays in spectator | |
 | 3.8 | Slot freed on disconnect | Player in slot disconnects | Slot freed immediately; another player can take it | |
 | 3.9 | Multi-crew slot | Enter multi-crew aircraft as first crew | `units_by_slot` maps slot to multiple unit IDs | |
-| 3.10 | player_in_slot map | Occupy slot, verify via admin query | `player_in_slot` correctly maps SlotId → Ucid | |
+| 3.10 | player_in_slot map | Occupy slot, verify via the `query-player` RPC | `player_in_slot` correctly maps SlotId → Ucid | |
 
 ---
 
@@ -83,12 +103,12 @@
 | 4.4 | Attack life type | Take off in attack aircraft | Attack life deducted | |
 | 4.5 | Recon life type | Take off in recon aircraft | Recon life deducted | |
 | 4.6 | No life on ground start | Spawn on ramp without taking off | No life deducted until actual takeoff event fires | |
-| 4.7 | /lives command | Type `/lives` in chat | Message shows remaining lives for each type for player's side | |
+| 4.7 | -lives command | Type `-lives` in chat | Message shows remaining lives for each type for player's side | |
 | 4.8 | Life message on takeoff | Take off in any aircraft | Popup or panel message shows which life was consumed | |
 | 4.9 | Lives return after capture | Capture an objective with `log_points > 0` | `return_lives()` fires; life count increases for winning side | |
 | 4.10 | Periodic life return | Wait for slow timer cycle | Lives tick up passively over time (if configured) | |
 | 4.11 | Zero lives blocks slot | Exhaust all lives of one type | Attempting to take slot of that type gives "no lives remaining" error | |
-| 4.12 | Admin reset lives | `/admin reset_lives <player>` | Player's lives restored to config default | |
+| 4.12 | Admin reset lives | `-admin reset-lives <player>`; `-admin lives <player> attack 1` | Lives restored to config default; then exactly 1 attack life left | |
 
 ---
 
@@ -198,10 +218,10 @@
 | 9B.5 | Drop crate | Select "Drop Crate" with crate loaded | Crate appears on ground at current position | |
 | 9B.6 | Drop at speed | Try dropping crate above `max_drop_speed` | Drop refused with speed warning | |
 | 9B.7 | Drop at height | Try dropping above `max_drop_height_agl` | Drop refused with height warning | |
-| 9B.8 | Parachute drop | Select unpakistan / parachute drop | Crate descends under parachute; lands at offset position | |
+| 9B.8 | Airdrop | Unload Crate in flight, below `max_drop_speed` and `max_drop_height_agl` | Crate falls and lands near the release point | |
 | 9B.9 | List current cargo | Open "List cargo" option | All loaded crates and troops shown with counts | |
 | 9B.10 | Destroy crate | Select "Destroy crate" near ground crate | Crate removed from map; no orphaned entry in DB | |
-| 9B.11 | Spawn crate (admin) | `/admin spawn_crate <name> <pos>` | Crate appears at specified position | |
+| 9B.11 | Spawn crate | At a friendly logistics objective, spawn a crate from the cargo menu | Crate appears near the aircraft; refused away from a logistics point | |
 | 9B.12 | Multi-crate assembly | Drop all required crates within assembly radius | After last crate dropped, deployable assembles and spawns | |
 
 ### 9C. Troop Menu
@@ -321,88 +341,104 @@
 | 12.15 | Convoy interdiction | Destroy convoy group | Supply NOT delivered; source reports convoy lost | |
 | 12.16 | Air logistics orbit | Air route configured and active | Aircraft orbits waypoints; route markers on F10 | |
 | 12.17 | Sea route | Naval route configured (if applicable) | Ships move route; supply delivered on arrival | |
-| 12.18 | Warehouse supply increase | After delivery, check warehouse | `/admin query_warehouse` shows increased fuel/ammo | |
+| 12.18 | Warehouse supply increase | After delivery, check warehouse | `-admin log-warehouse objective <airbase>` (or the `query-warehouse` RPC) shows increased fuel/ammo | |
 | 12.19 | DCS warehouse sync | After engine delivery, check DCS F10 rearm menu | Fuel/ammo available for rearming at that airbase | |
 
 ---
 
 ## 13. Chat Commands (chatcmd.rs)
 
+Commands start with `-`. Chat that starts with `-` but not a letter (`-_-`) is ordinary chat.
+
 | # | Item | Steps | Expected | Pass |
 |---|------|-------|----------|------|
-| 13.1 | /register | Type `/register` | Confirmation message; player data initialized | |
-| 13.2 | /blue | Type `/blue` | Side set to Blue; confirmation in chat | |
-| 13.3 | /red | Type `/red` | Side set to Red; confirmation in chat | |
-| 13.4 | /lives | Type `/lives` | Life counts for all types shown for player's side | |
-| 13.5 | /time | Type `/time` | Current mission time displayed (e.g. "12:34:56") | |
-| 13.6 | /balance | Type `/balance` | Player's current point balance shown | |
-| 13.7 | /status | Type `/status` | Server status (player count, objectives held, etc.) | |
-| 13.8 | /transfer valid | `/transfer <player> 100` | 100 points moved; both players notified | |
-| 13.9 | /transfer insufficient | `/transfer <player> 999999` | Refused; "insufficient points" message | |
-| 13.10 | /transfer self | `/transfer <own-name> 100` | Refused or no-op; no crash | |
-| 13.11 | /help | Type `/help` | List of available commands shown | |
-| 13.12 | /action | `/action <action-name>` | Action executes if valid for player's current slot | |
-| 13.13 | /bind | `/bind F1 <action>` | Key binding saved; confirmation shown | |
-| 13.14 | Unknown command | Type `/asdfghjkl` | "Unknown command" message; no crash | |
-| 13.15 | Malformed args | `/transfer` (no args) | Usage hint shown; no crash | |
-| 13.16 | Admin prefix | `/admin <cmd>` as admin | Routes to admin handler | |
-| 13.17 | Admin prefix non-admin | `/admin <cmd>` as regular player | "Permission denied" message | |
+| 13.1 | -help | Type `-help` | Command list; admins also see the `-admin` line | |
+| 13.2 | -switch blue | In spectators, type `-switch blue` | Side set to Blue; confirmation in chat | |
+| 13.3 | -switch red | In spectators, type `-switch red` | Side set to Red; confirmation in chat | |
+| 13.4 | -lives | Type `-lives` | Life counts for all types shown for player's side | |
+| 13.5 | -time | Type `-time` | Time until the server restart | |
+| 13.6 | -balance | Type `-balance` | Player's current point balance shown | |
+| 13.7 | -status | Type `-status` | Campaign status: objectives, convoys, streak | |
+| 13.8 | -transfer valid | `-transfer 100 <player>` | 100 points moved; both players notified | |
+| 13.9 | -transfer insufficient | `-transfer 999999 <player>` | Refused; balance unchanged | |
+| 13.10 | -transfer to objective | `-transfer 100 objective:<objective>` | Points moved to the objective | |
+| 13.11 | -transfer self | `-transfer 100 <own-name>` | Refused or no-op; no crash | |
+| 13.12 | -action | `-action help`, then `-action <name> <args>` | Action list with costs; action executes if valid for the player's slot | |
+| 13.13 | -bind | `-bind <uuid>` with the uuid from the dashboard's login page | Account linked; dashboard login completes | |
+| 13.14 | -delete | `-delete <groupid>` on a group you deployed | Group deleted; partial refund | |
+| 13.15 | -weather | Type `-weather` in a slot | Weather for your slot, including winds and temperature aloft | |
+| 13.16 | -brief | Type `-brief` | Situational briefing (full report under F10 > Info > Situation) | |
+| 13.17 | -jtac | `-jtac list`, then `-jtac help` | JTACs listed; JTAC chat commands listed | |
+| 13.18 | -gci | `-gci`, then `-gci off` and `-gci on` | Current GCI voice settings; calls stop and resume | |
+| 13.19 | -hq / -request | `-hq`, `-hq ops`, `-request <kind>` | Commander's intent and operations; support request sent to HQ | |
+| 13.20 | Unknown command | Type `-asdfghjkl` | "-asdfghjkl is not a valid command. Valid commands follow." plus the help list | |
+| 13.21 | Malformed args | `-transfer` (no args) | Treated as unknown: message plus the help list; no crash | |
+| 13.22 | Admin prefix | `-admin help` as admin | Admin command list | |
+| 13.23 | Admin prefix non-admin | `-admin help` as regular player | No reply; nothing happens | |
 
 ---
 
 ## 14. Admin Commands (admin.rs)
 
+Chat commands are `-admin <command>` from an admin UCID; `-admin help` lists them. The query and API items are netidx RPCs under bflib's `api/` path (what bfdb and the bot call), not chat commands.
+
 ### Player Management
 
 | # | Item | Steps | Expected | Pass |
 |---|------|-------|----------|------|
-| 14.1 | spawn | `/admin spawn <key>` | Named deployable spawns at default position | |
-| 14.2 | sideswitch | `/admin sideswitch red <player>` | Player moved to red side; confirmation shown | |
-| 14.3 | ban timed | `/admin ban <player> 2h` | Player kicked; reconnect within 2h refused | |
-| 14.4 | ban permanent | `/admin ban <player> 0` | Permanent ban; no expiry | |
-| 14.5 | unban | `/admin unban <player>` | Ban lifted; player can reconnect | |
-| 14.6 | list_banned | `/admin list_banned` | All currently banned players listed with expiry | |
-| 14.7 | kick | `/admin kick <player>` | Player disconnected immediately | |
-| 14.8 | list_connected | `/admin list_connected` | All online players listed with UCID | |
-| 14.9 | search | `/admin search <partial-name>` | Matching players listed (fuzzy match) | |
-| 14.10 | log_desc | `/admin log_desc <ucid>` | Sortie history, kills, deaths shown | |
-| 14.11 | reset_lives | `/admin reset_lives <player>` | Player lives reset to config defaults | |
-| 14.12 | add_admin | `/admin add_admin <player>` | Player gains admin flag; can use admin commands | |
-| 14.13 | remove_admin | `/admin remove_admin <player>` | Admin flag removed | |
-| 14.14 | balance | `/admin balance <player>` | Player's exact point total shown | |
-| 14.15 | set_points | `/admin set_points <player> 500` | Player points set to exactly 500 | |
-| 14.16 | deslot | `/admin deslot <player>` | Player ejected to spectator; slot freed | |
+| 14.1 | switch | `-admin switch red <player>` | Player moved to red side; confirmation shown | |
+| 14.2 | ban timed | `-admin ban 2h <player>` | Player kicked; reconnect within 2h refused | |
+| 14.3 | ban permanent | `-admin ban forever <player>` | Reconnect refused: "you are banned forever" | |
+| 14.4 | unban | `-admin unban <player>` | Ban lifted; player can reconnect | |
+| 14.5 | banned | `-admin banned` | All currently banned players listed | |
+| 14.6 | kick | `-admin kick <player>` | Player disconnected immediately | |
+| 14.7 | connected | `-admin connected` | All online players listed | |
+| 14.8 | search | `-admin search <regex>` | Matching players listed (case-insensitive) | |
+| 14.9 | reset-lives | `-admin reset-lives <player>`; `-admin reset-lives-all` | Lives reset to config defaults for one player / for everyone | |
+| 14.10 | lives | `-admin lives <player> recon 2` | Player has exactly 2 recon lives | |
+| 14.11 | add-admin | `-admin add-admin <player>` | Player gains admin; can use admin commands | |
+| 14.12 | remove-admin | `-admin remove-admin <player>` | Admin removed | |
+| 14.13 | balance | `-admin balance <player>` | Player's exact point total shown | |
+| 14.14 | set-points | `-admin set-points 500 <player>` | Player points set to exactly 500 | |
+| 14.15 | addpoints | `-admin addpoints <player> -50` | 50 points taken away | |
+| 14.16 | deslot | `-admin deslot <player>` | Player forced to spectators; slot freed | |
+| 14.17 | broadcast | `-admin broadcast test` | Every player gets the text as chat and a panel message | |
 
 ### Object Management
 
 | # | Item | Steps | Expected | Pass |
 |---|------|-------|----------|------|
-| 14.17 | delete group | `/admin delete <group_id>` | Group despawned from DCS; removed from DB | |
-| 14.18 | remark | `/admin remark <objective> <new-name>` | Objective rename reflected on F10 map | |
+| 14.18 | delete group | `-admin delete <groupid>` | Group despawned from DCS; removed from DB | |
+| 14.19 | remark | `-admin remark <objective>` | Objective markup on the F10 map redrawn | |
+| 14.20 | capture | `-admin capture <objective> red` | Objective changes hands | |
+| 14.21 | spawn | F10 mark `<key> deployable blue 90 <name>`, then `-admin spawn <key>` | Deployable spawns at the mark; mark removed | |
+| 14.22 | whythreat | `-admin whythreat <objective>` | Why it isn't repairing: threat units, capture timer, logistics, supply, next pulse | |
+| 14.23 | ghosts | `-admin ghosts`, then `-admin purge-ghosts` | Units with no DCS object listed, then marked dead | |
+| 14.24 | supply | `-admin reduce <objective> 50`, `-admin transfer <from> <to>`, `-admin tick`, `-admin deliver` | Supplies drop by half; move between objectives; a logistics tick and a delivery run now | |
+| 14.25 | repair | `-admin repair <airbase>` | One repair step at that airbase | |
+| 14.26 | log-desc | `-admin log-desc` in a slot | getDesc of your aircraft written to the log | |
+| 14.27 | shutdown confirm | `-admin shutdown` | Asks for `confirm` within 30 s; nothing else happens (see 22.4) | |
 
-### Query Commands
-
-| # | Item | Steps | Expected | Pass |
-|---|------|-------|----------|------|
-| 14.19 | query_objectives | `/admin query_objectives` | All objectives listed with side, health, supply | |
-| 14.20 | query_objective_details | `/admin query_objective_details <name>` | Full detail: groups, zone, warehouse link | |
-| 14.21 | query_players | `/admin query_players` | All registered players listed | |
-| 14.22 | query_player_details | `/admin query_player_details <name>` | Points, side, slot, ban status, registration | |
-| 14.23 | query_groups | `/admin query_groups blue` | All blue-side groups listed with IDs | |
-| 14.24 | query_group_details | `/admin query_group_details <id>` | Units, origin, health, destination shown | |
-| 14.25 | query_units | `/admin query_units <group_id>` | All units in group with type, health, ammo | |
-| 14.26 | query_warehouse | `/admin query_warehouse <objective>` | Fuel and ammo inventory shown | |
-| 14.27 | query_logistics | `/admin query_logistics` | All convoys, air routes, sea routes and their states | |
-| 14.28 | query_campaign_state | `/admin query_campaign_state` | Objective counts per side, treasury, event queue | |
-
-### API Commands
+### Query RPCs
 
 | # | Item | Steps | Expected | Pass |
 |---|------|-------|----------|------|
-| 14.29 | api_spawn_deployable | `/admin api_spawn_deployable <obj> <deployable>` | Deployable group spawns at objective | |
-| 14.30 | api_spawn_troop | `/admin api_spawn_troop <obj> <troop>` | Troop group spawns at objective | |
-| 14.31 | api_move_group | `/admin api_move_group <id> <x,y>` | Group issued move waypoint | |
-| 14.32 | api_add_points | `/admin api_add_points <player> 100 "test"` | 100 points added; log records reason | |
+| 14.28 | query-objectives | Call `query-objectives` | All objectives as JSON with side, health, supply | |
+| 14.29 | query-objective | Call `query-objective` with a name | Full detail for that objective | |
+| 14.30 | query-players / query-player | Call each | All registered players; one player's points, side, slot | |
+| 14.31 | query-groups / query-group / query-units | Call each | Groups for a side; one group's units, origin, health | |
+| 14.32 | query-warehouse | Call `query-warehouse` for an objective | Fuel and ammo inventory | |
+| 14.33 | query-logistics | Call `query-logistics` | Convoys, air routes, sea routes and their states | |
+| 14.34 | query-campaign-state | Call `query-campaign-state` | Campaign state as JSON | |
+
+### API RPCs
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 14.35 | spawn-deployable | Call `spawn-deployable` (side, name, x, z, heading) | Deployable group spawns there | |
+| 14.36 | spawn-troop | Call `spawn-troop` | Troop group spawns | |
+| 14.37 | move-group | Call `move-group` | Group issued move waypoint | |
+| 14.38 | add-points | Call `add-points` with a reason | Points added; log records reason | |
 
 ---
 
@@ -509,10 +545,10 @@
 | 21.4 | Points on land | Land with positive sortie points | Points transferred to career total | |
 | 21.5 | Points on death | Die with positive sortie points | Points may be lost or transferred (verify config behavior) | |
 | 21.6 | Periodic award | Wait for `award_periodic_points()` cycle | All players on winning side receive periodic points | |
-| 21.7 | Transfer | `/transfer <player> 50` | Sender -50, receiver +50 | |
+| 21.7 | Transfer | `-transfer 50 <player>` | Sender -50, receiver +50 | |
 | 21.8 | Deploy cost | Deploy item with `cost = 100` | 100 points deducted from deploying player | |
 | 21.9 | Repair cost | Repair damaged deployable | `repair_cost` deducted | |
-| 21.10 | Score tracking | Accumulate kills and deaths | `/admin log_desc` shows accurate K/D/cargo stats | |
+| 21.10 | Score tracking | Accumulate kills and deaths | The pilot's stats on the dashboard show the same kills and deaths | |
 
 ---
 
@@ -523,7 +559,7 @@
 | 22.1 | Monitor player count | All players leave server | `check_auto_shutdown()` starts countdown timer | |
 | 22.2 | Shutdown after timeout | Remain empty for full timeout duration | Server process exits cleanly | |
 | 22.3 | Cancel on join | Player joins before timeout expires | Shutdown cancelled; server continues running | |
-| 22.4 | Force spectators | `/admin force_spectators` (if exposed) | All players moved to spectator; slots freed | |
+| 22.4 | Admin shutdown | `-admin shutdown`, then `-admin shutdown confirm` within 30 s | First asks for confirmation; second shuts the server down | |
 
 ---
 
@@ -581,10 +617,199 @@
 
 ---
 
+## 26. Training Range (bfrange)
+
+A range server set up as in `deploy/range.md`, flying the generated `VS_Range_Marianas.miz` (sortie `VSRANGE`). The "First flight" list in `deploy/range.md` is a 20-minute smoke test through most of this section. Grades and thresholds are in `bfrange/README.md`.
+
+### 26A. Server and Engine
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 26A.1 | Engine loads | Start the range server from the bot | `dcs.log` shows `loading bfrange.dll`; `Logs\bfrange.txt` shows `range engine running` and one line per station, tanker and carrier | |
+| 26A.2 | No campaign hooks | Look in `DCS.range\Scripts\Hooks` | `bfrange_hooks.lua` is there, bflib's hook loader is not (with it every slot is refused) | |
+| 26A.3 | Open slots | Take a dynamic-spawn slot at Andersen, a CVN-72 deck slot and a Combined Arms slot | Each is granted; no lives, points or side checks | |
+| 26A.4 | Bad config | Break the JSON in `VSRANGE_RANGE`, restart (restore it afterwards) | Every player sees **THE RANGE CANNOT START** with the reason | |
+| 26A.5 | Missing item | Point one config item at a zone that does not exist | Engine logs it and runs without that item | |
+| 26A.6 | Range status | F10 > Range > Range status | The sector you are in; stations, tankers and both carriers with bearing and range | |
+| 26A.7 | Sectors | F10 > Range > Sectors: what is where; open the F10 map | Sectors nearest first with bearing, range and job; the map shows the same areas | |
+| 26A.8 | Sector entry | Fly into R-7201 FDM | `Entering R-7201 FDM (AIR-TO-GROUND)`; not repeated for that sector within 15 min | |
+| 26A.9 | Carriers | Check CVN-72 and LHA-1 | Steaming into the wind; TACAN 72X / 71X, ICLS 11 / 12, Link-4 336.0; `bfrange.txt` logs the wind seen and course chosen | |
+| 26A.10 | Netidx | `netidx resolver list /local/fowl/range` | The range publishes; `/range status` and the site's live map have data | |
+| 26A.11 | Live weather (if `live_weather` is set) | Restart DCS | `[LIVE_WX]` lines in `bfrange.txt`; mission weather and start time follow the real METAR and clock; a failed fetch is logged and the mission loads as it was | |
+| 26A.12 | Kept out of campaign stats | Fly a range sortie, open the campaign dashboard | Not in the leaderboard or pilot lifetime totals; the range is not in the dashboard's server selector | |
+| 26A.13 | Engine update | Drop `bfrange.dll` in the bot's admin channel | Staged only in the range instance's `_staging`; `/feops stage_status` shows it; swapped in at the next DCS start, not on a mission restart | |
+
+### 26B. Drills
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 26B.1 | Bombing | Drop one bomb on the R-7201 bomb circle | `RANGE R-7201 FDM - Bomb Circle: ... o'clock` in the cockpit; `RESULT <id>: ...` in `bfrange.txt`; grade from miss distance (SHACK to POOR) | |
+| 26B.2 | Station tools | Air-to-Ground > Stations > (station): Info / bearing, Smoke the target, Reset targets | Info shown; smoke on the target; targets respawn | |
+| 26B.3 | Strafe | Strafe the FDM pit, opening fire outside the foul line | Rounds fired, hits and accuracy grade | |
+| 26B.4 | Foul line | Keep firing inside 610 m | Pass voided | |
+| 26B.5 | Tiered targets | Bomb an easy, a medium and a hard target at TN-2 | Scored as bombs; the card carries the tier | |
+| 26B.6 | GPS jammer | Release a GPS weapon inside the EW-1 jammer radius | Warning on entering the radius; card says **GPS denied** | |
+| 26B.7 | CAS drill | Air-to-Ground > CAS / JTAC > Check in | JTAC lases and passes a nine-line; first impact scored on time, miss distance and right target | |
+| 26B.8 | SEAD / IADS | Fly into S-1 Rota; fire an ARM at a site; kill an emitter | SAM radars dark until the network sees you; the ARM's target goes dark for 45 s; kill graded 5 / 4 / 3 | |
+| 26B.9 | BFM set-up | Air-to-Air > Set-up selection: MiG-29S, Fox 2, BFM offensive; FIGHT'S ON | Adversary spawns as selected; WIN / LOSS / DRAW at the end | |
+| 26B.10 | Missile trainer | Missile trainer ON; let a missile reach you | Missile deleted inside 200 m (500 m for big warheads) with a "you'd be dead" message; result recorded | |
+| 26B.11 | Missile defeated | Defeat a missile | `DEFEATED` result with reaction time and time hot / beaming / dragging | |
+| 26B.12 | Duel | Two players: Duel (PvP) > Challenge nearest player, Accept challenge; later Cancel / knock it off | Engagement starts; WIN / LOSS / DRAW; cancel ends it | |
+| 26B.13 | AAR | Join Arco 1 on AR MIRAGE (TACAN 52Y, 252.0), plug, leave | `contact` / `disconnect` calls; A-F grade after leaving | |
+| 26B.14 | Tanker on position | Tankers / Carrier > Tanker on my position | Tanker spawns near you; shown under My spawns | |
+| 26B.15 | Carrier pass | One pass to CVN-72 | Trap card with DCS's LSO grade (ours if DCS did not grade), the decoded comment and the trap sheet; Tankers / Carrier > My last pass shows it | |
+| 26B.16 | Anti-ship | Anti-ship > (ship) 30 nm ahead, then attack it | Ship spawns ahead; HIT / MISS, damage and launch range | |
+| 26B.17 | Helicopter pad | Land on the H-1 Andersen Precision Pad | Distance from the mark, descent, heading; PERFECT inside the radius; a hard landing caps the grade | |
+| 26B.18 | Dynamic cargo | Ask the ground crew (F8) for cargo, load it, set it down at a pad or DZ/LZ | `CARGO ... delivered to ...` and a "Cargo delivery (internal)" card, with no F10 step | |
+| 26B.19 | Sling and troops | Helicopter > Sling-load courses; Troops: load at ..., then Troops: unload here in the LZ | Sling load graded once on the ground and still; troop landing graded | |
+| 26B.20 | CSAR | Helicopter > CSAR > (area) > Pilot down (cold); find him, land within 50 m for 8 s, fly home | Smoke (flare at night) inside 3 km; graded on time home (PERFECT inside 20 min) | |
+| 26B.21 | Airdrop | C-130J: drop a package over an Airlift drop zone | Release height, speed and heading recorded; landing point scored against the zone | |
+| 26B.22 | Low-level route | Fly LL-1 from gate 1 below 500 ft AGL | Gates timed; points off for missed gates, time above the ceiling and time on target | |
+| 26B.23 | Field landing | Land on any runway; then a touch-and-go | Landing graded (aim point, centreline, sink rate); a take-off within 15 s makes it a touch-and-go | |
+| 26B.24 | Ship deck | Land a helicopter on an FD-1 frigate | Graded in the ship's frame; card carries the ship's speed | |
+| 26B.25 | CA gunnery | From a Combined Arms slot, engage the G-1 gunnery lane | Result is the fraction of the lane killed | |
+| 26B.26 | Hot zone | Fly into HZ-1 Saipan | AI CAP launches; Air-to-Air > Hot zone: AWACS picture works; one card for the trip | |
+| 26B.27 | My spawns | My spawns > List, then Despawn all | Your spawns listed, then removed | |
+
+### 26C. Results, Discord and Website
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 26C.1 | Results feed | Drop one bomb | Within ~15 s the embed with its debrief card is in `range_results_channel`, with Debrief, 3D replay, Web Tacview and Tacview clip buttons | |
+| 26C.2 | Greenie channel | Trap on CVN-72 | Also posted to `greenie_channel` | |
+| 26C.3 | No repost | Restart the bot | Results already posted are not posted again | |
+| 26C.4 | Status embed | Watch `range_status_channel` | One embed, edited every 2 min: tankers, carriers with BRC/FB and wind over deck, stations, who is flying | |
+| 26C.5 | /range commands | `/range status`; `/range me` (after `/linkme`); `/range greenie` | Live status; a link to your page on the range site; top 10 of the last 30 days | |
+| 26C.6 | Campaign-only commands | `/fe_objective` for the range server | Answers that it is a range server | |
+| 26C.7 | Live page | Open range.vectorstrike.org | Live map with sectors, players, stations, tankers and carriers; the top bar shows the range live | |
+| 26C.8 | Debrief | Open a result from the feed | 2D plot and 3D replay, the card, card PNG, Tacview clip | |
+| 26C.9 | Lists | `/results`, `/greenie`, `/leaderboards` | New results listed; `/results` filters stay in the URL | |
+| 26C.10 | Spawn page | Logged in with a linked DCS account: spawn a tanker at your position, then despawn it | Tanker appears in game and goes again; a second request within 3 s is refused | |
+| 26C.11 | Spawn logged out | Open `/spawn` without logging in | Spawning refused | |
+| 26C.12 | Brief | Open `/brief`, print it | Frequencies, TACANs, weather, targets with coordinates, laser codes; prints as a kneeboard card | |
+| 26C.13 | Server down | Stop the range server | Site shows "No live data"; results still open | |
+
+---
+
+## 27. Cockpit Plugin (bfcockpit)
+
+Client side, on a player PC, flying on a campaign server. `bfcockpit/README.md` describes every item.
+
+### 27A. Install
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 27A.1 | Profiles found | Run `VectorStrike-Cockpit-Install.exe` with DCS closed | Every `DCS*` profile with a `Config` folder listed, all ticked | |
+| 27A.2 | Add profile | **Add profile...**, point at a profile somewhere else | Added and installed into | |
+| 27A.3 | Files | Check the profile after **Install** | `Scripts\Hooks\bfcockpit.lua` and `Mods\Services\BFCockpit\bin\bfcockpit_net.dll`; `Config\BFCockpit.lua` after the first run | |
+| 27A.4 | Load log | Start DCS, search `dcs.log` for `BFCOCKPIT` | Version, DLL loaded, VR detected or not, the bound key | |
+| 27A.5 | CLI | `bfcockpit-install-cli.exe --list`, `--yes`, `--uninstall` | Lists profiles; installs into all without asking; removes the plugin | |
+| 27A.6 | Settings kept | Uninstall, then reinstall | Window position, opacity and key come back | |
+
+### 27B. Panel and Wheel
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 27B.1 | Open | In a slot press the Comms key; then `Ctrl+Alt+C` twice | Panel opens; `Ctrl+Alt+C` shows and hides it from anywhere | |
+| 27B.2 | Key handshake | Open the panel for the first time on a server, with a second player watching chat | The `-cockpitkey` line is not seen by anyone and not in `dcs.log`; the panel starts answering | |
+| 27B.3 | Reconnect | Disconnect, reconnect, open the panel | Works again with a new key | |
+| 27B.4 | MENU tab | Go into a submenu, run a command, `< Back` | Same items as the F10 menu; the reply shows in the box at the top; the list scrolls instead of `More >>` | |
+| 27B.5 | CARGO tab | At a logistics base: SPAWN 1, Load, Unload, Unpack | Same results and same refusals as the F10 commands; weight and room shown | |
+| 27B.6 | STATUS tab | Open STATUS | Side, points, lives, crates; aircraft, position, altitude, heading, speed; nearest objective with range and bearing | |
+| 27B.7 | EWR tab | Toggle EWR calls and imperial/metric | Picture shown; toggles take effect | |
+| 27B.8 | LOG tab | Receive messages while on another tab | LOG tab counts them; newest first, tagged YOU / SIDE / ALL | |
+| 27B.9 | Window | `-` / `+`, drag, resize, X; restart DCS | Opacity, position and size remembered | |
+| 27B.10 | Wheel | `Ctrl+Alt+W`, point at a group, move onto its arc, click | Group fans out on an arc; the picked command runs; the reply shows under the wheel | |
+| 27B.11 | Wheel safety | Pick the hub; pick a destroy or delete item | Hub goes back a level or closes; the destructive item needs a second pick | |
+| 27B.12 | Wheel keys | With the wheel open: arrows, Enter, Backspace; then with it closed | Steps round the ring, onto arcs, fires, goes back; keys not taken while closed | |
+| 27B.13 | Custom wheel | ☆ a command in MENU; edit it in the WHEEL tab; switch to a helicopter | Command on the wheel; edits kept per aircraft type; the helicopter starts with the logistics preset | |
+| 27B.14 | Special page | Options > Special > Vector Strike: change the show/hide key, wheel key and panel size mid-mission | Applied within a few seconds | |
+| 27B.15 | VR | Fly in VR | Panel larger and centred; the wheel opens where you look; head pointing works | |
+| 27B.16 | DLL missing | Rename `bfcockpit_net.dll`, start DCS | Panel says `bfcockpit_net.dll is missing -- re-run the Vector Strike installer` | |
+| 27B.17 | Server unreachable | Set `api` in `Config\BFCockpit.lua` to a host that doesn't answer | Panel says it can't reach the campaign server and gives the reason | |
+| 27B.18 | Two servers | Join a second campaign server | The panel shows that server's menu | |
+
+### 27C. Updates
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 27C.1 | Release | Check GitHub release `cockpit-v<version>` | `VectorStrike-Cockpit-Install.exe`, `VectorStrike-Cockpit-<version>.zip` and a `.minisig` for each | |
+| 27C.2 | Installer link | Open `<bfdb>/api/cockpit/plugin/installer` | Points at the installer for the version bfdb ships | |
+| 27C.3 | Version check | Older plugin, join a server whose bfdb ships a newer one | `dcs.log`: `server has plugin <new>, this is <old>` | |
+| 27C.4 | Download | **Update automatically** on (the default) | Status line `Downloading version <v>...`, then `Version <v> is downloaded -- it installs when you close DCS` | |
+| 27C.5 | Install on close | Close DCS, start it again | `Logs\bfcockpit-update.log` written; the `BFCOCKPIT` line shows the new version | |
+| 27C.6 | Auto-update off | Untick **Update automatically**, rejoin | Status line says the version is available; nothing downloads | |
+| 27C.7 | Release missing | bfdb advertises a version with no GitHub release | `auto-update failed` in `dcs.log`; nothing runs; the panel keeps working | |
+
+---
+
+## 28. Auto-Update and Server Ops
+
+On the server box. `deploy/auto-update.md` is the reference; `DCSServerBot/plugins/fowlengine/README.md` lists the Discord side.
+
+### 28A. Releases, Staging, Probation and Rollback
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 28A.1 | Dry run | `.\deploy\publish-release.ps1 -DryRun` | Builds `bflib.dll`, `bfrange.dll`, `bfdb.exe`, `bftools.exe` and `manifest.json` with a sha256 per file | |
+| 28A.2 | No key, no publish | Publish without a signing key | Refused | |
+| 28A.3 | Check now | `autoupdate.enabled: false`; OPS page > **Check now** | Latest release and what would be staged; nothing staged | |
+| 28A.4 | Unsigned | Remove `autoupdate.public_key`, or serve a release whose `manifest.json.sig` doesn't verify | Nothing fetched or staged | |
+| 28A.5 | Staging | A signed release arrives | `bflib.dll.pending` with a `source: autoupdate` sidecar in each campaign server's staging dir; `bfdb.exe` / `bftools.exe` in the global one; announced in `ops_channel` | |
+| 28A.6 | Manual upload | Drop `bflib.dll` in the admin channel | Posted to `ops_channel` with its sha256; Apply when empty / Restart now buttons; the upload message deleted once on disk | |
+| 28A.7 | Manual wins | Release arrives while a manual upload is staged | The manual upload is kept | |
+| 28A.8 | when_idle | `apply: when_idle`, server empty | Applied after `idle_minutes` (inside `apply_window` if set) with a DCS stop/start | |
+| 28A.9 | Mission restart | Staged DLL, mission restart only | Old DLL stays loaded until a full DCS restart | |
+| 28A.10 | DLL probation | After a swap | Passes once `Logs\bfnext-bflib-build.json` is newer than the swap and the server has run `probation_minutes` | |
+| 28A.11 | DLL rollback | Kill DCS during probation | Backup staged back and DCS restarted on it; bad build kept as `<dll>.failed-<ts>`; release marked bad; `ops_channel` says so | |
+| 28A.12 | Restart is not a crash | Scheduled restart or admin shutdown during probation | No rollback | |
+| 28A.13 | bfdb probation | New `bfdb.exe` | Passes after `probation_minutes` answering `/api/health`; one that exits or never answers is rolled back together with its DB snapshot | |
+| 28A.14 | Allow again | OPS page **Allow again**, or `/feops update_unmark` | The bad release is offered again | |
+| 28A.15 | Campaign pack | `autoupdate.campaigns: true`; release built with `-Campaigns` | Pack staged; written at the next DCS start after a backup in `<instance home>\_fowl_campaign_backups\<ts>-<tag>\` | |
+| 28A.16 | Held pack | Edit the server's `*_CFG`, publish a pack | Pack held, `ops_channel` says why; **Apply** / **Keep server's** on the OPS page | |
+| 28A.17 | Held pack in Discord | `/feops campaign_apply server:<name> confirm:True`, or `/feops campaign_keep server:<name>` | Written at the next start (edited copy in the backup), or the server's cfg kept and the pack dismissed for that server | |
+| 28A.18 | Pack rollback | Pack with a cfg the engine refuses | `THE MISSION CANNOT START`; backup restored at the next start; tag never retried on that server | |
+| 28A.19 | Bot plugin | Release built with `-BotPlugin`, `bot_plugin: true` | Plugin updated; previous one in `<DCSServerBot>\_fowl_backups\plugin-<ts>.zip`; never unpacked over a newer plugin | |
+
+### 28B. OPS Page and /feops
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 28B.1 | Access | Open the dashboard as a player, then as an admin | **OPS** in the nav for admins only | |
+| 28B.2 | No API key | No `ops_api.api_key` and no `bfdb.dcsserverbot_api_key` | OPS page disabled | |
+| 28B.3 | Cards | Open OPS | Summary, Server box & auto-start, Processes, Engine builds, Campaign packs, Automatic updates, History & backups, Issues, Bot config, Logs | |
+| 28B.4 | Restarts | Processes > **Restart bfdb**, **Restart bot** | Each restarts; DCS keeps running | |
+| 28B.5 | Engine builds | Engine builds card | Per binary: running build, file on disk, staged, latest release | |
+| 28B.6 | Config editor | Bot config: change a value, save | Secrets show as `__SECRET__` and are kept; file validated and backed up to `config\backup\fowlengine\`; keys naming a program, path, URL or update source can't be changed | |
+| 28B.7 | Logs | Logs card | Live tails for bot, service, bfdb, bfdb boot and netidx; the log archive | |
+| 28B.8 | Issues | Cause a repeated WARN; later mark it fixed and cause it again | One issue with a count; posted in `ops_channel`; **Copy report for Claude** works; shows REGRESSED when it comes back | |
+| 28B.9 | Log archive | Restart a DCS server | Earlier lines still in `<bfdb.home>\_logarchive\<source>\<UTC date>.log` | |
+| 28B.10 | Update commands | `/feops update_status`, `update_check`, `update_pause` | Latest release, what's installed, probation; a check now; pause and resume | |
+| 28B.11 | Rollback command | `/feops update_rollback which:dll server:<name> confirm:True` | DLL rolled back to its previous build | |
+| 28B.12 | Stage commands | `/feops stage_status`, `stage_cancel`, `stage_apply` | Shows, discards and applies staged binaries | |
+| 28B.13 | Other commands | `/feops bfdb_restart`, `gci_show`, `versions`, `issues` | bfdb restarts; `gci.json` with secrets masked; git rev and build time of the running binaries; the issues report attached | |
+
+### 28C. Fowl Engine Manager
+
+| # | Item | Steps | Expected | Pass |
+|---|------|-------|----------|------|
+| 28C.1 | Setup | Install, then Setup: DCSServerBot folder, Install plugin, Service, Automatic sign-in | `FowlEngine` service created; the older NSSM `DCSServerBot` service disabled | |
+| 28C.2 | Reboot | `Restart-Computer`, don't sign in | DCS servers and the dashboard come back | |
+| 28C.3 | Bot supervision | Kill the bot process | Restarted, backing off from 5 s to 5 min | |
+| 28C.4 | Plugin sync | Restart the bot with **keep the plugin synced** on | Bundled plugin synced before the start; a bundle older than the installed plugin is skipped and Overview says so | |
+| 28C.5 | Self-update | Publish a newer `manager-v<version>` | Signature verified, installed; the bot restarts, DCS does not | |
+| 28C.6 | Server OPS | Manager > **Server OPS** | The dashboard's OPS page, talking to the local bot | |
+| 28C.7 | Backup | BACKUP tab, make a backup | `FowlEngine-backup-<pc>-<date>.zip`; OK / CHECK / BROKEN per section; log saved as `<zip>.log` | |
+| 28C.8 | Check a backup | **Check a backup** on a copy of the zip | Same report | |
+| 28C.9 | Restore | Restore onto a spare box | Missing prerequisites listed; existing folders renamed `*.before-restore-<time>`; service installed and started; automatic sign-in and the GitHub token have to be entered again | |
+
+---
+
 ## Sign-off Table
 
 | Section | Tested By | Date | Pass/Fail | Notes |
 |---------|-----------|------|-----------|-------|
+| Automated tests | | | | |
 | Pre-Test Setup | | | | |
 | 1. Mission Init | | | | |
 | 2. Player Connection | | | | |
@@ -616,3 +841,12 @@
 | 23. Spawn Context | | | | |
 | 24. Message Queue | | | | |
 | 25. Regression / Edge Cases | | | | |
+| 26A. Range: Server & Engine | | | | |
+| 26B. Range: Drills | | | | |
+| 26C. Range: Results, Discord & Website | | | | |
+| 27A. Cockpit: Install | | | | |
+| 27B. Cockpit: Panel & Wheel | | | | |
+| 27C. Cockpit: Updates | | | | |
+| 28A. Releases, Staging & Rollback | | | | |
+| 28B. OPS Page & /feops | | | | |
+| 28C. Fowl Engine Manager | | | | |

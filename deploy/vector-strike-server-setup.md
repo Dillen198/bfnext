@@ -228,6 +228,10 @@ Stop with Ctrl-C. If bfdb didn't stop, `taskkill /IM bfdb.exe /F`.
 
 ## 7. Install as a Windows service
 
+> **Legacy.** On a new box, install [Fowl Engine Manager](../bfmanager/README.md)
+> instead: it creates its own `FowlEngine` service and disables this one. The
+> NSSM steps below are for a box without it.
+
 ```powershell
 cd E:\Github\bfnext-vector\deploy\windows-service
 # edit the param defaults at the top if your paths/account differ, then:

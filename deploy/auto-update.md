@@ -34,10 +34,12 @@ The server box looks after itself:
 
 ## 1. One-time setup on the server
 
-1. **Service.** From an elevated PowerShell on the server:
-   `deploy\windows-service\install-service.ps1`, then `check-autostart.ps1`.
-   See [windows-service/README.md](windows-service/README.md). Then do a real
-   test: `Restart-Computer`, don't log in, and check that the dashboard comes back.
+1. **Service.** Install [Fowl Engine Manager](../bfmanager/README.md) and
+   follow its Setup page. On a box without it, use the legacy NSSM service:
+   `deploy\windows-service\install-service.ps1`, then `check-autostart.ps1`
+   (see [windows-service/README.md](windows-service/README.md)). Either way,
+   do a real test: `Restart-Computer`, don't log in, and check that the
+   dashboard comes back.
 2. **BIOS/UEFI:** set *Restore on AC power loss* to *Power On*, so a power cut
    also ends with the box booting. Windows can't check this setting.
 3. **Bot WebService.** The OPS page reaches the plugin through DCSServerBot's
@@ -99,7 +101,10 @@ key id `44D2C7BA11CC8E7D`, public line
 also `bfmanager/src-tauri/engine.pub`, which Fowl Engine Manager's New box
 wizard checks engine releases with and writes into the new box's
 `fowlengine.yaml`. Back up the secret key off that PC: losing it means
-rotating (below).
+rotating (below). **It still has no password and no documented offline
+copy.** [`signing-keys.md`](signing-keys.md) has the steps to add a
+password (or rotate to a key that has one), to keep two offline copies,
+and to rotate any of the three release keys.
 
 One-time, on the PC you publish from (user action; done once already, see
 above):
@@ -122,7 +127,7 @@ npx tauri signer generate -w "$env:USERPROFILE\.tauri\fowl-engine.key"   # give 
 
 Rotating the key: generate a new one, publish with it, and update
 `public_key` on every server at the same time -- a server only trusts the key
-it has pinned.
+it has pinned. The full runbook is in [`signing-keys.md`](signing-keys.md).
 
 Dependencies are the committed ones: `Cargo.lock` and `bftools/Cargo.lock` are
 in git and every build is `cargo build --locked` (a lockfile that no longer

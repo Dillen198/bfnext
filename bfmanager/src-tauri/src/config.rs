@@ -135,19 +135,79 @@ impl Default for ManagerConfig {
     }
 }
 
+/// manager.json keeps github_token DPAPI-encrypted under this key (base64);
+/// in memory, and over IPC to the UI (masked there), it is the plain
+/// `github_token` as before.
+const TOKEN_PROTECTED: &str = "github_token_dpapi";
+
 impl ManagerConfig {
     pub fn load() -> ManagerConfig {
-        std::fs::read_to_string(config_path())
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        Self::load_from(&config_path())
     }
 
     pub fn save(&self) -> Result<()> {
         ensure_dirs()?;
-        let tmp = config_path().with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)?;
-        std::fs::rename(&tmp, config_path())?;
+        self.save_to(&config_path())
+    }
+
+    fn load_from(path: &Path) -> ManagerConfig {
+        let Some(mut v) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        else {
+            return ManagerConfig::default();
+        };
+        let plain_on_disk = v
+            .get("github_token")
+            .and_then(|t| t.as_str())
+            .map(|t| !t.is_empty())
+            .unwrap_or(false);
+        if let Some(blob) = v.get(TOKEN_PROTECTED).and_then(|b| b.as_str()).map(String::from) {
+            let token = dpapi::unprotect_b64(&blob)
+                .map_err(|e| {
+                    // e.g. manager.json restored onto another PC: the token
+                    // has to be entered again there
+                    log::warn!(
+                        "manager.json: the saved GitHub token can't be decrypted on this PC ({e:#}) -- enter it again"
+                    );
+                })
+                .ok();
+            if let Some(o) = v.as_object_mut() {
+                o.insert("github_token".into(), token.map(Into::into).unwrap_or(serde_json::Value::Null));
+            }
+        }
+        let cfg: ManagerConfig = serde_json::from_value(v).unwrap_or_default();
+        // Written by a version that kept the token in plain text: encrypt it
+        // now (best effort -- only an elevated GUI or the service can write).
+        if plain_on_disk && dpapi::AVAILABLE {
+            if let Err(e) = cfg.save_to(path) {
+                log::debug!("manager.json: encrypting the GitHub token deferred: {e:#}");
+            }
+        }
+        cfg
+    }
+
+    fn save_to(&self, path: &Path) -> Result<()> {
+        let mut v = serde_json::to_value(self)?;
+        if let Some(o) = v.as_object_mut() {
+            o.remove(TOKEN_PROTECTED);
+            let token = self.github_token.as_deref().filter(|t| !t.is_empty());
+            if let (Some(t), true) = (token, dpapi::AVAILABLE) {
+                match dpapi::protect_b64(t) {
+                    Ok(blob) => {
+                        o.remove("github_token");
+                        o.insert(TOKEN_PROTECTED.into(), blob.into());
+                    }
+                    // keep it (in plain text, as before) rather than lose it
+                    Err(e) => log::warn!(
+                        "manager.json: could not encrypt the GitHub token ({e:#}); saved as plain text"
+                    ),
+                }
+            }
+        }
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, serde_json::to_vec_pretty(&v)?)?;
+        std::fs::rename(&tmp, path)?;
         Ok(())
     }
 
@@ -164,6 +224,95 @@ impl ManagerConfig {
             .clone()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "run.cmd".into())
+    }
+}
+
+/// Windows DPAPI, machine scope: the GUI (an elevated admin) and the service
+/// (LocalSystem) both have to read the token, so it is bound to this PC
+/// rather than to one account. That keeps it out of copies of manager.json --
+/// backup zips, a disk image, a support upload -- while the folder's ACL
+/// (Administrators + SYSTEM, see agent::restrict_data_dir) still decides who
+/// on this PC can read it.
+pub mod dpapi {
+    use anyhow::Result;
+    use base64::Engine as _;
+
+    pub const AVAILABLE: bool = cfg!(windows);
+    /// Ties the blobs to this use, so another program's DPAPI blob can't be
+    /// swapped in.
+    #[cfg(windows)]
+    const ENTROPY: &[u8] = b"FowlEngineManager/manager.json/github_token/v1";
+
+    pub fn protect_b64(plain: &str) -> Result<String> {
+        Ok(base64::engine::general_purpose::STANDARD.encode(protect(plain.as_bytes())?))
+    }
+
+    pub fn unprotect_b64(blob: &str) -> Result<String> {
+        let raw = base64::engine::general_purpose::STANDARD.decode(blob.trim())?;
+        Ok(String::from_utf8(unprotect(&raw)?)?)
+    }
+
+    #[cfg(windows)]
+    fn call(data: &[u8], encrypt: bool) -> Result<Vec<u8>> {
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::Security::Cryptography::{
+            CryptProtectData, CryptUnprotectData, CRYPTPROTECT_LOCAL_MACHINE,
+            CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+        };
+        let input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
+        let entropy =
+            CRYPT_INTEGER_BLOB { cbData: ENTROPY.len() as u32, pbData: ENTROPY.as_ptr() as *mut u8 };
+        let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
+        let flags = CRYPTPROTECT_UI_FORBIDDEN | CRYPTPROTECT_LOCAL_MACHINE;
+        // SAFETY: every pointer is valid for the duration of the call; `out`
+        // is allocated by DPAPI with LocalAlloc and freed below.
+        let ok = unsafe {
+            if encrypt {
+                CryptProtectData(
+                    &input,
+                    std::ptr::null(),
+                    &entropy,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    flags,
+                    &mut out,
+                )
+            } else {
+                CryptUnprotectData(
+                    &input,
+                    std::ptr::null_mut(),
+                    &entropy,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    flags,
+                    &mut out,
+                )
+            }
+        };
+        if ok == 0 || out.pbData.is_null() {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        // SAFETY: DPAPI returned cbData bytes at pbData.
+        let v = unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize) }.to_vec();
+        unsafe { LocalFree(out.pbData as _) };
+        Ok(v)
+    }
+
+    #[cfg(windows)]
+    fn protect(data: &[u8]) -> Result<Vec<u8>> {
+        call(data, true)
+    }
+    #[cfg(windows)]
+    fn unprotect(data: &[u8]) -> Result<Vec<u8>> {
+        call(data, false)
+    }
+    #[cfg(not(windows))]
+    fn protect(_: &[u8]) -> Result<Vec<u8>> {
+        anyhow::bail!("DPAPI is Windows-only")
+    }
+    #[cfg(not(windows))]
+    fn unprotect(_: &[u8]) -> Result<Vec<u8>> {
+        anyhow::bail!("DPAPI is Windows-only")
     }
 }
 
@@ -205,6 +354,37 @@ mod tests {
         assert!(in_window(Some("22:00-02:00"), t(1, 0)));
         assert!(!in_window(Some("22:00-02:00"), t(12, 0)));
         assert!(in_window(Some("junk"), t(12, 0)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dpapi_round_trip() {
+        let blob = dpapi::protect_b64("ghp_example").unwrap();
+        assert!(!blob.contains("ghp_example"));
+        assert_eq!(dpapi::unprotect_b64(&blob).unwrap(), "ghp_example");
+        assert!(dpapi::unprotect_b64("bm90IGEgYmxvYg==").is_err());
+    }
+
+    /// An old plain-text manager.json loads, and is rewritten encrypted.
+    #[cfg(windows)]
+    #[test]
+    fn token_migrates_to_dpapi() {
+        let dir = std::env::temp_dir().join(format!("fowl-cfg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("manager.json");
+        std::fs::write(&path, r#"{"github_token":"ghp_plain","channel":"beta"}"#).unwrap();
+        let c = ManagerConfig::load_from(&path);
+        assert_eq!(c.github_token.as_deref(), Some("ghp_plain"));
+        assert_eq!(c.channel, "beta");
+        let disk = std::fs::read_to_string(&path).unwrap();
+        assert!(!disk.contains("ghp_plain") && disk.contains(TOKEN_PROTECTED), "{disk}");
+        assert_eq!(ManagerConfig::load_from(&path).github_token.as_deref(), Some("ghp_plain"));
+        // a blob from another PC (or garbage) is dropped, not fatal
+        std::fs::write(&path, r#"{"github_token_dpapi":"AAAA","channel":"beta"}"#).unwrap();
+        let c = ManagerConfig::load_from(&path);
+        assert!(c.github_token.is_none() && c.channel == "beta");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
