@@ -813,6 +813,99 @@ pub(crate) fn harden(mut r: Response) -> Response {
     r
 }
 
+// ── Request metrics ──────────────────────────────────────────────────────────
+
+/// Latency buckets, seconds, for `bfdb_http_request_duration_seconds`.
+const LATENCY_BUCKETS: [f64; 8] = [0.005, 0.025, 0.1, 0.25, 0.5, 1.0, 2.5, 10.0];
+
+#[derive(Default, Clone)]
+struct RouteStats {
+    /// requests by status class: 1xx..5xx at index 1..5
+    by_class: [u64; 6],
+    /// cumulative counts per LATENCY_BUCKETS entry
+    buckets: [u64; LATENCY_BUCKETS.len()],
+    sum_secs: f64,
+    count: u64,
+}
+
+static REQUESTS: std::sync::LazyLock<Mutex<HashMap<(std::string::String, &'static str), RouteStats>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The label a path is counted under: its first two segments
+/// (`/api/stats`, `/api/pilot`, `/ws/tacmap`), so ids never become labels.
+/// Everything that is not the API is the dashboard.
+fn route_label(path: &str) -> std::string::String {
+    if !(path.starts_with("/api/") || path.starts_with("/ws/")) {
+        return "page".into();
+    }
+    let mut segs = path.trim_start_matches('/').split('/').take(2);
+    let a = segs.next().unwrap_or("");
+    let b: std::string::String = segs
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(32)
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        .collect();
+    format!("/{a}/{b}")
+}
+
+/// Count one answered request.
+pub(crate) fn record_request(method: &Method, path: &str, status: StatusCode, elapsed: Duration) {
+    let method: &'static str = match *method {
+        Method::GET => "GET",
+        Method::POST => "POST",
+        Method::OPTIONS => "OPTIONS",
+        _ => "other",
+    };
+    let mut g = REQUESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let label = route_label(path);
+    // a flood of made-up first segments must not grow this without bound
+    let key = if g.len() >= 2_000 && !g.contains_key(&(label.clone(), method)) { ("/other".into(), method) } else { (label, method) };
+    let s = g.entry(key).or_default();
+    s.by_class[(status.as_u16() / 100).min(5) as usize] += 1;
+    let secs = elapsed.as_secs_f64();
+    for (i, b) in LATENCY_BUCKETS.iter().enumerate() {
+        if secs <= *b {
+            s.buckets[i] += 1;
+        }
+    }
+    s.sum_secs += secs;
+    s.count += 1;
+}
+
+/// The request counters in Prometheus text form.
+pub(crate) fn write_request_metrics(out: &mut std::string::String) {
+    use std::fmt::Write as _;
+    let g = REQUESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut keys: Vec<_> = g.keys().cloned().collect();
+    keys.sort();
+    let _ = writeln!(out, "# TYPE bfdb_http_requests_total counter");
+    for k in &keys {
+        let s = &g[k];
+        for (class, n) in s.by_class.iter().enumerate().skip(1) {
+            if *n > 0 {
+                let _ = writeln!(
+                    out,
+                    "bfdb_http_requests_total{{route=\"{}\",method=\"{}\",status=\"{class}xx\"}} {n}",
+                    k.0, k.1
+                );
+            }
+        }
+    }
+    let _ = writeln!(out, "# TYPE bfdb_http_request_duration_seconds histogram");
+    for k in &keys {
+        let s = &g[k];
+        let l = format!("route=\"{}\",method=\"{}\"", k.0, k.1);
+        for (i, b) in LATENCY_BUCKETS.iter().enumerate() {
+            let _ = writeln!(out, "bfdb_http_request_duration_seconds_bucket{{{l},le=\"{b}\"}} {}", s.buckets[i]);
+        }
+        let _ = writeln!(out, "bfdb_http_request_duration_seconds_bucket{{{l},le=\"+Inf\"}} {}", s.count);
+        let _ = writeln!(out, "bfdb_http_request_duration_seconds_sum{{{l}}} {}", s.sum_secs);
+        let _ = writeln!(out, "bfdb_http_request_duration_seconds_count{{{l}}} {}", s.count);
+    }
+}
+
 // ── Upload sniffing ──────────────────────────────────────────────────────────
 
 /// The image type `bytes` actually is, judged by magic number -- never by the
@@ -1131,6 +1224,22 @@ mod tests {
             }
         }
         panic!("the background refresh never landed");
+    }
+
+    #[test]
+    fn request_metrics() {
+        assert_eq!(route_label("/api/pilot/0123/sorties"), "/api/pilot");
+        assert_eq!(route_label("/ws/tacmap"), "/ws/tacmap");
+        assert_eq!(route_label("/map"), "page");
+        assert_eq!(route_label("/api/x\"y"), "/api/xy");
+        record_request(&Method::GET, "/api/metrics-test", StatusCode::OK, Duration::from_millis(30));
+        record_request(&Method::GET, "/api/metrics-test", StatusCode::INTERNAL_SERVER_ERROR, Duration::from_secs(3));
+        let mut out = std::string::String::new();
+        write_request_metrics(&mut out);
+        assert!(out.contains("bfdb_http_requests_total{route=\"/api/metrics-test\",method=\"GET\",status=\"2xx\"} 1"));
+        assert!(out.contains("bfdb_http_requests_total{route=\"/api/metrics-test\",method=\"GET\",status=\"5xx\"} 1"));
+        assert!(out.contains("bfdb_http_request_duration_seconds_bucket{route=\"/api/metrics-test\",method=\"GET\",le=\"0.1\"} 1"));
+        assert!(out.contains("bfdb_http_request_duration_seconds_count{route=\"/api/metrics-test\",method=\"GET\"} 2"));
     }
 
     #[test]

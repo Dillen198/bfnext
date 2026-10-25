@@ -4209,6 +4209,7 @@ async fn api_metrics(
             }
         }
     }
+    websec::write_request_metrics(&mut out);
     let _ = writeln!(out, "# TYPE bfdb_build_info gauge\nbfdb_build_info{{version=\"{BUILD_VERSION}\",git=\"{BUILD_GIT}\"}} 1");
     text(warp::http::StatusCode::OK, out)
 }
@@ -10496,5 +10497,12 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
             .boxed())
         .map(|r| websec::harden(warp::Reply::into_response(r)))
         .with(cors);
-    embedded_files.or(cors_routes).map(|r| warp::Reply::into_response(r)).boxed()
+    embedded_files
+        .or(cors_routes)
+        .map(|r| warp::Reply::into_response(r))
+        .with(warp::log::custom(|info| {
+            websec::record_request(info.method(), info.path(), info.status(), info.elapsed())
+        }))
+        .map(|r| warp::Reply::into_response(r))
+        .boxed()
 }
