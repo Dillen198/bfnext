@@ -2429,7 +2429,7 @@ async fn api_pilot_deploys(
 /// A dashboard can drive a three-state badge off this -- LIVE / ENGINE
 /// UNREACHABLE / OFFLINE -- instead of inferring liveness from the mere
 /// existence of a round row.
-async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+async fn health(db: StatsDb, inst: Inst, detail: bool) -> std::result::Result<warp::reply::Json, Error> {
     // Served from a short cache. Without one, every open dashboard tab fires
     // its own engine RPC every 30s, and this endpoint would itself become a
     // source of the poll contention it is meant to measure.
@@ -2514,29 +2514,60 @@ async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::R
             })))
     })?;
 
-    let body = serde_json::json!({
+    // Public: only what the site, the dashboard and the bot read. The
+    // engine's own error text (netidx paths), database size, free disk and
+    // the build are for `/api/admin/health`.
+    let mut body = serde_json::json!({
         "ok": engine_ok,
         "bfdb": "ok",
         "instance": inst.id.to_string(),
         "engine": {
             "reachable": engine_ok,
             "latency_ms": if engine_ok && elapsed_ms > 0 { Some(elapsed_ms) } else { None },
-            "error": engine_err,
+            "error": engine_err.as_deref().map(public_engine_error),
         },
         "active_round": round,
+    });
+    if detail {
+        body["engine"]["error"] = serde_json::json!(engine_err);
         // The engine answering says nothing about whether its stats are
         // reaching us: a stalled stats.jsonl reader looked perfectly healthy.
-        "ingest": {
+        body["ingest"] = serde_json::json!({
             "last_stat_at": inst.last_stat.lock().ok().and_then(|g| g.map(|(t, _)| t.to_rfc3339())),
             "lag_s": ingest_lag_secs(&inst),
-        },
-        "db": {
+        });
+        body["db"] = serde_json::json!({
             "size_bytes": db.sled().size_on_disk().ok(),
             "disk_free_bytes": DB_PATH.get().and_then(|p| maint::disk_free(p)),
-        },
-        "build": build_info_json(),
-    });
+        });
+        body["build"] = build_info_json();
+    }
     Ok(warp::reply::json(&body))
+}
+
+/// The engine probe's failure as the public health check tells it: what
+/// kind of failure, without the netidx paths and RPC detail in the error.
+fn public_engine_error(e: &str) -> &'static str {
+    if e.contains("timed out") || e.contains("did not answer") {
+        "the engine did not answer in time"
+    } else {
+        "the engine is not reachable"
+    }
+}
+
+/// GET /api/admin/health -- `/api/health` with everything: the engine's own
+/// error, ingest lag, database size, free disk and the build (ops role).
+async fn api_admin_health(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<warp::reply::Response, Error> {
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
+    Ok(health(db, inst, true).await?.into_response())
+}
+
+async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+    health(db, inst, false).await
 }
 
 /// Warehouse + supply topology for one objective.
@@ -9102,14 +9133,20 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_db(db.clone()))
         .then(api_pilot_deploys);
 
-    // Cheap liveness probe -- no DB access, no archive-replay contention.
-    // Process supervisors should poll this, not /api/stats (which runs
+    // Liveness: an engine probe (cached 15s) and one read of the round
+    // tree. Process supervisors should poll this, not /api/stats (which runs
     // several Sled queries and can be slow while the stats archive is
     // still replaying at startup).
     let health = warp::path!("api" / "health")
         .and(with_db(db.clone()))
         .and(with_instance(db.clone()))
         .then(api_health);
+
+    let admin_health = warp::path!("api" / "admin" / "health")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_health);
 
     // This bfdb binary's own build identity (git rev + build time), compiled
     // in by build.rs. Public -- it's just build metadata.
@@ -10040,6 +10077,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(auth_local_enabled)
         .or(admin_sessions)
         .or(admin_audit)
+        .or(admin_health)
         .or(admin_perf)
         .or(admin_perf_history)
         .or(admin_pilot_sides)

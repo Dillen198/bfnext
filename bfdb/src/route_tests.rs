@@ -458,6 +458,23 @@ async fn public_gets_are_metered_per_ip() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn public_health_keeps_internals_for_admins() {
+    let h = harness();
+    let r = h.get("/api/health", None).await;
+    assert_eq!(r.status(), 200);
+    let v = body_json(r);
+    assert_eq!(v["engine"]["reachable"], false);
+    assert!(v["engine"]["error"].is_string());
+    for k in ["db", "build", "ingest"] {
+        assert!(v.get(k).is_none(), "public /api/health shows {k}");
+    }
+    assert_eq!(h.get("/api/admin/health", None).await.status(), 401);
+    let ops = h.session_with(false, admin::Role::OPS);
+    let v = body_json(h.get("/api/admin/health", Some(&ops)).await);
+    assert!(v["db"].is_object() && v["build"].is_object() && v["ingest"].is_object());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn security_headers_on_api_and_page() {
     let h = harness();
     let r = h.get("/api/version", None).await;

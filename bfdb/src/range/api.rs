@@ -57,9 +57,10 @@ fn fail(code: StatusCode, msg: impl std::fmt::Display) -> Response {
     reply_json(code, &json!({ "ok": false, "message": msg.to_string() }))
 }
 
+/// A 500 that names a log reference, not the anyhow chain (sled paths,
+/// file names, serde positions), which goes to the log.
 fn internal(e: anyhow::Error) -> Response {
-    log::warn!("range api: {e:#}");
-    err(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))
+    crate::websec::error_response(&e.context("range api"))
 }
 
 fn bytes_reply(body: Vec<u8>, ctype: &'static str, max_age: u32) -> Response {
@@ -111,7 +112,7 @@ async fn linked_player(ctx: &RangeCtx, sid: Option<Uuid>) -> Result<(bool, Strin
     let s = match block_in_place(|| ctx.db.get_session(sid)) {
         Ok(Some(s)) => s,
         Ok(None) => return Err(fail(StatusCode::UNAUTHORIZED, "session expired -- log in again")),
-        Err(e) => return Err(fail(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))),
+        Err(e) => return Err(internal(e)),
     };
     match ctx.session_ucid(sid, &s.discord_id).await {
         Some(u) => Ok((s.is_admin, u)),
@@ -849,7 +850,12 @@ async fn h_clip(ctx: Arc<RangeCtx>, id: String, as_acmi: bool) -> Response {
             drop(permit);
             let c = match built {
                 Ok(Ok(c)) => c,
-                Ok(Err(e)) => return err(StatusCode::NOT_FOUND, format!("{e:#}")),
+                // the outermost message is the one written for the reader
+                // ("... is not in the recording"); the chain is for the log
+                Ok(Err(e)) => {
+                    log::info!("range: no clip for {id}: {e:#}");
+                    return err(StatusCode::NOT_FOUND, format!("{e}"));
+                }
                 Err(e) => return internal(anyhow::anyhow!("clip task failed: {e}")),
             };
             let gz = match serde_json::to_vec(&c).map_err(anyhow::Error::from).and_then(|j| gzip(&j)) {
