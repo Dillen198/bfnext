@@ -164,6 +164,17 @@ function Assert-CfgJson([string]$path) {
         }
     } catch { throw "$path is not valid JSON: $($_.Exception.Message)" }
     if ($doc -isnot [System.Collections.IDictionary]) { throw "$path is not a JSON object" }
+    # The repo's tracked cfgs (miz/ODFv2_CFG, ...) carry placeholder admins
+    # 000...0 / 000...1 instead of real UCIDs. A pack built from one would
+    # take every admin's rights away on the server it lands on.
+    $admins = $doc['admins']
+    if ($admins -is [System.Collections.IDictionary]) {
+        foreach ($k in @($admins.Keys)) {
+            if ([string]$k -match '^0{31}[01]$') {
+                throw "$path still has the placeholder admin UCID $k -- put the server's real admins in (see miz/README.md) before packing it"
+            }
+        }
+    }
 }
 
 # campaign-<key>.zip for every entry of -Campaigns, into $outDir; returns the

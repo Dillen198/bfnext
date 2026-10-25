@@ -1,8 +1,8 @@
 {
   "netidx_base": "/local/fowl/modern",
   "admins": {
-    "43009af9ad72caf2a3ff31396bed074f": "[.ID] EagleEye",
-    "eba008f7ec70d3629065a7ae0ebb8f67": "â„–15 | KillerDog"
+    "00000000000000000000000000000000": "REPLACE: admin 1 (32-hex UCID as the key)",
+    "00000000000000000000000000000001": "REPLACE: admin 2 (or remove this line)"
   },
   "banned": {},
   "rules": {
