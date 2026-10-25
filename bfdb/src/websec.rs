@@ -287,6 +287,7 @@ pub(crate) fn trusted_proxies() -> &'static TrustedProxies {
 /// address that is not one of them is the client. With
 /// `--trust-cf-connecting-ip` too, a request that reached Caddy from a
 /// trusted address takes `CF-Connecting-IP` as the client.
+#[cfg(test)]
 pub(crate) fn client_ip(peer: Option<SocketAddr>, xff: Option<&str>) -> IpAddr {
     client_ip_via(&TrustedProxies::default(), peer, xff, None)
 }
