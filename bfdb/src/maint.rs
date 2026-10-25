@@ -152,7 +152,14 @@ pub(crate) fn backup_now(db: &sled::Db, dir: &Path, keep: usize) -> Result<PathB
         let out = sled::open(&partial).with_context(|| format!("creating {}", partial.display()))?;
         // sled::import panics on IO trouble rather than returning it; keep a
         // failed backup from taking the whole process down with it.
-        let export = db.export();
+        // Live credentials stay out of it (see BACKUP_EXCLUDED_TREES).
+        let export: Vec<_> = db
+            .export()
+            .into_iter()
+            .filter(|(_, name, _)| {
+                !crate::db::BACKUP_EXCLUDED_TREES.iter().any(|t| t.as_bytes() == &name[..])
+            })
+            .collect();
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| out.import(export)))
             .map_err(|_| anyhow::anyhow!("sled import panicked while writing the backup"))?;
         out.flush().context("flushing the backup")?;
@@ -418,9 +425,12 @@ mod tests {
         {
             let db = sled::open(&db_path).unwrap();
             db.open_tree("t").unwrap().insert(b"k", b"v").unwrap();
+            db.open_tree("auth_sessions_h").unwrap().insert(b"k", b"secret").unwrap();
             let b = backup_now(&db, &dir, 2).unwrap();
             let restored = sled::open(&b).unwrap();
             assert_eq!(restored.open_tree("t").unwrap().get(b"k").unwrap().as_deref(), Some(&b"v"[..]));
+            // live logins are not copied into backups
+            assert!(!restored.tree_names().iter().any(|n| &n[..] == b"auth_sessions_h"));
         }
         // rotation keeps only the newest `keep`
         for n in 0..3 {

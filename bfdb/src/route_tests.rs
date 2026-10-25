@@ -101,6 +101,7 @@ impl Harness {
                     avatar: None,
                     is_admin: admin,
                     expires: chrono::Utc::now() + chrono::Duration::hours(1),
+                    roles: if admin { admin::Role::ALL } else { 0 },
                 },
             )
             .unwrap();

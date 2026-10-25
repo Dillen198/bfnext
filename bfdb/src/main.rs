@@ -72,6 +72,7 @@ mod range;
 mod replay;
 mod websec;
 mod maint;
+mod admin;
 #[cfg(test)]
 mod route_tests;
 
@@ -3074,6 +3075,7 @@ async fn api_auth_callback(
         avatar:     user.avatar.clone(),
         is_admin,
         expires:    chrono::Utc::now() + chrono::Duration::seconds(lifetime),
+        roles:      if is_admin { admin::Role::ALL } else { 0 },
     };
     task::block_in_place(|| db.create_session(session_id, session))?;
 
@@ -3207,6 +3209,7 @@ async fn api_auth_local_login(
         avatar:     None,
         is_admin:   true,
         expires:    chrono::Utc::now() + chrono::Duration::seconds(ADMIN_SESSION_SECS),
+        roles:      admin::Role::ALL,
     };
     task::block_in_place(|| db.create_session(session_id, session))?;
     let cookie = format!(
@@ -3716,7 +3719,7 @@ async fn api_admin_sessions(
     require_admin(session_id, db.clone()).await?;
     let data = task::block_in_place(|| -> Result<String> {
         let sessions = db.list_sessions()?;
-        let entries: Vec<_> = sessions.iter().map(|(_, s)| {
+        let entries: Vec<_> = sessions.iter().map(|s| {
             serde_json::json!({
                 "discord_id": s.discord_id,
                 "username":   s.username,

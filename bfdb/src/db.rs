@@ -313,6 +313,7 @@ pub(crate) struct OAuthState {
     pub(crate) return_to: Option<std::string::String>,
 }
 
+/// A logged-in browser session, as stored in `auth_sessions_h`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionData {
     pub(crate) discord_id: std::string::String,
@@ -320,7 +321,36 @@ pub(crate) struct SessionData {
     pub(crate) avatar:     Option<std::string::String>,
     pub(crate) is_admin:   bool,
     pub(crate) expires:    DateTime<Utc>,
+    /// `crate::admin::Role` bits. A full admin has every one; a player none.
+    /// (Rows of the old `auth_sessions` tree predate this field -- see
+    /// `LegacySessionData`.)
+    pub(crate) roles:      u8,
 }
+
+/// The layout of the pre-hash `auth_sessions` tree, keyed by the raw cookie
+/// id. Read once, at startup, to move each row into `auth_sessions_h`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacySessionData {
+    discord_id: std::string::String,
+    username:   std::string::String,
+    avatar:     Option<std::string::String>,
+    is_admin:   bool,
+    expires:    DateTime<Utc>,
+}
+
+/// Sessions are keyed by this digest of the cookie id, never the id itself:
+/// the database, and every backup of it, then holds nothing a browser could
+/// present as a cookie.
+pub(crate) fn session_key(id: Uuid) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(32);
+    buf.extend_from_slice(b"bfdb-session-v1\0");
+    buf.extend_from_slice(id.as_bytes());
+    crate::websec::sha256(&buf)
+}
+
+/// Trees a backup leaves out: live credentials. Restoring a backup just
+/// means everyone logs in again.
+pub(crate) const BACKUP_EXCLUDED_TREES: &[&str] = &["auth_sessions", "auth_sessions_h", "auth_states"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TrailPoint {
@@ -1077,7 +1107,11 @@ pub(crate) struct StatsDbInner {
     /// The old single-server JSONL cursor, kept only long enough to migrate it.
     legacy_jsonl_cursor: Tree<u8, u64>,
     // Auth
-    auth_sessions:    Tree<Uuid, SessionData>,
+    /// Pre-hash sessions keyed by the raw cookie id; emptied into
+    /// `auth_sessions` at startup (`migrate_session_keys`).
+    legacy_auth_sessions: Tree<Uuid, LegacySessionData>,
+    /// Sessions keyed by `session_key(cookie id)`.
+    auth_sessions:    Tree<[u8; 32], SessionData>,
     auth_states:      Tree<Uuid, OAuthState>,
     // Trail history
     trail_points: Tree<(RoundId, std::string::String, i64), (f64, f64, f64, f64)>,
@@ -1489,7 +1523,8 @@ impl StatsDb {
             round_instance: Tree::open(&db, "round_instance")?,
             jsonl_cursor: Tree::open(&db, "jsonl_cursor_v2")?,
             legacy_jsonl_cursor: Tree::open(&db, "jsonl_cursor")?,
-            auth_sessions: Tree::open(&db, "auth_sessions")?,
+            legacy_auth_sessions: Tree::open(&db, "auth_sessions")?,
+            auth_sessions: Tree::open(&db, "auth_sessions_h")?,
             auth_states: Tree::open(&db, "auth_states")?,
             trail_points: Tree::open(&db, "trail_points")?,
             objective_captures: Tree::open(&db, "objective_captures")?,
@@ -1522,6 +1557,7 @@ impl StatsDb {
         t.check_schema_version()?;
         t.migrate_legacy_cursors()?;
         t.migrate_legacy_sessions()?;
+        t.migrate_session_keys()?;
         t.seed_wiki_if_empty()?;
         t.seed_wiki_images_if_empty()?;
         t.close_stale_open_rounds()?;
@@ -1612,6 +1648,40 @@ impl StatsDb {
                 "{unreadable} session record(s) written by older builds can't be read by this one; \
                  ignoring them (only their perf history is lost)"
             );
+        }
+        Ok(())
+    }
+
+    /// Rekey every session still stored under its raw cookie id (written by
+    /// a bfdb from before `session_key`) by the digest, so the cookies keep
+    /// working and the plain ids leave the database. Expired rows and rows
+    /// that no longer decode are just dropped.
+    fn migrate_session_keys(&self) -> Result<()> {
+        let keys: Vec<Uuid> = self.legacy_auth_sessions.iter().keys_only().filter_map(|k| k.ok()).collect();
+        let now = Utc::now();
+        let mut moved = 0usize;
+        for id in keys {
+            if let Ok(Some(s)) = self.legacy_auth_sessions.get(&id) {
+                if s.expires > now {
+                    let roles = if s.is_admin { crate::admin::Role::ALL } else { 0 };
+                    self.auth_sessions.insert(
+                        &session_key(id),
+                        &SessionData {
+                            discord_id: s.discord_id,
+                            username: s.username,
+                            avatar: s.avatar,
+                            is_admin: s.is_admin,
+                            expires: s.expires,
+                            roles,
+                        },
+                    )?;
+                    moved += 1;
+                }
+            }
+            self.legacy_auth_sessions.delete(&id)?;
+        }
+        if moved > 0 {
+            info!("rekeyed {moved} login session(s) by digest; the raw session ids are gone from the database");
         }
         Ok(())
     }
@@ -5338,15 +5408,16 @@ impl StatsDb {
     // ── Auth session methods ─────────────────────────────────────────
 
     pub(crate) fn create_session(&self, id: Uuid, data: SessionData) -> Result<()> {
-        self.auth_sessions.insert(&id, &data)?;
+        self.auth_sessions.insert(&session_key(id), &data)?;
         Ok(())
     }
 
     pub(crate) fn get_session(&self, id: Uuid) -> Result<Option<SessionData>> {
-        match self.auth_sessions.get(&id)? {
+        let k = session_key(id);
+        match self.auth_sessions.get(&k)? {
             None => Ok(None),
             Some(s) if s.expires < Utc::now() => {
-                let _ = self.auth_sessions.remove(&id);
+                let _ = self.auth_sessions.delete(&k);
                 Ok(None)
             }
             Some(s) => Ok(Some(s)),
@@ -5354,7 +5425,7 @@ impl StatsDb {
     }
 
     pub(crate) fn delete_session(&self, id: Uuid) -> Result<()> {
-        self.auth_sessions.remove(&id)?;
+        self.auth_sessions.delete(&session_key(id))?;
         Ok(())
     }
 
@@ -5375,13 +5446,14 @@ impl StatsDb {
         }
     }
 
-    pub(crate) fn list_sessions(&self) -> Result<Vec<(Uuid, SessionData)>> {
+    /// Every unexpired session. The data only: their ids are not stored.
+    pub(crate) fn list_sessions(&self) -> Result<Vec<SessionData>> {
         let now = Utc::now();
         let mut out = Vec::new();
         for item in self.auth_sessions.iter() {
-            let (id, data) = item?;
+            let (_, data) = item?;
             if data.expires > now {
-                out.push((id, data));
+                out.push(data);
             }
         }
         Ok(out)
@@ -5412,7 +5484,7 @@ impl StatsDb {
             }
         }
         for k in &dead_sessions {
-            self.auth_sessions.remove(k)?;
+            self.auth_sessions.delete(k)?;
         }
         for k in &dead_states {
             self.auth_states.remove(k)?;
@@ -5431,7 +5503,7 @@ impl StatsDb {
             }
         }
         for id in &dead {
-            self.auth_sessions.remove(id)?;
+            self.auth_sessions.delete(id)?;
         }
         Ok(dead.len())
     }
@@ -6342,6 +6414,47 @@ impl StatsDb {
             "id": crate::instance::DEFAULT_INSTANCE,
         }))?;
         Self::new(&HashMap::new(), path, Registry::single(cfg), include, exclude)
+    }
+}
+
+#[cfg(test)]
+mod session_key_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn legacy_sessions_are_rekeyed_and_keep_working() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-session-test-{}", Uuid::new_v4()));
+        let live = Uuid::new_v4();
+        let stale = Uuid::new_v4();
+        {
+            // what a bfdb from before session_key left behind
+            let db = sled::open(tmp.join("db")).unwrap();
+            let old: Tree<Uuid, LegacySessionData> = Tree::open(&db, "auth_sessions").unwrap();
+            let row = |hours: i64, admin: bool| LegacySessionData {
+                discord_id: "42".into(),
+                username: "pilot".into(),
+                avatar: None,
+                is_admin: admin,
+                expires: Utc::now() + chrono::Duration::hours(hours),
+            };
+            old.insert(&live, &row(1, true)).unwrap();
+            old.insert(&stale, &row(-1, false)).unwrap();
+            db.flush().unwrap();
+        }
+        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        assert!(db.legacy_auth_sessions.is_empty());
+        let s = db.get_session(live).unwrap().expect("the old cookie still logs in");
+        assert!(s.is_admin);
+        assert_eq!(s.roles, crate::admin::Role::ALL);
+        assert!(db.get_session(stale).unwrap().is_none());
+        // no stored key is the cookie id
+        for k in db.auth_sessions.iter().keys_only() {
+            assert_ne!(&k.unwrap()[..16], live.as_bytes());
+        }
+        db.delete_session(live).unwrap();
+        assert!(db.get_session(live).unwrap().is_none());
+        drop(db);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 
