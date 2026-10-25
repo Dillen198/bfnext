@@ -35,6 +35,8 @@ pub(crate) fn harness() -> Harness {
 /// A harness over an `--instances` file's worth of JSON, with a hook to adjust
 /// the route context before the chain is built.
 pub(crate) fn harness_with(instances: serde_json::Value, tweak: impl FnOnce(&mut RouteCtx)) -> Harness {
+    // never ask GitHub from a test
+    let _ = COCKPIT_VERSION_OVERRIDE.set("9.9.9-test".into());
     let dir = std::env::temp_dir().join(format!("bfdb-route-test-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let file: instance::InstancesFile = serde_json::from_value(instances).unwrap();
@@ -289,6 +291,19 @@ async fn cockpit_auth() {
     let r = h.get("/api/cockpit/context?playerid=3&ckey=abcdef", None).await;
     assert_ne!(r.status(), 401);
     assert_ne!(r.status(), 200);
+    // the key may come in a header instead of the URL
+    let r = warp::test::request()
+        .method("GET")
+        .path("/api/cockpit/context?playerid=3&plugin=3.4.0")
+        .remote_addr(peer())
+        .header("x-cockpit-key", "abcdef")
+        .reply(&h.routes)
+        .await;
+    assert_ne!(r.status(), 401);
+    assert!(COCKPIT_PLUGINS.lock().unwrap().contains_key("3.4.0"));
+    // the advertised version
+    let r = h.get("/api/cockpit/plugin/version", None).await;
+    assert_eq!(body_json(r)["version"], "9.9.9-test");
     // a browser session with no Discord link is told so
     let player = h.session(false);
     let r = h.get("/api/cockpit/context", Some(&player)).await;

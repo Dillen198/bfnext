@@ -455,6 +455,12 @@ struct Args {
     /// 0 turns it off.
     #[arg(long = "heavy-get-rate", default_value_t = 120)]
     heavy_get_rate: u32,
+    /// The cockpit overlay version /api/cockpit/plugin/version advertises,
+    /// as is. Default: the version bfdb was built with, but only once its
+    /// `cockpit-v<version>` installer is confirmed published on GitHub
+    /// ("unknown" until then, which no overlay takes for an update).
+    #[arg(long = "cockpit-plugin-version", value_name = "VERSION")]
+    cockpit_plugin_version: Option<String>,
     /// A proxy in front of Caddy (a CDN, a load balancer) whose
     /// X-Forwarded-For entries are believed, as an IP or CIDR block; repeat
     /// for several. Without it, the client is the address Caddy saw -- which,
@@ -3458,6 +3464,49 @@ async fn resolve_by_player_id(
     Ok(ucid)
 }
 
+/// The cockpit routes' query map, with the overlay key taken from the
+/// `X-Cockpit-Key` header when it is sent there -- a header stays out of
+/// proxy and browser history logs, where `?ckey=` lands. `?ckey=` still
+/// works: every overlay released so far sends it.
+fn cockpit_query(
+) -> impl Filter<Extract = (std::collections::HashMap<std::string::String, std::string::String>,), Error = warp::Rejection> + Clone {
+    warp::query::<std::collections::HashMap<std::string::String, std::string::String>>()
+        .and(warp::header::optional::<std::string::String>("x-cockpit-key"))
+        .map(
+            |mut q: std::collections::HashMap<std::string::String, std::string::String>, key: Option<std::string::String>| {
+                if let Some(k) = key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()) {
+                    q.insert("ckey".into(), k);
+                }
+                q
+            },
+        )
+}
+
+/// Overlay versions seen on cockpit requests (`?plugin=`): requests and the
+/// last time, per version. Shown in `/api/metrics`; a version's first
+/// appearance is logged.
+static COCKPIT_PLUGINS: std::sync::LazyLock<
+    Mutex<std::collections::HashMap<std::string::String, (u64, chrono::DateTime<chrono::Utc>)>>,
+> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+fn note_cockpit_plugin(query: &std::collections::HashMap<std::string::String, std::string::String>) {
+    let v = match query.get("plugin").map(|s| s.trim()) {
+        Some(v) if !v.is_empty() && v.len() <= 32 && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) => v,
+        Some(_) => "invalid",
+        None => "none",
+    };
+    let mut g = COCKPIT_PLUGINS.lock().unwrap_or_else(|e| e.into_inner());
+    if g.len() >= 64 && !g.contains_key(v) {
+        return;
+    }
+    let e = g.entry(v.to_string()).or_insert_with(|| {
+        log::info!("cockpit: first request from overlay version {v}");
+        (0, chrono::Utc::now())
+    });
+    e.0 += 1;
+    e.1 = chrono::Utc::now();
+}
+
 async fn require_linked_player(
     query: &std::collections::HashMap<std::string::String, std::string::String>,
     session_id: Option<Uuid>,
@@ -3466,6 +3515,7 @@ async fn require_linked_player(
     inst: &InstanceState,
     ip: std::net::IpAddr,
 ) -> std::result::Result<dcso3::net::Ucid, Error> {
+    note_cockpit_plugin(query);
     let player_id = query.get("playerid").and_then(|s| s.parse::<i64>().ok());
     let key = query.get("ckey").map(|s| s.trim()).filter(|s| !s.is_empty());
     if let (Some(id), Some(key)) = (player_id, key) {
@@ -3679,13 +3729,70 @@ fn cockpit_plugin_version() -> &'static str {
         .unwrap_or("unknown")
 }
 
-/// GET /api/cockpit/plugin/version — what the current overlay version is.
+/// `--cockpit-plugin-version`: advertise this overlay version as is, with no
+/// release check. Set once in `main`.
+static COCKPIT_VERSION_OVERRIDE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
+
+/// Whether the installer for the bundled overlay version is published, as
+/// last checked, and when.
+static COCKPIT_RELEASE: std::sync::LazyLock<Mutex<(Option<(std::time::Instant, bool)>, bool)>> =
+    std::sync::LazyLock::new(|| Mutex::new((None, false)));
+
+/// Re-check a confirmed release this often, a missing one sooner.
+const COCKPIT_RELEASE_RECHECK_OK: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+const COCKPIT_RELEASE_RECHECK_MISSING: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The overlay version to advertise. The one bfdb was built with is only
+/// offered once its `cockpit-v<version>` release asset is confirmed on
+/// GitHub: an overlay told about a version whose installer is not out yet
+/// tried to update itself and got a 404. Until then the answer is
+/// "unknown", which no overlay or dashboard takes for an update. The check
+/// runs in the background; a request never waits on GitHub.
+fn advertised_cockpit_version() -> std::string::String {
+    if let Some(v) = COCKPIT_VERSION_OVERRIDE.get() {
+        return v.clone();
+    }
+    let built = cockpit_plugin_version();
+    let (known, start) = {
+        let mut g = COCKPIT_RELEASE.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = g.0.map_or(false, |(at, ok)| {
+            at.elapsed() < if ok { COCKPIT_RELEASE_RECHECK_OK } else { COCKPIT_RELEASE_RECHECK_MISSING }
+        });
+        let start = !fresh && !g.1;
+        if start {
+            g.1 = true;
+        }
+        (g.0.map(|(_, ok)| ok), start)
+    };
+    if start && built != "unknown" {
+        let url = format!("{COCKPIT_RELEASES}/cockpit-v{built}/{COCKPIT_INSTALLER_ASSET}");
+        tokio::spawn(async move {
+            let ok = http_client().head(&url).send().await.map_or(false, |r| r.status().is_success());
+            let mut g = COCKPIT_RELEASE.lock().unwrap_or_else(|e| e.into_inner());
+            if !ok && g.0.map_or(true, |(_, was)| was) {
+                log::warn!("cockpit: no published installer at {url} yet -- advertising overlay version \"unknown\" until there is");
+            }
+            *g = (Some((std::time::Instant::now(), ok)), false);
+        });
+    }
+    match known {
+        Some(true) => built.to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+/// GET /api/cockpit/plugin/version — what the current overlay version is
+/// (see `advertised_cockpit_version`); `built` is the copy this bfdb ships.
 ///
 /// Open on purpose: a player needs this before they are identified, and it
 /// reveals nothing.
-async fn api_cockpit_plugin_version() -> std::result::Result<impl warp::Reply, Error> {
+async fn api_cockpit_plugin_version(
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    note_cockpit_plugin(&query);
     Ok(warp::reply::json(&serde_json::json!({
-        "version": cockpit_plugin_version(),
+        "version": advertised_cockpit_version(),
+        "built": cockpit_plugin_version(),
     })))
 }
 
@@ -3698,10 +3805,10 @@ const COCKPIT_INSTALLER_ASSET: &str = "VectorStrike-Cockpit-Install.exe";
 /// GET /api/cockpit/plugin/installer — the installer for the version this bfdb
 /// ships, so the wiki and dashboard have one link that is never out of date.
 async fn api_cockpit_plugin_installer() -> std::result::Result<impl warp::Reply, Error> {
-    let url = format!(
-        "{COCKPIT_RELEASES}/cockpit-v{}/{COCKPIT_INSTALLER_ASSET}",
-        cockpit_plugin_version()
-    );
+    // The newest published one; the bundled version's until that is known.
+    let advertised = advertised_cockpit_version();
+    let version = if advertised == "unknown" { cockpit_plugin_version().to_string() } else { advertised };
+    let url = format!("{COCKPIT_RELEASES}/cockpit-v{version}/{COCKPIT_INSTALLER_ASSET}");
     Ok(warp::redirect::temporary(url.parse::<warp::http::Uri>().unwrap()))
 }
 
@@ -3965,6 +4072,15 @@ async fn api_metrics(
         let reachable = st.health_cache.lock().await.as_ref().map(|(_, ok, _)| *ok);
         if let Some(ok) = reachable {
             let _ = writeln!(out, "bfdb_engine_reachable{{instance=\"{id}\"}} {}", ok as u8);
+        }
+    }
+    {
+        let g = COCKPIT_PLUGINS.lock().unwrap_or_else(|e| e.into_inner());
+        if !g.is_empty() {
+            let _ = writeln!(out, "# TYPE bfdb_cockpit_plugin_requests_total counter");
+            for (v, (n, _)) in g.iter() {
+                let _ = writeln!(out, "bfdb_cockpit_plugin_requests_total{{version=\"{v}\"}} {n}");
+            }
         }
     }
     let _ = writeln!(out, "# TYPE bfdb_build_info gauge\nbfdb_build_info{{version=\"{BUILD_VERSION}\",git=\"{BUILD_GIT}\"}} 1");
@@ -8036,6 +8152,9 @@ async fn main() -> Result<()> {
     ));
 
     websec::set_spa_csp(args.csp_enforce, &args.csp_extra_src);
+    if let Some(v) = args.cockpit_plugin_version.clone().filter(|v| !v.trim().is_empty()) {
+        let _ = COCKPIT_VERSION_OVERRIDE.set(v.trim().to_string());
+    }
 
     // Secrets may come from a file or the environment instead of argv.
     args.admin_password = secret_from(
@@ -8745,7 +8864,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .allow_methods(&[Method::GET, Method::POST, Method::OPTIONS])
         // x-intel-filename: sent by the recon-intel photo upload, which is a
         // cross-origin POST and so triggers a CORS preflight.
-        .allow_headers(vec!["content-type", "x-intel-filename"])
+        // x-cockpit-key: the cockpit overlay key, sent as a header by
+        // overlays that no longer put it in the URL.
+        .allow_headers(vec!["content-type", "x-intel-filename", "x-cockpit-key"])
         .allow_credentials(true);
     let cors = if cross_origin {
         // Our own public origin too. A page bfdb serves itself
@@ -9420,7 +9541,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let cockpit_ewr_report_route = warp::path!("api" / "cockpit" / "ewr" / "report")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9429,7 +9550,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let cockpit_ewr_intel_route = warp::path!("api" / "cockpit" / "ewr" / "intel")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9439,7 +9560,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let cockpit_ewr_toggle_route = warp::path!("api" / "cockpit" / "ewr" / "toggle")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9449,7 +9570,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let cockpit_ewr_units_route = warp::path!("api" / "cockpit" / "ewr" / "units")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<EwrUnitsBody>())
         .and(with_db(db.clone()))
@@ -9460,7 +9581,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let cockpit_carp_solve_route = warp::path!("api" / "cockpit" / "carp" / "solve")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9469,7 +9590,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let cockpit_carp_solve_latlon_route = warp::path!("api" / "cockpit" / "carp" / "solve-latlon")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9479,7 +9600,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let cockpit_cargo_spawn_route = warp::path!("api" / "cockpit" / "cargo" / "spawn")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<CargoSpawnBody>())
         .and(with_db(db.clone()))
@@ -9490,6 +9611,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let cockpit_plugin_version_route = warp::path!("api" / "cockpit" / "plugin" / "version")
         .and(warp::get())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .then(api_cockpit_plugin_version);
 
     let cockpit_plugin_download_route = warp::path!("api" / "cockpit" / "plugin" / "download")
@@ -9502,7 +9624,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let cockpit_context_route = warp::path!("api" / "cockpit" / "context")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9512,7 +9634,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let cockpit_menu_route = warp::path!("api" / "cockpit" / "menu")
         .and(warp::get())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9522,7 +9644,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let cockpit_messages_route = warp::path!("api" / "cockpit" / "messages")
         .and(warp::get())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9532,7 +9654,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let cockpit_cargo_route = warp::path!("api" / "cockpit" / "cargo")
         .and(warp::get())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9542,7 +9664,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let cockpit_menu_invoke_route = warp::path!("api" / "cockpit" / "menu" / "invoke")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<MenuInvokeBody>())
         .and(with_db(db.clone()))
