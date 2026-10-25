@@ -37,6 +37,7 @@ mod menu;
 mod modern_war;
 mod msgq;
 mod navaids;
+mod rules;
 mod shots;
 mod situation;
 mod spawnctx;
@@ -342,10 +343,6 @@ struct PendingTakeoff {
     air_since: Option<DateTime<Utc>>,
 }
 
-/// A held takeoff counts once the aircraft is this high above the ground...
-const TAKEOFF_CONFIRM_AGL_M: f64 = 30.;
-/// ...or has stayed in the air this long (a helicopter departing low).
-const TAKEOFF_CONFIRM_SECS: i64 = 30;
 
 #[derive(Debug, Default)]
 struct JtacSlotIfo {
@@ -1783,7 +1780,7 @@ fn confirm_takeoffs(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
                 Some(pt.0.y - ground)
             })
             .unwrap_or(0.);
-        if agl >= TAKEOFF_CONFIRM_AGL_M || now - since >= Duration::seconds(TAKEOFF_CONFIRM_SECS) {
+        if rules::takeoff_confirmed(agl, now - since) {
             confirmed.push((id.clone(), p.clone()));
             false
         } else {
@@ -1844,48 +1841,16 @@ fn took_off_off_runway(lua: MizLua, airbase_name: &str, pos: Vector2) -> Option<
         }
         saw_runway = true;
         // DCS world frame: x = north, z = east. get_ground_position gives a
-        // Vector2 of (x = north, y = east).
+        // Vector2 of (x = north, y = east). See `rules::runway_fit` for the
+        // margins and the course sign problem.
         let dn = pos.x - center.0.x;
         let de = pos.y - center.0.z;
-        // Fast jets float well past the far threshold before S_EVENT_TAKEOFF
-        // fires, and getRunways()'s reported length/centre isn't always the
-        // full paved surface -- be very generous along the axis. The side
-        // margin stays tighter so a parallel-taxiway departure is still caught,
-        // but with enough room for line-up + shoulder.
-        let end_margin = length / 2.0 + 1500.0;
-        // The lateral margin has to grow with distance along the runway.
-        // `getRunways()` reports a course that is a few degrees off the real
-        // axis on some fields, and an angular error turns into a lateral error
-        // proportional to how far down the runway the wheels left the ground --
-        // at ~1500 m along (a fast jet lifting off past the far threshold) six
-        // degrees is ~160 m, well outside a flat 90 m box. That is what has
-        // been flagging legitimate departures. 0.06 ~= 3.4 degrees of slop.
-        let side_margin = |along: f64| width / 2.0 + 60.0 + along.abs() * 0.06;
-        let mut best: Option<(f64, f64)> = None;
-        for course in [course, -course] {
-            let (s, c) = course.sin_cos();
-            let along = dn * c + de * s;
-            let across = -dn * s + de * c;
-            if along.abs() <= end_margin && across.abs() <= side_margin(along) {
-                return Some(false);
-            }
-            // Keep the *closest* projection for the diagnostic. This compared
-            // `across.abs() < a` against the stored raw `across`, so once the
-            // first candidate stored a negative value nothing could ever beat
-            // it -- the log then reported the discarded projection. That is how
-            // a departure 165 m off centreline came out in the log as 1536 m.
-            if best.map(|(_, a)| across.abs() < a.abs()).unwrap_or(true) {
-                best = Some((along, across));
-            }
-        }
-        if let Some((along, across)) = best {
-            info!(
-                "[TAXIWAY_CHK] {airbase_name}: liftoff off runway (name={:?} len={length:.0} \
-                 width={width:.0} course={course:.3}rad) along={along:.0} across={across:.0} \
-                 (limits {end_margin:.0}/{:.0})",
+        match rules::runway_fit(dn, de, course, length, width) {
+            rules::RunwayFit::On => return Some(false),
+            rules::RunwayFit::Off { along, across } => info!(
+                "[TAXIWAY_CHK] {airbase_name}: liftoff off runway (name={:?} len={length:.0}                  width={width:.0} course={course:.3}rad) along={along:.0} across={across:.0}",
                 rwy.name().ok(),
-                side_margin(along)
-            );
+            ),
         }
     }
     saw_runway.then_some(true)
@@ -2043,23 +2008,20 @@ fn check_banned_loadout(ctx: &mut Context, unit: &Unit, slot: &SlotId, now: Date
     let Some(era) = ctx.db.ephemeral.cfg.era.clone() else { return };
     let Some(ucid) = ctx.db.ephemeral.player_in_slot(slot).copied() else { return };
     let Ok(ammo) = unit.get_ammo() else { return };
-    let mut found: Vec<std::string::String> = vec![];
-    for a in ammo {
-        let Ok(a) = a else { continue };
-        let typ = a.type_name().map(|s| s.to_string()).unwrap_or_default();
-        let shown = a.display_name().map(|s| s.to_string()).unwrap_or_default();
-        if era.banned(&typ).is_some() || era.banned(&shown).is_some() {
-            let label = if shown.is_empty() { typ } else { shown };
-            if !found.contains(&label) {
-                found.push(label);
-            }
-        }
-    }
+    let found = rules::banned_weapon_labels(
+        ammo.into_iter().filter_map(|a| a.ok()).map(|a| {
+            (
+                a.type_name().map(|s| s.to_string()).unwrap_or_default(),
+                a.display_name().map(|s| s.to_string()).unwrap_or_default(),
+            )
+        }),
+        |name| era.banned(name).is_some(),
+    );
     if found.is_empty() {
         return;
     }
     let list = found.join(", ");
-    let secs = era.banned_weapon_land_secs.max(30);
+    let secs = rules::banned_land_secs(era.banned_weapon_land_secs);
     info!("era rules: {ucid} took off with banned {list}");
     if let Some(uid) = slot.as_unit_id() {
         ctx.db.ephemeral.msgs().panel_to_unit(
@@ -2115,12 +2077,12 @@ fn enforce_banned_loadouts(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
             .filter(|(s, _)| *s == slot)
             .and_then(|(_, i)| i.as_ref())
             .map(|i| i.in_air);
-        match in_air {
+        match rules::banned_loadout_verdict(in_air, now, deadline) {
             // Left the slot, or landed: nothing to enforce.
-            None | Some(false) => {
+            rules::BannedVerdict::Forgive => {
                 ctx.banned_loadouts.remove(&ucid);
             }
-            Some(true) if now >= deadline => {
+            rules::BannedVerdict::Remove => {
                 warn!("[ERA_RULES] {ucid} still airborne with banned {list} after the deadline -- removed");
                 remove_for_era_rules(
                     lua,
@@ -2130,7 +2092,7 @@ fn enforce_banned_loadouts(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
                     &format_compact!("You did not land to remove {list}, which is banned in this era"),
                 );
             }
-            Some(true) => (),
+            rules::BannedVerdict::Wait => (),
         }
     }
 }
@@ -4370,21 +4332,14 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
     }
 
     // Compute battlefield centroid for compass reporting.
-    let (centroid_sum, centroid_n) = ctx
-        .db
-        .persisted
-        .objectives
-        .into_iter()
-        .filter(|(_, o)| o.owner() != Side::Neutral)
-        .fold((Vector2::new(0., 0.), 0usize), |(acc, n), (_, o)| {
-            let p = o.pos();
-            (Vector2::new(acc.x + p.x, acc.y + p.y), n + 1)
-        });
-    let centroid = if centroid_n == 0 {
-        Vector2::new(0., 0.)
-    } else {
-        Vector2::new(centroid_sum.x / centroid_n as f64, centroid_sum.y / centroid_n as f64)
-    };
+    let centroid = rules::centroid(
+        ctx.db
+            .persisted
+            .objectives
+            .into_iter()
+            .filter(|(_, o)| o.owner() != Side::Neutral)
+            .map(|(_, o)| o.pos()),
+    );
 
     // For each side that still has room, check detections and cluster them.
     // We iterate Red-defends-against-Blue and Blue-defends-against-Red.
@@ -4394,11 +4349,16 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             Side::Blue => active_blue.len(),
             _ => continue,
         };
-        if side_active_count >= max_per_side {
-            continue; // this side is already at its per-side limit
-        }
         if active_red.len() + active_blue.len() >= max_concurrent {
             break; // global cap hit mid-loop
+        }
+        if !rules::wave_has_room(
+            side_active_count,
+            active_red.len() + active_blue.len(),
+            max_per_side,
+            max_concurrent,
+        ) {
+            continue; // this side is already at its per-side limit
         }
 
         // ── Step 1: gate on enemy PLAYER count in this airframe class ───────────
@@ -4424,9 +4384,10 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
         // path that covers "tonight only helo pilots showed up".
         let my_air = enemy_players_airborne(&ctx.db, defending_side, rotary);
         let their_air = enemy_players_airborne(&ctx.db, attacking, rotary);
-        let outnumbered =
-            rc.balance_gap > 0 && their_air >= my_air + rc.balance_gap as usize;
-        if player_threat_count < min_threat && !outnumbered {
+        let outnumbered = rules::outnumbered(my_air, their_air, rc.balance_gap);
+        let scramble =
+            rules::scramble_reason(player_threat_count, min_threat, my_air, their_air, rc.balance_gap);
+        if scramble == rules::Scramble::No {
             // This runs every 10s per side, and on a quiet server the answer is
             // the same every time -- unthrottled it was 13% of the whole engine
             // log. Say it when the picture actually changes, and otherwise once
@@ -4471,7 +4432,7 @@ fn check_air_threats(ctx: &mut Context, now: DateTime<Utc>, rotary: bool) {
             }
             continue;
         }
-        if outnumbered && player_threat_count < min_threat {
+        if scramble == rules::Scramble::Balance {
             info!(
                 "{}: {:?} scrambling to balance ({}v{} {} players)",
                 rc.label,

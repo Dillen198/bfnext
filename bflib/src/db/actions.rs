@@ -4955,6 +4955,82 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bfprotocols::cfg::Cfg;
+    use std::sync::Arc;
+
+    /// A Db whose config has these Blue actions, all copies of one action
+    /// from the example config (only the names matter here).
+    fn db_with_actions(names: &[&str]) -> Db {
+        let mut cfg = Cfg::default();
+        let proto = cfg
+            .actions
+            .values()
+            .flat_map(|a| a.values())
+            .next()
+            .expect("the example config has actions")
+            .clone();
+        cfg.actions.remove(&Side::Red);
+        let blue = cfg.actions.entry(Side::Blue).or_default();
+        blue.clear();
+        for n in names {
+            blue.insert((*n).into(), proto.clone());
+        }
+        let mut db = Db::default();
+        db.ephemeral.cfg = Arc::new(cfg);
+        db
+    }
+
+    #[test]
+    fn split_name_takes_the_longest_matching_action() {
+        let db = db_with_actions(&["JTAC", "JTAC Drone", "Tanker"]);
+        let (name, _, args) = ActionCmd::split_name(&db, Side::Blue, "JTAC Drone M1").unwrap();
+        assert_eq!((name.as_str(), args), ("JTAC Drone", "M1"));
+        let (name, _, args) = ActionCmd::split_name(&db, Side::Blue, "jtac M1").unwrap();
+        assert_eq!((name.as_str(), args), ("JTAC", "M1"));
+        // what players paste from `-action help`: quotes and a colon
+        let (name, _, args) = ActionCmd::split_name(&db, Side::Blue, "\"JTAC Drone\": M2").unwrap();
+        assert_eq!((name.as_str(), args), ("JTAC Drone", "M2"));
+        // a prefix of a longer word is not a match
+        assert!(ActionCmd::split_name(&db, Side::Blue, "Tankers M1").is_err());
+        // no actions for a side at all
+        assert!(ActionCmd::split_name(&db, Side::Red, "Tanker M1").is_err());
+    }
+
+    #[test]
+    fn split_name_never_slices_inside_a_character() {
+        let db = db_with_actions(&["Tanker"]);
+        // "Tanké" is 6 characters but 7 bytes; byte 6 is inside the é
+        assert!(ActionCmd::split_name(&db, Side::Blue, "Tanké M1").is_err());
+    }
+
+    #[test]
+    fn only_group_actions_count_against_the_group_limit() {
+        for kind in [
+            ActionKind::Rtb,
+            ActionKind::CarrierRepair,
+            ActionKind::CarrierRespawn,
+            ActionKind::CarrierWaypoint,
+            ActionKind::TankerWaypoint,
+            ActionKind::FighersWaypoint,
+        ] {
+            assert!(!action_spawns_group(&kind), "{kind:?}");
+        }
+        let cfg = Cfg::default();
+        for (side, actions) in &cfg.actions {
+            for (name, a) in actions {
+                let spawns = action_spawns_group(&a.kind);
+                match &a.kind {
+                    ActionKind::Tanker(_) | ActionKind::Awacs(_) | ActionKind::Fighters(_) => {
+                        assert!(spawns, "{side:?} {name}")
+                    }
+                    ActionKind::Move(_) | ActionKind::Nuke(_) | ActionKind::Artillery(_) => {
+                        assert!(!spawns, "{side:?} {name}")
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
 
     #[test]
     fn nuke_cost_is_geometric() {

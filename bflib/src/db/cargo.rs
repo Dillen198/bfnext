@@ -5302,6 +5302,72 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bfprotocols::cfg::Cfg;
+
+    fn example_troop() -> Troop {
+        Cfg::default()
+            .troops
+            .values()
+            .flat_map(|t| t.iter())
+            .next()
+            .expect("the example config has troops")
+            .clone()
+    }
+
+    fn example_crate() -> Crate {
+        Cfg::default()
+            .deployables
+            .values()
+            .flat_map(|d| d.iter())
+            .flat_map(|d| d.crates.iter())
+            .next()
+            .expect("the example config has crates")
+            .clone()
+    }
+
+    fn internal_troop(origin: Option<ObjectiveId>, strength: Option<(u16, u16)>) -> InternalTroop {
+        InternalTroop {
+            player: Ucid::default(),
+            origin,
+            cost_fraction: 1.,
+            troop: example_troop(),
+            jtac: None,
+            strength,
+        }
+    }
+
+    #[test]
+    fn cargo_counts_and_weight() {
+        let mut cargo = Cargo::default();
+        assert_eq!((cargo.num_total(), cargo.weight()), (0, 0));
+        let cr = example_crate();
+        let it = internal_troop(None, None);
+        let expect = 2 * cr.weight as i64 + it.troop.weight as i64;
+        cargo.crates.push((ObjectiveId::from(1), cr.clone()));
+        cargo.crates.push((ObjectiveId::from(2), cr));
+        cargo.troops.push(it);
+        assert_eq!((cargo.num_crates(), cargo.num_troops(), cargo.num_pilots()), (2, 1, 0));
+        assert_eq!(cargo.num_total(), 3);
+        // pilots take a slot but weigh nothing in the cargo sum
+        cargo.pilots.push(InternalPilot {
+            ucid: Ucid::default(),
+            name: "pilot".into(),
+            life_type: LifeType::Standard,
+        });
+        assert_eq!(cargo.num_total(), 4);
+        assert_eq!(cargo.weight(), expect);
+    }
+
+    #[test]
+    fn troop_refund_scales_with_casualties() {
+        let full = internal_troop(Some(ObjectiveId::from(1)), None);
+        let cost = full.troop.cost;
+        assert_eq!(full.refund_cost(), cost);
+        let half = internal_troop(Some(ObjectiveId::from(1)), Some((2, 4)));
+        assert_eq!(half.refund_cost(), (cost as f32 * 0.5).round() as u32);
+        // nobody paid for an admin / API spawn
+        assert_eq!(internal_troop(None, None).refund_cost(), 0);
+    }
 
     #[test]
     fn squad_strength_counts_casualties() {
