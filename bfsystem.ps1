@@ -62,11 +62,12 @@ $statsDir = Join-Path $dcsWriteDir "Logs\stats"
 # Path where bfdb.exe will natively write its plain-text logs
 $logFile = Join-Path $dcsWriteDir "Logs\bfdb.log"
 
-# Dashboard address (stats + API + map)
-$listenAddress = "0.0.0.0:8880"
+# Dashboard address (stats + API + map). Loopback only; use 0.0.0.0 to
+# reach it from other machines (e.g. bfcockpit on the LAN).
+$listenAddress = "127.0.0.1:8880"
 
 # Public website address (separate port)
-$siteAddress = "0.0.0.0:8766"
+$siteAddress = "127.0.0.1:8766"
 
 # Admin panel local login (username + password — no Discord required)
 # Leave blank to disable local login (Discord-only)

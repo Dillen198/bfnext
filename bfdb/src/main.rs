@@ -142,7 +142,9 @@ struct Args {
     /// The web address to listen on. Defaulted so the one-off maintenance
     /// modes (`--clear-sessions`, `--rebuild-stats`, `--merge-rounds`) don't
     /// need it -- the normal server run always gets it from procman anyway.
-    #[arg(long, default_value = "0.0.0.0:8880")]
+    /// Loopback by default: bfdb sits behind a reverse proxy, and exposing
+    /// it on every interface (admin API included) has to be asked for.
+    #[arg(long, default_value = "127.0.0.1:8880")]
     listen_address: SocketAddr,
     /// Discord OAuth2 client ID
     #[arg(long)]
@@ -8284,7 +8286,14 @@ async fn main() -> Result<()> {
                 .collect::<Vec<_>>(),
         )
     } else {
-        cors.allow_any_origin()
+        // No --cors-origin: only pages bfdb serves itself, at its public
+        // address or opened locally on the listen port. allow_any_origin with
+        // credentials let any site a signed-in user visited read the API as
+        // them.
+        let port = args.listen_address.port();
+        let local = [format!("http://localhost:{port}"), format!("http://127.0.0.1:{port}")];
+        let own = websec::origin_of(&args.public_api_url);
+        cors.allow_origins(local.iter().map(|s| s.as_str()).chain(own.as_deref()).collect::<Vec<_>>())
     };
     if cross_origin {
         log::info!("Cross-origin mode enabled for: {:?} (cookies use SameSite=None; Secure — bfdb must be served over TLS)", args.cors_origins);
