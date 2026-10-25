@@ -142,7 +142,9 @@ struct Args {
     /// The web address to listen on. Defaulted so the one-off maintenance
     /// modes (`--clear-sessions`, `--rebuild-stats`, `--merge-rounds`) don't
     /// need it -- the normal server run always gets it from procman anyway.
-    #[arg(long, default_value = "0.0.0.0:8880")]
+    /// Loopback by default: bfdb sits behind a reverse proxy, and exposing
+    /// it on every interface (admin API included) has to be asked for.
+    #[arg(long, default_value = "127.0.0.1:8880")]
     listen_address: SocketAddr,
     /// Discord OAuth2 client ID
     #[arg(long)]
