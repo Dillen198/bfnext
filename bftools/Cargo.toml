@@ -30,6 +30,7 @@ mlua = { version = "0.9.9", features = [ "lua51", "serialize", "vendored" ] }
 dcso3 = { version = "0.1", path = "../dcso3" }
 # Live weather/time (--live-weather, --live-time), shared with bflib/bfrange.
 livewx = { version = "0.1", path = "../livewx" }
+bfprotocols = { version = "0.1", path = "../bfprotocols" }
 compact_str = { version = "0.8", features = ["serde"] }
 nalgebra = { version = "0.33", features = ["serde-serialize"] }
 chrono = "0.4"

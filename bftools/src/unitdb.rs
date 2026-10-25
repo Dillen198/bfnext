@@ -10,38 +10,11 @@
 //! DCS actually says.
 
 use anyhow::{bail, Context, Result};
-use serde_derive::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::PathBuf};
+use serde_derive::Serialize;
+use std::path::PathBuf;
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct UnitInfo {
-    #[serde(default)]
-    pub typ: String,
-    #[serde(default)]
-    pub display_name: Option<String>,
-    #[serde(default)]
-    pub category: Option<String>,
-    #[serde(default)]
-    pub attributes: Vec<String>,
-    #[serde(default)]
-    pub threat_range_m: Option<f64>,
-    #[serde(default)]
-    pub threat_range_min_m: Option<f64>,
-    #[serde(default)]
-    pub detection_range_m: Option<f64>,
-    #[serde(default)]
-    pub max_target_detection_range_m: Option<f64>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct UnitDb {
-    #[serde(default)]
-    pub dcs_version: Option<String>,
-    #[serde(default)]
-    pub harvested_at: Option<String>,
-    #[serde(default)]
-    pub by_type: BTreeMap<String, UnitInfo>,
-}
+// The row and snapshot types are shared with the engine and bfdb.
+pub use bfprotocols::unitdb::{UnitDbSnapshot as UnitDb, UnitInfo};
 
 #[derive(clap::Args, Clone, Debug, Serialize)]
 pub struct UnitDbCmd {

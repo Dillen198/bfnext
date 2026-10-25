@@ -230,6 +230,7 @@ name = "bftools"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bfprotocols",
  "chrono",
  "clap",
  "compact_str 0.8.1",
