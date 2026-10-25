@@ -41,7 +41,7 @@ pub(crate) fn harness_with(instances: serde_json::Value, tweak: impl FnOnce(&mut
     std::fs::create_dir_all(&dir).unwrap();
     let file: instance::InstancesFile = serde_json::from_value(instances).unwrap();
     let reg = Registry::new(file).unwrap();
-    let db = StatsDb::new(&std::collections::HashMap::new(), dir.join("db"), reg, None, None).unwrap();
+    let db = StatsDb::new(&std::collections::HashMap::new(), dir.join("db"), reg).unwrap();
     let bot: Arc<Option<BotLinkConfig>> = Arc::new(None);
     let range_ctx = range::RangeCtx::new(db.clone(), bot.clone(), "https://range.example.org", API, dir.join("clips")).unwrap();
     let replay_ctx = replay::ReplayCtx::new(db.clone(), dir.join("replays"), 30).unwrap();

@@ -3171,7 +3171,7 @@ Connection: close
     fn temp_db() -> StatsDb {
         let dir = std::env::temp_dir().join(format!("bfdb-newsimg-{}", uuid::Uuid::new_v4()));
         let reg = crate::instance::Registry::single(inst(serde_json::json!({"id": "vs1"})));
-        StatsDb::new(&std::collections::HashMap::new(), dir, reg, None, None).unwrap()
+        StatsDb::new(&std::collections::HashMap::new(), dir, reg).unwrap()
     }
 
     #[tokio::test(flavor = "multi_thread")]

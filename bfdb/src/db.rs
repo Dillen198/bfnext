@@ -28,9 +28,9 @@ use netidx_archive::{
     config::file::Config as ArchiveFileCfg,
     logfile_collection::{ArchiveCollectionReader, ArchiveIndex},
 };
-use regex::Regex;
+
 use serde::{Deserialize, Serialize};
-use sled::{transaction::TransactionError, Db};
+use sled::Db;
 use smallvec::SmallVec;
 use std::{
     collections::{Bound, HashMap, HashSet, VecDeque},
@@ -825,14 +825,6 @@ struct StatCtxInner {
 struct StatCtx(Option<StatCtxInner>);
 
 impl StatCtx {
-    #[allow(dead_code)]
-    fn get(&self) -> Result<&StatCtxInner> {
-        match &self.0 {
-            Some(t) => Ok(t),
-            None => bail!("expected to see NewSession before stats"),
-        }
-    }
-
     fn get_mut(&mut self) -> Result<&mut StatCtxInner> {
         match &mut self.0 {
             Some(t) => Ok(t),
@@ -1066,10 +1058,7 @@ pub(crate) struct StatsDbInner {
     instances: Registry,
     /// Runtime state per instance, keyed by `InstanceCfg::id`.
     states: Arc<HashMap<InstanceId, Arc<InstanceState>>>,
-    #[allow(dead_code)]
-    include: Option<Regex>,
-    #[allow(dead_code)]
-    exclude: Option<Regex>,
+
     db: Db,
     pilots: Pilots,
     /// XP, levels and challenges (`crate::progression`).
@@ -1462,13 +1451,7 @@ impl Deref for StatsDb {
 }
 
 
-#[allow(dead_code)]
-fn txn_err(e: TransactionError<anyhow::Error>) -> anyhow::Error {
-    match e {
-        TransactionError::Abort(e) => e,
-        TransactionError::Storage(e) => e.into(),
-    }
-}
+
 
 impl StatsDb {
     /// Open the database and start one ingestion pipeline per configured
@@ -1484,8 +1467,6 @@ impl StatsDb {
         subscribers: &HashMap<Option<PathBuf>, Subscriber>,
         db: P,
         instances: Registry,
-        include: Option<Regex>,
-        exclude: Option<Regex>,
     ) -> Result<Self> {
         let db = sled::open(db.as_ref())?;
         let states: HashMap<InstanceId, Arc<InstanceState>> = instances
@@ -1518,8 +1499,6 @@ impl StatsDb {
         let t = Self(Arc::new(StatsDbInner {
             instances: instances.clone(),
             states: Arc::new(states),
-            include,
-            exclude,
             db: db.clone(),
             pilots: Pilots::new(&db)?,
             progress: crate::progression::Progression::new(&db)?,
@@ -2918,18 +2897,6 @@ impl StatsDb {
         Ok(out)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn pilots(&self) -> impl Iterator<Item = Result<(Ucid, String)>> {
-        self.pilots.pilots.iter().map(|r| {
-            let (ucid, pilot) = r?;
-            let name = pilot
-                .name
-                .last()
-                .map(|s| s.clone())
-                .unwrap_or(String::default());
-            Ok((ucid, name))
-        })
-    }
 
     /// Get all pilots with their aggregate stats, sorted by total kills descending.
     /// If `round` is Some, only stats from that round are included; otherwise all-time.
@@ -3430,17 +3397,6 @@ impl StatsDb {
 
     pub(crate) fn unit_db_json(&self, inst: &str, version: &str) -> Result<Option<std::string::String>> {
         Ok(self.unit_db.get(&(inst.to_string(), version.to_string()))?)
-    }
-
-    /// Every DCS version we have a snapshot for, oldest insertion first is not
-    /// knowable, so these come back in key order.
-    pub(crate) fn unit_db_versions(&self, inst: &str) -> Result<Vec<std::string::String>> {
-        let mut out = vec![];
-        for r in self.unit_db.scan_prefix(&inst.to_string())? {
-            let ((_, version), _) = r?;
-            out.push(version);
-        }
-        Ok(out)
     }
 
     pub(crate) fn unit_db_latest(&self, inst: &str) -> Result<Option<(std::string::String, std::string::String)>> {
@@ -6471,15 +6427,11 @@ impl StatsDb {
     /// A single default instance with no engine, no ingestion source -- what
     /// the unit tests below need. (They referred to this before it existed,
     /// which kept the whole test build from compiling.)
-    fn new_offline<P: AsRef<Path>>(
-        path: P,
-        include: Option<Regex>,
-        exclude: Option<Regex>,
-    ) -> Result<Self> {
+    fn new_offline<P: AsRef<Path>>(path: P) -> Result<Self> {
         let cfg: InstanceCfg = serde_json::from_value(serde_json::json!({
             "id": crate::instance::DEFAULT_INSTANCE,
         }))?;
-        Self::new(&HashMap::new(), path, Registry::single(cfg), include, exclude)
+        Self::new(&HashMap::new(), path, Registry::single(cfg))
     }
 }
 
@@ -6501,7 +6453,7 @@ mod wiki_tombstone_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn deleted_seed_pages_stay_deleted() {
         let tmp = std::env::temp_dir().join(format!("bfdb-wiki-test-{}", Uuid::new_v4()));
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let slug = "reference/faq";
         assert!(db.wiki_get_page(slug).unwrap().is_some(), "seeded");
         assert!(db.wiki_delete_page(slug, "admin").unwrap());
@@ -6549,7 +6501,7 @@ mod session_key_tests {
             old.insert(&stale, &row(-1, false)).unwrap();
             db.flush().unwrap();
         }
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         assert!(db.legacy_auth_sessions.is_empty());
         let s = db.get_session(live).unwrap().expect("the old cookie still logs in");
         assert!(s.is_admin);
@@ -6573,7 +6525,7 @@ mod round_number_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn rounds_are_numbered_per_server_in_start_order() {
         let tmp = std::env::temp_dir().join(format!("bfdb-number-test-{}", Uuid::new_v4()));
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let t0 = Utc::now();
         // Ids as sled hands them out: nothing like 1, 2, 3, and not in order.
         let rounds = [(RoundId(108_000_656), 120i64), (RoundId(0), 0), (RoundId(54_000_002), 60)];
@@ -6599,7 +6551,7 @@ mod merge_rounds_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn collapses_forked_campaign_rounds() {
         let tmp = std::env::temp_dir().join(format!("bfdb-merge-test-{}", Uuid::new_v4()));
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let scen = Scenario::from("campaign");
         let t0 = Utc::now();
 
@@ -6671,7 +6623,7 @@ mod merge_rounds_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn merge_all_sweeps_orphan_round_ids() {
         let tmp = std::env::temp_dir().join(format!("bfdb-mergeall-test-{}", Uuid::new_v4()));
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let scen = Scenario::from("campaign");
         let t0 = Utc::now();
 
@@ -6724,7 +6676,7 @@ mod intel_storage_tests {
         let tmp = std::env::temp_dir().join(format!("bfdb-intel-test-{}", Uuid::new_v4()));
         let db_path = tmp.join("db");
         let img_dir = tmp.join("photos");
-        let db = StatsDb::new_offline(&db_path, None, None).unwrap();
+        let db = StatsDb::new_offline(&db_path).unwrap();
         db.set_intel_dir(Some(img_dir.clone())).unwrap();
         assert!(img_dir.is_dir(), "--intel-dir should be created");
 
@@ -6753,7 +6705,7 @@ mod intel_storage_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn in_db_photo_when_no_dir() {
         let tmp = std::env::temp_dir().join(format!("bfdb-intel-test-{}", Uuid::new_v4()));
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let id = Uuid::new_v4();
         db.intel_put_image(id, "image/jpeg".into(), vec![1, 2, 3]).unwrap();
         let row = db.intel_images.get(&id).unwrap().unwrap();
@@ -6772,7 +6724,7 @@ mod off_slot_credit_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn combined_arms_kill_counts_in_round() {
         let tmp = std::env::temp_dir().join(format!("bfdb-ca-test-{}", Uuid::new_v4()));
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let ucid: Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
         let rid = RoundId(7);
         db.pilots.saw_pilot(ucid, String::from("blueshack")).unwrap();

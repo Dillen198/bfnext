@@ -125,14 +125,6 @@ async fn linked_player(ctx: &RangeCtx, sid: Option<Uuid>) -> Result<(bool, Strin
 
 // ── handlers: listing ──────────────────────────────────────────────────
 
-async fn h_instances(ctx: Arc<RangeCtx>) -> Response {
-    let v: Vec<Value> = ctx
-        .range_instances()
-        .iter()
-        .map(|c| json!({ "id": c.id, "label": c.label(), "dcs_server_name": c.dcs_server_name }))
-        .collect();
-    ok(&v)
-}
 
 async fn h_live(ctx: Arc<RangeCtx>, q: Q) -> Response {
     let sc = scope_or_400!(ctx, q);
@@ -1066,7 +1058,6 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
     let sid = crate::extract_session_cookie();
     let body = warp::body::content_length_limit(16 * 1024).and(warp::body::bytes());
 
-    let instances = warp::path!("api" / "range" / "instances").and(c.clone()).then(h_instances);
     let live = warp::path!("api" / "range" / "live").and(c.clone()).and(q.clone()).then(h_live);
     let feed = warp::path!("api" / "range" / "feed").and(c.clone()).and(q.clone()).then(h_feed);
     let results = warp::path!("api" / "range" / "results").and(c.clone()).and(q.clone()).then(h_results);
@@ -1142,9 +1133,7 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
         .then(h_reset_station);
 
     // Boxed in small groups: each `.or` nests the type one level deeper.
-    let reads_a = instances
-        .or(live)
-        .unify()
+    let reads_a = live
         .or(feed)
         .unify()
         .or(results)

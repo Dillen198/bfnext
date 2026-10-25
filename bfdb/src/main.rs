@@ -8,7 +8,7 @@ use clap::Parser;
 use db::{IntelCapture, IntelMarkup, SessionData, SessionEnd, StatsDb, WikiImage, WikiPage};
 use futures::{SinkExt, StreamExt};
 use netidx::{config::Config, path::Path as NetidxPath, subscriber::SubscriberBuilder};
-use regex::Regex;
+
 use rust_embed::RustEmbed;
 use serde_derive::{Deserialize, Serialize};
 use std::{
@@ -130,12 +130,13 @@ struct Args {
     /// Path to stats JSONL file (e.g. "E:/Saved Games/DCS/Logs/stats.jsonl")
     #[arg(long)]
     stats_jsonl: Option<PathBuf>,
-    /// Include only scenarios that match the given regex
-    #[arg(long)]
-    include: Option<Regex>,
-    /// Exclude scenarios that match the given regex
-    #[arg(long)]
-    exclude: Option<Regex>,
+    /// No longer does anything (it never did: the filter was not applied
+    /// anywhere). Still accepted so an old command line starts.
+    #[arg(long, hide = true)]
+    include: Option<String>,
+    /// No longer does anything; see --include.
+    #[arg(long, hide = true)]
+    exclude: Option<String>,
     /// Store uploaded recon-intel (TARPS) photos as files in this directory
     /// instead of as blobs in the stats DB. bfdb creates it if missing and
     /// clears it on a campaign reset. Recommended for any real deployment --
@@ -1311,8 +1312,6 @@ async fn api_all_pilots(db: StatsDb, q: Q) -> std::result::Result<impl warp::Rep
     Ok(paged_response((serde_json::to_string(rows).map_err(anyhow::Error::from)?, total)))
 }
 
-/// Call one of bflib's netidx RPC procs and return its reply as an owned
-/// String (bail on Value::Error or an unexpected reply shape).
 /// Move an existing log file aside as `<stem><UTC-timestamp>.<ext>` so each run
 /// starts a fresh file. No-op if the file doesn't exist. Mirrors bflib's
 /// `rotate_log`.
@@ -3189,7 +3188,6 @@ struct GuildMember { roles: Vec<String> }
 #[derive(Deserialize)]
 struct TokenResponse { access_token: String }
 
-/// GET /api/auth/callback?code=&state=  — exchange code, create session
 /// Session cookie attributes. SameSite=None (needed for cross-origin fetch/XHR
 /// with credentials) requires Secure, which requires bfdb to be served over
 /// TLS — so we only opt into it when --cors-origin was actually configured.
@@ -3197,6 +3195,7 @@ fn session_cookie_attrs(cross_origin: bool) -> &'static str {
     if cross_origin { "SameSite=None; Secure" } else { "SameSite=Lax" }
 }
 
+/// GET /api/auth/callback?code=&state=  — exchange code, create session
 async fn api_auth_callback(
     q: CallbackQuery,
     cfg: AuthConfig,
@@ -3320,7 +3319,7 @@ async fn api_auth_me(
     })).map_err(anyhow::Error::from)?))
 }
 
-/// GET /api/auth/logout  — clear session cookie
+/// POST /api/auth/logout  — end the session and clear its cookie
 async fn api_auth_logout(
     session_id: Option<Uuid>,
     db: StatsDb,
@@ -3340,7 +3339,6 @@ async fn api_auth_logout(
 #[derive(Deserialize)]
 struct LocalLoginBody { username: String, password: String }
 
-/// POST /api/auth/local-login  — username/password admin login (no Discord required)
 /// Failed local-login attempts per client IP: 5 in 15 minutes locks that
 /// address out for 15 minutes.
 static LOCAL_LOGIN_FAILS: std::sync::LazyLock<websec::RateLimiter<std::net::IpAddr>> =
@@ -3359,6 +3357,7 @@ static LOCAL_LOGIN_FAILS: std::sync::LazyLock<websec::RateLimiter<std::net::IpAd
 const ADMIN_SESSION_SECS: i64 = 12 * 3600;
 const PLAYER_SESSION_SECS: i64 = 7 * 24 * 3600;
 
+/// POST /api/auth/local-login  — username/password admin login (no Discord required)
 async fn api_auth_local_login(
     body: LocalLoginBody,
     local_cfg: Option<LocalAdminConfig>,
@@ -5169,7 +5168,6 @@ fn parse_side(s: &str) -> Option<dcso3::coalition::Side> {
 /// per-side briefing).
 struct Caller {
     session: SessionData,
-    #[allow(dead_code)]
     ucid: Option<dcso3::net::Ucid>,
     /// The coalition whose data the caller gets. For a registered player this
     /// is *their* side, full stop. For a dashboard admin with no in-game
@@ -6399,14 +6397,14 @@ async fn api_admin_ban(
 }
 
 #[derive(serde::Deserialize)]
-struct UnbanBody2 {
+struct UnbanBody {
     ucid: std::string::String,
 }
 
 /// POST /api/admin/unban  — remove a ban record
-async fn api_admin_unban2(
+async fn api_admin_unban(
     session_id: Option<Uuid>,
-    body: UnbanBody2,
+    body: UnbanBody,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let who = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
@@ -6661,7 +6659,6 @@ struct WsUnitsMsg<'a> {
 
 type LiveState = Arc<tokio::sync::RwLock<(f64, Vec<LiveUnit>, Vec<Bullseye>)>>;
 
-/// WebSocket handler for `/ws/logs` — streams real-time bfdb log lines (admin only).
 /// Whether this session cookie belongs to a dashboard admin.
 fn session_is_admin(db: &StatsDb, session_id: Option<Uuid>) -> bool {
     match session_id {
@@ -6693,6 +6690,7 @@ fn admin_ws_gate(
     })
 }
 
+/// WebSocket handler for `/ws/logs` — streams real-time bfdb log lines (ops role).
 async fn ws_logs_handler(
     ws: warp::ws::Ws,
     ip: std::net::IpAddr,
@@ -7387,13 +7385,6 @@ async fn api_unitdb(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::R
     ))
 }
 
-async fn api_unitdb_versions(
-    db: StatsDb,
-    inst: Inst,
-) -> std::result::Result<impl warp::Reply, Error> {
-    let versions = task::block_in_place(|| db.unit_db_versions(&inst.id.to_string()))?;
-    Ok(warp::reply::json(&versions))
-}
 
 async fn api_unitdb_stale(
     db: StatsDb,
@@ -7403,29 +7394,6 @@ async fn api_unitdb_stale(
     Ok(warp::reply::json(&stale))
 }
 
-#[derive(serde::Deserialize)]
-struct UnitDbDiffQuery {
-    from: std::string::String,
-    to: std::string::String,
-}
-
-async fn api_unitdb_diff(
-    q: UnitDbDiffQuery,
-    db: StatsDb,
-    inst: Inst,
-) -> std::result::Result<impl warp::Reply, Error> {
-    let inst_id = inst.id.to_string();
-    let changes = task::block_in_place(|| -> Result<Vec<db::UnitDbChange>> {
-        let load = |v: &str| -> Result<db::UnitDbSnapshot> {
-            match db.unit_db_json(&inst_id, v)? {
-                Some(j) => Ok(serde_json::from_str(&j)?),
-                None => anyhow::bail!("no unit db snapshot for DCS {v}"),
-            }
-        };
-        Ok(db::diff_unit_db(&load(&q.from)?, &load(&q.to)?))
-    })?;
-    Ok(warp::reply::json(&changes))
-}
 
 /// A weapon name worth showing, or None.
 ///
@@ -8361,7 +8329,7 @@ fn open_db_offline(args: &Args, db_path: PathBuf) -> Result<StatsDb> {
             replay_delay_secs: 0,
         });
     }
-    StatsDb::new(&std::collections::HashMap::new(), db_path, reg, None, None)
+    StatsDb::new(&std::collections::HashMap::new(), db_path, reg)
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -8533,6 +8501,9 @@ async fn main() -> Result<()> {
         BUILD_GIT,
         build_info_json()["built"].as_str().unwrap_or("unknown")
     );
+    if args.include.is_some() || args.exclude.is_some() {
+        log::warn!("--include/--exclude do nothing and will be removed; drop them from the command line");
+    }
     for flag in &secrets_on_argv {
         log::warn!(
             "{flag} was given on the command line, where other local processes can read it -- \
@@ -8571,7 +8542,7 @@ async fn main() -> Result<()> {
         // an error: the process died with code 101 and none of the advice
         // below was ever printed (Oct 8). Catch it so it is.
         let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            StatsDb::new(&subscribers, args.db.clone(), registry, args.include.clone(), args.exclude.clone())
+            StatsDb::new(&subscribers, args.db.clone(), registry)
         }));
         let opened = match opened {
             Ok(r) => r,
@@ -9414,21 +9385,12 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_instance(db.clone()))
         .then(api_unitdb);
 
-    let unitdb_versions = warp::path!("api" / "unitdb" / "versions")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_unitdb_versions);
 
     let unitdb_stale = warp::path!("api" / "unitdb" / "stale-overrides")
         .and(with_db(db.clone()))
         .and(with_instance(db.clone()))
         .then(api_unitdb_stale);
 
-    let unitdb_diff = warp::path!("api" / "unitdb" / "diff")
-        .and(warp::query::<UnitDbDiffQuery>())
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_unitdb_diff);
 
     let stats = warp::path!("api" / "stats")
         .and(with_db(db.clone()))
@@ -9614,11 +9576,6 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(warp::any().map(move || local_login_from.clone()))
         .then(api_auth_local_login);
 
-    // Tells the frontend whether local admin login is available
-    let local_admin_enabled = local_admin_cfg.is_some();
-    let auth_local_enabled = warp::path!("api" / "auth" / "local-enabled")
-        .map(move || json_response(format!(r#"{{"enabled":{}}}"#, local_admin_enabled)))
-        .boxed();
 
     let admin_audit = warp::path!("api" / "admin" / "audit")
         .and(extract_session_cookie())
@@ -9813,9 +9770,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(warp::post())
         .and(extract_session_cookie())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json::<UnbanBody2>())
+        .and(warp::body::json::<UnbanBody>())
         .and(with_db(db.clone()))
-        .then(api_admin_unban2);
+        .then(api_admin_unban);
 
     let commander_spawn_route = warp::path!("api" / "commander" / "spawn")
         .and(warp::post())
@@ -10277,9 +10234,9 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(round_report)
         .or(health)
         .or(version)
-        .or(unitdb_versions)
+
         .or(unitdb_stale)
-        .or(unitdb_diff)
+
         .or(unitdb)
         .or(leaderboard)
         .or(objectives)
@@ -10334,7 +10291,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let auth_routes = auth_login
         .or(auth_callback)
         .or(auth_me)
-        .or(auth_local_enabled)
+
         .or(admin_sessions)
         .or(admin_audit)
         .or(admin_health)
