@@ -99,7 +99,10 @@ key id `44D2C7BA11CC8E7D`, public line
 also `bfmanager/src-tauri/engine.pub`, which Fowl Engine Manager's New box
 wizard checks engine releases with and writes into the new box's
 `fowlengine.yaml`. Back up the secret key off that PC: losing it means
-rotating (below).
+rotating (below). **It still has no password and no documented offline
+copy.** [`signing-keys.md`](signing-keys.md) has the steps to add a
+password (or rotate to a key that has one), to keep two offline copies,
+and to rotate any of the three release keys.
 
 One-time, on the PC you publish from (user action; done once already, see
 above):
@@ -122,7 +125,7 @@ npx tauri signer generate -w "$env:USERPROFILE\.tauri\fowl-engine.key"   # give 
 
 Rotating the key: generate a new one, publish with it, and update
 `public_key` on every server at the same time -- a server only trusts the key
-it has pinned.
+it has pinned. The full runbook is in [`signing-keys.md`](signing-keys.md).
 
 Dependencies are the committed ones: `Cargo.lock` and `bftools/Cargo.lock` are
 in git and every build is `cargo build --locked` (a lockfile that no longer

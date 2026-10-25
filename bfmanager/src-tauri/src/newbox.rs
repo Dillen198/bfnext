@@ -113,7 +113,7 @@ const RANGE_EXPORT_PORT: u16 = 42004;
 const DISCORD_API: &str = "https://discord.com/api/v10";
 /// The engine release key's public half (`tauri signer`'s wrapped .pub, key
 /// id 44D2C7BA11CC8E7D), so a new box checks engine releases without anyone
-/// pasting it. Its secret half is %USERPROFILE%\.tauriowl-engine.key on
+/// pasting it. Its secret half is %USERPROFILE%\.tauri\fowl-engine.key on
 /// the build PC, which publish-release.ps1 signs with.
 pub const ENGINE_PUBKEY: &str = include_str!("../engine.pub");
 
