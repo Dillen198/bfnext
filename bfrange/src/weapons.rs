@@ -21,9 +21,11 @@ use dcso3::{
     net::Ucid,
     object::{DcsObject, DcsOid},
     weapon::{ClassWeapon, GuidanceType, MissileCategory, Weapon, WeaponCategory, WeaponDesc},
-    LuaVec3, MizLua,
+    LuaEnv, LuaVec3, MizLua,
 };
-use log::debug;
+use log::{debug, info, warn};
+use mlua::FromLua;
+use std::sync::OnceLock;
 
 /// Who fired it.
 #[derive(Debug, Clone)]
@@ -51,7 +53,94 @@ pub enum Purpose {
     Ignore,
 }
 
+/// DCS's own `Weapon.GuidanceType` numbering, as (number, our label), read
+/// once per DCS process by `read_guidance_table`.
+static LIVE_GUIDANCE: OnceLock<Vec<(u8, &'static str)>> = OnceLock::new();
+
+fn label_of_dcs_key(k: &str) -> Option<&'static str> {
+    Some(match k {
+        "INS" => "ins",
+        "IR" => "ir",
+        "RADAR_ACTIVE" | "RADAR_MMW" | "MMW" => "radar",
+        "RADAR_SEMI_ACTIVE" => "sarh",
+        "RADAR_PASSIVE" => "arm",
+        "TV" => "tv",
+        "LASER" => "laser",
+        "TELE" => "command",
+        _ => return None,
+    })
+}
+
+/// Log DCS's `Weapon.GuidanceType` table once, and check dcso3's
+/// `GuidanceType` numbering against it. dcso3 numbers MmwRadar = 3, which
+/// the scripting docs don't list; if DCS really has no MMW entry every
+/// value from 3 up decodes one off (an ARM as `Tv`), which broke ARM
+/// detection in the IADS trainer. When the two disagree, labels and the ARM
+/// test follow DCS's table (see `guidance_str`).
+pub fn read_guidance_table(lua: MizLua) {
+    if LIVE_GUIDANCE.get().is_some() {
+        return;
+    }
+    let r = (|| -> anyhow::Result<Vec<(std::string::String, i64)>> {
+        let w: mlua::Table = lua.inner().globals().raw_get("Weapon")?;
+        let g: mlua::Table = w.raw_get("GuidanceType")?;
+        let mut v = vec![];
+        for kv in g.pairs::<std::string::String, i64>() {
+            v.push(kv?);
+        }
+        v.sort_by_key(|(_, n)| *n);
+        Ok(v)
+    })();
+    let table = match r {
+        Ok(t) => t,
+        Err(e) => {
+            warn!("could not read Weapon.GuidanceType: {e:?}");
+            return;
+        }
+    };
+    let listed: Vec<std::string::String> = table.iter().map(|(k, n)| format!("{k}={n}")).collect();
+    info!("DCS Weapon.GuidanceType: {}", listed.join(", "));
+    let mut live = vec![];
+    let mut mismatch = vec![];
+    for (k, n) in &table {
+        let Some(label) = label_of_dcs_key(k) else {
+            warn!("Weapon.GuidanceType.{k}={n} is new to the range: shown as dcso3 decodes it");
+            continue;
+        };
+        let Ok(n8) = u8::try_from(*n) else { continue };
+        let dcso3 = GuidanceType::from_lua(mlua::Value::Integer(*n), lua.inner()).ok();
+        let theirs = dcso3_label(dcso3);
+        if theirs != label {
+            mismatch.push(format!("{k}={n} decodes as {theirs}"));
+        }
+        live.push((n8, label));
+    }
+    if !mismatch.is_empty() {
+        warn!(
+            "dcso3's GuidanceType numbering disagrees with DCS ({}); guidance labels and ARM detection use DCS's table",
+            mismatch.join(", ")
+        );
+    }
+    let _ = LIVE_GUIDANCE.set(live);
+}
+
+/// The guidance label recorded for a weapon: DCS's own numbering when it
+/// has been read, dcso3's otherwise.
 pub fn guidance_str(g: Option<GuidanceType>) -> &'static str {
+    if let (Some(g), Some(live)) = (g, LIVE_GUIDANCE.get()) {
+        if let Some((_, l)) = live.iter().find(|(n, _)| *n == g as u8) {
+            return l;
+        }
+    }
+    dcso3_label(g)
+}
+
+/// An anti-radiation (passive radar) missile?
+pub fn is_arm(g: Option<GuidanceType>) -> bool {
+    guidance_str(g) == "arm"
+}
+
+fn dcso3_label(g: Option<GuidanceType>) -> &'static str {
     match g {
         None => "none",
         Some(GuidanceType::Ins) => "ins",

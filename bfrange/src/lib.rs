@@ -445,6 +445,7 @@ fn delayed_init(lua: MizLua) -> Result<()> {
 
 fn delayed_init_inner(lua: MizLua, ctx: &mut Ctx) -> Result<()> {
     harvest::bombs_from_mission(lua);
+    weapons::read_guidance_table(lua);
     let sortie = read_sortie(lua);
     let cfg_path = ctx.write_dir.join(format!("{sortie}_RANGE"));
     let cfg = if cfg_path.exists() {
