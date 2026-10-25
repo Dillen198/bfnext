@@ -972,6 +972,42 @@ impl log::Log for BroadcastLogger {
     }
 }
 
+/// A route's query string as a map.
+type Q = std::collections::HashMap<std::string::String, std::string::String>;
+
+/// Default (and largest) page of each list route: far above what any of them
+/// holds today, so a caller that sends no `?limit=` still gets everything --
+/// they are a bound, not a page size.
+const PILOT_NAMES_CAP: usize = 100_000;
+const PILOT_LIST_CAP: usize = 10_000;
+const SQUADRON_LIST_CAP: usize = 5_000;
+const WIKI_LIST_CAP: usize = 5_000;
+const ADMIN_LIST_CAP: usize = 10_000;
+
+/// `?offset=` and `?limit=` (at most `cap`, and `cap` when absent) over a
+/// list, plus how long the whole list is.
+fn page<T>(mut rows: Vec<T>, q: &Q, cap: usize) -> (Vec<T>, usize) {
+    let total = rows.len();
+    let num = |k: &str| q.get(k).and_then(|s| s.trim().parse::<usize>().ok());
+    let offset = num("offset").unwrap_or(0).min(total);
+    let limit = num("limit").unwrap_or(cap).min(cap);
+    rows.drain(..offset);
+    rows.truncate(limit);
+    (rows, total)
+}
+
+/// [`page`], serialized.
+fn page_json<T: serde::Serialize>(rows: Vec<T>, q: &Q, cap: usize) -> Result<(String, usize)> {
+    let (rows, total) = page(rows, q, cap);
+    Ok((serde_json::to_string(&rows)?, total))
+}
+
+/// A page of a list: the JSON array as before, its full length in
+/// `X-Total-Count`.
+fn paged_response((data, total): (String, usize)) -> impl warp::Reply {
+    reply::with_header(json_response(data), "x-total-count", total.to_string())
+}
+
 fn json_response(data: String) -> impl warp::Reply {
     reply::with_header(
         reply::with_header(data, "content-type", "application/json"),
@@ -1253,22 +1289,26 @@ async fn api_leaderboard(
 ///
 /// A walk of every pilot ever seen, polled by every dashboard: shared, and
 /// refreshed at most once a minute (a new pilot's name shows up within one).
-async fn api_all_pilots(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+async fn api_all_pilots(db: StatsDb, q: Q) -> std::result::Result<impl warp::Reply, Error> {
     const PILOTS_TTL: std::time::Duration = std::time::Duration::from_secs(60);
-    static PILOTS: std::sync::LazyLock<Arc<websec::Cached<Arc<std::string::String>>>> =
+    static PILOTS: std::sync::LazyLock<Arc<websec::Cached<Arc<Vec<serde_json::Value>>>>> =
         std::sync::LazyLock::new(|| Arc::new(websec::Cached::new()));
-    let data = PILOTS
+    let all = PILOTS
         .clone()
-        .get_swr(PILOTS_TTL, PILOTS_TTL * 10, move || -> Result<Arc<String>> {
+        .get_swr(PILOTS_TTL, PILOTS_TTL * 10, move || -> Result<Arc<Vec<serde_json::Value>>> {
             let pilots = db.all_pilot_names()?;
-            let entries: Vec<_> = pilots.iter().map(|(ucid, name)| {
+            Ok(Arc::new(pilots.iter().map(|(ucid, name)| {
                 serde_json::json!({ "ucid": ucid.to_string(), "name": name.to_string() })
-            }).collect();
-            Ok(Arc::new(serde_json::to_string(&entries)?))
+            }).collect()))
         })
         .await
         .map_err(Error)?;
-    Ok(json_response((*data).clone()))
+    let total = all.len();
+    let num = |k: &str| q.get(k).and_then(|s| s.trim().parse::<usize>().ok());
+    let offset = num("offset").unwrap_or(0).min(total);
+    let limit = num("limit").unwrap_or(PILOT_NAMES_CAP).min(PILOT_NAMES_CAP);
+    let rows = &all[offset..(offset + limit).min(total)];
+    Ok(paged_response((serde_json::to_string(rows).map_err(anyhow::Error::from)?, total)))
 }
 
 /// Call one of bflib's netidx RPC procs and return its reply as an owned
@@ -2108,8 +2148,9 @@ fn shown_round(db: &StatsDb) -> Result<impl Fn(db::RoundId) -> bool> {
 async fn api_pilot_sorties(
     ucid: String,
     db: StatsDb,
+    q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         // Summary rows, newest first. The per-sortie event lists are left to
         // /api/pilot/:ucid/sortie/:id so a long career stays a small payload.
@@ -2135,9 +2176,9 @@ async fn api_pilot_sorties(
                 "killed_by": s.death.as_ref().and_then(|d| d.killer_name.clone().or_else(|| d.killer_type.clone())),
             })
         }).collect();
-        Ok(serde_json::to_string(&entries)?)
+        page_json(entries, &q, PILOT_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 /// GET /api/pilot/:ucid/sortie/:sortie_id — one sortie with its kills,
@@ -2282,12 +2323,12 @@ fn squadron_json(db: &StatsDb, s: &squadrons::Squadron, members: bool) -> serde_
 }
 
 /// GET /api/squadrons -- every squadron, by XP served.
-async fn api_squadrons(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+async fn api_squadrons(db: StatsDb, q: Q) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let v: Vec<_> = db.squadrons().all()?.iter().map(|s| squadron_json(&db, s, false)).collect();
-        Ok(serde_json::to_string(&v)?)
+        page_json(v, &q, SQUADRON_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 /// GET /api/squadrons/{tag} -- one squadron with its members.
@@ -2401,8 +2442,9 @@ async fn api_xp_leaderboard(db: StatsDb) -> std::result::Result<impl warp::Reply
 async fn api_pilot_kills(
     ucid: String,
     db: StatsDb,
+    q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         let shown = shown_round(&db)?;
         let kills = db.pilot_kills_for(&ucid)?;
@@ -2432,17 +2474,18 @@ async fn api_pilot_kills(
                 "killer_airframe": airframe,
             })
         }).collect();
-        Ok(serde_json::to_string(&entries)?)
+        page_json(entries, &q, PILOT_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 /// GET /api/pilot/:ucid/deploys — all deployable-crate deploys done by a pilot
 async fn api_pilot_deploys(
     ucid: String,
     db: StatsDb,
+    q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         let shown = shown_round(&db)?;
         let deploys = db.pilot_deploys_for(&ucid)?;
@@ -2455,9 +2498,9 @@ async fn api_pilot_deploys(
                 "method": rec.method,
             })
         }).collect();
-        Ok(serde_json::to_string(&entries)?)
+        page_json(entries, &q, PILOT_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 /// Real health, as opposed to the string "ok".
@@ -2953,6 +2996,7 @@ async fn api_capture_events(
     db: StatsDb,
     round_id: Option<u64>,
     limit: Option<usize>,
+    offset: usize,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
@@ -2969,8 +3013,11 @@ async fn api_capture_events(
                 },
             },
         };
-        // Same cap as /api/kills: `?limit=` is the caller's to choose.
-        let entries = db.recent_captures(rid, limit.unwrap_or(50).clamp(1, 500))?;
+        // Same cap as /api/kills: `?limit=` is the caller's to choose, and
+        // `?offset=` pages further back.
+        let limit = limit.unwrap_or(50).clamp(1, 500);
+        let offset = offset.min(10_000);
+        let entries: Vec<_> = db.recent_captures(rid, limit + offset)?.into_iter().skip(offset).collect();
         let json: Vec<_> = entries
             .iter()
             .map(|c| {
@@ -4025,9 +4072,10 @@ async fn api_cockpit_menu_invoke(
 async fn api_admin_sessions(
     session_id: Option<Uuid>,
     db: StatsDb,
+    q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let sessions = db.list_sessions()?;
         let entries: Vec<_> = sessions.iter().map(|s| {
             serde_json::json!({
@@ -4038,9 +4086,9 @@ async fn api_admin_sessions(
                 "expires":    s.expires.to_rfc3339(),
             })
         }).collect();
-        Ok(serde_json::to_string(&entries)?)
+        page_json(entries, &q, ADMIN_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 
@@ -4616,7 +4664,7 @@ async fn api_admin_cfg_post(
 /// GET /api/wiki/pages  — list all pages (slug/title/section/order only, no
 /// content) for building the sidebar. Public -- reading the wiki needs no
 /// login, only editing does.
-async fn api_wiki_list(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+async fn api_wiki_list(db: StatsDb, q: Q) -> std::result::Result<impl warp::Reply, Error> {
     let pages = task::block_in_place(|| db.wiki_list_pages())?;
     let entries: Vec<_> = pages.iter().map(|(slug, p)| {
         serde_json::json!({
@@ -4626,7 +4674,7 @@ async fn api_wiki_list(db: StatsDb) -> std::result::Result<impl warp::Reply, Err
             "order": p.order,
         })
     }).collect();
-    Ok(warp::reply::json(&entries))
+    Ok(paged_response(page_json(entries, &q, WIKI_LIST_CAP)?))
 }
 
 /// A wiki slug: `/`-separated segments of letters, digits, `-`, `_` and `.`,
@@ -6108,9 +6156,10 @@ async fn api_admin_pilot_sides(
 async fn api_admin_banned(
     session_id: Option<Uuid>,
     db: StatsDb,
+    q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let web_bans = db.list_admin_bans()?;
         let cfg_bans = db.session_bans_from_cfg()?;
         let entries: Vec<_> = web_bans.iter().map(|(ucid, rec)| serde_json::json!({
@@ -6132,9 +6181,9 @@ async fn api_admin_banned(
                 "source":    "engine",
             }))
         })).collect();
-        Ok(serde_json::to_string(&entries)?)
+        page_json(entries, &q, ADMIN_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 /// GET /api/admin/engine-errors  — recent ERROR/WARN lines from the live
@@ -9097,6 +9146,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         // x-cockpit-key: the cockpit overlay key, sent as a header by
         // overlays that no longer put it in the URL.
         .allow_headers(vec!["content-type", "x-intel-filename", "x-cockpit-key"])
+        .expose_headers(vec!["x-total-count"])
         .allow_credentials(true);
     let cors = if cross_origin {
         // Our own public origin too. A page bfdb serves itself
@@ -9159,6 +9209,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let all_pilots = warp::path!("api" / "pilots")
         .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
         .then(api_all_pilots);
 
     let objectives = warp::path!("api" / "objectives")
@@ -9238,7 +9289,8 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .then(|db, q: std::collections::HashMap<String, String>, inst| {
             let round_id = q.get("round").and_then(|s| s.parse().ok());
             let limit = q.get("limit").and_then(|s| s.parse().ok());
-            api_capture_events(db, round_id, limit, inst)
+            let offset = q.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+            api_capture_events(db, round_id, limit, offset, inst)
         });
 
     let pilot = warp::path!("api" / "pilot" / String)
@@ -9247,6 +9299,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let pilot_sorties = warp::path!("api" / "pilot" / String / "sorties")
         .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
         .then(api_pilot_sorties);
 
     let pilot_sortie = warp::path!("api" / "pilot" / String / "sortie" / u64)
@@ -9260,6 +9313,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let squadron_list = warp::path!("api" / "squadrons")
         .and(warp::get())
         .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
         .then(api_squadrons);
     let squadron_one = warp::path!("api" / "squadrons" / String)
         .and(warp::get())
@@ -9326,10 +9380,12 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let pilot_kills_route = warp::path!("api" / "pilot" / String / "kills")
         .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
         .then(api_pilot_kills);
 
     let pilot_deploys_route = warp::path!("api" / "pilot" / String / "deploys")
         .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
         .then(api_pilot_deploys);
 
     // Liveness: an engine probe (cached 15s) and one read of the round
@@ -9572,6 +9628,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let admin_sessions = warp::path!("api" / "admin" / "sessions")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
         .then(api_admin_sessions);
 
     let admin_reset = warp::path!("api" / "admin" / "reset")
@@ -9719,6 +9776,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let admin_banned = warp::path!("api" / "admin" / "banned")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
         .then(api_admin_banned);
 
     let admin_engine_errors = warp::path!("api" / "admin" / "engine-errors")
@@ -9958,6 +10016,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
 
     let wiki_list_route = warp::path!("api" / "wiki" / "pages")
         .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
         .then(api_wiki_list);
 
     // Not the `path!` macro here (it implicitly requires end-of-path) --

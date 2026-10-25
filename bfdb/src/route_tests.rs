@@ -541,6 +541,24 @@ async fn a_private_default_is_not_served_to_the_public() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn list_routes_page_with_limit_and_offset() {
+    let h = harness();
+    // wiki pages are seeded: dozens of them
+    let all = h.get("/api/wiki/pages", None).await;
+    let total: usize = all.headers()["x-total-count"].to_str().unwrap().parse().unwrap();
+    let all = body_json(all);
+    assert_eq!(all.as_array().unwrap().len(), total, "no ?limit= is everything");
+    assert!(total > 10);
+    let page = body_json(h.get("/api/wiki/pages?limit=5&offset=3", None).await);
+    let page = page.as_array().unwrap();
+    assert_eq!(page.len(), 5);
+    assert_eq!(page[0], all[3]);
+    assert_eq!(body_json(h.get("/api/wiki/pages?offset=100000", None).await), serde_json::json!([]));
+    let r = h.get("/api/pilots?limit=1", None).await;
+    assert_eq!(r.headers()["x-total-count"], "0");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn security_headers_on_api_and_page() {
     let h = harness();
     let r = h.get("/api/version", None).await;
