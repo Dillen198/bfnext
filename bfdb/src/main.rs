@@ -433,6 +433,19 @@ struct Args {
     /// `--local-login-from 0.0.0.0/0 --local-login-from ::/0` to get that back.
     #[arg(long = "local-login-from", value_name = "IP[/PREFIX]")]
     local_login_from: Vec<websec::IpNet>,
+    /// A proxy in front of Caddy (a CDN, a load balancer) whose
+    /// X-Forwarded-For entries are believed, as an IP or CIDR block; repeat
+    /// for several. Without it, the client is the address Caddy saw -- which,
+    /// behind a CDN, is the CDN's edge, so every visitor shares one rate-limit
+    /// budget. Caddy must be told the same ranges (`trusted_proxies`, see
+    /// deploy/backend/Caddyfile.vectorstrike) or it overwrites the header.
+    #[arg(long = "trusted-proxy", value_name = "IP[/PREFIX]")]
+    trusted_proxies: Vec<websec::IpNet>,
+    /// With --trusted-proxy listing Cloudflare's ranges: take the client from
+    /// `CF-Connecting-IP` when the request reached Caddy from one of them.
+    /// Ignored for any request that did not.
+    #[arg(long = "trust-cf-connecting-ip")]
+    trust_cf_connecting_ip: bool,
     /// Read the local admin password from this file (first line) instead of
     /// the command line, where every process on the box can read it. Also
     /// read from $BFDB_ADMIN_PASSWORD when neither is given.
@@ -7978,6 +7991,14 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    if args.trust_cf_connecting_ip && args.trusted_proxies.is_empty() {
+        eprintln!("--trust-cf-connecting-ip needs --trusted-proxy (Cloudflare's address ranges); ignoring it");
+    }
+    websec::set_trusted_proxies(websec::TrustedProxies::new(
+        args.trusted_proxies.clone(),
+        args.trust_cf_connecting_ip,
+    ));
 
     // Secrets may come from a file or the environment instead of argv.
     args.admin_password = secret_from(

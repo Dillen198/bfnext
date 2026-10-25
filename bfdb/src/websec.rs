@@ -235,6 +235,44 @@ fn is_loopback(ip: IpAddr) -> bool {
     }
 }
 
+/// Proxies beyond our own (loopback) Caddy whose forwarding headers are
+/// believed: `--trusted-proxy` CIDRs, and whether `CF-Connecting-IP` may be
+/// read when the request reached Caddy from one of them
+/// (`--trust-cf-connecting-ip`). Empty -- the default -- is the behaviour
+/// bfdb always had.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TrustedProxies {
+    nets: Arc<Vec<IpNet>>,
+    cloudflare: bool,
+}
+
+impl TrustedProxies {
+    pub(crate) fn new(nets: Vec<IpNet>, cloudflare: bool) -> Self {
+        Self { nets: Arc::new(nets), cloudflare }
+    }
+
+    fn trusts(&self, ip: IpAddr) -> bool {
+        self.nets.iter().any(|n| n.contains(ip))
+    }
+
+    /// Whether `CF-Connecting-IP` can ever be believed here.
+    pub(crate) fn trusts_cloudflare(&self) -> bool {
+        self.cloudflare && !self.nets.is_empty()
+    }
+}
+
+static TRUSTED: std::sync::OnceLock<TrustedProxies> = std::sync::OnceLock::new();
+
+/// Set once, in `main`, from the command line.
+pub(crate) fn set_trusted_proxies(t: TrustedProxies) {
+    let _ = TRUSTED.set(t);
+}
+
+pub(crate) fn trusted_proxies() -> &'static TrustedProxies {
+    static NONE: std::sync::LazyLock<TrustedProxies> = std::sync::LazyLock::new(TrustedProxies::default);
+    TRUSTED.get().unwrap_or(&NONE)
+}
+
 /// Who is really calling. bfdb sits behind Caddy on the same box, so every
 /// proxied request arrives from loopback with the real client in
 /// `X-Forwarded-For` -- which Caddy overwrites with the address it saw unless
@@ -242,25 +280,52 @@ fn is_loopback(ip: IpAddr) -> bool {
 /// believed when the peer is loopback (i.e. it came through our own proxy);
 /// from anyone else it is ignored, since they could write anything there.
 /// The rightmost entry is the one our proxy added.
+///
+/// With `--trusted-proxy` set (a CDN or load balancer in front of Caddy, and
+/// Caddy's own `trusted_proxies` set to match so it keeps their entries),
+/// entries from those addresses are skipped right to left, and the first
+/// address that is not one of them is the client. With
+/// `--trust-cf-connecting-ip` too, a request that reached Caddy from a
+/// trusted address takes `CF-Connecting-IP` as the client.
 pub(crate) fn client_ip(peer: Option<SocketAddr>, xff: Option<&str>) -> IpAddr {
-    let peer_ip = peer.map(|p| p.ip()).unwrap_or(IpAddr::from([127, 0, 0, 1]));
-    if is_loopback(peer_ip) {
-        if let Some(ip) = xff
-            .and_then(|h| h.rsplit(',').next())
-            .and_then(|s| s.trim().parse::<IpAddr>().ok())
-        {
-            return ip;
-        }
-    }
-    peer_ip
+    client_ip_via(&TrustedProxies::default(), peer, xff, None)
 }
 
-/// A filter extracting [`client_ip`].
+pub(crate) fn client_ip_via(
+    trusted: &TrustedProxies,
+    peer: Option<SocketAddr>,
+    xff: Option<&str>,
+    cf_connecting_ip: Option<&str>,
+) -> IpAddr {
+    let peer_ip = peer.map(|p| p.ip()).unwrap_or(IpAddr::from([127, 0, 0, 1]));
+    if !is_loopback(peer_ip) && !trusted.trusts(peer_ip) {
+        return peer_ip;
+    }
+    let hops: Vec<IpAddr> = xff
+        .map(|h| h.split(',').filter_map(|s| s.trim().parse::<IpAddr>().ok()).collect())
+        .unwrap_or_default();
+    let Some(&nearest) = hops.last() else { return peer_ip };
+    if trusted.trusts(nearest) {
+        if trusted.cloudflare {
+            if let Some(ip) = cf_connecting_ip.and_then(|s| s.trim().parse::<IpAddr>().ok()) {
+                return ip;
+            }
+        }
+        // walk left past every trusted hop; all trusted means the leftmost
+        return hops.iter().rev().copied().find(|ip| !trusted.trusts(*ip)).unwrap_or(hops[0]);
+    }
+    nearest
+}
+
+/// A filter extracting [`client_ip_via`] with the configured proxies.
 pub(crate) fn with_client_ip(
 ) -> impl Filter<Extract = (IpAddr,), Error = warp::Rejection> + Clone {
     warp::addr::remote()
         .and(warp::header::optional::<std::string::String>("x-forwarded-for"))
-        .map(|peer: Option<SocketAddr>, xff: Option<std::string::String>| client_ip(peer, xff.as_deref()))
+        .and(warp::header::optional::<std::string::String>("cf-connecting-ip"))
+        .map(|peer: Option<SocketAddr>, xff: Option<std::string::String>, cf: Option<std::string::String>| {
+            client_ip_via(trusted_proxies(), peer, xff.as_deref(), cf.as_deref())
+        })
 }
 
 /// True when the request came straight from this machine, not through the
@@ -729,6 +794,26 @@ mod tests {
         assert_eq!(client_ip(Some(lo), Some("1.1.1.1, 198.51.100.7")), "198.51.100.7".parse::<IpAddr>().unwrap());
         assert_eq!(client_ip(Some(ext), Some("1.1.1.1")), "203.0.113.9".parse::<IpAddr>().unwrap());
         assert_eq!(client_ip(Some(lo), None), "127.0.0.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn client_ip_through_trusted_proxies() {
+        let lo: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        let cdn = TrustedProxies::new(vec!["173.245.48.0/20".parse().unwrap()], false);
+        // the CDN's own hop is skipped; the visitor is the one it forwarded
+        assert_eq!(client_ip_via(&cdn, Some(lo), Some("198.51.100.7, 173.245.48.9"), None), ip("198.51.100.7"));
+        // a forged entry left of the visitor's is never reached
+        assert_eq!(client_ip_via(&cdn, Some(lo), Some("6.6.6.6, 198.51.100.7, 173.245.48.9"), None), ip("198.51.100.7"));
+        // not through the CDN: same as without the flag
+        assert_eq!(client_ip_via(&cdn, Some(lo), Some("6.6.6.6, 203.0.113.1"), None), ip("203.0.113.1"));
+        let cf = TrustedProxies::new(vec!["173.245.48.0/20".parse().unwrap()], true);
+        assert_eq!(client_ip_via(&cf, Some(lo), Some("173.245.48.9"), Some("198.51.100.8")), ip("198.51.100.8"));
+        // CF-Connecting-IP from a client that did not come through Cloudflare is ignored
+        assert_eq!(client_ip_via(&cf, Some(lo), Some("203.0.113.1"), Some("1.2.3.4")), ip("203.0.113.1"));
+        // and a direct, non-proxied peer is always itself
+        let ext: SocketAddr = "203.0.113.9:5000".parse().unwrap();
+        assert_eq!(client_ip_via(&cf, Some(ext), Some("1.1.1.1"), Some("1.2.3.4")), ip("203.0.113.9"));
     }
 
     #[test]
