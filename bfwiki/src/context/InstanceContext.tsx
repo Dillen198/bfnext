@@ -1,6 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, getInstance, setInstance, type ServerInstance, type WikiFacts } from '../api'
+import { api, instanceStore, type ServerInstance, type WikiFacts } from '../api'
+import { useInstanceSelection, type InstanceSelection } from '@shared/web/instance'
 import { useAuth } from './AuthContext'
 
 /**
@@ -16,18 +17,9 @@ import { useAuth } from './AuthContext'
  * picks it up without a hook; this context is the React-visible mirror, plus
  * the instance list and the resolved fact set.
  */
-interface InstanceContextValue {
-  /** Every instance this bfdb fronts, in configured order. Empty while loading. */
-  instances: ServerInstance[]
-  /** The selected instance's id, or undefined while it is still bfdb's default. */
-  selected: string | undefined
-  /** The selected instance's record, if the list has loaded. */
-  current: ServerInstance | undefined
-  /** True when there is more than one server to choose between. */
-  multi: boolean
+interface InstanceContextValue extends InstanceSelection<ServerInstance> {
   /** That instance's campaign numbers, or undefined while loading / unavailable. */
   facts: WikiFacts | undefined
-  select: (id: string) => void
 }
 
 const InstanceContext = createContext<InstanceContextValue>({
@@ -42,8 +34,6 @@ const InstanceContext = createContext<InstanceContextValue>({
 export function InstanceProvider({ children }: { children: React.ReactNode }) {
   const qc = useQueryClient()
   const { user } = useAuth()
-  const [chosen, setSelected] = useState<string | undefined>(() => getInstance())
-
   // Keyed on the viewer's admin flag: bfdb omits non-public (test/staging)
   // instances from the list for anyone who isn't an admin, so an admin signing
   // in has to refetch or they keep the anonymous list.
@@ -55,17 +45,13 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
     retry: 1,
   })
 
-  const instances = useMemo(() => data?.instances ?? [], [data])
-
-  // A remembered id that is no longer configured (renamed or removed) is
-  // dropped rather than sent, which would get a 400 on every request.
-  const stale = !!data && !!chosen && !instances.some(i => i.id === chosen)
-  const selected = stale ? undefined : chosen
-  useEffect(() => {
-    if (!stale) return
-    setInstance(undefined)
-    qc.invalidateQueries()
-  }, [stale, qc])
+  // Page content is shared between servers, but the fact set is not. A
+  // remembered id that has gone stale may have had anything cached against it.
+  const onSwitch = useCallback((reason: 'select' | 'stale') => {
+    qc.invalidateQueries(reason === 'select' ? { queryKey: ['wiki', 'facts'] } : undefined)
+  }, [qc])
+  const selection = useInstanceSelection(instanceStore, data, onSwitch)
+  const { selected } = selection
 
   // The numbers themselves. Scoped to the selected instance by `withInstance`
   // in api.ts, so the query key has to carry the id or a switch would serve the
@@ -77,27 +63,7 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
     retry: 1,
   })
 
-  const select = useCallback((id: string) => {
-    if (id === selected) return
-    setInstance(id)
-    setSelected(id)
-    // Page content is shared, but the fact set is not.
-    qc.invalidateQueries({ queryKey: ['wiki', 'facts'] })
-  }, [selected, qc])
-
-  const current = useMemo(
-    () => instances.find(i => i.id === selected) ?? instances.find(i => i.default),
-    [instances, selected],
-  )
-
-  const value = useMemo<InstanceContextValue>(() => ({
-    instances,
-    selected,
-    current,
-    multi: instances.length > 1,
-    facts,
-    select,
-  }), [instances, selected, current, facts, select])
+  const value = useMemo<InstanceContextValue>(() => ({ ...selection, facts }), [selection, facts])
 
   return <InstanceContext.Provider value={value}>{children}</InstanceContext.Provider>
 }

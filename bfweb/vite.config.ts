@@ -36,9 +36,12 @@ export default defineConfig(({ mode }) => {
       // would swallow 'react-dom/client' with it.
       alias: [
         { find: '@icons', replacement: fileURLToPath(new URL('../shared/icons', import.meta.url)) },
+        // shared/web: code the four front ends share (see shared/web/README.md).
+        { find: '@shared', replacement: fileURLToPath(new URL('../shared', import.meta.url)) },
         { find: /^react$/, replacement: fileURLToPath(new URL('./node_modules/react', import.meta.url)) },
         { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./node_modules/react/jsx-runtime', import.meta.url)) },
         { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('./node_modules/react/jsx-dev-runtime', import.meta.url)) },
+        { find: /^@tanstack\/react-query$/, replacement: fileURLToPath(new URL('./node_modules/@tanstack/react-query', import.meta.url)) },
       ],
     },
     server: { fs: { allow: ['..'] },

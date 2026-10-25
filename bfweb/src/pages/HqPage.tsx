@@ -21,7 +21,7 @@ import {
   type LatLon,
 } from '../api'
 import { useAuth } from '../context/AuthContext'
-import { useTheme } from '../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 import { mapStyleFor } from '../lib/mapStyle'
 import { hqMock, hqMockCommand } from './hqMock'
 

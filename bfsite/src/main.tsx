@@ -4,7 +4,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import './index.css'
 import App from './App'
-import { ThemeProvider } from './context/ThemeContext'
+import { ThemeProvider, type ThemeOptions } from '@shared/web/theme'
+
+// Only an explicit choice is remembered; until then the site follows the OS.
+// index.html's pre-paint script reads the same key; keep the two in step.
+const THEME: ThemeOptions = { storageKey: 'bfsite-theme', rememberChoiceOnly: true }
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,7 +22,7 @@ const queryClient = new QueryClient({
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
+      <ThemeProvider options={THEME}>
         {/* BASE_URL keeps routes working when bfdb serves the build under /site/. */}
         <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
           <App />

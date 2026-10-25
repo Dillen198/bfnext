@@ -25,7 +25,7 @@ import {
 } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { useInstance } from '../context/InstanceContext'
-import { useTheme } from '../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 import { BattlefieldEngine } from './groundwar/engine'
 import { Drawer, EventFeed, HelpOverlay, TopHud } from './groundwar/hud'
 import { attachInput, type InputHandle } from './groundwar/input'

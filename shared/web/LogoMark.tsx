@@ -9,10 +9,13 @@ interface Props {
 /**
  * Campaign logo mark. Renders the light-on-dark logo by default and swaps to
  * the dark-on-light variant under [data-theme="light"] (see the .logo-mark
- * rules in index.css). Both files live in /public — vs-vectorstrike_hd-white.png (dark themes)
- * and vs-vectorstrike_hd-dark.png (light themes).
+ * rules in each app's index.css). Both files live in each app's /public:
+ * vs-vectorstrike_hd-white.png (dark themes) and vs-vectorstrike_hd-dark.png
+ * (light themes).
+ *
+ * When a dashboard deployment sets campaign.logoUrl, callers should prefer that.
  */
-export default function LogoMark({ size = 28, style, alt = '' }: Props) {
+export function LogoMark({ size = 28, style, alt = '' }: Props) {
   const s: CSSProperties = { width: size, height: size, objectFit: 'contain', flexShrink: 0, ...style }
   return (
     <>

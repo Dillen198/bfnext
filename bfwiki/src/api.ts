@@ -1,3 +1,8 @@
+import {
+  createInstanceStore, deadline, errorMessage, LONG_TIMEOUT_MS,
+  type AuthUser, type InstanceList as SharedInstanceList,
+} from '@shared/web/api'
+
 // Default: relative '/api'. Set VITE_API_BASE (e.g. "https://api.example.com")
 // at build time to point a standalone-hosted wiki at a remotely-hosted bfdb
 // instead — see bfnext-vector/deploy/README.md. No trailing slash.
@@ -15,41 +20,16 @@ const BASE = `${API_ROOT}/api`
 // Same mechanism as bfweb: `undefined` means "let bfdb pick its default", which
 // is what a single-server deployment wants.
 
-const INSTANCE_STORAGE_KEY = 'bfwiki.instance'
-
-let currentInstance: string | undefined = (() => {
-  try {
-    // A URL param wins over the remembered choice, so a link can point at one
-    // server's numbers: /gameplay/points-and-lives?instance=vs2
-    const fromUrl = new URLSearchParams(window.location.search).get('instance')
-    if (fromUrl) return fromUrl
-    return localStorage.getItem(INSTANCE_STORAGE_KEY) ?? undefined
-  } catch {
-    return undefined
-  }
-})()
+const instanceStore = createInstanceStore({ storageKey: 'bfwiki.instance' })
 
 /** The instance facts are currently being read from, if any. */
-export function getInstance(): string | undefined {
-  return currentInstance
-}
-
+export const getInstance = instanceStore.get
 /** Switch which DCS server the wiki quotes numbers from. Callers invalidate
  *  their query cache afterwards -- nothing here is reactive. */
-export function setInstance(id: string | undefined): void {
-  currentInstance = id
-  try {
-    if (id) localStorage.setItem(INSTANCE_STORAGE_KEY, id)
-    else localStorage.removeItem(INSTANCE_STORAGE_KEY)
-  } catch { /* private mode / storage disabled */ }
-}
-
+export const setInstance = instanceStore.set
 /** Append `instance=<id>` to a path, respecting any query string it has. */
-export function withInstance(path: string): string {
-  if (!currentInstance) return path
-  if (/[?&]instance=/.test(path)) return path
-  return path + (path.includes('?') ? '&' : '?') + `instance=${encodeURIComponent(currentInstance)}`
-}
+export const withInstance = instanceStore.withInstance
+export { instanceStore }
 
 /** One DCS server instance this bfdb fronts. */
 export interface ServerInstance {
@@ -65,10 +45,7 @@ export interface ServerInstance {
   public: boolean
 }
 
-export interface InstanceList {
-  default: string
-  instances: ServerInstance[]
-}
+export type InstanceList = SharedInstanceList<ServerInstance>
 
 /** The campaign numbers for one instance, as `/api/wiki/facts` returns them.
  *  `facts` mirrors the engine config's shape (an allow-listed subset of it),
@@ -80,13 +57,7 @@ export interface WikiFacts {
   facts: Record<string, unknown>
 }
 
-export interface AuthUser {
-  discord_id: string
-  username:   string
-  avatar:     string | null
-  is_admin:   boolean
-  ucid:       string | null
-}
+export type { AuthUser }
 
 export interface WikiPageMeta {
   slug:    string
@@ -101,16 +72,8 @@ export interface WikiPageFull extends WikiPageMeta {
   updated_by: string
 }
 
-async function errorMessage(res: Response): Promise<string> {
-  try {
-    const j = await res.json()
-    if (j && typeof j.error === 'string') return j.error
-  } catch { /* body wasn't JSON */ }
-  return `HTTP ${res.status}`
-}
-
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${withInstance(path)}`, { credentials: 'include' })
+  const res = await fetch(`${BASE}${withInstance(path)}`, { credentials: 'include', signal: deadline() })
   if (!res.ok) throw new Error(await errorMessage(res))
   return res.json()
 }
@@ -121,6 +84,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     credentials: 'include',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    signal: deadline(),
   })
   if (!res.ok) throw new Error(await errorMessage(res))
   return res.json()
@@ -136,14 +100,14 @@ function slugPath(slug: string): string {
 export const api = {
   /** The DCS servers this bfdb fronts. Never instance-scoped itself. */
   instances: async (): Promise<InstanceList> => {
-    const res = await fetch(`${BASE}/instances`, { credentials: 'include' })
+    const res = await fetch(`${BASE}/instances`, { credentials: 'include', signal: deadline() })
     if (!res.ok) throw new Error(await errorMessage(res))
     return res.json()
   },
   auth: {
     me:           () => get<{ user: AuthUser | null }>('/auth/me').then(r => r.user),
     // POST: bfdb no longer ends a session on a GET.
-    logout:       () => fetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include' }),
+    logout:       () => fetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include', signal: deadline() }),
     loginUrl:     () => `${BASE}/auth/login?return_to=${encodeURIComponent(window.location.origin + '/')}`,
     // No username/password login here: bfdb's local login is a machine
     // credential for DCSServerBot on the server itself and refuses anyone
@@ -167,6 +131,7 @@ export const api = {
         credentials: 'include',
         headers: { 'content-type': file.type || 'application/octet-stream' },
         body: file,
+        signal: deadline(LONG_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(await errorMessage(res))
       const { id } = await res.json() as { id: string }

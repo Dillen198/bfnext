@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { api } from '../api'
 import { DEV_PERSONAS, setDevUser, withUcid, type DevPersona } from '../lib/devAuth'
 import { campaign } from '../config/campaign'
-import ThemeToggle from '../components/ThemeToggle'
-import LogoMark from '../components/LogoMark'
+import { ThemeToggle } from '@shared/web/theme'
+import { LogoMark } from '@shared/web/LogoMark'
 import Backdrop from '../components/Backdrop'
 import { useWireframe } from '../lib/wireframe'
 
@@ -33,7 +33,7 @@ export default function LoginPage() {
         WebkitMaskImage: 'radial-gradient(ellipse 60% 58% at 50% 50%, #000 35%, transparent 100%)',
         maskImage: 'radial-gradient(ellipse 60% 58% at 50% 50%, #000 35%, transparent 100%)',
       }} />
-      <ThemeToggle style={{ position: 'absolute', top: 16, right: 16 }} />
+      <ThemeToggle className="vs-touch-target" style={{ position: 'absolute', top: 16, right: 16 }} />
       <div style={{
         position: 'relative',
         padding: '2rem', width: '100%', maxWidth: '340px',

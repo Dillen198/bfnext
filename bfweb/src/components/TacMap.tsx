@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { Pin, ExternalLink } from '@icons'
 import type { Objective, Frontlines } from '../api'
 import { campaign } from '../config/campaign'
-import { useTheme } from '../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 import { OBJ_ICON } from '../lib/objIcon'
 
 function FitBounds({ objectives, padding }: { objectives: Objective[]; padding: number }) {

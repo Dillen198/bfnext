@@ -2,12 +2,14 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider } from './context/AuthContext'
 import { InstanceProvider } from './context/InstanceContext'
-import { ThemeProvider } from './context/ThemeContext'
+import { ThemeProvider, type ThemeOptions } from '@shared/web/theme'
 import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
 import WikiPage from './pages/WikiPage'
 import EditPage from './pages/EditPage'
+
+const THEME: ThemeOptions = { storageKey: 'bfwiki-theme' }
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 10_000, retry: 1 } },
@@ -16,7 +18,7 @@ const queryClient = new QueryClient({
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
+      <ThemeProvider options={THEME}>
         <AuthProvider>
           <InstanceProvider>
             <BrowserRouter>

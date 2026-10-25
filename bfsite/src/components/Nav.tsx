@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { Menu, X, Wiki, Sitrep } from '@icons'
 import { links } from '../config/campaign'
-import ThemeToggle from './ThemeToggle'
-import LogoMark from './LogoMark'
+import { ThemeToggle } from '@shared/web/theme'
+import { LogoMark } from '@shared/web/LogoMark'
 import StatusBanner from './StatusBanner'
 import NotificationBell from './NotificationBell'
 
@@ -52,14 +52,14 @@ export default function Nav() {
           <NotificationBell />
 
           <div className="nav-actions">
-            <ThemeToggle />
+            <ThemeToggle className="icon-btn" bare />
             <a href={links.wiki} className="vs-btn vs-btn-ghost vs-btn-sm"><Wiki size={13} />Wiki</a>
             <a href={links.dashboard} className="vs-btn vs-btn-outline vs-btn-sm"><Sitrep size={13} />Dashboard</a>
             <a href={links.discord} target="_blank" rel="noopener noreferrer" className="vs-btn vs-btn-sm">Join Discord</a>
           </div>
 
           <div className="nav-burger">
-            <ThemeToggle />
+            <ThemeToggle className="icon-btn" bare />
             <button
               type="button"
               className="icon-btn"

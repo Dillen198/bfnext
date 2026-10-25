@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'r
 
 /**
  * A small per-viewer preference, remembered in this browser (like the theme,
- * src/context/ThemeContext.tsx). Storage can be blocked or empty (private
+ * shared/web/theme.tsx). Storage can be blocked or empty (private
  * windows, cleared site data): then it quietly falls back to `initial`.
  * `valid` guards against a stale or hand-edited value. Only a change the
  * viewer makes is stored, so a default that depends on the screen (say) is

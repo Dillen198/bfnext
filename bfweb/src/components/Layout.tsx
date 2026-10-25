@@ -5,9 +5,9 @@ import { api, roundNo, type Round, type ServerInstance } from '../api'
 import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
-import ThemeToggle from './ThemeToggle'
+import { ThemeToggle } from '@shared/web/theme'
 import { useInstance } from '../context/InstanceContext'
-import LogoMark from './LogoMark'
+import { LogoMark } from '@shared/web/LogoMark'
 import Backdrop from './Backdrop'
 import StatusBanner from './StatusBanner'
 import NotificationBell from './NotificationBell'
@@ -497,7 +497,7 @@ export default function Layout() {
         {/* Theme toggle -- topbar copy (mobile gets the drawer copy) */}
         <div className="topbar-theme">
           <Sep />
-          <ThemeToggle style={{ marginRight: 4 }} />
+          <ThemeToggle className="vs-touch-target" style={{ marginRight: 4 }} />
           <Sep />
         </div>
 
@@ -576,7 +576,7 @@ export default function Layout() {
                 {...campaignProps}
                 style={{ flex: 1, minWidth: 0, height: 32 }}
               />}
-            <ThemeToggle style={{ width: 32, height: 32 }} />
+            <ThemeToggle className="vs-touch-target" style={{ width: 32, height: 32 }} />
           </div>
 
           {/* Nav section */}

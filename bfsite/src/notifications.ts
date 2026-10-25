@@ -1,7 +1,9 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { roundNo } from './api'
 import { useTheatres } from './live'
-import { fmtUtc, useStatusFile, type NoticeLevel } from './status'
+import { fmtUtc, maintenanceVisible, type NoticeLevel } from '@shared/web/status'
+import { lasted, ROUND_NEWS_MS, useReadState as useSharedReadState } from '@shared/web/notifications'
+import { useStatusFile } from './status'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // What the site's notification bell lists, the same as the dashboard's:
@@ -21,10 +23,7 @@ export interface SiteNotification {
   link?: { href: string; label: string; external?: boolean }
 }
 
-const ROUND_NEWS_MS = 7 * 86_400_000
-const MAINT_LEAD_MS = 7 * 86_400_000
 const READ_KEY = 'vs-site-notifications-read'
-const READ_KEEP = 200
 
 export function useNotifications(dashboard: (path: string) => string): SiteNotification[] {
   const { data, dataUpdatedAt } = useStatusFile()
@@ -47,9 +46,8 @@ export function useNotifications(dashboard: (path: string) => string): SiteNotif
       })
     }
     for (const m of data?.maintenance ?? []) {
+      if (!maintenanceVisible(m, now)) continue
       const start = Date.parse(m.start)
-      const end = Date.parse(m.end)
-      if (Number.isNaN(start) || Number.isNaN(end) || end <= now || start - MAINT_LEAD_MS > now) continue
       const running = start <= now
       out.push({
         id: `maint:${m.start}`,
@@ -66,13 +64,11 @@ export function useNotifications(dashboard: (path: string) => string): SiteNotif
       if (!r?.end || (r.winner !== 'Blue' && r.winner !== 'Red')) continue
       const end = Date.parse(r.end)
       if (Number.isNaN(end) || now - end > ROUND_NEWS_MS) continue
-      const hours = Math.max(0, (end - Date.parse(r.start)) / 3_600_000)
-      const lasted = hours < 48 ? `${hours.toFixed(1)} hours` : `${(hours / 24).toFixed(1)} days`
       out.push({
         id: `round:${t.key}:${r.id}`,
         kind: 'round',
         title: `${t.label}: Round ${roundNo(r)} won by ${r.winner === 'Blue' ? t.blueLabel : t.redLabel}`,
-        message: `The round lasted ${lasted} and ended ${fmtUtc(r.end)}.`,
+        message: `The round lasted ${lasted(r.start, r.end)} and ended ${fmtUtc(r.end)}.`,
         time: end,
         tone: r.winner === 'Blue' ? 'b' : 'r',
         link: {
@@ -86,25 +82,7 @@ export function useNotifications(dashboard: (path: string) => string): SiteNotif
   }, [data, dataUpdatedAt, checkedAt, theatres, dashboard])
 }
 
-function readIds(): string[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(READ_KEY) ?? '[]')
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
-  } catch {
-    return []
-  }
-}
-
 /** Which notifications this browser has seen, and a way to mark them seen. */
 export function useReadState(items: SiteNotification[]) {
-  const [read, setRead] = useState<Set<string>>(() => new Set(readIds()))
-  const unread = items.filter(n => !read.has(n.id)).length
-  const markAllRead = useCallback(() => {
-    const next = new Set(read)
-    for (const n of items) next.add(n.id)
-    const kept = [...next].slice(-READ_KEEP)
-    try { localStorage.setItem(READ_KEY, JSON.stringify(kept)) } catch { /* private window */ }
-    setRead(new Set(kept))
-  }, [items, read])
-  return { read, unread, markAllRead }
+  return useSharedReadState(items, READ_KEY)
 }

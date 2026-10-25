@@ -1,8 +1,10 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, roundNo, type ServerInstance } from '../api'
 import { useInstance } from '../context/InstanceContext'
-import { appliesTo, fmtUtc, STATUS_PAGE, useStatusFile, type Level } from './statusFile'
+import { appliesTo, fmtUtc, maintenanceVisible, type NoticeLevel as Level } from '@shared/web/status'
+import { lasted, ROUND_NEWS_MS, useReadState as useSharedReadState } from '@shared/web/notifications'
+import { STATUS_PAGE, useStatusFile } from './statusFile'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // What the notification bell lists. Two sources:
@@ -30,21 +32,13 @@ export interface AppNotification {
   link?: { href: string; label: string; external?: boolean }
 }
 
-const ROUND_NEWS_MS = 7 * 86_400_000
-const MAINT_LEAD_MS = 7 * 86_400_000
 const READ_KEY = 'vs-notifications-read'
-const READ_KEEP = 200
 
 const LEVEL_COLOR: Record<Level, string> = {
   outage: 'var(--red)',
   maintenance: 'var(--yellow)',
   degraded: 'var(--yellow)',
   info: 'var(--accent)',
-}
-
-function lasted(start: string, end: string): string {
-  const hours = Math.max(0, (Date.parse(end) - Date.parse(start)) / 3_600_000)
-  return hours < 48 ? `${hours.toFixed(1)} hours` : `${(hours / 24).toFixed(1)} days`
 }
 
 /** A server's last won round, while it is news. */
@@ -99,10 +93,8 @@ export function useNotifications(): AppNotification[] {
       })
     }
     for (const m of file.data?.maintenance ?? []) {
+      if (!maintenanceVisible(m, now) || !appliesTo(m.servers, id)) continue
       const start = Date.parse(m.start)
-      const end = Date.parse(m.end)
-      if (Number.isNaN(start) || Number.isNaN(end) || end <= now || start - MAINT_LEAD_MS > now) continue
-      if (!appliesTo(m.servers, id)) continue
       const running = start <= now
       out.push({
         id: `maint:${m.start}`,
@@ -122,26 +114,7 @@ export function useNotifications(): AppNotification[] {
   }, [file.data, inst.data, fileAt, instAt, current?.id, multi])
 }
 
-function readIds(): string[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(READ_KEY) ?? '[]')
-    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
-  } catch {
-    return []
-  }
-}
-
 /** Which notifications this viewer has seen, and a way to mark them seen. */
 export function useReadState(items: AppNotification[]) {
-  const [read, setRead] = useState<Set<string>>(() => new Set(readIds()))
-  const unread = items.filter(n => !read.has(n.id)).length
-  const markAllRead = useCallback(() => {
-    const next = new Set(read)
-    for (const n of items) next.add(n.id)
-    // Newest last, trimmed, so the list cannot grow without end.
-    const kept = [...next].slice(-READ_KEEP)
-    try { localStorage.setItem(READ_KEY, JSON.stringify(kept)) } catch { /* private window */ }
-    setRead(new Set(kept))
-  }, [items, read])
-  return { read, unread, markAllRead }
+  return useSharedReadState(items, READ_KEY)
 }

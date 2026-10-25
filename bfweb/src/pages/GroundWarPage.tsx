@@ -20,7 +20,7 @@ import { Aircraft, ChevronsLeft, Defend, Info, Pin, Plus, Shield, Strike, X } fr
 import { api, type CommandMe, type CommandOrder, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon, type OrderOption, type CombatLogLine } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { useInstance } from '../context/InstanceContext'
-import { useTheme } from '../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 import { BattlefieldEngine, type Verb, VERB_COLOR } from './groundwar/engine'
 import { km } from './groundwar/geo'
 import { CommandBar, Drawer, EventFeed, HelpOverlay, TopHud, Toasts, type CmdButton, type Toast } from './groundwar/hud'

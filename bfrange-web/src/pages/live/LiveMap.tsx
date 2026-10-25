@@ -15,7 +15,7 @@ import { Layer, Marker, Source, type MapLayerMouseEvent, type MapRef, type Marke
 import type { Feature, FeatureCollection } from 'geojson'
 import { Aircraft, AntiShip, Antenna, Armor, Bombing, Carrier, Csar, Gunnery, Helicopter, HotZone, Layers as LayersIcon, Maximize2, Radar, Refuel, Sam, Ship, Strafe, type IconComponent } from '@icons'
 import { RangeMap } from '../../components/RangeMap'
-import { useTheme } from '../../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 import { airframe, fmt, pad3 } from '../../lib/format'
 import { boundsOf, circleRing, destination, NM, type LatLon } from '../../lib/geo'
 import { drawSectors, showsFor, type SideFilter } from '../../lib/sectors'
