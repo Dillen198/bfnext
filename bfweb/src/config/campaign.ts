@@ -12,6 +12,8 @@
 // See campaign.sample.json in the repo root for a ready-to-edit template.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { VS_URLS } from '@shared/web/urls'
+
 export interface EngineCredit {
   name:   string
   handle: string
@@ -81,7 +83,7 @@ export const campaignDefaults: CampaignConfig = {
   server:      'The Coop · Operation Vector Strike',
   serverIp:    '',
   websiteUrl:  '',
-  wikiUrl:     'https://wiki.vectorstrike.org',
+  wikiUrl:     VS_URLS.wiki,
   donationUrl: '',
 
   blueLabel: 'BLUFOR',

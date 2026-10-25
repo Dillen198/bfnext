@@ -9,6 +9,9 @@ import { cloudText, visibilityText } from '../lib/weather'
 import type { RangeLive } from '../types'
 import { KB_INK, KB_MONO, KB_SANS, type KbTheme } from '../lib/kneeboardInk'
 import { ChartBody } from './KneeboardChart'
+import { VS_URLS } from '@shared/web/urls'
+
+const RANGE_HOST = new URL(VS_URLS.range).host
 
 export const SHEET_W = 768
 export const SHEET_H = 1024
@@ -78,7 +81,7 @@ export function KneeboardSheet({ live, theme }: { live: RangeLive; theme: KbThem
       {table(M, 'COMMS & NAV', ['CALLSIGN', 'MHZ', 'TACAN'], [0, 168, 230], comms)}
       {table(SHEET_W / 2 + 8, 'TARGETS', ['STATION', 'LASER', 'ELEV FT'], [0, 236, 292], targets)}
       <line x1={M} x2={SHEET_W - M} y1={SHEET_H - 26} y2={SHEET_H - 26} stroke={ink.dim} strokeWidth={0.6} />
-      <text x={M} y={SHEET_H - 12} fontSize={8} fill={ink.dim}>range.vectorstrike.org/brief · from the mission running at {live.server_time.replace('T', ' ').slice(0, 16)}Z</text>
+      <text x={M} y={SHEET_H - 12} fontSize={8} fill={ink.dim}>{RANGE_HOST}/brief · from the mission running at {live.server_time.replace('T', ' ').slice(0, 16)}Z</text>
       <text x={SHEET_W - M} y={SHEET_H - 12} fontSize={8} textAnchor="end" fontWeight={600} letterSpacing={1} fill={ink.dim}>{theme === 'dark' ? 'NIGHT' : 'DAY'} CARD</text>
     </svg>
   )
