@@ -144,3 +144,9 @@ miz/ODFv2_CFG.bak-*
 # Generated rustdoc for dcso3 -- see https://docs.rs/dcso3, or run
 # `cargo doc -p dcso3` locally
 docs/dcso3/
+
+# Built range missions (bfrange/mission/build_range_miz.py). The Marianas one
+# stays tracked: bfmanager's `tauri build` (scripts/stage-range.mjs) bundles it
+# straight from the checkout.
+bfrange/mission/dist/*.miz
+!bfrange/mission/dist/VS_Range_Marianas.miz
