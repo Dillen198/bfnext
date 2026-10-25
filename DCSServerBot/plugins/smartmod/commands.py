@@ -6,17 +6,27 @@ from datetime import datetime, timezone, timedelta
 
 from ._icons import icon, icon_emoji
 
-# Safely attempt to load the Gemini library
+# Safely attempt to load the Gemini library: google-genai (the current SDK,
+# see DCSServerBot/requirements-plugins.txt), else the deprecated
+# google-generativeai a box may still have installed.
+genai = legacy_genai = None
 try:
-    import google.generativeai as genai
-    HAS_GENAI = True
-except ImportError as e:
-    HAS_GENAI = False
-    print(f"\n==========================================================")
-    print(f"SMARTMOD WARNING: Missing AI Package! ({e})")
-    print(f"The bot is running in a virtual environment. You must install")
-    print(f"the library directly into the .venv folder for AI to work.")
-    print(f"==========================================================\n")
+    from google import genai
+except ImportError:
+    try:
+        import google.generativeai as legacy_genai
+    except ImportError as e:
+        print(f"\n==========================================================")
+        print(f"SMARTMOD WARNING: Missing AI Package! ({e})")
+        print(f"Install google-genai into the bot's virtual environment")
+        print(f"(requirements-plugins.txt) for the AI check to work.")
+        print(f"==========================================================\n")
+HAS_GENAI = genai is not None or legacy_genai is not None
+
+# gemini-1.5-flash, which this used to hard-code, has been retired. The
+# "-latest" alias follows Google's current Flash model; set gemini_model in
+# smartmod.yaml to pin one.
+DEFAULT_GEMINI_MODEL = "gemini-flash-latest"
 
 class VerifyView(ui.View):
     """Persistent View for the Verification Button."""
@@ -42,7 +52,9 @@ class Smartmod(Plugin):
     def __init__(self, bot):
         super().__init__(bot)
         self.recent_joins = []
-        self.ai_model = None
+        self.ai_model = None        # the legacy SDK's GenerativeModel
+        self.ai_client = None       # google-genai's Client
+        self.ai_model_name = DEFAULT_GEMINI_MODEL
 
     async def cog_load(self):
         await super().cog_load()
@@ -58,14 +70,29 @@ class Smartmod(Plugin):
         # Load AI only if the package was successfully imported
         if HAS_GENAI:
             api_key = config.get("gemini_api_key")
+            self.ai_model_name = config.get("gemini_model") or DEFAULT_GEMINI_MODEL
             if api_key and api_key != "YOUR_GEMINI_API_KEY_HERE":
-                genai.configure(api_key=api_key)
-                self.ai_model = genai.GenerativeModel('gemini-1.5-flash')
-                self.log.info("[Smartmod] Gemini AI integration active.")
+                if genai is not None:
+                    self.ai_client = genai.Client(api_key=api_key)
+                    self.log.info(f"[Smartmod] Gemini AI integration active ({self.ai_model_name}).")
+                else:
+                    legacy_genai.configure(api_key=api_key)
+                    self.ai_model = legacy_genai.GenerativeModel(self.ai_model_name)
+                    self.log.warning("[Smartmod] Gemini AI active on the deprecated google-generativeai "
+                                     "package -- install google-genai (requirements-plugins.txt).")
             else:
                 self.log.warning("[Smartmod] Gemini API key missing. Operating in keyword-only mode.")
         else:
-            self.log.error("[Smartmod] AI disabled due to missing 'google.generativeai' package.")
+            self.log.error("[Smartmod] AI disabled: the 'google-genai' package is not installed.")
+
+    async def _ask_ai(self, prompt: str) -> str:
+        if self.ai_client is not None:
+            response = await self.ai_client.aio.models.generate_content(
+                model=self.ai_model_name, contents=prompt)
+        else:
+            response = await self.ai_model.generate_content_async(prompt)
+        # .text is None when the reply was blocked or empty
+        return response.text or ""
 
     async def _startup_sync(self):
         await self.bot.wait_until_ready()
@@ -196,11 +223,10 @@ class Smartmod(Plugin):
         config = self.get_config() or {}
         
         # 1. AI Checking (Only runs if library was installed successfully)
-        if HAS_GENAI and self.ai_model and any(trigger in content.lower() for trigger in lure_triggers):
+        if HAS_GENAI and (self.ai_client or self.ai_model) and any(trigger in content.lower() for trigger in lure_triggers):
             prompt = f'Analyze this Discord message. Is it a scam, phishing attempt, fake giveaway, or malicious server invite? Context matters. Message: "{content}". Reply ONLY YES if scam, NO if safe.'
             try:
-                response = await self.ai_model.generate_content_async(prompt)
-                if "YES" in response.text.strip().upper():
+                if "YES" in (await self._ask_ai(prompt)).strip().upper():
                     await message.delete()
                     action_log = await self.apply_points(message.guild, message.author, 5, "AI context-flagged scam attempt.")
                     await message.channel.send(f"{icon('removed')} {message.author.mention}'s message removed by AI AutoMod. {action_log}", delete_after=10)
