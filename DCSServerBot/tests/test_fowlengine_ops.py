@@ -165,6 +165,17 @@ class FakeServer:
         self.calls.append("shutdown")
         self.status = Status.SHUTDOWN
 
+    async def start(self):
+        # DCSServerBot: resume a STOPPED server (DCS up, no mission running)
+        self.calls.append("start")
+        self.status = Status.RUNNING
+
+    async def restart(self):
+        # DCSServerBot: restart the mission (DCS keeps running)
+        self.calls.append("mission_restart")
+        if getattr(self, "fail_restart", None):
+            raise RuntimeError(self.fail_restart)
+
     async def startup(self):
         self.calls.append("startup")
         # BFBinaries' prepare() would run here; emulate its swap (and its
@@ -2049,3 +2060,258 @@ def test_range_atc_block_renders_for_a_range_instance_without_gci():
 def test_range_atc_off_when_disabled():
     assert not pmmod.range_atc_on({"range_atc": {"enabled": False}})
     assert not pmmod.range_atc_on({})
+
+
+# ---- remote control from Fowl Engine Manager: live logs, DCS control, backups ------
+
+
+def test_follow_file_offsets_rotation_and_truncation(tmp_path):
+    p = tmp_path / "bfnext.txt"
+    p.write_bytes(b"".join(f"line {i}\n".encode() for i in range(10)))
+    # first call: the tail, and where to carry on from
+    r = oa.follow_file(str(p), None, tail=3)
+    assert r["lines"] == ["line 7", "line 8", "line 9"] and r["offset"] == p.stat().st_size
+    assert r["reason"] == "start" and not r["reset"]
+    off, ident = r["offset"], r["ident"]
+    # nothing new
+    r = oa.follow_file(str(p), off, ident)
+    assert r["lines"] == [] and r["offset"] == off and not r["more"]
+    # a half-written line waits for its newline
+    with open(p, "ab") as fh:
+        fh.write(b"line 10\nhalf")
+    r = oa.follow_file(str(p), off, ident)
+    assert r["lines"] == ["line 10"]
+    off = r["offset"]
+    assert oa.follow_file(str(p), off, ident)["lines"] == []
+    with open(p, "ab") as fh:
+        fh.write(b" done\r\n")
+    r = oa.follow_file(str(p), off, ident)
+    assert r["lines"] == ["half done"]
+    off = r["offset"]
+    # truncated in place (the same file, now shorter than the offset): the tail again
+    with open(p, "r+b") as fh:
+        fh.truncate(0)
+        fh.write(b"fresh 1\nfresh 2\n")
+    assert oa.file_ident(p.stat()) == ident
+    r = oa.follow_file(str(p), off, ident, tail=5)
+    assert r["reset"] and r["reason"] == "truncated" and r["lines"] == ["fresh 1", "fresh 2"]
+    # rotated: renamed aside and a new file started -> the new one from its start
+    off, ident = r["offset"], r["ident"]
+    os.replace(p, tmp_path / "bfnext-old.txt")
+    p.write_bytes(b"new start\n")
+    assert oa.file_ident(p.stat()) != ident
+    r = oa.follow_file(str(p), off, ident)
+    assert r["reset"] and r["reason"] == "rotated" and r["lines"] == ["new start"]
+    # far behind: jump to the tail and say how much was left out
+    big = tmp_path / "dcs.log"
+    big.write_bytes(b"x" * 99 + b"\n" + b"".join(f"row {i}\n".encode() for i in range(3000)))
+    bid = oa.file_ident(big.stat())
+    r = oa.follow_file(str(big), 10, bid, max_bytes=1024, tail=2)
+    assert r["reason"] == "skipped" and r["skipped"] > 0 and r["lines"] == ["row 2998", "row 2999"]
+    # capped by max_bytes: `more` says ask again now; the pieces join up exactly
+    r = oa.follow_file(str(big), 0, bid, max_bytes=8192)
+    got, off2 = list(r["lines"]), r["offset"]
+    assert r["more"]
+    for _ in range(100):
+        r = oa.follow_file(str(big), off2, bid, max_bytes=8192)
+        got += r["lines"]
+        off2 = r["offset"]
+        if not r["more"]:
+            break
+    assert got[0] == "x" * 99 and got[-1] == "row 2999" and len(got) == 3001
+    # gone: missing, and a reset for a caller that had an offset
+    r = oa.follow_file(str(tmp_path / "nope.log"), 5)
+    assert r["missing"] and r["reset"]
+
+
+def _ops_client(world):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    api = oa.OpsApi(world.cog)
+    app = FastAPI()
+    api.mount(app)
+    return api, TestClient(app)
+
+
+BASE = "/stats/fowlengine/ops"
+H = {"X-API-Key": "KEY123"}
+
+
+def test_logs_list_and_follow_over_http(world):
+    world.cog.locals = {"DEFAULT": {**world.cfg, "admin_password": "s3cretpw"}}
+    log_dir = Path(world.servers[0].instance.home, "Logs")
+    (log_dir / "bfnext.txt").write_text("12:00:00 [INFO] up\n12:00:01 [ERROR] login s3cretpw failed\n")
+    (log_dir / "dcs.log").write_text("2026-10-25 12:00:00.000 INFO    APP: started\n")
+    api, c = _ops_client(world)
+    cat = c.get(f"{BASE}/logs/list", headers=H).json()["logs"]
+    ids = {e["id"] for e in cat}
+    assert {"bot", "bfdb", "engine:vs1", "dcs:vs1", "engine:vs2", "dcs:vs2"} <= ids
+    eng = next(e for e in cat if e["id"] == "engine:vs1")
+    assert eng["exists"] and eng["server"] == "vs1" and eng["path"].endswith("bfnext.txt")
+    assert not next(e for e in cat if e["id"] == "dcs:vs2")["exists"]
+
+    r = c.get(f"{BASE}/logs/follow", headers=H, params={"which": "engine:vs1"}).json()
+    assert r["lines"] == ["12:00:00 [INFO] up", "12:00:01 [ERROR] login *** failed"]  # redacted
+    off, ident = r["offset"], r["ident"]
+    with open(log_dir / "bfnext.txt", "a") as fh:
+        fh.write("12:00:02 [WARN] slow\n")
+    r = c.get(f"{BASE}/logs/follow", headers=H,
+              params={"which": "engine:vs1", "offset": off, "ident": ident}).json()
+    assert r["lines"] == ["12:00:02 [WARN] slow"] and r["offset"] > off
+    # the old tail route takes the new ids too
+    t = c.get(f"{BASE}/logs", headers=H, params={"which": "dcs:vs1", "lines": 5}).json()
+    assert t["lines"] == ["2026-10-25 12:00:00.000 INFO    APP: started"]
+    # ids only: no path from the caller, nothing outside the catalog
+    assert c.get(f"{BASE}/logs/follow", headers=H, params={"which": "C:/Windows/win.ini"}).status_code == 400
+    assert c.get(f"{BASE}/logs/follow", headers=H, params={"which": "engine:../../x"}).status_code == 400
+    assert c.get(f"{BASE}/logs/follow", params={"which": "bot"}).status_code == 403
+
+
+def test_dcs_control_endpoints(world):
+    import time as _t
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    world.cog.updater = au.Updater(world.cog, log, str(world.tmp / "config" / "upd.json"))
+    api = oa.OpsApi(world.cog)
+    app = FastAPI()
+    api.mount(app)
+    vs1, vs2 = world.servers
+
+    def row_of(c, name):
+        return next(s for s in c.get(f"{BASE}/dcs", headers=H).json()["servers"] if s["name"] == name)
+
+    def wait_done(c, name):
+        for _ in range(200):
+            row = row_of(c, name)
+            if row["last_action"] and row["last_action"]["state"] != "running":
+                return row
+            _t.sleep(0.02)
+        raise AssertionError("action never finished")
+
+    with TestClient(app) as c:
+        lst = c.get(f"{BASE}/dcs", headers=H).json()
+        assert lst["actions"] == ["start", "stop", "restart", "mission_restart"]
+        row = next(s for s in lst["servers"] if s["name"] == "vs1")
+        assert row["status"] == "RUNNING"
+        assert row["can"] == {"start": False, "stop": True, "restart": True, "mission_restart": True}
+        assert row["blocked"] is None and row["last_action"] is None
+
+        # already running: refused, with why
+        r = c.post(f"{BASE}/dcs/start", headers=H, json={"server": "vs1"})
+        assert r.status_code == 409 and "already running" in r.json()["error"]
+        # unknown server / no server
+        r = c.post(f"{BASE}/dcs/stop", headers=H, json={"server": "nope"})
+        assert r.status_code == 404 and "vs1" in r.json()["error"]
+        assert c.post(f"{BASE}/dcs/stop", headers=H, json={}).status_code == 404
+
+        # stop: shutdown, recorded as orderly so engine probation never counts it as a crash
+        r = c.post(f"{BASE}/dcs/stop", headers=H, json={"server": "vs1"})
+        assert r.status_code == 200, r.text
+        assert r.json()["action"]["action"] == "stop"
+        row = wait_done(c, "vs1")
+        assert row["last_action"]["state"] == "done" and vs1.calls[-1] == "shutdown"
+        assert row["status"] == "SHUTDOWN" and row["can"]["start"] and not row["can"]["mission_restart"]
+        assert "vs1" in world.cog.updater._orderly
+        r = c.post(f"{BASE}/dcs/mission_restart", headers=H, json={"server": "vs1"})
+        assert r.status_code == 409 and "not running" in r.json()["error"]
+        assert c.post(f"{BASE}/dcs/stop", headers=H, json={"server": "vs1"}).status_code == 409
+
+        # start a shut-down server: startup()
+        assert c.post(f"{BASE}/dcs/start", headers=H, json={"server": "vs1"}).status_code == 200
+        assert wait_done(c, "vs1")["status"] == "RUNNING" and vs1.calls[-1] == "startup"
+        # STOPPED (mission stopped, DCS up): start() resumes it
+        vs1.status = Status.STOPPED
+        assert c.post(f"{BASE}/dcs/start", headers=H, json={"server": "vs1"}).status_code == 200
+        wait_done(c, "vs1")
+        assert vs1.calls[-1] == "start"
+
+        # restart a running server goes through the updater (history + orderly)
+        vs2.calls.clear()
+        assert c.post(f"{BASE}/dcs/restart", headers=H, json={"server": "vs2"}).status_code == 200
+        wait_done(c, "vs2")
+        assert vs2.calls == ["shutdown", "startup"]
+        assert any(h.get("event") == "dcs_restart" for h in world.cog.updater.state.get("history", []))
+
+        # mission restart: Server.restart(); a failure is reported, not swallowed
+        assert c.post(f"{BASE}/dcs/mission_restart", headers=H, json={"server": "vs2"}).status_code == 200
+        row = wait_done(c, "vs2")
+        assert row["last_action"]["state"] == "done" and vs2.calls[-1] == "mission_restart"
+        vs2.fail_restart = "mission file missing"
+        assert c.post(f"{BASE}/dcs/mission_restart", headers=H, json={"server": "vs2"}).status_code == 200
+        row = wait_done(c, "vs2")
+        assert row["last_action"]["state"] == "failed" and "mission file missing" in row["last_action"]["error"]
+        assert any("failed" in n for n in world.cog.notices)
+
+        # while the auto-updater checks for / stages a release: refused
+        class Held:
+            def locked(self):
+                return True
+        real_lock = world.cog.updater._lock
+        world.cog.updater._lock = Held()
+        world.cog.updater._busy = "staging engine-v9"
+        r = c.post(f"{BASE}/dcs/restart", headers=H, json={"server": "vs1"})
+        assert r.status_code == 409 and "staging engine-v9" in r.json()["error"]
+        assert row_of(c, "vs1")["blocked"]
+        world.cog.updater._lock = real_lock
+        world.cog.updater._busy = None
+        # ... and while a staged build's restart of that server is running
+        world.cog._stage_restarting = {"vs1": _t.time()}
+        r = c.post(f"{BASE}/dcs/stop", headers=H, json={"server": "vs1"})
+        assert r.status_code == 409 and "staged build" in r.json()["error"]
+        world.cog._stage_restarting = {}
+        # an action still running blocks a second one on the same server
+        api._dcs_actions["vs1"] = {"action": "restart", "state": "running"}
+        assert c.post(f"{BASE}/dcs/stop", headers=H, json={"server": "vs1"}).status_code == 409
+        api._dcs_actions.pop("vs1")
+
+        # an old DCSServerBot without Server.restart: a clear 501
+        class Old(FakeServer):
+            restart = None
+        b = vs1.instance.locals["extensions"]["BFBinaries"]
+        world.cog.bot.servers["old"] = Old("old", world.tmp / "vs1", vs1.node, b["dll_path"], b["staging_dir"])
+        assert c.post(f"{BASE}/dcs/mission_restart", headers=H, json={"server": "old"}).status_code == 501
+        del world.cog.bot.servers["old"]
+        # the key still guards every DCS route
+        assert c.post(f"{BASE}/dcs/stop", json={"server": "vs1"}).status_code == 403
+
+
+def test_backup_bridge_to_the_manager(world):
+    mdir = world.tmp / "FowlEngine"
+    world.cfg["ops_api"] = {"manager_dir": str(mdir)}
+    api, c = _ops_client(world)
+    # the box's Manager has remote backups off (or is too old): said, not a bare 404
+    r = c.get(f"{BASE}/backup", headers=H)
+    assert r.status_code == 409 and "not turned on" in r.json()["error"]
+    assert c.post(f"{BASE}/backup/start", headers=H, json={}).status_code == 409
+
+    remote = mdir / "remote"
+    remote.mkdir(parents=True)
+    status = {"enabled": True, "updated_unix": time.time(), "hostname": "RANGE-PC", "job": None,
+              "backups": [{"path": "D:\\FowlEngineBackups\\FowlEngine-backup-x.zip", "bytes": 5}]}
+    (remote / "backup-status.json").write_text(json.dumps(status))
+    g = c.get(f"{BASE}/backup", headers=H).json()
+    assert g["ok"] and g["hostname"] == "RANGE-PC" and not g["stale"]
+
+    assert c.post(f"{BASE}/backup/start", headers=H, json={"password": "short"}).status_code == 400
+    r = c.post(f"{BASE}/backup/start", headers=H, json={"password": "long enough pw"})
+    assert r.status_code == 200, r.text
+    req = json.loads((remote / "requests" / f"{r.json()['request']}.json").read_text())
+    assert req["kind"] == "backup" and req["password"] == "long enough pw"
+    assert c.post(f"{BASE}/backup/verify", headers=H, json={}).status_code == 400
+    r = c.post(f"{BASE}/backup/verify", headers=H, json={"zip": "D:\\FowlEngineBackups\\FowlEngine-backup-x.zip"})
+    assert r.status_code == 200
+    assert json.loads((remote / "requests" / f"{r.json()['request']}.json").read_text())["kind"] == "verify"
+    assert c.post(f"{BASE}/backup/cancel", headers=H).status_code == 200
+    assert not list((remote / "requests").glob("*.tmp"))
+    # restore is never remote
+    r = c.post(f"{BASE}/backup/restore", headers=H, json={"zip": "x"})
+    assert r.status_code == 403 and "on the box" in r.json()["error"]
+
+    # a Manager service that stopped reporting, or has it off: refused with why
+    (remote / "backup-status.json").write_text(json.dumps({**status, "updated_unix": time.time() - 3600}))
+    r = c.post(f"{BASE}/backup/start", headers=H, json={})
+    assert r.status_code == 409 and "is it running" in r.json()["error"]
+    (remote / "backup-status.json").write_text(json.dumps({**status, "enabled": False}))
+    assert "turned off" in c.post(f"{BASE}/backup/start", headers=H, json={}).json()["error"]
