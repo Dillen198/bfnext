@@ -700,7 +700,17 @@ fn pick_acmi(dir: &std::path::Path, ts: SystemTime) -> Option<std::path::PathBuf
     containing.or_else(|| cands.iter().min_by_key(|(_, _, m)| *m).map(|(p, _, _)| p.clone()))
 }
 
+/// Whole-recording downloads streaming at once, across every client: each
+/// holds a file open and a disk read in flight for minutes.
+const TACVIEW_STREAMS: usize = 4;
+
+/// Clip cuts running at once: each scans a Tacview recording end to end on
+/// a blocking thread.
+const CLIP_BUILDS: usize = 2;
+
 async fn h_tacview(ctx: Arc<RangeCtx>, id: String) -> Response {
+    static STREAMS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+        std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(TACVIEW_STREAMS)));
     use tokio::io::AsyncReadExt;
     let id = decode_seg(&id);
     let s = match block_in_place(|| ctx.store.get(&id)) {
@@ -715,19 +725,23 @@ async fn h_tacview(ctx: Arc<RangeCtx>, id: String) -> Response {
     let Some(path) = block_in_place(|| pick_acmi(&dir, ts)) else {
         return err(StatusCode::NOT_FOUND, "no Tacview recording covers this result");
     };
+    let Ok(permit) = STREAMS.clone().try_acquire_owned() else {
+        return err(StatusCode::SERVICE_UNAVAILABLE, "too many recordings are downloading right now -- try again in a minute");
+    };
     let file = match tokio::fs::File::open(&path).await {
         Ok(f) => f,
         Err(e) => return err(StatusCode::NOT_FOUND, format!("cannot open the recording: {e}")),
     };
     let len = file.metadata().await.map(|m| m.len()).ok();
-    let stream = futures::stream::unfold(Some(file), |f| async move {
-        let mut f = f?;
+    // the permit rides along with the file and is released with it
+    let stream = futures::stream::unfold(Some((file, permit)), |f| async move {
+        let (mut f, permit) = f?;
         let mut buf = vec![0u8; 256 * 1024];
         match f.read(&mut buf).await {
             Ok(0) => None,
             Ok(n) => {
                 buf.truncate(n);
-                Some((Ok::<_, std::io::Error>(bytes::Bytes::from(buf)), Some(f)))
+                Some((Ok::<_, std::io::Error>(bytes::Bytes::from(buf)), Some((f, permit))))
             }
             Err(e) => Some((Err(e), None)),
         }
@@ -823,7 +837,16 @@ async fn h_clip(ctx: Arc<RangeCtx>, id: String, as_acmi: bool) -> Response {
                 lead_s: (span + 25.0).clamp(40.0, 900.0),
                 tail_s: 15.0,
             };
+            static BUILDS: std::sync::LazyLock<tokio::sync::Semaphore> =
+                std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(CLIP_BUILDS));
+            // Wait a while for a slot rather than refusing at once: a debrief
+            // page asks once and shows a spinner.
+            let permit = match tokio::time::timeout(Duration::from_secs(30), BUILDS.acquire()).await {
+                Ok(Ok(p)) => p,
+                _ => return err(StatusCode::SERVICE_UNAVAILABLE, "the server is busy cutting other clips -- try again in a minute"),
+            };
             let built = tokio::task::spawn_blocking(move || clip::build(&path, &req)).await;
+            drop(permit);
             let c = match built {
                 Ok(Ok(c)) => c,
                 Ok(Err(e)) => return err(StatusCode::NOT_FOUND, format!("{e:#}")),

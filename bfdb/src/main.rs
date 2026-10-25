@@ -433,6 +433,17 @@ struct Args {
     /// `--local-login-from 0.0.0.0/0 --local-login-from ::/0` to get that back.
     #[arg(long = "local-login-from", value_name = "IP[/PREFIX]")]
     local_login_from: Vec<websec::IpNet>,
+    /// GETs under /api/ one client IP may make per minute (a token bucket
+    /// with a third of that as its burst). Generous: a dashboard tab polls a
+    /// few dozen a minute. Loopback callers (the bot) are never metered.
+    /// 0 turns it off.
+    #[arg(long = "public-get-rate", default_value_t = 1800)]
+    public_get_rate: u32,
+    /// The stricter budget, per client IP per minute, for the GETs that cost
+    /// real work: range clip cuts, PNG cards, whole Tacview recordings.
+    /// 0 turns it off.
+    #[arg(long = "heavy-get-rate", default_value_t = 120)]
+    heavy_get_rate: u32,
     /// A proxy in front of Caddy (a CDN, a load balancer) whose
     /// X-Forwarded-For entries are believed, as an IP or CIDR block; repeat
     /// for several. Without it, the client is the address Caddy saw -- which,
@@ -1191,15 +1202,27 @@ async fn api_leaderboard(
 }
 
 /// GET /api/pilots — all pilot UCIDs + names (all-time, for name resolution)
+///
+/// A walk of every pilot ever seen, polled by every dashboard: shared, and
+/// refreshed at most once a minute (a new pilot's name shows up within one).
 async fn api_all_pilots(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
-        let pilots = db.all_pilot_names()?;
-        let entries: Vec<_> = pilots.iter().map(|(ucid, name)| {
-            serde_json::json!({ "ucid": ucid.to_string(), "name": name.to_string() })
-        }).collect();
-        Ok(serde_json::to_string(&entries)?)
-    })?;
-    Ok(json_response(data))
+    const PILOTS_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+    static PILOTS: std::sync::LazyLock<websec::Cached<Arc<std::string::String>>> =
+        std::sync::LazyLock::new(websec::Cached::new);
+    let data = PILOTS
+        .get_or_refresh(PILOTS_TTL, || async move {
+            task::block_in_place(|| -> Result<String> {
+                let pilots = db.all_pilot_names()?;
+                let entries: Vec<_> = pilots.iter().map(|(ucid, name)| {
+                    serde_json::json!({ "ucid": ucid.to_string(), "name": name.to_string() })
+                }).collect();
+                Ok(serde_json::to_string(&entries)?)
+            })
+            .map(Arc::new)
+            .map_err(Error)
+        })
+        .await?;
+    Ok(json_response((*data).clone()))
 }
 
 /// Call one of bflib's netidx RPC procs and return its reply as an owned
@@ -2854,7 +2877,8 @@ async fn api_capture_events(
                 },
             },
         };
-        let entries = db.recent_captures(rid, limit.unwrap_or(50))?;
+        // Same cap as /api/kills: `?limit=` is the caller's to choose.
+        let entries = db.recent_captures(rid, limit.unwrap_or(50).clamp(1, 500))?;
         let json: Vec<_> = entries
             .iter()
             .map(|c| {
@@ -8598,6 +8622,7 @@ async fn main() -> Result<()> {
         local_login_from: args.local_login_from.clone(),
         log_read_token: args.log_read_token.clone(),
         shutdown_token: args.shutdown_token.clone(),
+        get_limits: websec::GetLimits { per_min: args.public_get_rate, heavy_per_min: args.heavy_get_rate },
     });
 
     log::info!("API server listening on http://{}", args.listen_address);
@@ -8669,6 +8694,7 @@ struct RouteCtx {
     local_login_from: Vec<websec::IpNet>,
     log_read_token: Option<String>,
     shutdown_token: Option<String>,
+    get_limits: websec::GetLimits,
 }
 
 /// Per-instance GCI transcript channel and backlog.
@@ -8697,6 +8723,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         local_login_from,
         log_read_token,
         shutdown_token,
+        get_limits,
     } = rc;
 
     let cross_origin = !cors_origins.is_empty();
@@ -9963,6 +9990,8 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
     let cors_routes = websec::csrf_guard(origin_policy)
         // First of all: a cookie-authenticated POST or WebSocket from a page
         // we do not trust is refused before any route sees it.
+        // Then a client past its GET budget (`--public-get-rate`).
+        .or(websec::get_rate_guard(get_limits))
         .or(shutdown_route)
         .or(admin_revoke_route)
         .or(metrics_route)

@@ -458,6 +458,111 @@ impl<K: Hash + Eq + Clone> RateLimiter<K> {
     }
 }
 
+/// A token bucket per key: `burst` requests at once, refilled at `per_min` a
+/// minute. For metering ordinary traffic, where a fixed window's lockout
+/// would be too blunt.
+pub(crate) struct TokenBucket<K> {
+    per_sec: f64,
+    burst: f64,
+    state: Mutex<HashMap<K, (f64, Instant)>>,
+}
+
+impl<K: Hash + Eq + Clone> TokenBucket<K> {
+    pub(crate) fn new(per_min: u32, burst: u32) -> Self {
+        Self { per_sec: per_min as f64 / 60.0, burst: burst.max(1) as f64, state: Mutex::new(HashMap::new()) }
+    }
+
+    /// Take one token for `key`. `Err(wait)` when there is none: how long
+    /// until there is.
+    pub(crate) fn take(&self, key: &K) -> std::result::Result<(), Duration> {
+        let now = Instant::now();
+        let mut g = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if g.len() > 50_000 {
+            // a bucket that has refilled is the same as no bucket
+            let full = Duration::from_secs_f64(self.burst / self.per_sec.max(1e-9));
+            g.retain(|_, (_, at)| now.duration_since(*at) < full);
+        }
+        let (tokens, at) = g.entry(key.clone()).or_insert((self.burst, now));
+        *tokens = (*tokens + now.duration_since(*at).as_secs_f64() * self.per_sec).min(self.burst);
+        *at = now;
+        if *tokens >= 1.0 {
+            *tokens -= 1.0;
+            Ok(())
+        } else {
+            Err(Duration::from_secs_f64(((1.0 - *tokens) / self.per_sec.max(1e-9)).max(1.0)))
+        }
+    }
+}
+
+/// Budgets for anonymous GETs under `/api/` (`--public-get-rate`,
+/// `--heavy-get-rate`). 0 turns a budget off.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GetLimits {
+    /// Every GET under /api/, per client IP per minute.
+    pub(crate) per_min: u32,
+    /// The expensive ones on top -- clip cuts, PNG cards, whole Tacview
+    /// recordings -- per client IP per minute.
+    pub(crate) heavy_per_min: u32,
+}
+
+/// A route that costs real CPU or I/O per call: it gets the stricter budget.
+pub(crate) fn is_heavy_get(path: &str) -> bool {
+    path.ends_with("/card.png")
+        || path.ends_with("/clip")
+        || path.ends_with("/clip.acmi")
+        || path.starts_with("/api/range/tacview/")
+        || (path.starts_with("/api/replay/rec/") && path.ends_with("/acmi"))
+}
+
+/// A front-of-chain filter: answers 429 when a client has spent its GET
+/// budget, and rejects (lets the chain carry on) otherwise.
+///
+/// Loopback callers -- the Discord bot, bfdb's own tooling -- are never
+/// metered. Nor is anything when the client cannot be told apart: a request
+/// carrying `CF-Connecting-IP` that bfdb was not told to trust
+/// (`--trusted-proxy`) looks like it comes from one Cloudflare edge address
+/// for every visitor, and metering that would throttle everyone at once.
+pub(crate) fn get_rate_guard(
+    limits: GetLimits,
+) -> impl Filter<Extract = (Response,), Error = warp::Rejection> + Clone {
+    let general: Arc<TokenBucket<IpAddr>> = Arc::new(TokenBucket::new(limits.per_min, (limits.per_min / 3).max(60)));
+    let heavy: Arc<TokenBucket<IpAddr>> = Arc::new(TokenBucket::new(limits.heavy_per_min, (limits.heavy_per_min / 3).max(10)));
+    warp::get()
+        .and(warp::path::full())
+        .and(with_client_ip())
+        .and(warp::header::optional::<std::string::String>("cf-connecting-ip"))
+        .and_then(move |full: warp::path::FullPath, ip: IpAddr, cf: Option<std::string::String>| {
+            let (general, heavy) = (general.clone(), heavy.clone());
+            async move {
+                let path = full.as_str();
+                if !path.starts_with("/api/") || is_loopback(ip) {
+                    return Err(warp::reject::reject());
+                }
+                if cf.is_some() && !trusted_proxies().trusts_cloudflare() {
+                    return Err(warp::reject::reject());
+                }
+                let mut verdict = Ok(());
+                if limits.per_min > 0 {
+                    verdict = general.take(&ip);
+                }
+                if verdict.is_ok() && limits.heavy_per_min > 0 && is_heavy_get(path) {
+                    verdict = heavy.take(&ip);
+                }
+                match verdict {
+                    Ok(()) => Err(warp::reject::reject()),
+                    Err(wait) => {
+                        log::debug!("rate limited GET {path} from {ip}");
+                        let mut r = error_response(&too_many("too many requests -- slow down"));
+                        if let Ok(v) = HeaderValue::from_str(&wait.as_secs().max(1).to_string()) {
+                            r.headers_mut().insert("retry-after", v);
+                        }
+                        Ok(r)
+                    }
+                }
+            }
+        })
+}
+
 // ── Cross-site request guard ─────────────────────────────────────────────────
 
 /// Origins allowed to drive a cookie-authenticated request.
@@ -736,8 +841,11 @@ impl<T: Clone> Cached<T> {
 
 /// A keyed family of [`Cached`] values (per instance, per round, ...).
 pub(crate) struct CacheMap<K, T> {
-    map: Mutex<HashMap<K, Arc<Cached<T>>>>,
+    map: Mutex<HashMap<K, (Arc<Cached<T>>, Instant)>>,
 }
+
+/// Most keys a [`CacheMap`] holds before it evicts.
+const CACHE_MAP_KEYS: usize = 256;
 
 impl<K: Hash + Eq + Clone, T: Clone> CacheMap<K, T> {
     pub(crate) fn new() -> Self {
@@ -746,12 +854,28 @@ impl<K: Hash + Eq + Clone, T: Clone> CacheMap<K, T> {
 
     pub(crate) fn entry(&self, key: &K) -> Arc<Cached<T>> {
         let mut g = self.map.lock().unwrap_or_else(|e| e.into_inner());
-        // Keys are instances/rounds -- a handful -- but a caller-controlled
-        // key (`?round=`) must not grow this without bound.
-        if g.len() > 256 {
-            g.clear();
+        let now = Instant::now();
+        if let Some((c, used)) = g.get_mut(key) {
+            *used = now;
+            return c.clone();
         }
-        g.entry(key.clone()).or_insert_with(|| Arc::new(Cached::new())).clone()
+        // Keys are instances/rounds -- a handful -- but a caller-controlled
+        // key (`?round=`) must not grow this without bound. Evict the least
+        // recently used: clearing the lot, as this once did, threw away every
+        // hot dashboard answer whenever someone walked through old rounds.
+        if g.len() >= CACHE_MAP_KEYS {
+            if let Some(oldest) = g.iter().min_by_key(|(_, (_, used))| *used).map(|(k, _)| k.clone()) {
+                g.remove(&oldest);
+            }
+        }
+        let c = Arc::new(Cached::new());
+        g.insert(key.clone(), (c.clone(), now));
+        c
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.map.lock().unwrap().len()
     }
 }
 
@@ -857,6 +981,41 @@ mod tests {
         assert!(!valid_hex_color("red"));
         assert!(!valid_hex_color("#fff\"><img src=x onerror=alert(1)>"));
         assert!(!valid_hex_color("#12345"));
+    }
+
+    #[test]
+    fn token_bucket() {
+        let b: TokenBucket<u8> = TokenBucket::new(60, 3);
+        assert!(b.take(&1).is_ok());
+        assert!(b.take(&1).is_ok());
+        assert!(b.take(&1).is_ok());
+        let wait = b.take(&1).unwrap_err();
+        assert!(wait >= Duration::from_secs(1));
+        assert!(b.take(&2).is_ok(), "buckets are per key");
+    }
+
+    #[test]
+    fn cache_map_evicts_least_recently_used() {
+        let m: CacheMap<u32, u32> = CacheMap::new();
+        let hot = m.entry(&0);
+        for k in 1..CACHE_MAP_KEYS as u32 {
+            m.entry(&k);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+        m.entry(&0); // touch the hot key
+        m.entry(&9999); // over the cap: evicts key 1, the oldest untouched
+        assert_eq!(m.len(), CACHE_MAP_KEYS);
+        assert!(Arc::ptr_eq(&hot, &m.entry(&0)), "the hot entry survived");
+    }
+
+    #[test]
+    fn heavy_routes() {
+        assert!(is_heavy_get("/api/range/result/abc/clip"));
+        assert!(is_heavy_get("/api/range/result/abc/card.png"));
+        assert!(is_heavy_get("/api/range/tacview/abc"));
+        assert!(is_heavy_get("/api/replay/rec/x/acmi"));
+        assert!(!is_heavy_get("/api/replay/rec/x/chunk/3"));
+        assert!(!is_heavy_get("/api/stats"));
     }
 
     #[test]

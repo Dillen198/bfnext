@@ -82,6 +82,7 @@ pub(crate) fn harness_with(instances: serde_json::Value, tweak: impl FnOnce(&mut
         local_login_from: Vec::new(),
         log_read_token: None,
         shutdown_token: None,
+        get_limits: websec::GetLimits { per_min: 1800, heavy_per_min: 120 },
     };
     tweak(&mut rc);
     let routes = build_routes(rc);
@@ -409,6 +410,36 @@ async fn admin_actions_land_in_the_audit_log() {
     let row = &rows.as_array().unwrap()[0];
     assert_eq!(row["action"], "merge rounds (dry run)");
     assert_eq!(row["username"], "tester");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn public_gets_are_metered_per_ip() {
+    let h = harness_with(serde_json::json!({ "instances": [{ "id": "default" }] }), |rc| {
+        rc.get_limits = websec::GetLimits { per_min: 60, heavy_per_min: 0 };
+    });
+    let visitor = peer();
+    let get = |addr: SocketAddr| warp::test::request().method("GET").path("/api/version").remote_addr(addr);
+    let mut limited = None;
+    for i in 0..80 {
+        let r = get(visitor).reply(&h.routes).await;
+        if r.status() == 429 {
+            limited = Some(i);
+            assert!(r.headers().contains_key("retry-after"));
+            break;
+        }
+    }
+    // the burst is a third of the minute's budget, but at least 60
+    assert!(matches!(limited, Some(n) if (60..=62).contains(&n)), "{limited:?}");
+    // someone else is unaffected, and so is the bot on this machine
+    assert_eq!(get(peer()).reply(&h.routes).await.status(), 200);
+    let lo: SocketAddr = "127.0.0.1:5555".parse().unwrap();
+    for _ in 0..100 {
+        assert_eq!(get(lo).reply(&h.routes).await.status(), 200);
+    }
+    // a visitor behind Cloudflare that bfdb was not told to trust cannot be
+    // told apart from the others: not metered
+    let cf = get(visitor).header("cf-connecting-ip", "198.51.100.1").reply(&h.routes).await;
+    assert_eq!(cf.status(), 200);
 }
 
 #[tokio::test(flavor = "multi_thread")]
