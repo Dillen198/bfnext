@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["LiquidType","WSAircraftCategory","WSCategory","WSFixedWingCategory","WarehouseItem"],"struct":["Inventory","ItemInventory","LiquidInventory","ResourceMap","WSType","Warehouse"]};

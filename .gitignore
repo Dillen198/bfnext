@@ -140,3 +140,7 @@ miz/ODFv2_CFG.bak-*
 # Fowl Engine plugin build stamp -- written into an installed plugin by the
 # updater / Fowl Engine Manager, never part of the source tree
 .fowl-plugin.json
+
+# Generated rustdoc for dcso3 -- see https://docs.rs/dcso3, or run
+# `cargo doc -p dcso3` locally
+docs/dcso3/
