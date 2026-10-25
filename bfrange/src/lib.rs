@@ -68,7 +68,7 @@ use dcso3::{
     trigger::{SmokeColor, Trigger},
     unit::{ClassUnit, Unit, UnitCategory},
     world::{HandlerId, World},
-    HooksLua, LuaEnv, LuaVec3, MizLua, String,
+    HooksLua, LuaVec3, MizLua, String,
 };
 use fxhash::{FxHashMap, FxHashSet};
 use ground::Ground;
@@ -423,14 +423,13 @@ fn init_hooks(lua: HooksLua) -> Result<()> {
 
 fn read_sortie(lua: MizLua) -> std::string::String {
     (|| -> Result<std::string::String> {
-        let env: LuaTable = lua.inner().globals().raw_get("env")?;
-        let m: LuaTable = env.raw_get("mission")?;
-        let s: Option<std::string::String> = m.raw_get("sortie")?;
+        let env = dcso3::env::Env::singleton(lua)?;
+        // Miz::sortie() can't say "unset"
+        let s: Option<std::string::String> = dcso3::env::miz::Miz::singleton(lua)?.raw_get("sortie")?;
         // the ME stores the sortie name as a dictionary key; resolve it
         let s = s.unwrap_or_default();
         if s.starts_with("DictKey_") {
-            let f: LuaFunction = env.raw_get("getValueDictByKey")?;
-            return Ok(f.call::<_, std::string::String>(s)?);
+            return Ok(env.get_value_dict_by_key(s.as_str().into())?.to_string());
         }
         Ok(s)
     })()

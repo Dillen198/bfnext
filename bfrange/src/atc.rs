@@ -203,9 +203,8 @@ impl Clouds {
     fn read(lua: MizLua) -> Self {
         let r = (|| -> LuaResult<Clouds> {
             let g = lua.inner().globals();
-            let env: LuaTable = g.raw_get("env")?;
-            let mission: LuaTable = env.raw_get("mission")?;
-            let wx: LuaTable = mission.raw_get("weather")?;
+            // dcso3 wraps the mission's weather table but has no accessors for its fields
+            let wx = dcso3::env::miz::Miz::singleton(lua).and_then(|m| m.weather()).map_err(LuaError::external)?;
             let clouds: Option<LuaTable> = wx.raw_get("clouds").ok();
             let density: f64 = clouds.as_ref().and_then(|c| c.get("density").ok()).unwrap_or(0.);
             let preset: Option<String> = clouds.as_ref().and_then(|c| c.get::<_, String>("preset").ok()).filter(|s| !s.is_empty());

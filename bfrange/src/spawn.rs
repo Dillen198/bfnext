@@ -14,7 +14,14 @@
 use crate::util::{self, json_to_lua, V3};
 use anyhow::{anyhow, bail, Result};
 use chrono::{DateTime, Duration, Utc};
-use dcso3::{coalition::Side, country::Country, LuaEnv, MizLua};
+use dcso3::{
+    coalition::{Coalition, Side, Static},
+    country::Country,
+    env,
+    group::{Group, GroupCategory},
+    static_object::StaticObject,
+    LuaEnv, MizLua,
+};
 use fxhash::FxHashMap;
 use log::{info, warn};
 use mlua::prelude::*;
@@ -232,62 +239,55 @@ pub fn static_object(name: &str, typ: &str, p: V3, hdg: f64, cargo_mass: Option<
     s
 }
 
-pub fn add_group(lua: MizLua, country: i64, category: i64, g: &J) -> Result<()> {
+/// The mission-table JSON as one of dcso3's wrapped mission tables.
+fn miz_table<'lua, T: FromLua<'lua>>(lua: MizLua<'lua>, j: &J) -> Result<T> {
     let l = lua.inner();
-    let coa: LuaTable = l.globals().raw_get("coalition")?;
-    let data = json_to_lua(l, g)?;
-    let r: LuaValue = coa.call_function("addGroup", (country, category, data))?;
-    if matches!(r, LuaValue::Nil) {
-        bail!("DCS refused the group (check the country is in the mission's coalitions)")
-    }
+    Ok(T::from_lua(json_to_lua(l, j)?, l)?)
+}
+
+fn country_of(lua: MizLua, country: i64) -> Result<Country> {
+    Ok(Country::from_lua(LuaValue::Integer(country), lua.inner())?)
+}
+
+pub fn add_group(lua: MizLua, country: i64, category: i64, g: &J) -> Result<()> {
+    let category = GroupCategory::from_lua(LuaValue::Integer(category), lua.inner())?;
+    let data: env::miz::Group = miz_table(lua, g)?;
+    // addGroup returns nil when it refuses, which the typed result can't hold
+    Coalition::singleton(lua)?
+        .add_group(country_of(lua, country)?, category, data)
+        .map_err(|e| anyhow!("DCS refused the group (check the country is in the mission's coalitions): {e}"))?;
     Ok(())
 }
 
 pub fn add_static(lua: MizLua, country: i64, s: &J) -> Result<()> {
-    let l = lua.inner();
-    let coa: LuaTable = l.globals().raw_get("coalition")?;
-    let data = json_to_lua(l, s)?;
-    let r: LuaValue = coa.call_function("addStaticObject", (country, data))?;
-    if matches!(r, LuaValue::Nil) {
-        bail!("DCS refused the static object")
-    }
+    let data: env::miz::Unit = miz_table(lua, s)?;
+    Coalition::singleton(lua)?
+        .add_static_object(country_of(lua, country)?, data)
+        .map_err(|e| anyhow!("DCS refused the static object: {e}"))?;
     Ok(())
 }
 
 pub fn group_exists(lua: MizLua, name: &str) -> bool {
-    (|| -> Result<bool> {
-        let g: LuaTable = lua.inner().globals().raw_get("Group")?;
-        let v: LuaValue = g.call_function("getByName", name)?;
-        match v {
-            LuaValue::Table(t) => Ok(t.call_method::<_, bool>("isExist", ())?
-                && t.call_method::<_, i64>("getSize", ())? > 0),
-            _ => Ok(false),
-        }
-    })()
-    .unwrap_or(false)
+    // get_by_name already refuses a group of size 0 (DCS keeps those around)
+    Group::get_by_name(lua, name).and_then(|g| g.is_exist()).unwrap_or(false)
 }
 
 pub fn destroy_group(lua: MizLua, name: &str) {
-    let r = (|| -> Result<()> {
-        let g: LuaTable = lua.inner().globals().raw_get("Group")?;
-        if let LuaValue::Table(t) = g.call_function::<_, LuaValue>("getByName", name)? {
-            t.call_method::<_, ()>("destroy", ())?;
+    // gone already (or never spawned) is not an error
+    if let Ok(g) = Group::get_by_name(lua, name) {
+        if let Err(e) = g.destroy() {
+            warn!("could not destroy group {name}: {e:?}")
         }
-        Ok(())
-    })();
-    if let Err(e) = r {
-        warn!("could not destroy group {name}: {e:?}")
     }
 }
 
 pub fn destroy_static(lua: MizLua, name: &str) {
-    let r = (|| -> Result<()> {
-        let g: LuaTable = lua.inner().globals().raw_get("StaticObject")?;
-        if let LuaValue::Table(t) = g.call_function::<_, LuaValue>("getByName", name)? {
-            t.call_method::<_, ()>("destroy", ())?;
-        }
-        Ok(())
-    })();
+    let r = match StaticObject::get_by_name(lua, name) {
+        Ok(Static::Static(s)) => s.destroy(),
+        Ok(Static::Airbase(a)) => a.destroy(),
+        // gone already (or never spawned) is not an error
+        Err(_) => Ok(()),
+    };
     if let Err(e) = r {
         warn!("could not destroy static {name}: {e:?}")
     }
@@ -506,15 +506,5 @@ pub fn bool_cmd(id: &str, v: bool) -> J {
 
 /// Unit id of the first unit of a group, once it exists.
 pub fn first_unit_id(lua: MizLua, group: &str) -> Option<i64> {
-    (|| -> Result<Option<i64>> {
-        let g: LuaTable = lua.inner().globals().raw_get("Group")?;
-        let LuaValue::Table(t) = g.call_function::<_, LuaValue>("getByName", group)? else {
-            return Ok(None);
-        };
-        let u: LuaValue = t.call_method("getUnit", 1)?;
-        let LuaValue::Table(u) = u else { return Ok(None) };
-        Ok(Some(u.call_method::<_, i64>("getID", ())?))
-    })()
-    .ok()
-    .flatten()
+    Group::get_by_name(lua, group).and_then(|g| g.get_unit(1)).and_then(|u| u.id()).ok().map(|id| id.inner())
 }

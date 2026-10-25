@@ -236,47 +236,32 @@ pub fn json_to_lua<'l>(lua: &'l Lua, v: &serde_json::Value) -> LuaResult<Value<'
     })
 }
 
+fn group_controller<'lua>(lua: MizLua<'lua>, group: &str) -> Result<dcso3::controller::Controller<'lua>> {
+    let g = dcso3::group::Group::get_by_name(lua, group).map_err(|e| anyhow!("group {group} does not exist: {e}"))?;
+    g.get_controller()
+}
+
 /// Controller:setCommand / setOption / setTask / pushTask on a group,
-/// with the argument built from JSON.
+/// with the argument built from JSON. dcso3's typed `Task` / `Command` /
+/// `AiOption` don't cover every task the range issues (Orbit, Tanker,
+/// ActivateBeacon, EPLRS ...), so the call itself stays raw.
 pub fn group_controller_call(lua: MizLua, group: &str, method: &str, arg: serde_json::Value) -> Result<()> {
-    let l = lua.inner();
-    let grp_cls: LuaTable = l.globals().raw_get("Group")?;
-    let g: Value = grp_cls.call_function("getByName", group)?;
-    let g = match g {
-        Value::Table(t) => t,
-        _ => return Err(anyhow!("group {group} does not exist")),
-    };
-    let ctl: LuaTable = g.call_method("getController", ())?;
-    let a = json_to_lua(l, &arg)?;
-    ctl.call_method::<_, ()>(method, a)?;
+    let ctl = group_controller(lua, group)?;
+    ctl.call_method::<_, ()>(method, json_to_lua(lua.inner(), &arg)?)?;
     Ok(())
 }
 
 /// Controller:setOption(id, value) on a group.
 pub fn group_set_option(lua: MizLua, group: &str, id: i64, value: serde_json::Value) -> Result<()> {
-    let l = lua.inner();
-    let grp_cls: LuaTable = l.globals().raw_get("Group")?;
-    let g: Value = grp_cls.call_function("getByName", group)?;
-    let g = match g {
-        Value::Table(t) => t,
-        _ => return Err(anyhow!("group {group} does not exist")),
-    };
-    let ctl: LuaTable = g.call_method("getController", ())?;
-    ctl.call_method::<_, ()>("setOption", (id, json_to_lua(l, &value)?))?;
+    let ctl = group_controller(lua, group)?;
+    ctl.call_method::<_, ()>("setOption", (id, json_to_lua(lua.inner(), &value)?))?;
     Ok(())
 }
 
 /// Controller:setCommand on one UNIT (TACAN/ICLS/Link-4 are per unit).
 pub fn unit_controller_call(lua: MizLua, unit: &str, method: &str, arg: serde_json::Value) -> Result<()> {
-    let l = lua.inner();
-    let cls: LuaTable = l.globals().raw_get("Unit")?;
-    let u: Value = cls.call_function("getByName", unit)?;
-    let u = match u {
-        Value::Table(t) => t,
-        _ => return Err(anyhow!("unit {unit} does not exist")),
-    };
-    let ctl: LuaTable = u.call_method("getController", ())?;
-    ctl.call_method::<_, ()>(method, json_to_lua(l, &arg)?)?;
+    let u = dcso3::unit::Unit::get_by_name(lua, unit).map_err(|e| anyhow!("unit {unit} does not exist: {e}"))?;
+    u.get_controller()?.call_method::<_, ()>(method, json_to_lua(lua.inner(), &arg)?)?;
     Ok(())
 }
 
@@ -290,8 +275,8 @@ pub struct MissionClock {
 impl MissionClock {
     pub fn read(lua: MizLua) -> Self {
         let r = (|| -> Result<Self> {
-            let env: LuaTable = lua.inner().globals().raw_get("env")?;
-            let m: LuaTable = env.raw_get("mission")?;
+            // dcso3 has no accessors for env.mission's theatre and date
+            let m = dcso3::env::miz::Miz::singleton(lua)?;
             let theatre: String = m.raw_get::<_, Option<String>>("theatre")?.unwrap_or_default();
             let date = m
                 .raw_get::<_, Option<LuaTable>>("date")?

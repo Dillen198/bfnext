@@ -858,8 +858,8 @@ fn update_laser(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) ->
     }
     let Some(tp) = target else {
         if let Some(k) = st.spot.take() {
-            if let Ok(t) = lua.inner().registry_value::<LuaTable>(&k) {
-                let _ = t.call_method::<_, ()>("destroy", ());
+            if let Ok(t) = lua.inner().registry_value::<dcso3::spot::Spot>(&k) {
+                let _ = t.destroy();
             }
             let _ = lua.inner().remove_registry_value(k);
         }
@@ -868,8 +868,8 @@ fn update_laser(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) ->
     let aim = V3::new(tp.x, tp.y + 1.5, tp.z);
     match &st.spot {
         Some(k) => {
-            let t: LuaTable = lua.inner().registry_value(k)?;
-            t.call_method::<_, ()>("setPoint", LuaVec3(aim))?;
+            let t: dcso3::spot::Spot = lua.inner().registry_value(k)?;
+            t.set_point(LuaVec3(aim))?;
         }
         None => {
             let d = st.designator.clone().unwrap_or_default();

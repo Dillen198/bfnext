@@ -62,9 +62,8 @@ fn cover_of_density(d: f64) -> Option<&'static str> {
 pub fn read(lua: MizLua, ground_m: f64) -> Option<SkyInfo> {
     let r = (|| -> LuaResult<SkyInfo> {
         let g = lua.inner().globals();
-        let env: LuaTable = g.raw_get("env")?;
-        let mission: LuaTable = env.raw_get("mission")?;
-        let wx: LuaTable = mission.raw_get("weather")?;
+        // dcso3 wraps the mission's weather table but has no accessors for its fields
+        let wx = dcso3::env::miz::Miz::singleton(lua).and_then(|m| m.weather()).map_err(LuaError::external)?;
         let clouds: Option<LuaTable> = wx.raw_get("clouds").ok();
         let num = |k: &str| clouds.as_ref().and_then(|c| c.raw_get::<_, Option<f64>>(k).ok().flatten());
         let preset_key: Option<String> =
