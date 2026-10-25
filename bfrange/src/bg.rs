@@ -148,8 +148,10 @@ impl Sinks {
 
     fn stat(&mut self, st: &Stat) {
         if let Some(f) = &mut self.stats {
-            let line = serde_json::json!({"ts": Utc::now().to_rfc3339(), "stat": st});
-            if let Err(e) = writeln!(f, "{line}") {
+            // One write per record: `writeln!` on an unbuffered File issues
+            // several, so bfdb could read a record half-written.
+            let line = format!("{}\n", serde_json::json!({"ts": Utc::now().to_rfc3339(), "stat": st}));
+            if let Err(e) = f.write_all(line.as_bytes()) {
                 error!("could not write stat: {e:?}")
             }
         }
@@ -158,8 +160,9 @@ impl Sinks {
     fn record(&mut self, r: &RangeRecord) {
         if let Some(f) = &mut self.range {
             match serde_json::to_string(r) {
-                Ok(s) => {
-                    if let Err(e) = writeln!(f, "{s}") {
+                Ok(mut s) => {
+                    s.push('\n');
+                    if let Err(e) = f.write_all(s.as_bytes()) {
                         error!("could not write range record: {e:?}")
                     }
                     let _ = f.flush();
