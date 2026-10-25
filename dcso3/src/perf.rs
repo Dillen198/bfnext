@@ -29,6 +29,8 @@ macro_rules! record_perf {
         let ts = chrono::Utc::now();
         let res = $e;
         {
+            // SAFETY: the reference ends at the end of this block and
+            // nothing in it can re-enter.
             let t = unsafe { Perf::get_mut() };
             let t = Arc::make_mut(&mut t.0); // takes about 20ns if we don't need to clone
             crate::perf::record_perf(&mut t.$key, ts);

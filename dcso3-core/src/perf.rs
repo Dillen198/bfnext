@@ -263,8 +263,6 @@ pub struct PerfInner {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Perf(pub Arc<PerfInner>);
 
-static mut PERF: Option<Perf> = None;
-
 impl Deref for Perf {
     type Target = PerfInner;
 
@@ -280,22 +278,7 @@ impl Clone for Perf {
 }
 
 impl Perf {
-    pub unsafe fn get_mut() -> &'static mut Perf {
-        #[allow(static_mut_refs)]
-        let perf = PERF.as_mut();
-        match perf {
-            Some(perf) => perf,
-            None => {
-                PERF = Some(Perf::default());
-                #[allow(static_mut_refs)]
-                PERF.as_mut().unwrap()
-            }
-        }
-    }
-
-    pub unsafe fn reset() {
-        PERF = None;
-    }
+    crate::thread_singleton!(Perf);
 
     pub fn stat(&self) -> PerfStat {
         let PerfInner {
@@ -444,10 +427,88 @@ impl PerfStat {
     }
 }
 
+/// Defines `get_mut()` and `reset()` for a perf singleton of type `$ty`
+/// (which must implement `Default`), inside that type's `impl` block.
+///
+/// Each thread gets its own instance, created on first use and never freed.
+/// That replaces a `static mut`, which every thread shared with no
+/// synchronisation at all. The engine only touches these from the DCS main
+/// thread, so it keeps seeing the one instance it always did; a background
+/// thread that called in would now get separate counters instead of racing
+/// the main thread.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! thread_singleton {
+    ($ty:ty) => {
+        /// This thread's instance, created on first use.
+        ///
+        /// # Safety
+        ///
+        /// The returned reference must not overlap another one from
+        /// `get_mut` on the same thread: do not hold it across a call that
+        /// can re-enter (a Lua call that runs an event handler or timer may
+        /// call `get_mut` again), and do not call `reset` while it is alive.
+        /// Take it, update the counters, let it go.
+        pub unsafe fn get_mut() -> &'static mut $ty {
+            thread_local! {
+                static SLOT: std::cell::Cell<*mut $ty> =
+                    const { std::cell::Cell::new(std::ptr::null_mut()) };
+            }
+            SLOT.with(|slot| {
+                let mut p = slot.get();
+                if p.is_null() {
+                    p = Box::into_raw(Box::new(<$ty as Default>::default()));
+                    slot.set(p);
+                }
+                // SAFETY: `p` is from `Box::into_raw` and never freed, so it
+                // is valid for 'static, and it is only reachable from this
+                // thread's slot, so no other thread can touch it. That the
+                // reference is unique is the caller's contract (see above).
+                unsafe { &mut *p }
+            })
+        }
+
+        /// Put this thread's instance back to its default.
+        ///
+        /// # Safety
+        ///
+        /// No reference from `get_mut` may be alive on this thread.
+        pub unsafe fn reset() {
+            // SAFETY: the caller guarantees no other reference is alive.
+            *unsafe { Self::get_mut() } = <$ty as Default>::default();
+        }
+    };
+}
+
 pub fn record_perf(h: &mut HistogramSer, start_ts: DateTime<Utc>) {
     if let Some(ns) = (Utc::now() - start_ts).num_nanoseconds() {
         if ns >= 1 && ns <= 1_000_000_000 {
             **h += ns as u64;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn perf_singleton_is_per_thread_and_resettable() {
+        // SAFETY (all blocks below): each reference is used and dropped
+        // before the next get_mut/reset on this thread.
+        let p = unsafe { Perf::get_mut() } as *const Perf;
+        assert_eq!(p, unsafe { Perf::get_mut() } as *const Perf);
+        *Arc::make_mut(&mut unsafe { Perf::get_mut() }.0).get_point += 5;
+        assert_eq!(unsafe { Perf::get_mut() }.get_point.len(), 1);
+        let other = std::thread::spawn(|| {
+            let o = unsafe { Perf::get_mut() };
+            (o as *const Perf as usize, o.get_point.len())
+        })
+        .join()
+        .unwrap();
+        assert_ne!(other.0, p as usize);
+        assert_eq!(other.1, 0);
+        unsafe { Perf::reset() };
+        assert_eq!(unsafe { Perf::get_mut() }.get_point.len(), 0);
     }
 }
