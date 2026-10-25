@@ -520,6 +520,14 @@ struct Args {
     /// Hours between database backups; 0 turns them off.
     #[arg(long = "backup-interval-hours", default_value_t = 24)]
     backup_interval_hours: u64,
+    /// Also back up what lives beside the database rather than in it: the
+    /// recon photos (`<db>.intel`), flight replays (`<db>.replays`), range
+    /// clip cache (`<db>.range-clips`), every instance's engine config file,
+    /// and the --instances / --config files. Unchanged files are hard-linked
+    /// to the previous backup's copy, so seven backups of a recording cost
+    /// one. Off by default (replays can be large); see bfdb/BACKUPS.md.
+    #[arg(long = "backup-files")]
+    backup_files: bool,
     /// How many backups to keep; older ones are deleted.
     #[arg(long = "backup-keep", default_value_t = 7)]
     backup_keep: usize,
@@ -8177,6 +8185,34 @@ fn last_round(db: &StatsDb, cfg: &InstanceCfg) -> Option<serde_json::Value> {
     }))
 }
 
+/// `<db><suffix>`, the convention for the folders kept beside the database.
+fn beside_db(db: &std::path::Path, suffix: &str) -> PathBuf {
+    let mut p = db.as_os_str().to_os_string();
+    p.push(suffix);
+    PathBuf::from(p)
+}
+
+/// What `--backup-files` copies, named as it appears under a backup's `files/`.
+fn backup_file_list(args: &Args, db: &StatsDb, intel_dir: &std::path::Path) -> Vec<(String, PathBuf)> {
+    let mut v = vec![
+        ("intel".to_string(), intel_dir.to_path_buf()),
+        ("replays".to_string(), args.replay_dir.clone().unwrap_or_else(|| beside_db(&args.db, ".replays"))),
+        ("range-clips".to_string(), beside_db(&args.db, ".range-clips")),
+    ];
+    for cfg in db.instances().all() {
+        if let Some(p) = &cfg.engine_config {
+            v.push((format!("engine-cfg/{}", cfg.id), p.clone()));
+        }
+    }
+    if let Some(p) = &args.instances {
+        v.push(("instances.json".into(), p.clone()));
+    }
+    if let Some(p) = &args.config {
+        v.push(("campaign-config.json".into(), p.clone()));
+    }
+    v
+}
+
 /// Build the instance registry from the CLI: either `--instances <file>`, or
 /// the legacy single-server flags synthesized into one instance called
 /// `DEFAULT_INSTANCE` (which is also the id every pre-existing round in the DB
@@ -8531,6 +8567,7 @@ async fn main() -> Result<()> {
                 dir: backup_dir.clone(),
                 every: std::time::Duration::from_secs(args.backup_interval_hours.saturating_mul(3600)),
                 keep: args.backup_keep,
+                files: if args.backup_files { backup_file_list(&args, &db, &intel_dir) } else { Vec::new() },
             },
         );
     } else {
