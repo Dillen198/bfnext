@@ -480,6 +480,9 @@ fn delayed_init_inner(lua: MizLua, ctx: &mut Ctx) -> Result<()> {
     ctx.sortie = sortie.clone();
     ctx.rec = Recorder::new(sortie.clone(), util::MissionClock::read(lua), cfg.record_tracks);
     ctx.cmds = Arc::new(SegQueue::new());
+    // before this mission's first record, so a rotated file is whole
+    let mb = |m: Option<u64>| m.map(|m| m.saturating_mul(1024 * 1024));
+    bg::send(bg::Task::RotateJsonl { range_max: mb(cfg.range_jsonl_rotate_mb), stats_max: mb(cfg.stats_jsonl_rotate_mb) });
     // one stats round per range, not per restart: the marker keeps pilots'
     // identity stats attached to the same round across restarts
     let marker = ctx.write_dir.join(format!("{sortie}_RANGE.round"));

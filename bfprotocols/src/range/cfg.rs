@@ -1670,6 +1670,20 @@ pub struct RangeCfg {
     /// "utc_offset_hours": 10}`.
     #[serde(default)]
     pub live_weather: Option<crate::cfg::LiveWeatherConfig>,
+    /// At mission start, rotate `Logs/range.jsonl` once it is bigger than
+    /// this many MB: it is renamed `range<UTC timestamp>.jsonl` and a new
+    /// one started. Unset (the default), it grows forever as before. bfdb's
+    /// range ingest finishes a rotated file before moving on to the new one
+    /// (older bfdb builds re-read the new file and can miss records written
+    /// while they weren't keeping up), so update bfdb first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range_jsonl_rotate_mb: Option<u64>,
+    /// The same for `Logs/stats.jsonl`. bfdb's stats reader (`db.rs`) does
+    /// not yet look for a rotated file: it re-reads the new one from the
+    /// top, so stats written after its last read and before the rotation
+    /// are lost if it was behind (it reads every 2 s, so normally nothing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stats_jsonl_rotate_mb: Option<u64>,
 }
 
 fn default_range_name() -> String {

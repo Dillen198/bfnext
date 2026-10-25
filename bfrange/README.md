@@ -32,6 +32,15 @@ channel so it is staged as `_bfrange.dll` and swapped in on the next restart.
 | `bfrange_live_weather.json` | with `live_weather` set: which mission file to give the real weather, and how (see "Live weather and time") | the engine, when DCS next starts |
 | the mission `.miz` | with `live_weather` set: its weather, date and start time, rewritten in place | DCS, when it loads the mission |
 
+`bfrange.txt` is rotated on every DCS start. The two JSONL feeds grow until
+you set `range_jsonl_rotate_mb` / `stats_jsonl_rotate_mb` in the range
+config: then, at mission start, a feed bigger than that is renamed
+`range<UTC timestamp>.jsonl` (or `stats<...>.jsonl`) and a new one begun.
+bfdb's range ingest finishes the rotated `range.jsonl` from where it was
+before reading the new one, so deploy that bfdb first. Its stats reader does
+not look for the rotated file yet; it re-reads the new one from the top,
+which loses only stats it had not read when the mission started.
+
 Its netidx RPCs are published under `<netidx_base>/<sortie>/api/`: `query-range`,
 `query-range-catalog`, `query-weapons`, `range-spawn`, `range-despawn` and
 `range-reset-station`.
