@@ -190,6 +190,7 @@ export default function ObjectiveDrawer({
       {/* Scrim: dims the page and gives "click away to close" somewhere to
           land. Without it the drawer read as part of the table behind it. */}
       <div
+        role="presentation"
         onClick={onClose}
         style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 59 }}
       />

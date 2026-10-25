@@ -2,7 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Alert, ExternalLink } from '@icons'
 import { api } from '../api'
 import { useInstance } from '../context/InstanceContext'
-import { appliesTo, fmtUtc, RANK, STATUS_PAGE, useStatusFile, type Level, type Notice } from '../lib/statusFile'
+import { appliesTo, fmtUtc, LEVEL_RANK as RANK, type NoticeLevel as Level, type Notice } from '@shared/web/status'
+import { STATUS_PAGE, useStatusFile } from '../lib/statusFile'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Outage banner: one line across every page, only while the server is down.

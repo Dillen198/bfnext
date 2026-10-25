@@ -116,7 +116,7 @@ function Tag({ x, y, text, color, bg = 'rgba(0,0,0,0.75)', ink, dashed = false, 
 
 type Role = 'tank' | 'ifv' | 'apc' | 'recon' | 'truck' | 'aaa' | 'sam' | 'artillery' | 'infantry'
 
-function Vehicle({ role, body }: { role: Role; body: string }) {
+function Vehicle({ kind, body }: { kind: Role; body: string }) {
   const dark = shade(body, -0.5)
   const deck = shade(body, 0.18)
   const R = (x0: number, y0: number, x1: number, y1: number, fill: string, k?: string) => (
@@ -124,7 +124,7 @@ function Vehicle({ role, body }: { role: Role; body: string }) {
   )
   const D = (x: number, y: number, r: number, fill: string, k?: string) => <circle key={k} cx={x} cy={y} r={r} fill={fill} />
   let parts: ReactElement[] = []
-  switch (role) {
+  switch (kind) {
     case 'tank':
       parts = [R(8.5, 7, 11, 27, dark, 'a'), R(21, 7, 23.5, 27, dark, 'b'), R(11, 7.5, 21, 26.5, body, 'c'), D(16, 18, 4.4, deck, 'd'), R(15.25, 1, 16.75, 14, dark, 'e')]
       break
@@ -216,10 +216,10 @@ export default function GroundGlyph({ icon, side = 'Blue' }: { icon: string; sid
   const ownBright = GC_BRIGHT[side] ?? GC_BRIGHT.Blue
   const foe = GC_SIDE[other(side)]
 
-  if (icon === 'gc-v-broken') return <Tile><Vehicle role="tank" body="#9a9a90" /></Tile>
+  if (icon === 'gc-v-broken') return <Tile><Vehicle kind="tank" body="#9a9a90" /></Tile>
   if (icon.startsWith('gc-v-')) {
     const role = icon.slice(5) as Role
-    return <Tile><Vehicle role={role} body={side === 'Neutral' ? '#9a9a90' : ownBright} /></Tile>
+    return <Tile><Vehicle kind={role} body={side === 'Neutral' ? '#9a9a90' : ownBright} /></Tile>
   }
 
   switch (icon) {
@@ -362,7 +362,7 @@ export default function GroundGlyph({ icon, side = 'Blue' }: { icon: string; sid
           </defs>
           <path d="M4 44 Q16 30 26 28 T38 12" stroke="url(#gcTrail)" strokeWidth="1.2" fill="none" transform="translate(-1.5 0)" />
           <path d="M4 44 Q16 30 26 28 T38 12" stroke="url(#gcTrail)" strokeWidth="1.2" fill="none" transform="translate(1.5 0)" />
-          <g transform="translate(38 11) rotate(25) translate(-8 -8) scale(0.5)"><Vehicle role="tank" body={ownBright} /></g>
+          <g transform="translate(38 11) rotate(25) translate(-8 -8) scale(0.5)"><Vehicle kind="tank" body={ownBright} /></g>
         </Tile>
       )
     case 'gc-front':

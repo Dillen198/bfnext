@@ -13,7 +13,7 @@ import './scope.css'
 
 import { api, type Frontlines } from '../api'
 import { mapStyleFor } from '../lib/mapStyle'
-import { useTheme } from '../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 import AirportMarker from './AirportMarker'
 import BraaInfo from './BraaInfo'
 import ControlPanel from './ControlPanel'

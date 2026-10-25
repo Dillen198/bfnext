@@ -13,6 +13,7 @@ import {
 } from '@icons'
 import type { Briefing, SituationReport } from '../api'
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function fmtCoord(lat: number, lon: number): string {
   if (!lat && !lon) return '—'
   const c = (v: number, pos: string, neg: string) => {
@@ -266,6 +267,7 @@ type PdfCol = { h: string; w: number }
  * its narrative, tasking and comms card lead the document, because that is the
  * part that goes stale and the part a pilot actually reads on the ramp.
  */
+// eslint-disable-next-line react-refresh/only-export-components
 export function buildPdf(b: Briefing, sit?: SituationReport) {
   const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' })
   const W = doc.internal.pageSize.getWidth()

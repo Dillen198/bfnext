@@ -3,6 +3,7 @@
 // layout documented there.
 
 import { API_ROOT } from '../api'
+import { deadline, LONG_TIMEOUT_MS } from '@shared/web/api'
 
 export type Kind =
   | 'air' | 'helo' | 'missile' | 'bomb' | 'rocket' | 'torpedo'
@@ -169,7 +170,8 @@ export function decodeChunk(buf: ArrayBuffer): Map<number, Seg> {
 }
 
 async function fetchBin(path: string): Promise<ArrayBuffer> {
-  const res = await fetch(`${API_ROOT}/api/replay${path}`, { credentials: 'include' })
+  // Track blocks can be large on a slow link: the long deadline.
+  const res = await fetch(`${API_ROOT}/api/replay${path}`, { credentials: 'include', signal: deadline(LONG_TIMEOUT_MS) })
   if (!res.ok) {
     let msg = `HTTP ${res.status}`
     try { const j = await res.json(); if (j?.error) msg = j.error } catch { /* not JSON */ }
@@ -179,7 +181,7 @@ async function fetchBin(path: string): Promise<ArrayBuffer> {
 }
 
 export async function fetchMeta(rec: string): Promise<RecMeta> {
-  const res = await fetch(`${API_ROOT}/api/replay/rec/${encodeURIComponent(rec)}`, { credentials: 'include' })
+  const res = await fetch(`${API_ROOT}/api/replay/rec/${encodeURIComponent(rec)}`, { credentials: 'include', signal: deadline() })
   if (!res.ok) {
     let msg = `HTTP ${res.status}`
     try { const j = await res.json(); if (j?.error) msg = j.error } catch { /* not JSON */ }
@@ -213,13 +215,13 @@ export interface RangeHit {
 
 /** The range results in a recording, and where the range site lives; empty when it has none. */
 export async function fetchRangeHits(rec: string): Promise<{ items: RangeHit[]; site: string }> {
-  const res = await fetch(`${API_ROOT}/api/range/replay/${encodeURIComponent(rec)}/results`, { credentials: 'include' })
+  const res = await fetch(`${API_ROOT}/api/range/replay/${encodeURIComponent(rec)}/results`, { credentials: 'include', signal: deadline() })
   if (!res.ok) return { items: [], site: '' }
   return res.json()
 }
 
 export async function fetchHumans(rec: string): Promise<number[]> {
-  const res = await fetch(`${API_ROOT}/api/replay/rec/${encodeURIComponent(rec)}/humans`, { credentials: 'include' })
+  const res = await fetch(`${API_ROOT}/api/replay/rec/${encodeURIComponent(rec)}/humans`, { credentials: 'include', signal: deadline() })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }

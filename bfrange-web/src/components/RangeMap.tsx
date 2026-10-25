@@ -9,7 +9,7 @@ import { useMemo, type ReactNode, type Ref } from 'react'
 import Map, { AttributionControl, NavigationControl, ScaleControl, type MapProps, type MapRef } from 'react-map-gl/maplibre'
 import type { StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
-import { useTheme } from '../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 import { BASE_TILES, useBasemap, type Basemap } from '../lib/basemap'
 
 function mapStyleFor(theme: 'dark' | 'light', base: Basemap, withNames: boolean): StyleSpecification {

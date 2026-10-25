@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { appliesTo, fetchStatusFile, maintenanceVisible, type Notice } from '@shared/web/status'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Server status that does not depend on bfdb.
@@ -13,52 +14,19 @@ import { useQuery } from '@tanstack/react-query'
 // A notice wins over a probe: a probe can only say "offline", a notice says why.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type NoticeLevel = 'outage' | 'degraded' | 'maintenance' | 'info'
-
-export interface Notice {
-  id: string
-  level: NoticeLevel
-  title: string
-  message?: string
-  /** Instance ids; absent means every server. */
-  servers?: string[]
-  since?: string
-  /** Expected return, ISO 8601 UTC. */
-  eta?: string
-}
-
-export interface Maintenance {
-  title: string
-  message?: string
-  servers?: string[]
-  start: string
-  end: string
-}
-
-export interface StatusFile {
-  notices?: Notice[]
-  maintenance?: Maintenance[]
-}
+export type { Notice, NoticeLevel } from '@shared/web/status'
+export { fmtUtc } from '@shared/web/status'
 
 const STATUS_URL: string = import.meta.env.VITE_STATUS_URL ?? '/status.json'
-
-/** Windows show from a week before they start until they end. */
-const MAINT_LEAD_MS = 7 * 86_400_000
 
 export function useStatusFile() {
   return useQuery({
     queryKey: ['status-file'],
-    queryFn: async (): Promise<StatusFile> => {
-      const res = await fetch(STATUS_URL, { cache: 'no-store' })
-      if (!res.ok) throw new Error(`${res.status}`)
-      return res.json()
-    },
+    queryFn: () => fetchStatusFile(STATUS_URL),
     refetchInterval: 60_000,
     retry: 1,
   })
 }
-
-const appliesTo = (servers: string[] | undefined, id: string) => !servers || servers.length === 0 || servers.includes(id)
 
 export function useNotices() {
   const { data, dataUpdatedAt } = useStatusFile()
@@ -66,11 +34,7 @@ export function useNotices() {
   // a minute -- close enough for windows measured in hours, and pure.
   const now = dataUpdatedAt
   const notices = data?.notices ?? []
-  const maintenance = (data?.maintenance ?? []).filter(m => {
-    const start = Date.parse(m.start)
-    const end = Date.parse(m.end)
-    return !Number.isNaN(start) && !Number.isNaN(end) && end > now && start - MAINT_LEAD_MS < now
-  })
+  const maintenance = (data?.maintenance ?? []).filter(m => maintenanceVisible(m, now))
   /** Maintenance windows running right now count as a notice for their servers. */
   const activeMaintenance: Notice[] = maintenance
     .filter(m => Date.parse(m.start) <= now)
@@ -116,14 +80,4 @@ export function stateTone(s: ServerState): 'ok' | 'warn' | 'bad' | 'idle' {
     case 'engine-down': return 'bad'
     default: return 'idle'
   }
-}
-
-/** "Sun 19 Oct, 18:00 UTC" */
-export function fmtUtc(iso: string | undefined): string | undefined {
-  if (!iso) return undefined
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return undefined
-  return d.toLocaleString('en-GB', {
-    weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC',
-  }) + ' UTC'
 }

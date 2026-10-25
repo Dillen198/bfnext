@@ -10,7 +10,7 @@ import {
   type SituationReport,
   type Task,
 } from '../api'
-import { useTheme } from '../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 import { Explosion } from '@icons'
 
 // Inline raster style off the Esri canvas tiles — a hosted vector style is

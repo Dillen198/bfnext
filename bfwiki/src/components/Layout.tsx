@@ -1,5 +1,5 @@
 import React from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   LogOut,
@@ -11,9 +11,10 @@ import {
 } from '@icons'
 import { api, type WikiPageMeta } from '../api'
 import { useAuth } from '../context/AuthContext'
-import ThemeToggle from './ThemeToggle'
+import { ThemeToggle } from '@shared/web/theme'
 import InstanceSelect from './InstanceSelect'
-import LogoMark from './LogoMark'
+import { ErrorBoundary } from '@shared/web/ErrorBoundary'
+import { LogoMark } from '@shared/web/LogoMark'
 
 function groupBySection(pages: WikiPageMeta[]) {
   const groups = new Map<string, WikiPageMeta[]>()
@@ -28,6 +29,7 @@ function groupBySection(pages: WikiPageMeta[]) {
 export default function Layout() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const [query, setQuery] = React.useState('')
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
 
@@ -103,6 +105,7 @@ export default function Layout() {
         {/* Backdrop -- closes the drawer on mobile when tapped outside it */}
         <div
           className={`wiki-sidebar-backdrop${sidebarOpen ? ' open' : ''}`}
+          role="presentation"
           onClick={() => setSidebarOpen(false)}
         />
 
@@ -142,7 +145,10 @@ export default function Layout() {
 
         {/* MAIN */}
         <main className="wiki-main">
-          <Outlet />
+          {/* A crashed page keeps the navigation; moving to another page resets it. */}
+          <ErrorBoundary key={pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>

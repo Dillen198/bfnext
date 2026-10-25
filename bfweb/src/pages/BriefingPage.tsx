@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import QueryState from '../components/QueryState'
 import { useQuery } from '@tanstack/react-query'
 import { api, type Briefing, type SituationReport } from '../api'
 import PageHeader from '../components/PageHeader'
@@ -157,40 +158,24 @@ export default function BriefingPage() {
       }}>
         {tab === 'situation' && (
           <>
-            {sitLoading && (
-              <div className="vs-card" style={{ padding: 20, color: 'var(--text-dim)' }}>
-                Building the situation from the engine…
-              </div>
-            )}
-            {sitError && (
-              <div className="vs-card" style={{ padding: 20, color: '#f87171' }}>
-                Situation unavailable — the engine may be unreachable, no round is active, or the running
-                bflib.dll predates this feature. The Kneeboard tab still works.
-                {/* The guesses above are usually right, but not always -- a
-                    coalition/auth rejection looks identical from here. Show
-                    what bfdb actually said. */}
-                <div style={{ marginTop: 8, fontSize: '0.68rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                  {sitError instanceof Error ? sitError.message : String(sitError)}
-                </div>
-              </div>
-            )}
+            {/* The hint is usually right, but not always -- a coalition/auth
+                rejection looks identical from here, so bfdb's own message
+                shows above it. */}
+            <QueryState
+              isLoading={sitLoading} isError={!!sitError} error={sitError} what="the situation from the engine"
+              onRetry={() => refetchSit()}
+              hint="The engine may be unreachable, no round is active, or the running bflib.dll predates this feature. The Kneeboard tab still works."
+            />
             {situation && <SituationTab report={situation} />}
           </>
         )}
 
         {tab === 'kneeboard' && (
           <>
-            {briefLoading && (
-              <div className="vs-card" style={{ padding: 20, color: 'var(--text-dim)' }}>Loading kneeboard…</div>
-            )}
-            {briefError && (
-              <div className="vs-card" style={{ padding: 20, color: '#f87171' }}>
-                Kneeboard unavailable — the engine may be unreachable or no round is active.
-                <div style={{ marginTop: 8, fontSize: '0.68rem', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                  {briefError instanceof Error ? briefError.message : String(briefError)}
-                </div>
-              </div>
-            )}
+            <QueryState
+              isLoading={briefLoading} isError={!!briefError} error={briefError} what="kneeboard"
+              hint="The engine may be unreachable or no round is active."
+            />
             {briefing && <KneeboardTab briefing={briefing} />}
           </>
         )}

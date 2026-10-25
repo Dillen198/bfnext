@@ -53,6 +53,7 @@ export function RoundProvider({ children }: { children: React.ReactNode }) {
   return <RoundContext.Provider value={value}>{children}</RoundContext.Provider>
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useRound() {
   return useContext(RoundContext)
 }

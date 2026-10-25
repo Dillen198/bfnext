@@ -143,7 +143,9 @@ function Player({ clip, rec }: { clip: Clip; rec: RangeRecord }) {
   }
 
   return (
-    <div className="d3" tabIndex={0} onKeyDown={onKey} aria-label="3D debrief. Space plays, arrow keys step, 1 to 6 change camera.">
+    // A keyboard-driven 3D view: focusable on purpose, it takes its own keys.
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex, jsx-a11y/no-noninteractive-element-interactions
+    <div className="d3" role="application" tabIndex={0} onKeyDown={onKey} aria-label="3D debrief. Space plays, arrow keys step, 1 to 6 change camera.">
       <div className="d3-stage">
         <div ref={host} className="d3-host" />
         {read && <Hud r={read} kind={kind} waveoff={waveoff} />}

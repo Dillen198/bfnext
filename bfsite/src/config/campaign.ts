@@ -5,10 +5,12 @@
 // below) rather than copying it here, so there is one copy to keep current.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { VS_URLS } from '@shared/web/urls'
+
 export const links = {
   discord: 'https://discord.gg/XyGkb3WAXS',
-  dashboard: 'https://dashboard.vectorstrike.org',
-  wiki: 'https://wiki.vectorstrike.org',
+  dashboard: VS_URLS.dashboard,
+  wiki: VS_URLS.wiki,
   dcs: 'https://www.digitalcombatsimulator.com',
 } as const
 

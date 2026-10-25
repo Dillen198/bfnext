@@ -5,11 +5,12 @@ import { api, roundNo, type Round, type ServerInstance } from '../api'
 import { useRound } from '../context/RoundContext'
 import { useAuth } from '../context/AuthContext'
 import { campaign } from '../config/campaign'
-import ThemeToggle from './ThemeToggle'
+import { ThemeToggle } from '@shared/web/theme'
 import { useInstance } from '../context/InstanceContext'
-import LogoMark from './LogoMark'
+import { LogoMark } from '@shared/web/LogoMark'
 import Backdrop from './Backdrop'
 import StatusBanner from './StatusBanner'
+import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 import NotificationBell from './NotificationBell'
 import { useWireframe } from '../lib/wireframe'
 import { getDevUser } from '../lib/devAuth'
@@ -118,6 +119,8 @@ function isNavActive(to: string, pathname: string, search: string, exact: boolea
   if (!pathMatches) return false
   return toQuery ? search === `?${toQuery}` : search === ''
 }
+
+function Sep() { return <div className="topbar-sep" /> }
 
 function pad(n: number) { return String(n).padStart(2, '0') }
 function fmtDuration(s: number) {
@@ -367,9 +370,6 @@ export default function Layout() {
     ],
   ].filter(g => g.length > 0)
 
-  const Sep = () => <div className="topbar-sep" />
-
-
   const hasCampaignSelect = rounds.length > 0 || multi
   const campaignProps = {
     value: selectorValue,
@@ -498,7 +498,7 @@ export default function Layout() {
         {/* Theme toggle -- topbar copy (mobile gets the drawer copy) */}
         <div className="topbar-theme">
           <Sep />
-          <ThemeToggle style={{ marginRight: 4 }} />
+          <ThemeToggle className="vs-touch-target" style={{ marginRight: 4 }} />
           <Sep />
         </div>
 
@@ -563,6 +563,7 @@ export default function Layout() {
         {/* Backdrop -- closes the drawer on mobile when tapped outside it */}
         <div
           className={`sidebar-backdrop${sidebarOpen ? ' open' : ''}`}
+          role="presentation"
           onClick={() => setSidebarOpen(false)}
         />
 
@@ -577,7 +578,7 @@ export default function Layout() {
                 {...campaignProps}
                 style={{ flex: 1, minWidth: 0, height: 32 }}
               />}
-            <ThemeToggle style={{ width: 32, height: 32 }} />
+            <ThemeToggle className="vs-touch-target" style={{ width: 32, height: 32 }} />
           </div>
 
           {/* Nav section */}
@@ -673,7 +674,10 @@ export default function Layout() {
         {/* MAIN */}
         <main className="vs-main" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
           <StatusBanner />
-          <Outlet />
+          {/* A crashed page keeps the navigation; moving to another page resets it. */}
+          <ErrorBoundary key={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
 
       </div>

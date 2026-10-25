@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import QueryState from '../components/QueryState'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import { api, type JsonSchema } from '../api'
 import { useAuth } from '../context/AuthContext'
 import PageHeader from '../components/PageHeader'
@@ -17,12 +18,12 @@ import {
 
 export default function ConfigEditorPage() {
   const { user, loading } = useAuth()
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
 
   const [search, setSearch] = useState('')
   const [activeCat, setActiveCat] = useState(CFG_CATEGORIES[0].key)
-  const [draft, setDraft] = useState<Record<string, unknown> | null>(null)
+  // The local edits; until the first one the form shows the saved config.
+  const [edited, setEdited] = useState<Record<string, unknown> | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'error' | 'saved'>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -31,9 +32,7 @@ export default function ConfigEditorPage() {
   const { data: cfg, isLoading: cfgLoading, error: cfgError } =
     useQuery({ queryKey: ['admin', 'cfg'], queryFn: api.admin.cfg, retry: false })
 
-  useEffect(() => {
-    if (cfg && !draft) setDraft(cfg)
-  }, [cfg, draft])
+  const draft = edited ?? cfg ?? null
 
   const dirty = draft !== null && cfg !== undefined && JSON.stringify(draft) !== JSON.stringify(cfg)
 
@@ -71,8 +70,8 @@ export default function ConfigEditorPage() {
   const visibleKeys = fieldsByCat.get(activeCat) ?? []
 
   if (loading) return null
-  if (!user) { navigate('/login'); return null }
-  if (!user.is_admin) { navigate('/'); return null }
+  if (!user) return <Navigate to="/login" replace />
+  if (!user.is_admin) return <Navigate to="/" replace />
 
   async function handleSave() {
     if (!draft) return
@@ -100,7 +99,7 @@ export default function ConfigEditorPage() {
         schema={propSchema}
         root={root}
         value={draft?.[key]}
-        onChange={v => setDraft(d => d ? { ...d, [key]: v } : d)}
+        onChange={v => setEdited(d => { const base = d ?? cfg; return base ? { ...base, [key]: v } : null })}
         defaultOpen={defaultOpen}
       />
     )
@@ -134,11 +133,7 @@ export default function ConfigEditorPage() {
         }
       />
 
-      {(schemaLoading || cfgLoading) && (
-        <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.75rem' }}>
-          Loading configuration schema…
-        </div>
-      )}
+      <QueryState isLoading={schemaLoading || cfgLoading} what="configuration schema" />
 
       {notConfigured && (
         <div style={{ padding: '1rem' }}>

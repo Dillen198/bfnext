@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { ExternalLink } from '@icons'
 import { campaign, dashboard, links, wiki } from '../config/campaign'
-import LogoMark from './LogoMark'
+import { LogoMark } from '@shared/web/LogoMark'
 
 export default function Footer() {
   const year = new Date().getFullYear()

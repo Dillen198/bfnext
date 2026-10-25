@@ -1,6 +1,7 @@
-import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, Fragment, useCallback, useContext, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, getInstance, setInstance, type ServerInstance } from '../api'
+import { api, instanceStore, type ServerInstance } from '../api'
+import { useInstanceSelection, type InstanceSelection } from '@shared/web/instance'
 import { useAuth } from './AuthContext'
 import { campaign } from '../config/campaign'
 
@@ -26,17 +27,7 @@ import { campaign } from '../config/campaign'
  * everything swapped at once. Removing the entries instead makes each page show
  * its own loading state immediately and redraw as the new server's data lands.
  */
-interface InstanceContextValue {
-  /** Every instance this bfdb fronts, in configured order. Empty while loading. */
-  instances: ServerInstance[]
-  /** The selected instance's id, or undefined while it is still bfdb's default. */
-  selected: string | undefined
-  /** The selected instance's record, if the list has loaded. */
-  current: ServerInstance | undefined
-  /** True when there is more than one server to choose between. */
-  multi: boolean
-  select: (id: string) => void
-}
+type InstanceContextValue = InstanceSelection<ServerInstance>
 
 /**
  * The side labels from /api/config, before any server's own names replace
@@ -72,7 +63,6 @@ const InstanceContext = createContext<InstanceContextValue>({
 export function InstanceProvider({ children }: { children: React.ReactNode }) {
   const qc = useQueryClient()
   const { user } = useAuth()
-  const [selected, setSelected] = useState<string | undefined>(() => getInstance())
 
   // The instance list is not instance-scoped, and changes only when bfdb is
   // restarted with a different --instances file -- but *who is asking* matters:
@@ -88,41 +78,14 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
     retry: 1,
   })
 
-  const instances = useMemo(() => data?.instances ?? [], [data])
-
-  // Drop a remembered id that is no longer configured (an instance was removed
-  // or renamed) rather than sending it and getting a 400 on every request.
-  useEffect(() => {
-    if (!data || !selected) return
-    if (!instances.some(i => i.id === selected)) {
-      setInstance(undefined)
-      setSelected(undefined)
-      qc.removeQueries({ predicate: q => !INSTANCE_AGNOSTIC.has(q.queryKey[0] as string) })
-    }
-  }, [data, instances, selected, qc])
-
-  const select = useCallback((id: string) => {
-    if (id === selected) return
-    setInstance(id)
-    setSelected(id)
-    // Everything cached belongs to the server we just left -- except the two
-    // queries that are about the whole bfdb rather than one server. Keeping
-    // those stops the server selector itself blanking out mid-switch.
+  // Everything cached belongs to the server we just left -- except the two
+  // queries that are about the whole bfdb rather than one server. Keeping
+  // those stops the server selector itself blanking out mid-switch.
+  const onSwitch = useCallback(() => {
     qc.removeQueries({ predicate: q => !INSTANCE_AGNOSTIC.has(q.queryKey[0] as string) })
-  }, [selected, qc])
-
-  const current = useMemo(
-    () => instances.find(i => i.id === selected) ?? instances.find(i => i.default),
-    [instances, selected],
-  )
-
-  const value = useMemo<InstanceContextValue>(() => ({
-    instances,
-    selected,
-    current,
-    multi: instances.length > 1,
-    select,
-  }), [instances, selected, current, select])
+  }, [qc])
+  const value = useInstanceSelection(instanceStore, data, onSwitch)
+  const { current } = value
 
   // Applied while rendering, so the pages below read the new names on this
   // very render. They read `campaign` directly rather than through a hook,
@@ -137,6 +100,7 @@ export function InstanceProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useInstance() {
   return useContext(InstanceContext)
 }

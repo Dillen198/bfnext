@@ -12,7 +12,7 @@ import { Backdrop } from './Backdrop'
 import { Carrier, ChevronsLeft, ChevronsRight, LogOut, Menu, Moon, Search, Sun, X } from '@icons'
 import { MOCK } from '../api'
 import { useAuth } from '../context/AuthContext'
-import { useTheme } from '../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 import { fmt, pad3 } from '../lib/format'
 import { useMissionClock } from '../lib/missionClock'
 import { useLive } from '../lib/useLive'
@@ -298,8 +298,8 @@ export function Shell({ children, bleed }: { children: ReactNode; bleed: boolean
       </div>
 
       {drawer && (
-        <div className="nav-scrim lg:hidden" onClick={() => setDrawer(false)}>
-          <aside className="nav-drawer" onClick={e => e.stopPropagation()} aria-label="Menu">
+        <div className="nav-scrim lg:hidden" role="presentation" onClick={e => { if (e.target === e.currentTarget) setDrawer(false) }}>
+          <aside className="nav-drawer" aria-label="Menu">
             <div className="flex items-center justify-between px-3 h-14 border-b border-[var(--line)]">
               <RangeLockup size={32} />
               <button className="btn-range ghost sm" onClick={() => setDrawer(false)} aria-label="Close menu"><X size={16} /></button>

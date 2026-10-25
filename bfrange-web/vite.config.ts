@@ -6,11 +6,11 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 /**
- * The range site talks to bfdb on another origin (https://api.vectorstrike.org
- * by default, see src/api.ts), so the dev server needs no proxy for normal
- * work. The /api proxy below is for pointing a local build at a local bfdb
- * with a same-origin cookie: set `VITE_API_BASE=` (empty) and
- * `VITE_BFDB_URL=http://localhost:8880` in `.env.local`.
+ * The dev server proxies /api to a bfdb, like the other apps: normally the
+ * local one, or production with `--mode live` (see .env.live). Read-only from
+ * here: nothing writes without a session, and there is none over this proxy.
+ * A production build talks to bfdb on its own origin instead (VITE_API_BASE,
+ * set in .env.production).
  *
  * `npm run dev:mock` (`--mode mock`, see .env.mock) serves everything from
  * the fixtures in src/mock/ -- no backend at all.
@@ -59,9 +59,12 @@ export default defineConfig(({ mode }) => {
       // would swallow 'react-dom/client' with it.
       alias: [
         { find: '@icons', replacement: fileURLToPath(new URL('../shared/icons', import.meta.url)) },
+        // shared/web: code the four front ends share (see shared/web/README.md).
+        { find: '@shared', replacement: fileURLToPath(new URL('../shared', import.meta.url)) },
         { find: /^react$/, replacement: fileURLToPath(new URL('./node_modules/react', import.meta.url)) },
         { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL('./node_modules/react/jsx-runtime', import.meta.url)) },
         { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL('./node_modules/react/jsx-dev-runtime', import.meta.url)) },
+        { find: /^@tanstack\/react-query$/, replacement: fileURLToPath(new URL('./node_modules/@tanstack/react-query', import.meta.url)) },
       ],
     },
     server: {

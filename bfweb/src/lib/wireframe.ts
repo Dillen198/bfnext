@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { campaign } from '../config/campaign'
-import { useTheme } from '../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Wireframe art behind a panel: the top bar's carrier, the login page's

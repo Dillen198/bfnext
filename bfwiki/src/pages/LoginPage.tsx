@@ -1,6 +1,6 @@
 import { api } from '../api'
-import ThemeToggle from '../components/ThemeToggle'
-import LogoMark from '../components/LogoMark'
+import { ThemeToggle } from '@shared/web/theme'
+import { LogoMark } from '@shared/web/LogoMark'
 
 /**
  * Discord is the only way a person signs in. bfdb's username/password login

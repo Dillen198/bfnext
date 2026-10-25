@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import {
   api,
   type OpsStatus, type OpsServer, type OpsPending, type OpsUpdateConfig, type OpsApplyPolicy,
@@ -12,6 +12,7 @@ import {
   Server, Activity, Download, RefreshCw, RotateCw, RotateCcw, Alert, CheckCircle2,
   Terminal, Save, Shield, Clock, Trash2, Config, Play, X,
 } from '@icons'
+import { pressable } from '@shared/web/a11y'
 
 // ── shared styles (same vocabulary as AdminPage) ─────────────────────────────
 
@@ -177,7 +178,7 @@ function ResultLine({ result, onClose }: { result: { ok: boolean; message: strin
       fontSize: '0.68rem', color: result.ok ? OK : RED, background: 'var(--bg-elevated)',
     }}>
       <span style={{ flex: 1, whiteSpace: 'pre-wrap' }}>{result.ok ? '✓ ' : '✗ '}{result.message}</span>
-      <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: 0 }}><X size={11} /></button>
+      <button onClick={onClose} aria-label="Dismiss" title="Dismiss" style={{ background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: 0 }}><X size={11} /></button>
     </div>
   )
 }
@@ -846,7 +847,7 @@ function IssueRow({ it, run, busy, selected, onSelect }: {
       <div className="flex items-start gap-2" style={{ flexWrap: 'wrap' }}>
         <input type="checkbox" checked={selected} onChange={e => onSelect(e.target.checked)}
           aria-label={`select issue ${it.id}`} style={{ marginTop: 2, cursor: 'pointer' }} />
-        <span className="flex items-start gap-2" style={{ flexWrap: 'wrap', cursor: 'pointer', flex: 1, minWidth: 0 }} onClick={() => setOpen(o => !o)}>
+        <span className="flex items-start gap-2" style={{ flexWrap: 'wrap', cursor: 'pointer', flex: 1, minWidth: 0 }} {...pressable(() => setOpen(o => !o))} aria-expanded={open}>
           <Pill color={LEVEL_COLOR[it.level] ?? 'var(--text-dim)'}>{it.level}</Pill>
           <Pill color={STATUS_COLOR[it.status] ?? 'var(--text-dim)'}>{it.status}</Pill>
           <span style={{ ...MONO, fontSize: '0.62rem', color: 'var(--text-dim)' }}>{it.id}</span>
@@ -865,7 +866,7 @@ function IssueRow({ it, run, busy, selected, onSelect }: {
               </>}
         </span>
       </div>
-      <div style={{ ...MONO, fontSize: '0.66rem', color: 'var(--text)', marginTop: 4, marginLeft: 22, wordBreak: 'break-word', cursor: 'pointer' }} onClick={() => setOpen(o => !o)}>
+      <div style={{ ...MONO, fontSize: '0.66rem', color: 'var(--text)', marginTop: 4, marginLeft: 22, wordBreak: 'break-word', cursor: 'pointer' }} {...pressable(() => setOpen(o => !o))} aria-expanded={open}>
         {it.signature}
       </div>
       {open && (
@@ -1090,7 +1091,7 @@ function LogsCard() {
         }}>
           {[100, 300, 1000, 3000].map(n => <option key={n} value={n}>{n} lines</option>)}
         </select>
-        <Btn onClick={() => refetch()}><RefreshCw size={10} />{isFetching ? '…' : ''}</Btn>
+        <Btn onClick={() => refetch()} title="Refresh"><RefreshCw size={10} />{isFetching ? '…' : ''}</Btn>
       </div>
       <pre style={{
         margin: 0, height: 420, overflow: 'auto', padding: '8px 12px', fontSize: '0.62rem', lineHeight: 1.55,
@@ -1108,7 +1109,6 @@ function LogsCard() {
 
 export default function OpsPage() {
   const { user, loading } = useAuth()
-  const navigate = useNavigate()
   const { data, error, dataUpdatedAt, isFetching } = useQuery({
     queryKey: ['ops', 'status'],
     queryFn: api.ops.status,
@@ -1118,8 +1118,8 @@ export default function OpsPage() {
   })
 
   if (loading) return null
-  if (!user) { navigate('/login'); return null }
-  if (!user.is_admin) { navigate('/'); return null }
+  if (!user) return <Navigate to="/login" replace />
+  if (!user.is_admin) return <Navigate to="/" replace />
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">

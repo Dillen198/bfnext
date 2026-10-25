@@ -374,7 +374,7 @@ function Bulletin({ day }: { day: NewsDay }) {
         <p className="np-box-sub">The state of the war tonight.</p>
         <table className="np-returns">
           <thead>
-            <tr><th /><th>{blue}</th><th>{red}</th></tr>
+            <tr><th><span className="sr-only">Return</span></th><th>{blue}</th><th>{red}</th></tr>
           </thead>
           <tbody>
             <ReturnRow label="Objectives held" blue={f.blue_held} red={f.red_held} />
@@ -466,7 +466,7 @@ function Ledger({ day }: { day: NewsDay }) {
               <caption>Equipment Destroyed</caption>
               <thead>
                 <tr>
-                  <th />
+                  <th><span className="sr-only">Return</span></th>
                   <th colSpan={2}>To-day</th>
                   {hasTotal && <th colSpan={2}>Since the Opening</th>}
                 </tr>

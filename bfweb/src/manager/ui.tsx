@@ -1,6 +1,7 @@
 /** Small building blocks for the Fowl Engine Manager screens -- same visual
  *  vocabulary as the dashboard (vs-card, the CSS tokens in index.css). */
 import { DIM, MONO, RED, AMBER, OK } from './style'
+import { pressable } from '@shared/web/a11y'
 
 export function Card({ icon, title, badge, children }: {
   icon?: React.ReactNode; title: string; badge?: React.ReactNode; children: React.ReactNode
@@ -78,7 +79,7 @@ export function Field({ label, hint, children }: { label: string; hint?: React.R
 export function Result({ r, onClose }: { r: { ok: boolean; message: string } | null; onClose: () => void }) {
   if (!r) return null
   return (
-    <div onClick={onClose} style={{
+    <div {...pressable(onClose, 'Dismiss')} style={{
       cursor: 'pointer', fontSize: '0.7rem', color: r.ok ? OK : RED, padding: '0.5rem 0.7rem', margin: '0 0 12px',
       border: `1px solid ${r.ok ? 'var(--border)' : 'rgba(239,68,68,0.4)'}`, borderRadius: 3,
       background: 'var(--bg-elevated)', whiteSpace: 'pre-wrap',

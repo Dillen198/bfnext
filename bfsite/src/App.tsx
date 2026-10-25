@@ -9,6 +9,7 @@ import HomePage from './pages/HomePage'
 import ServersPage from './pages/ServersPage'
 import StatusPage from './pages/StatusPage'
 import NotFoundPage from './pages/NotFoundPage'
+import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 
 // Routes manage their own scroll position (see PageChrome); stop the browser
 // restoring a stale one over it on reload.
@@ -33,11 +34,13 @@ function PageChrome() {
 }
 
 export default function App() {
+  const { pathname } = useLocation()
   return (
     <>
       <PageChrome />
       <Nav />
       <main>
+        <ErrorBoundary key={pathname}>
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/servers" element={<ServersPage />} />
@@ -46,6 +49,7 @@ export default function App() {
           <Route path="/community" element={<div className="page-first-wrap"><Community /><JoinBand /></div>} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
+        </ErrorBoundary>
       </main>
       <Footer />
     </>

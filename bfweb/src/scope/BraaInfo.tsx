@@ -2,13 +2,13 @@ import { type ReactElement } from "react";
 import { Marker } from "react-map-gl/maplibre";
 
 import { type Terrain } from "./dcs/terrain";
-import { getBearing, getCardinal, getRange } from "./util";
+import { getBearing, getCardinal, getRange, type MagModel } from "./util";
 
 export interface BraaInfoProps {
   start: [number, number];
   end: [number, number];
   terrain: Terrain;
-  geomagnetismModel: any;
+  geomagnetismModel: MagModel;
   useMagneticHeading: boolean;
 }
 
@@ -17,7 +17,7 @@ export default function BraaInfo(props: BraaInfoProps): ReactElement {
   let bearing = getBearing(props.start, props.end, props.terrain);
   if (props.useMagneticHeading) {
     bearing =
-      bearing - (props.geomagnetismModel.point(props.start).decl as number);
+      bearing - props.geomagnetismModel.point(props.start).decl;
   }
   bearing = Math.round((bearing + 360) % 360);
   const cardinal = getCardinal(bearing);

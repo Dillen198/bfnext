@@ -20,7 +20,7 @@ import { Aircraft, ChevronsLeft, Defend, Info, Pin, Plus, Shield, Strike, X } fr
 import { api, type CommandMe, type CommandOrder, type Frontlines, type GroundBattle, type GroundCommand, type GroundEvent, type GroundObjective, type GroundPicture, type LatLon, type OrderOption, type CombatLogLine } from '../api'
 import { useAuth } from '../context/AuthContext'
 import { useInstance } from '../context/InstanceContext'
-import { useTheme } from '../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 import { BattlefieldEngine, type Verb, VERB_COLOR } from './groundwar/engine'
 import { km } from './groundwar/geo'
 import { CommandBar, Drawer, EventFeed, HelpOverlay, TopHud, Toasts, type CmdButton, type Toast } from './groundwar/hud'
@@ -39,6 +39,7 @@ import { formationBase, isFormationKey } from './groundwar/buyFormation'
 import { ALL_LAYERS, MODE_TEXT, TARGET_TEXT, enemyAirOf, shown, useCommandFeed, useTacPicture, type AssetMode, type Layers } from './groundwar/commandFeed'
 import { Coverage, RoutePreview, SupplyNetwork, Territory, Threats } from './groundwar/overlays'
 import { rankFor } from '../ranks'
+import type { PressEvent } from '@shared/web/a11y'
 import './groundwar/groundwar.css'
 
 type Mode = 'none' | 'attack' | 'defend' | 'raise'
@@ -405,7 +406,7 @@ export default function GroundWarPage(): ReactElement {
     else armAsset(verb)
     return true
   }
-  const pickAsset = (e: MouseEvent, id: number) => {
+  const pickAsset = (e: PressEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
     setSelAssetId(id)
@@ -482,7 +483,7 @@ export default function GroundWarPage(): ReactElement {
     setSelEnemyId(null)
     setSelAssetId(null)
   }
-  const pickFormation = (e: MouseEvent, id: number) => {
+  const pickFormation = (e: PressEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
     // While an order is armed, a click anywhere aims it at the base under the cursor.
@@ -493,7 +494,7 @@ export default function GroundWarPage(): ReactElement {
     if (e.shiftKey) setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))
     else setSel([id])
   }
-  const pickKind = (e: MouseEvent, id: number) => {
+  const pickKind = (e: PressEvent, id: number) => {
     const map = getMap()
     const f = pic?.formations.find((x) => x.id === id)
     if (!map || !f || !pic) return
@@ -501,7 +502,7 @@ export default function GroundWarPage(): ReactElement {
     const b = map.getBounds()
     selectOnly(pic.formations.filter((x) => x.kind === f.kind && b.contains([x.pos[1], x.pos[0]])).map((x) => x.id))
   }
-  const pickObjective = (e: MouseEvent, id: number) => {
+  const pickObjective = (e: PressEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
     const o = pic?.objectives.find((x) => x.id === id)
@@ -512,7 +513,7 @@ export default function GroundWarPage(): ReactElement {
     setSelEnemyId(null)
     setSelAssetId(null)
   }
-  const pickEnemy = (e: MouseEvent, id: number) => {
+  const pickEnemy = (e: PressEvent, id: number) => {
     if (inputRef.current?.wasDrag()) return
     e.stopPropagation()
     if (mode !== 'none') return applyMode(hoverObj.current)
@@ -600,11 +601,11 @@ export default function GroundWarPage(): ReactElement {
   useEffect(() => { declutter() }, [declutter, objKey, selObjId])
 
   // Stable handlers, so a new picture doesn't re-render every marker.
-  const onPickFormation = useCallback((e: MouseEvent, id: number) => live.current.pickFormation(e, id), [])
+  const onPickFormation = useCallback((e: PressEvent, id: number) => live.current.pickFormation(e, id), [])
   const onPickKind = useCallback((e: MouseEvent, id: number) => live.current.pickKind(e, id), [])
-  const onPickObjective = useCallback((e: MouseEvent, id: number) => live.current.pickObjective(e, id), [])
-  const onPickEnemy = useCallback((e: MouseEvent, id: number) => live.current.pickEnemy(e, id), [])
-  const onPickAsset = useCallback((e: MouseEvent, id: number) => live.current.pickAsset(e, id), [])
+  const onPickObjective = useCallback((e: PressEvent, id: number) => live.current.pickObjective(e, id), [])
+  const onPickEnemy = useCallback((e: PressEvent, id: number) => live.current.pickEnemy(e, id), [])
+  const onPickAsset = useCallback((e: PressEvent, id: number) => live.current.pickAsset(e, id), [])
 
   const lastCursor = useRef('')
   const showHover = useCallback((x: number, y: number, obj: number | null) => {

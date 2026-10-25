@@ -106,13 +106,13 @@ function WarehouseStock({ w }: { w: Warehouse }) {
   )
 }
 
-function LinkRow({ l, role, onPick }: { l: SupplyLink; role: string; onPick: (name: string) => void }) {
+function LinkRow({ l, relation, onPick }: { l: SupplyLink; relation: string; onPick: (name: string) => void }) {
   return (
     <button className="tm-row" onClick={() => onPick(l.name)} title="Show this base">
       <i style={{ background: SIDE_COLOR[l.owner] }} />
       <b>{l.name.toUpperCase()}</b>
       {l.interdicted && <span className="bad">CUT</span>}
-      <span>{role}</span>
+      <span>{relation}</span>
     </button>
   )
 }
@@ -238,8 +238,8 @@ export function BaseDrawer({ o, pub, side, pic, assets, captures, intel, onClose
         <>
           <h3>SUPPLY LINE</h3>
           {!w.supplier && w.destinations.length === 0 && <p className="gw-drawer-note">Not on a supply line: a hub, or nothing routes to it.</p>}
-          {w.supplier && <LinkRow l={w.supplier} role="FEEDS IT" onPick={onPickBase} />}
-          {w.destinations.map((d) => <LinkRow key={d.id} l={d} role="FED FROM HERE" onPick={onPickBase} />)}
+          {w.supplier && <LinkRow l={w.supplier} relation="FEEDS IT" onPick={onPickBase} />}
+          {w.destinations.map((d) => <LinkRow key={d.id} l={d} relation="FED FROM HERE" onPick={onPickBase} />)}
         </>
       )}
 

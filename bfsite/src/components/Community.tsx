@@ -1,7 +1,7 @@
 import { ExternalLink, Server, Support } from '@icons'
 import { credits, links } from '../config/campaign'
 import { SectionHead } from './Bits'
-import LogoMark from './LogoMark'
+import { LogoMark } from '@shared/web/LogoMark'
 import Reveal from './Reveal'
 
 export default function Community() {

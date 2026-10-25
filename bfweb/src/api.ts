@@ -1,3 +1,8 @@
+import {
+  createInstanceStore, deadline, errorMessage, LONG_TIMEOUT_MS, REQUEST_TIMEOUT_MS,
+  wsUrl as sharedWsUrl, type AuthUser,
+} from '@shared/web/api'
+
 // ── API/WS base URLs ────────────────────────────────────────────────
 // Default: relative '/api' and same-origin WS, for when bfweb is embedded
 // directly in bfdb (rust-embed) and served from the same origin. Set
@@ -9,68 +14,25 @@ export const API_ROOT: string = import.meta.env.VITE_API_BASE ?? ''
 // ── Selected DCS server instance ────────────────────────────────────
 // One bfdb can front several DCS servers (see deploy/multi-instance.md).
 // Every instance-scoped API route takes `?instance=<id>`; rather than thread
-// that through ~80 call sites, it is appended centrally by `withInstance`
-// below, which `get`/`post`/`wsUrl` and the raw `fetch` calls all run through.
+// that through ~80 call sites, it is appended centrally by `withInstance`,
+// which `get`/`post`/`wsUrl` and the raw `fetch` calls all run through.
 //
-// `undefined` means "let bfdb pick its default instance", which is exactly
-// what a single-server deployment wants and what every older client sent.
-
-const INSTANCE_STORAGE_KEY = 'bfweb.instance'
-
-let currentInstance: string | undefined = (() => {
-  try {
-    // A URL param wins over the remembered choice, so a link can point
-    // straight at one server: /?instance=vs2
-    const fromUrl = new URLSearchParams(window.location.search).get('instance')
-    if (fromUrl) return fromUrl
-    return localStorage.getItem(INSTANCE_STORAGE_KEY) ?? undefined
-  } catch {
-    return undefined
-  }
-})()
-
-// The in-DCS cockpit overlay knows which DCS server the player is connected to
-// by its *name*, not by bfdb's short instance id -- a player installs one Hooks
-// script and joins whichever of our servers they like, and nothing on their
-// machine knows that "[VS] Vector Strike #2" is `vs2`. So cockpit.lua sends
-// `?server=<name>` and bfdb's `with_instance` resolves it against each
-// instance's `dcs_server_name`. Carried through here so every call the page
-// makes stays scoped to the server the player is actually flying on.
-const currentServer: string | undefined = (() => {
-  try {
-    return new URLSearchParams(window.location.search).get('server') ?? undefined
-  } catch {
-    return undefined
-  }
-})()
+// The in-DCS cockpit overlay knows which DCS server the player is connected
+// to by its *name*, not by bfdb's short instance id -- a player installs one
+// Hooks script and joins whichever of our servers they like. So cockpit.lua
+// sends `?server=<name>` and bfdb's `with_instance` resolves it against each
+// instance's `dcs_server_name`; `serverParam` carries it through here.
+const instanceStore = createInstanceStore({ storageKey: 'bfweb.instance', serverParam: true })
 
 /** The instance every request is currently scoped to, if any. */
-export function getInstance(): string | undefined {
-  return currentInstance
-}
-
+export const getInstance = instanceStore.get
 /** Switch which DCS server the dashboard is looking at. Callers are expected
- *  to invalidate their query cache afterwards -- nothing here is reactive. */
-export function setInstance(id: string | undefined): void {
-  currentInstance = id
-  try {
-    if (id) localStorage.setItem(INSTANCE_STORAGE_KEY, id)
-    else localStorage.removeItem(INSTANCE_STORAGE_KEY)
-  } catch { /* private mode / storage disabled */ }
-}
-
-/** Append `instance=<id>` to a path, respecting any query string it already
- *  has. A path that names an instance explicitly (`?instance=all`) is left
- *  alone. */
-export function withInstance(path: string): string {
-  if (/[?&](instance|server)=/.test(path)) return path
-  const sep = path.includes('?') ? '&' : '?'
-  // An explicit instance id is the precise answer; the DCS server name is the
-  // fallback the in-game overlay can supply. bfdb accepts either.
-  if (currentInstance) return path + sep + `instance=${encodeURIComponent(currentInstance)}`
-  if (currentServer) return path + sep + `server=${encodeURIComponent(currentServer)}`
-  return path
-}
+ *  to drop their query cache afterwards -- nothing here is reactive. */
+export const setInstance = instanceStore.set
+/** Append `instance=<id>` (or the cockpit's `server=<name>`) to a path. */
+export const withInstance = instanceStore.withInstance
+/** The store itself, for InstanceContext. */
+export { instanceStore }
 
 // The in-DCS overlay's identity: its player id plus the key it registered with
 // the engine (see bfcockpit.lua). Read once from the page URL.
@@ -90,12 +52,7 @@ function cockpitIdent(playerId: string | undefined, lead: '?' | '&'): string {
 }
 
 function wsUrl(path: string): string {
-  const p = withInstance(path)
-  if (API_ROOT) {
-    return API_ROOT.replace(/^http/, 'ws') + p
-  }
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${proto}://${window.location.host}${p}`
+  return sharedWsUrl(API_ROOT, withInstance(path))
 }
 
 // ── JSON Schema (draft-07, as produced by the `schemars` crate) ───────
@@ -1460,16 +1417,7 @@ export interface Warehouse {
   destinations: SupplyLink[]
 }
 
-export interface AuthUser {
-  discord_id: string
-  username:   string
-  avatar:     string | null
-  is_admin:   boolean
-  ucid:       string | null
-  /** Coalition in the active round; null if the pilot has no side (or isn't
-   *  linked). Gates access to the recon intel page. */
-  side:       'Blue' | 'Red' | null
-}
+export type { AuthUser }
 
 // ── Recon intel (TARPS) ─────────────────────────────────────────────────
 export interface IntelAdjust {
@@ -1994,14 +1942,6 @@ export interface PerfHistory {
 
 const BASE = `${API_ROOT}/api`
 
-async function errorMessage(res: Response): Promise<string> {
-  try {
-    const j = await res.json()
-    if (j && typeof j.error === 'string') return j.error
-  } catch { /* body wasn't JSON */ }
-  return `HTTP ${res.status}`
-}
-
 /**
  * How requests reach the backend. Normally `fetch` against bfdb; Fowl Engine
  * Manager (the desktop app, src/manager) swaps in its own so the same pages
@@ -2019,13 +1959,17 @@ export function setTransport(t: Transport | null): void {
 function send(method: 'GET' | 'POST', path: string, body?: unknown): Promise<Response> {
   const p = withInstance(path)
   if (transport) return transport(method, p, body)
+  // Admin operations are proxied by bfdb to the bot, which may take minutes
+  // (an update, a restart); everything else gets the ordinary deadline.
+  const signal = deadline(path.startsWith('/admin/') ? LONG_TIMEOUT_MS : REQUEST_TIMEOUT_MS)
   return fetch(`${BASE}${p}`, method === 'GET'
-    ? { credentials: 'include' }
+    ? { credentials: 'include', signal }
     : {
         method: 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
+        signal,
       })
 }
 
@@ -2271,7 +2215,7 @@ export interface NewsArchive {
 export const api = {
   /** The DCS servers this bfdb fronts. Never instance-scoped itself. */
   instances: async (): Promise<InstanceList> => {
-    const res = await fetch(`${BASE}/instances`, { credentials: 'include' })
+    const res = await fetch(`${BASE}/instances`, { credentials: 'include', signal: deadline() })
     if (!res.ok) throw new Error(await errorMessage(res))
     return res.json()
   },
@@ -2386,7 +2330,7 @@ export const api = {
     me:           () => get<{ user: AuthUser | null }>('/auth/me').then(r => r.user),
     // POST: bfdb no longer ends a session on a GET, which any <img> on any
     // site could fire.
-    logout:       () => fetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include' }),
+    logout:       () => fetch(`${BASE}/auth/logout`, { method: 'POST', credentials: 'include', signal: deadline() }),
     loginUrl:     () => `${BASE}/auth/login?return_to=${encodeURIComponent(window.location.origin + '/')}`,
     // No local username/password helper on purpose: Discord is the only sign-in
     // a person gets. bfdb's /api/auth/local-login stays, but as a machine
@@ -2524,6 +2468,7 @@ export const api = {
           'x-intel-filename': encodeURIComponent(file.name),
         },
         body: file,
+        signal: deadline(LONG_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(await errorMessage(res))
       return res.json()

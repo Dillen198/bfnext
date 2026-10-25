@@ -37,7 +37,8 @@ debrief link the moment one of their own results is graded, on any page.
 ```sh
 npm install
 npm run dev:mock   # no backend at all: fixtures from src/mock/ (http://localhost:5177)
-npm run dev        # against the real API (VITE_API_BASE, default https://api.vectorstrike.org)
+npm run dev        # /api proxied to a local bfdb on :8880
+npm run dev -- --mode live   # /api proxied to production (.env.live), read-only
 ```
 
 ### Mock mode (`VITE_MOCK=1`)
@@ -73,15 +74,10 @@ constant (`vite.config.ts` `define`), so the branch and its chunk are dropped.
 
 ### Against a local bfdb
 
-Either allow `http://localhost:5177` with bfdb's `--cors-origin` and set
-`VITE_API_BASE=http://localhost:8880`, or use the dev proxy: in `.env.local`
-
-```sh
-VITE_API_BASE=
-VITE_BFDB_URL=http://localhost:8880
-```
-
-and the site calls a same-origin `/api` that Vite forwards to bfdb.
+`npm run dev` already does this: the site calls a same-origin `/api` that
+Vite forwards to `VITE_BFDB_URL` (default `http://localhost:8880`). To call
+bfdb directly instead, allow `http://localhost:5177` with bfdb's
+`--cors-origin` and set `VITE_API_BASE=http://localhost:8880` in `.env.local`.
 
 ## Environment
 
@@ -89,11 +85,11 @@ All read at **build** time (Vite inlines them). See `.env.example`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `VITE_API_BASE` | `https://api.vectorstrike.org` | bfdb origin, no trailing slash. Empty = same-origin `/api` (dev proxy). |
+| `VITE_API_BASE` | unset; `.env.production` sets `https://api.vectorstrike.org` | bfdb origin, no trailing slash. Unset = same-origin `/api` (the dev proxy). |
 | `VITE_RANGE_INSTANCE` | unset | Only set when one bfdb fronts several range servers: appended as `?instance=` to every call. Unset, bfdb picks its range instance. |
-| `VITE_DASHBOARD_URL` | `https://dashboard.vectorstrike.org` | The dashboard; "Web Tacview" opens its `/replay/<rec>?focus=&t=` there. |
+| `VITE_DASHBOARD_URL` | `https://dashboard.vectorstrike.org` (`shared/web/urls.ts`) | The dashboard; "Web Tacview" opens its `/replay/<rec>?focus=&t=` there. |
 | `VITE_MOCK` | unset | `1` = serve everything from `src/mock/`. |
-| `VITE_BFDB_URL` | `http://localhost:8880` | Dev proxy target when `VITE_API_BASE` is empty. |
+| `VITE_BFDB_URL` | `http://localhost:8880` | Dev proxy target when `VITE_API_BASE` is unset; `.env.live` points it at production. |
 
 Every request sends cookies (`credentials: 'include'`). Login is the same
 Discord OAuth session as the dashboard and wiki:
@@ -125,8 +121,9 @@ Same shape as `bfwiki/` and `bfweb/`:
 1. New Vercel project, **root directory `bfrange-web`**, framework Vite,
    build `npm run build`, output `dist`. `vercel.json` rewrites every path to
    `index.html` so deep links (`/result/...`) work.
-2. Environment variables: `VITE_API_BASE=https://api.vectorstrike.org` (or
-   leave unset for that default), and `VITE_RANGE_INSTANCE` only if needed.
+2. Environment variables: none needed, `.env.production` supplies
+   `VITE_API_BASE=https://api.vectorstrike.org` (a project variable of the
+   same name overrides it); `VITE_RANGE_INSTANCE` only if needed.
 3. Domains: add `range.vectorstrike.org`; at the DNS provider add
    `CNAME range → cname.vercel-dns.com`.
 4. bfdb must allow the origin: add `https://range.vectorstrike.org` to

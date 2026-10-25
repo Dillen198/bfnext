@@ -8,13 +8,14 @@ import {
   getBearing,
   getCardinal,
   getRange,
+  type MagModel,
 } from "./util";
 
 export interface CursorInfoProps {
   cursorCoords: [number, number];
   bullseyeCoords: [number, number] | undefined;
   terrain: Terrain;
-  geomagnetismModel: any;
+  geomagnetismModel: MagModel;
   useMagneticHeading: boolean;
   showCursorCoords: boolean;
 }

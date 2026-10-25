@@ -16,6 +16,7 @@
  */
 import { ApiError, type RangeApi } from '../api'
 import { headline } from '../lib/headline'
+import { RESULT_KINDS } from '../types'
 import type {
   FeedQuery,
   LiveSpawn,
@@ -96,6 +97,15 @@ function buildHistory(): RangeRecord[] {
       break
     }
   }
+  // The random history above depends on today's date (weekends are busier),
+  // so a rarely-flown discipline can be missing from it on some days. Back-fill
+  // one result of any kind that is, from a pilot who flies it, so every
+  // discipline always has something to show.
+  RESULT_KINDS.forEach((kind, i) => {
+    if (out.some(r => r.result.kind === kind)) return
+    const p = PILOTS.find(p => p.kinds.some(([k]) => k === kind))
+    if (p) out.push(recordOfKind(kind, p, new Rng(300 + i), REF - (30 + i) * 60_000))
+  })
   return out
 }
 

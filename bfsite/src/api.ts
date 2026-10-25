@@ -1,5 +1,7 @@
 // Minimal client for the handful of public bfdb endpoints the site shows live.
 
+import { deadline } from '@shared/web/api'
+
 // Default: relative '/api', for when bfsite is embedded in bfdb (rust-embed)
 // and served from the same origin. Set VITE_API_BASE (e.g.
 // "https://api.example.com", no trailing slash) at build time to point a
@@ -108,7 +110,7 @@ export interface Health {
 const TIMEOUT_MS = 12_000
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_ROOT}${path}`, { signal: AbortSignal.timeout(TIMEOUT_MS) })
+  const res = await fetch(`${API_ROOT}${path}`, { signal: deadline(TIMEOUT_MS) })
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
 }

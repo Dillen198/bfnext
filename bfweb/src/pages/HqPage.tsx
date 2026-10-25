@@ -4,6 +4,7 @@
 // controls to take command. Everything comes from /api/hq, which the engine
 // builds for the viewer's own side from what that side can see.
 import { useMemo, useRef, useState, type CSSProperties, type ReactElement } from 'react'
+import QueryState from '../components/QueryState'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import Map, { Marker, type MapRef } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -21,9 +22,10 @@ import {
   type LatLon,
 } from '../api'
 import { useAuth } from '../context/AuthContext'
-import { useTheme } from '../context/ThemeContext'
+import { useTheme } from '@shared/web/theme'
 import { mapStyleFor } from '../lib/mapStyle'
 import { hqMock, hqMockCommand } from './hqMock'
+import { pressable } from '@shared/web/a11y'
 
 const SIDE_COLOR = { Blue: '#4a8fd4', Red: '#cc4444', Neutral: '#8a8f80' } as const
 const EFFORT = '#ff8c1a'
@@ -151,7 +153,7 @@ export default function HqPage(): ReactElement {
   // Dev builds only: `?mock` renders from a fixture and never calls the API.
   const mock = import.meta.env.DEV && new URLSearchParams(location.search).has('mock')
 
-  const { data: v, error, isLoading } = useQuery<HqView>({
+  const { data: v, error, isLoading, refetch } = useQuery<HqView>({
     queryKey: ['hq', sideParam],
     queryFn: () => (mock ? Promise.resolve(hqMock) : api.hq.view(sideParam)),
     retry: false,
@@ -179,16 +181,8 @@ export default function HqPage(): ReactElement {
   }, [!!v])
   const flyTo = (p: LatLon, zoom = 10) => mapRef.current?.flyTo({ center: [p[1], p[0]], zoom, duration: 800 })
 
-  if (isLoading) return <div style={{ padding: 24, ...label }}>CONTACTING HQ…</div>
-  if (error || !v) {
-    return (
-      <div style={{ padding: 24, color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-        <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', letterSpacing: '0.12em', color: 'var(--text)' }}>
-          HQ UNAVAILABLE
-        </div>
-        {(error as Error | null)?.message ?? 'No answer from the game server.'}
-      </div>
-    )
+  if (isLoading || error || !v) {
+    return <QueryState isLoading={isLoading} isError={!!error || !v} error={error ?? 'No answer from the game server.'} what="the theatre HQ" onRetry={() => refetch()} />
   }
   if (!v.enabled) {
     return (
@@ -292,7 +286,7 @@ export default function HqPage(): ReactElement {
         </div>
 
         {result && (
-          <div onClick={() => setResult(null)} style={{ ...panel, cursor: 'pointer', borderColor: result.ok ? 'var(--accent)' : 'var(--red)', fontSize: '0.74rem' }}>
+          <div {...pressable(() => setResult(null), 'Dismiss')} style={{ ...panel, cursor: 'pointer', borderColor: result.ok ? 'var(--accent)' : 'var(--red)', fontSize: '0.74rem' }}>
             {result.ok ? '✓ ' : '✕ '}{result.text}
           </div>
         )}
@@ -303,7 +297,7 @@ export default function HqPage(): ReactElement {
           <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '3px 8px', marginTop: 8, fontSize: '0.74rem' }}>
             <span style={label}>MAIN EFFORT</span>
             <span>{v.main_effort
-              ? <a style={{ color: EFFORT, cursor: 'pointer' }} onClick={() => flyTo(v.main_effort!.pos)}>{v.main_effort.name}</a>
+              ? <span style={{ color: EFFORT, cursor: 'pointer' }} {...pressable(() => flyTo(v.main_effort!.pos))}>{v.main_effort.name}</span>
               : '—'}</span>
             <span style={label}>HOLD</span>
             <span>{v.defend.map((d) => d.name).join(', ') || '—'}</span>
@@ -362,7 +356,7 @@ export default function HqPage(): ReactElement {
             <div key={op.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0', fontSize: '0.74rem', borderTop: '1px solid var(--border)' }}>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.62rem', color: STATUS_COLOR[op.status], minWidth: 74 }}>{OP_LABEL[op.kind]}</span>
               <span style={{ flex: 1, minWidth: 0, cursor: 'pointer', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                onClick={() => flyTo(op.pos)} title={op.detail}>
+                {...pressable(() => flyTo(op.pos))} title={op.detail}>
                 {op.target_name}
                 {op.status !== 'active' && <span style={{ color: STATUS_COLOR[op.status] }}> · {op.status}</span>}
                 {op.request != null && <span style={{ color: 'var(--text-dim)' }}> · req #{op.request}</span>}

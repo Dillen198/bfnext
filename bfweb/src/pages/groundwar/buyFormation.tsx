@@ -11,10 +11,12 @@ import type { Side } from './theme'
 
 export const FORMATION_PREFIX = 'formation:'
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const isFormationKey = (key: string): boolean => key.startsWith(FORMATION_PREFIX)
 
 /** The base the engine will build it at: ours, not under threat, nearest the
  *  first point of the route and within reach (as `deploy_base` picks it). */
+// eslint-disable-next-line react-refresh/only-export-components
 export function formationBase(objectives: GroundObjective[], side: Side, first: LatLon | undefined, rangeM: number): GroundObjective | null {
   if (!first) return null
   let best: GroundObjective | null = null

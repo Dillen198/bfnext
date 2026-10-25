@@ -9,12 +9,13 @@ import { fmtAge, offset } from './geo'
 import { displayName } from './declutter'
 import { OBJ_ICON, natoSymbol, shortName } from './sprites'
 import { ATTACK, ICON, PENCIL, SIDE_COLOR, WITHDRAW, other, type Side } from './theme'
+import { pressable, type PressEvent } from '@shared/web/a11y'
 
 const SYM = ICON
 const SYM_NEAR = 15
 
 export interface PickHandlers {
-  onPick: (e: MouseEvent, id: number) => void
+  onPick: (e: PressEvent, id: number) => void
   onDouble?: (e: MouseEvent, id: number) => void
 }
 
@@ -102,7 +103,7 @@ interface EProps {
   e: GroundEnemyContact
   side: Side
   near: boolean
-  onPick: (e: MouseEvent, id: number) => void
+  onPick: (e: PressEvent, id: number) => void
 }
 
 function EnemyMarkerImpl({ e, side, near, onPick }: EProps): ReactElement {
@@ -122,7 +123,7 @@ function EnemyMarkerImpl({ e, side, near, onPick }: EProps): ReactElement {
       <div
         className={`gw-mk gw-en${ghost ? ' ghost' : ''}`}
         style={{ width: s.w, height: s.h, opacity: op }}
-        onClick={(ev) => onPick(ev, e.id)}
+        {...pressable((ev) => onPick(ev, e.id))}
         title={ghost ? `Enemy ${e.kind}, last seen ${fmtAge(e.last_seen_secs).toLowerCase()} ago` : `Enemy ${e.kind}, about ${e.approx_vehicles} vehicles`}
       >
         <img src={s.url} width={s.w} height={s.h} alt="" draggable={false} />
@@ -146,7 +147,7 @@ interface OProps {
   selected: boolean
   /** False when the name would land on another base's (`declutter`). */
   showName: boolean
-  onPick: (e: MouseEvent, id: number) => void
+  onPick: (e: PressEvent, id: number) => void
 }
 
 function ObjectiveMarkerImpl({ o, side, selected, showName, onPick }: OProps): ReactElement {
@@ -158,7 +159,7 @@ function ObjectiveMarkerImpl({ o, side, selected, showName, onPick }: OProps): R
       <div
         className={`gw-mk gw-obj${ours ? ' ours' : ''}${o.being_captured ? ' capturing' : ''}${selected ? ' sel' : ''}`}
         style={{ ['--oc' as string]: col }}
-        onClick={(e) => onPick(e, o.id)}
+        {...pressable((e) => onPick(e, o.id))}
         title={`${o.name} (${o.kind}, ${o.owner})`}
       >
         <div className="gw-obj-plate">
@@ -196,7 +197,7 @@ export function BattleLabel({ b, onPick }: { b: GroundBattle; onPick: (b: Ground
   const top = offset(b.pos, 0, b.radius_m)
   return (
     <Marker longitude={top[1]} latitude={top[0]} anchor="bottom" offset={[0, -4]}>
-      <div className={`gw-mk gw-battle${b.live ? ' live' : ''}`} onClick={() => onPick(b)}>
+      <div className={`gw-mk gw-battle${b.live ? ' live' : ''}`} {...pressable(() => onPick(b))}>
         <b>⚔ {(b.near ?? 'BATTLE').toUpperCase()}</b>
         <span>OURS {b.our_losses} LOST · THEIRS {b.enemy_losses}</span>
       </div>

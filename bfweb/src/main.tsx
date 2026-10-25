@@ -2,10 +2,16 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
-import { ThemeProvider } from './context/ThemeContext'
-import { urlTheme } from './lib/urlTheme'
+import { initialTheme, ThemeProvider, type ThemeOptions } from '@shared/web/theme'
 import { campaign, campaignDefaults, type CampaignConfig } from './config/campaign'
 import { API_ROOT } from './api'
+import { ErrorBoundary } from '@shared/web/ErrorBoundary'
+import { installChunkReload } from '@shared/web/chunkReload'
+import { deadline } from '@shared/web/api'
+
+// `?theme=` wins (the Discord snapshot must render dark), then the stored
+// choice, then the OS.
+const THEME: ThemeOptions = { storageKey: 'bfweb-theme', urlParam: true }
 
 // ── Camo patterns (SVG data URIs) ────────────────────────────────────────────
 
@@ -189,26 +195,23 @@ function applyCampaignConfig(cfg: Partial<CampaignConfig>) {
   applyBackground(campaign)
 }
 
+// A tab left open across a deploy asks for route chunks that are gone.
+installChunkReload()
+
 async function bootstrap() {
   // Resolve the theme before first paint so campaign tokens land on the right
   // [data-theme] and there's no dark/light flash. ThemeProvider keeps it in
   // sync afterwards.
-  try {
-    const stored = urlTheme() ?? localStorage.getItem('bfweb-theme')
-    const theme = stored === 'light' || stored === 'dark'
-      ? stored
-      : (window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
-    document.documentElement.setAttribute('data-theme', theme)
-  } catch {
-    document.documentElement.setAttribute('data-theme', 'dark')
-  }
+  document.documentElement.setAttribute('data-theme', initialTheme(THEME))
 
   // Start with compiled-in defaults
   applyCampaignConfig(campaignDefaults)
 
   // Fetch server-provided config (set via --config flag on bfdb) and overlay it
   try {
-    const res = await fetch(`${API_ROOT}/api/config`)
+    // Nothing renders until this settles, so it gets a short deadline: an
+    // unreachable bfdb must not leave the page blank.
+    const res = await fetch(`${API_ROOT}/api/config`, { signal: deadline(8_000) })
     if (res.ok) {
       const remote: Partial<CampaignConfig> = await res.json()
       if (remote && typeof remote === 'object' && Object.keys(remote).length > 0) {
@@ -222,9 +225,11 @@ async function bootstrap() {
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <ThemeProvider>
-        <App />
-      </ThemeProvider>
+      <ErrorBoundary>
+        <ThemeProvider options={THEME}>
+          <App />
+        </ThemeProvider>
+      </ErrorBoundary>
     </StrictMode>,
   )
 }
