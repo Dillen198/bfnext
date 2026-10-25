@@ -47,12 +47,13 @@ jobs:
         shell: pwsh
         run: Add-Content -Path $env:GITHUB_PATH -Value $env:GITHUB_WORKSPACE
 
-      # bfdb embeds the dashboard build (bfweb/dist, gitignored) with
-      # RustEmbed, which refuses to compile if the folder is missing. CI only
-      # checks the Rust side, so an empty folder stands in for the npm build.
-      - name: Stub dashboard build output
+      # bfdb embeds the dashboard and site builds (bfweb/dist, bfsite/dist,
+      # both gitignored) with RustEmbed, which refuses to compile if a folder
+      # is missing. This job only checks the Rust side (the frontend job
+      # builds them for real), so empty folders stand in for the npm builds.
+      - name: Stub frontend build output
         shell: pwsh
-        run: New-Item -ItemType Directory -Force bfweb/dist | Out-Null
+        run: New-Item -ItemType Directory -Force bfweb/dist, bfsite/dist | Out-Null
 
       - name: cargo check (workspace)
         run: cargo check --workspace --locked
@@ -69,3 +70,118 @@ jobs:
       # so it is checked on its own.
       - name: cargo check (bftools)
         run: cargo check --locked --manifest-path bftools/Cargo.toml
+
+  # Formatting and lints, report-only for now: the tree is not yet
+  # rustfmt-clean or clippy-clean, so these show up as warnings on the run
+  # without failing it. Drop the continue-on-error lines once they pass.
+  rust-lint:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch, 2026-09-03
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Stub frontend build output
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force bfweb/dist, bfsite/dist | Out-Null
+
+      - name: cargo fmt --check
+        continue-on-error: true
+        run: cargo fmt --all --check
+
+      - name: cargo clippy (workspace)
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets --locked
+
+  # Fowl Engine Manager (bfmanager/src-tauri) is not a workspace member: it
+  # has its own Cargo.lock. Its build needs what `tauri build` would normally
+  # stage first -- the UI in bfmanager/dist (built from bfweb by
+  # vite.manager.config.ts) and the bundled resources/bot and resources/range
+  # (scripts/stage-*.mjs) -- because tauri-build and generate_context! check
+  # that they exist. The tests do not look at the UI, so a placeholder page
+  # stands in for it; the stage scripts need only Node, no npm install.
+  manager:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch, 2026-09-03
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: bfmanager/src-tauri
+
+      - name: Stage the Manager's UI and bundled resources
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force bfmanager/dist | Out-Null
+          Set-Content -Path bfmanager/dist/index.html -Value '<!doctype html><title>CI placeholder</title>'
+          node bfmanager/scripts/stage-bot.mjs
+          if ($LASTEXITCODE) { throw "stage-bot failed" }
+          node bfmanager/scripts/stage-range.mjs
+          if ($LASTEXITCODE) { throw "stage-range failed" }
+
+      - name: cargo test (bfmanager)
+        run: cargo test --locked --manifest-path bfmanager/src-tauri/Cargo.toml
+
+  # The web apps: bfweb (dashboard + Manager UI), bfsite (public site, embedded
+  # in bfdb), bfwiki and bfrange-web. Each step uses --if-present, so an app
+  # without a typecheck/lint/test script just skips it. Node 22: Vite 8 wants
+  # 20.19 or newer. Install scripts are skipped, as in the release builds.
+  frontend:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [bfweb, bfsite, bfwiki, bfrange-web]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      - run: npm run typecheck --if-present
+      - run: npm run lint --if-present
+      - run: npm run test --if-present
+      - run: npm run build --if-present
+
+  # Offline tests for the DCSServerBot plugin (fakes of the bot's `core`; no
+  # bot, Discord, DCS or database). Windows, like the server box it runs on.
+  bot:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: DCSServerBot/tests
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: DCSServerBot/tests/requirements.txt
+
+      - run: python -m pip install -r requirements.txt
+
+      - name: Compile every bot file
+        run: python -m compileall -q ..
+
+      - run: python -m pytest -q

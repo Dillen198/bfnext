@@ -4,7 +4,7 @@ Runs the real plugin files (copied into a throwaway package) against fakes of
 DCSServerBot's `core`, its servers and the cog -- no bot, Discord or DCS needed.
 
     python -m venv .venv
-    .venv/Scripts/pip install pytest fastapi httpx ruamel.yaml aiohttp psutil
+    .venv/Scripts/pip install -r DCSServerBot/tests/requirements.txt
     cd DCSServerBot/tests
     ../../.venv/Scripts/python -m pytest -q
 """
@@ -1246,7 +1246,12 @@ def _apply_roles_fn():
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, ast.AsyncFunctionDef) and n.name == "_apply_coalition_roles")
     fake = types.SimpleNamespace(Forbidden=type("Forbidden", (Exception,), {}))
-    ns = {"discord": fake, "REVOKE_MIN_PER_TICK": 10, "REVOKE_MAX_FRACTION": 0.25}
+    # ROLE_KINDS[0] is the default `kind`; its `fetch` is never called here.
+    coalition = {"label": "coalition", "keys": (("Blue", "blue"), ("Red", "red")), "fetch": None,
+                 "endpoint": "/api/admin/pilot-sides", "granted": "registered coalition",
+                 "revoked": "no matching coalition registration", "empty_ok": False}
+    ns = {"discord": fake, "REVOKE_MIN_PER_TICK": 10, "REVOKE_MAX_FRACTION": 0.25,
+          "ROLE_KINDS": [coalition]}
     exec(compile(ast.Module(body=[fn], type_ignores=[]), "commands.py", "exec"), ns)
     return ns["_apply_coalition_roles"]
 
