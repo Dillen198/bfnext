@@ -416,6 +416,51 @@ fn rotate_log(path: &Path) {
     }
 }
 
+/// Environment variable that turns on rotation of `Logs/stats.jsonl`: its
+/// size limit in MiB. Unset or 0 (the default) keeps today's behaviour, one
+/// file that only grows.
+///
+/// When set, a `stats.jsonl` at least this big when the engine starts (each
+/// mission load) is renamed to `stats-<UTC timestamp>.jsonl` beside it and a
+/// new one is started. bfdb's reader follows the rename: it finishes the
+/// rotated file, then reads the new one, and a stats rebuild re-reads the
+/// rotated files oldest first -- so keep them for as long as you want
+/// rebuilds to cover. Needs a bfdb with rotation support (jsonl_cursor_v3);
+/// an older bfdb treats the new file as a replacement and can miss the last
+/// few seconds written before the rename.
+pub(super) const STATS_JSONL_ROTATE_ENV: &str = "FOWL_STATS_JSONL_ROTATE_MB";
+
+/// The configured rotation limit in bytes, if rotation is on.
+fn stats_jsonl_rotate_limit() -> Option<u64> {
+    let mb = std::env::var(STATS_JSONL_ROTATE_ENV).ok()?.trim().parse::<u64>().ok()?;
+    (mb > 0).then(|| mb.saturating_mul(1024 * 1024))
+}
+
+/// Where a rotated `stats.jsonl` goes: `stats-<timestamp>.jsonl` in the same
+/// directory. Fixed width, so name order is age order (bfdb relies on it).
+fn rotated_stats_path(path: &Path, now: DateTime<Utc>) -> PathBuf {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("stats");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("jsonl");
+    path.with_file_name(format!("{stem}-{}.{ext}", now.format("%Y%m%dT%H%M%S%3fZ")))
+}
+
+/// Rotate `stats.jsonl` if rotation is on and it has reached the limit.
+fn maybe_rotate_stats_jsonl(path: &Path) {
+    let Some(limit) = stats_jsonl_rotate_limit() else { return };
+    let len = match fs::metadata(path) {
+        Ok(md) => md.len(),
+        Err(_) => return,
+    };
+    if len < limit {
+        return;
+    }
+    let to = rotated_stats_path(path, Utc::now());
+    match fs::rename(path, &to) {
+        Ok(()) => info!("rotated {path:?} ({len} bytes) to {to:?}"),
+        Err(e) => error!("could not rotate {path:?} to {to:?}, still appending to it: {e:?}"),
+    }
+}
+
 #[derive(Debug)]
 pub(super) enum Task {
     SaveState(PathBuf, Persisted),
@@ -526,6 +571,7 @@ impl Logs {
         let log_path = write_dir.join("Logs").join("bfnext.txt");
         let jsonl_path = write_dir.join("Logs").join("stats.jsonl");
         rotate_log(&log_path);
+        maybe_rotate_stats_jsonl(&jsonl_path);
         let stats_jsonl = match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -1100,6 +1146,23 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn rotated_stats_names_sort_by_age() {
+        let live = Path::new("Logs").join("stats.jsonl");
+        let t0 = Utc.with_ymd_and_hms(2026, 10, 25, 9, 59, 59).unwrap();
+        let t1 = t0 + chrono::Duration::milliseconds(1);
+        let t2 = t0 + chrono::Duration::days(40);
+        let (a, b, c) = (
+            rotated_stats_path(&live, t0),
+            rotated_stats_path(&live, t1),
+            rotated_stats_path(&live, t2),
+        );
+        // bfdb looks for `stats-*.jsonl` next to the live file and reads them
+        // in name order
+        assert_eq!(a, Path::new("Logs").join("stats-20261025T095959000Z.jsonl"));
+        assert!(a < b && b < c);
     }
 
     #[test]

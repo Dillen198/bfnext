@@ -1074,6 +1074,12 @@ pub(crate) struct StatsDbInner {
     /// `jsonl_cursor` tree, whose single `0u8` entry is migrated into this one
     /// under the default instance at startup.
     jsonl_cursor: Tree<std::string::String, u64>,
+    /// Where each instance's JSONL reader is, with a fingerprint of the file
+    /// the offset belongs to, so it can follow the engine's rotation of
+    /// `stats.jsonl` (see `JsonlCursor`). Supersedes `jsonl_cursor`, which is
+    /// still written (offset only) for an older bfdb and read when this tree
+    /// has no entry.
+    jsonl_file_cursor: Tree<std::string::String, JsonlCursor>,
     /// The old single-server JSONL cursor, kept only long enough to migrate it.
     legacy_jsonl_cursor: Tree<u8, u64>,
     // Auth
@@ -1208,23 +1214,289 @@ const RANGE_PROCS: &[&str] = &[
 /// misconfigured instance is obvious within one session.
 const JSONL_QUIET_WARN_SECS: u64 = 900;
 
-/// What one pass of the JSONL reader found. It used to return
-/// `(cursor, vec![])` for "file missing" and for "nothing new" alike, so an
-/// instance reading a path its engine never writes was indistinguishable from
-/// an idle one -- and neither said anything at all.
-enum JsonlRead {
-    /// The file could not be opened.
+/// Where an instance's JSONL reader is: a byte offset into one particular
+/// file, and a fingerprint of that file so the reader can find it again
+/// after the engine rotates `stats.jsonl` (renames it to
+/// `stats-<timestamp>.jsonl` and starts a new one). Persisted in
+/// `jsonl_cursor_v3`; `fp` is `None` for a cursor carried over from the
+/// offset-only `jsonl_cursor_v2`, or until the live file has a first line.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct JsonlCursor {
+    pub(crate) pos: u64,
+    pub(crate) fp: Option<u64>,
+}
+
+/// What one step of the JSONL reader did.
+#[derive(Debug)]
+enum JsonlStepKind {
+    /// The live file could not be opened.
     Missing(std::string::String),
-    /// The file is exactly as long as the cursor: caught up, nothing new.
+    /// Caught up with the live file, nothing new.
     Idle,
-    /// The file is *shorter* than the cursor, so it is not the file we were
-    /// reading: deleted and recreated, truncated, or restored from a copy.
+    /// The file the cursor pointed into is gone and the live file is not it
+    /// (deleted and recreated, truncated, restored from a copy): starting
+    /// the live file over from the top.
     Replaced { len: u64 },
-    /// New bytes, parsed.
-    Read {
-        pos: u64,
+    /// New bytes from the live file.
+    Read,
+    /// Finished a rotated file and moved on to the next one.
+    Rotated { from: PathBuf },
+}
+
+/// One step of the JSONL reader: the stats to apply and the cursor to persist
+/// once they are applied.
+#[derive(Debug)]
+struct JsonlStep {
+    kind: JsonlStepKind,
+    stats: Vec<(DateTime<Utc>, Stat)>,
+    next: JsonlCursor,
+    /// Moved to another file: step again right away instead of waiting.
+    more: bool,
+}
+
+/// FNV-1a over the first line of a stats JSONL file. The first line is a
+/// whole record with its timestamp, so this tells one file from another
+/// across a rename. (A hand-rolled hash because it is persisted:
+/// `DefaultHasher` is not guaranteed stable between Rust releases.) `None`
+/// until the file has a complete first line.
+fn jsonl_fingerprint(path: &Path) -> std::io::Result<Option<u64>> {
+    use std::io::BufRead;
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file).take(64 * 1024);
+    let mut line = Vec::new();
+    reader.read_until(b'\n', &mut line)?;
+    if line.last() != Some(&b'\n') {
+        return Ok(None);
+    }
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in line {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    Ok(Some(h))
+}
+
+/// The rotated copies of `live` (`stats.jsonl` -> `stats-*.jsonl` in the same
+/// directory), oldest first. The engine names them by UTC timestamp, so name
+/// order is age order.
+fn rotated_jsonl_files(live: &Path) -> Vec<PathBuf> {
+    let (Some(dir), Some(stem), Some(ext)) = (
+        live.parent(),
+        live.file_stem().and_then(|s| s.to_str()),
+        live.extension().and_then(|s| s.to_str()),
+    ) else {
+        return vec![];
+    };
+    let prefix = format!("{stem}-");
+    let suffix = format!(".{ext}");
+    let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
+    let mut files: Vec<PathBuf> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|n| n.starts_with(&prefix) && n.ends_with(&suffix))
+            })
+            .map(|e| e.path())
+            .collect(),
+        Err(_) => vec![],
+    };
+    files.sort();
+    files
+}
+
+/// Where to start reading when there is no cursor at all (a new database,
+/// or a rebuild): the oldest rotated file with anything in it, else the live
+/// file from the top.
+fn jsonl_start_cursor(live: &Path) -> JsonlCursor {
+    for f in rotated_jsonl_files(live) {
+        if let Ok(Some(fp)) = jsonl_fingerprint(&f) {
+            return JsonlCursor { pos: 0, fp: Some(fp) };
+        }
+    }
+    JsonlCursor::default()
+}
+
+/// The cursor for the first file after `after` (a rotated file) that has a
+/// first line: the next rotated file, else the live file from the top.
+fn jsonl_cursor_after(live: &Path, after: &Path) -> JsonlCursor {
+    for f in rotated_jsonl_files(live).into_iter().filter(|f| f.as_path() > after) {
+        if let Ok(Some(fp)) = jsonl_fingerprint(&f) {
+            return JsonlCursor { pos: 0, fp: Some(fp) };
+        }
+    }
+    JsonlCursor::default()
+}
+
+/// Parse the complete lines of `path` from byte `pos`. Returns the offset
+/// after the last complete line, and the stats. Lines that won't parse are
+/// counted, reported once, and skipped.
+fn read_jsonl_lines(
+    inst: &dyn std::fmt::Display,
+    path: &Path,
+    pos: u64,
+) -> Result<(u64, Vec<(DateTime<Utc>, Stat)>)> {
+    use std::io::{BufRead, Seek};
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file);
+    reader.seek(std::io::SeekFrom::Start(pos))?;
+    let mut line = std::string::String::new();
+    let mut new_pos = pos;
+    let mut stats = Vec::new();
+    // Bad lines arrive in runs, not one at a time: a torn write (the engine
+    // hard-killed mid-append) leaves one truncated record followed by a
+    // stretch of fragments, and logging each one produced 151 consecutive
+    // ERROR lines from a single startup read. Count them and report once per
+    // pass, keeping the first reason -- which is the one that says what
+    // actually happened.
+    let mut unparsed = 0u64;
+    let mut first_unparsed: Option<std::string::String> = None;
+    let mut undecodable = 0u64;
+    let mut first_undecodable: Option<std::string::String> = None;
+    while reader.read_line(&mut line)? > 0 {
+        // A last line with no newline is one the engine is still writing.
+        // Leave the cursor before it and read it whole next pass -- advancing
+        // past it split a record in two, and both halves were dropped as
+        // unparseable (413 stats lost across four restarts, Sept 22-24).
+        if !line.ends_with('\n') {
+            break;
+        }
+        new_pos = reader.stream_position()?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            line.clear();
+            continue;
+        }
+        match serde_json::from_str::<serde_json::Value>(trimmed) {
+            Ok(val) => {
+                let ts_str = val.get("ts").and_then(|v| v.as_str()).unwrap_or("");
+                let ts = ts_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now());
+                if let Some(stat_val) = val.get("stat") {
+                    match serde_json::from_value::<Stat>(stat_val.clone()) {
+                        Ok(st) => stats.push((ts, st)),
+                        Err(e) => {
+                            undecodable += 1;
+                            if first_undecodable.is_none() {
+                                let preview: std::string::String =
+                                    trimmed.chars().take(200).collect();
+                                first_undecodable = Some(format!("{e}, raw: {preview}"));
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                unparsed += 1;
+                if first_unparsed.is_none() {
+                    first_unparsed = Some(format!("{e}"));
+                }
+            }
+        }
+        line.clear();
+    }
+    if let Some(first) = first_unparsed {
+        error!(
+            "[{inst}] skipped {unparsed} unparsable JSONL line(s) in {path:?} (torn or \
+             truncated -- the records themselves are lost, the cursor moves past them); \
+             first: {first}"
+        );
+    }
+    if let Some(first) = first_undecodable {
+        error!(
+            "[{inst}] skipped {undecodable} JSONL line(s) in {path:?} that parsed but are not \
+             a known Stat (bflib/bfdb schema mismatch); first: {first}"
+        );
+    }
+    Ok((new_pos, stats))
+}
+
+/// One step of the JSONL reader from `cur`, following the engine's rotation
+/// of `live`: if the file the cursor points into has been renamed, read the
+/// rest of it, then every newer rotated file, then the live file from the
+/// top -- nothing lost, nothing read twice.
+fn jsonl_step(inst: &dyn std::fmt::Display, live: &Path, cur: JsonlCursor) -> Result<JsonlStep> {
+    fn step(
+        kind: JsonlStepKind,
         stats: Vec<(DateTime<Utc>, Stat)>,
-    },
+        next: JsonlCursor,
+        more: bool,
+    ) -> Result<JsonlStep> {
+        Ok(JsonlStep { kind, stats, next, more })
+    }
+    let live_len = std::fs::metadata(live).ok().map(|md| md.len());
+    let live_fp = match live_len {
+        Some(_) => jsonl_fingerprint(live).unwrap_or(None),
+        None => None,
+    };
+    // Which file does the cursor point into? `None` is the live file.
+    let rotated: Option<PathBuf> = match cur.fp {
+        Some(fp) if live_fp == Some(fp) => None,
+        Some(fp) => {
+            match rotated_jsonl_files(live)
+                .into_iter()
+                .find(|f| jsonl_fingerprint(f).ok().flatten() == Some(fp))
+            {
+                Some(f) => Some(f),
+                None => {
+                    return match live_len {
+                        None => step(JsonlStepKind::Missing("no such file".into()), vec![], cur, false),
+                        Some(len) => {
+                            step(JsonlStepKind::Replaced { len }, vec![], JsonlCursor::default(), true)
+                        }
+                    };
+                }
+            }
+        }
+        None => {
+            let Some(len) = live_len else {
+                return step(JsonlStepKind::Missing("no such file".into()), vec![], cur, false);
+            };
+            if cur.pos > len {
+                // An offset-only cursor (from before rotation existed) past
+                // the end of the live file: the file it pointed into is most
+                // likely the newest rotated copy at least that long.
+                match rotated_jsonl_files(live).into_iter().rev().find(|f| {
+                    std::fs::metadata(f).map(|m| m.len() >= cur.pos).unwrap_or(false)
+                }) {
+                    Some(f) => Some(f),
+                    None => {
+                        return step(JsonlStepKind::Replaced { len }, vec![], JsonlCursor::default(), true);
+                    }
+                }
+            } else {
+                None
+            }
+        }
+    };
+    match rotated {
+        Some(file) => {
+            // A rotated file is final: read it to the end and move on. A last
+            // line without a newline is a torn record and is lost.
+            let (pos, stats) = read_jsonl_lines(inst, &file, cur.pos)?;
+            let len = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(pos);
+            if pos < len {
+                warn!("[{inst}] {file:?} ends in {} byte(s) of a torn record, skipped", len - pos);
+            }
+            let next = jsonl_cursor_after(live, &file);
+            step(JsonlStepKind::Rotated { from: file }, stats, next, true)
+        }
+        None => {
+            let len = live_len.unwrap_or(0);
+            // The fingerprint is adopted as soon as the live file has a
+            // complete first line.
+            let fp = cur.fp.or(live_fp);
+            if len < cur.pos {
+                // the same file, shorter than before: truncated in place
+                return step(JsonlStepKind::Replaced { len }, vec![], JsonlCursor::default(), true);
+            }
+            if len == cur.pos {
+                return step(JsonlStepKind::Idle, vec![], JsonlCursor { pos: cur.pos, fp }, false);
+            }
+            let (pos, stats) = read_jsonl_lines(inst, live, cur.pos)?;
+            step(JsonlStepKind::Read, stats, JsonlCursor { pos, fp }, false)
+        }
+    }
 }
 
 /// Drop guard that reports an engine RPC's fate to the instance's breaker.
@@ -1488,6 +1760,7 @@ impl StatsDb {
             liquids: Tree::open(&db, "liquids")?,
             round_instance: Tree::open(&db, "round_instance")?,
             jsonl_cursor: Tree::open(&db, "jsonl_cursor_v2")?,
+            jsonl_file_cursor: Tree::open(&db, "jsonl_cursor_v3")?,
             legacy_jsonl_cursor: Tree::open(&db, "jsonl_cursor")?,
             auth_sessions: Tree::open(&db, "auth_sessions")?,
             auth_states: Tree::open(&db, "auth_states")?,
@@ -2301,21 +2574,42 @@ impl StatsDb {
         }
     }
 
-    /// Read stats from a JSONL file (one JSON object per line)
+    /// The persisted reader position for `inst_key`: the fingerprinted
+    /// cursor if there is one, else an offset-only cursor from
+    /// `jsonl_cursor_v2`, else the start of the oldest file.
+    fn load_jsonl_cursor(&self, inst_key: &std::string::String, live: &Path) -> Result<JsonlCursor> {
+        if let Some(cur) = self.0.jsonl_file_cursor.get(inst_key)? {
+            return Ok(cur);
+        }
+        Ok(match self.0.jsonl_cursor.get(inst_key)? {
+            Some(pos) if pos > 0 => JsonlCursor { pos, fp: None },
+            _ => jsonl_start_cursor(live),
+        })
+    }
+
+    /// Persist the reader position. The offset also goes to
+    /// `jsonl_cursor_v2`, which is what an older bfdb reads.
+    fn store_jsonl_cursor(&self, inst_key: &std::string::String, cur: &JsonlCursor) -> Result<()> {
+        self.0.jsonl_file_cursor.insert(inst_key, cur)?;
+        self.0.jsonl_cursor.insert(inst_key, &cur.pos)?;
+        Ok(())
+    }
+
+    /// Read stats from a JSONL file (one JSON object per line), following the
+    /// engine's rotation of it (see `jsonl_step`).
     async fn jsonl_loop(self, inst: Arc<InstanceState>, jsonl_path: PathBuf) -> Result<()> {
-        use std::io::BufRead;
         use tokio::time;
 
         let inst_key = inst.id.to_string();
         let mut ctx = StatCtx::default();
         let mut timer = time::interval(Duration::from_secs(5));
-        let mut last_pos: u64 = self.0.jsonl_cursor.get(&inst_key)?.unwrap_or(0);
+        let mut cur = self.load_jsonl_cursor(&inst_key, &jsonl_path)?;
 
         // Resume ctx from whatever round is still open, so stats that land
         // before the next SessionStart (e.g. after a bfdb-only restart) still
         // get attributed instead of being dropped as "no NewSession before
         // stats".
-        if last_pos > 0 {
+        if cur.pos > 0 {
             if let Ok(rounds) = self.latest_rounds_for(&inst.id) {
                 if let Some((sortie, round, _)) =
                     rounds.into_iter().find(|(_, _, r)| r.end.is_none())
@@ -2327,7 +2621,12 @@ impl StatsDb {
             }
         }
 
-        info!("[{}] starting JSONL reader from {jsonl_path:?} at offset {last_pos}", inst.id);
+        info!(
+            "[{}] starting JSONL reader from {jsonl_path:?} at offset {} ({})",
+            inst.id,
+            cur.pos,
+            if cur.fp.is_some() { "fingerprinted" } else { "offset only" }
+        );
 
         // Say out loud what this instance is actually reading and how that
         // compares to the cursor. When a server shows no new data the answer
@@ -2342,20 +2641,12 @@ impl StatsDb {
                     .and_then(|m| std::time::SystemTime::now().duration_since(m).ok())
                     .map(|d| format!("{}m ago", d.as_secs() / 60))
                     .unwrap_or_else(|| "unknown".into());
-                if len < last_pos {
-                    warn!(
-                        "[{}] {jsonl_path:?} is {len} bytes but the cursor is at {last_pos} -- it \
-                         is not the file we were reading; starting over from the top",
-                        inst.id
-                    );
-                } else {
-                    info!(
-                        "[{}] {jsonl_path:?} is {len} bytes, last written {age}, {} byte(s) \
-                         behind the cursor",
-                        inst.id,
-                        len.saturating_sub(last_pos)
-                    );
-                }
+                info!(
+                    "[{}] {jsonl_path:?} is {len} bytes, last written {age}; {} rotated \
+                     cop(y/ies) beside it",
+                    inst.id,
+                    rotated_jsonl_files(&jsonl_path).len()
+                );
             }
             Err(e) => warn!(
                 "[{}] {jsonl_path:?} does not exist ({e}) -- nothing will be ingested for this \
@@ -2371,16 +2662,24 @@ impl StatsDb {
         // new data with nothing in the log to say why.
         let mut quiet_since = std::time::Instant::now();
         let mut last_quiet_warn: Option<std::time::Instant> = None;
+        // Steps taken without waiting for the timer (moving through rotated
+        // files); bounded so a pathological directory can't spin forever.
+        let mut chained = 0u32;
 
         loop {
-            timer.tick().await;
+            if chained == 0 || chained >= 64 {
+                chained = 0;
+                timer.tick().await;
+            }
 
             // Live rebuild requested (POST /api/admin/rebuild-stats): wipe the
-            // derived trees and start reading the file over from the top. Done
-            // here, in the loop thread, so it can't interleave with add_stat.
+            // derived trees and start reading over from the top -- the oldest
+            // rotated file first. Done here, in the loop thread, so it can't
+            // interleave with add_stat.
             if inst.jsonl_reset.swap(false, Ordering::SeqCst) {
                 warn!(
-                    "[{}] jsonl rebuild requested -- wiping derived stats and re-ingesting {jsonl_path:?} from offset 0",
+                    "[{}] jsonl rebuild requested -- wiping derived stats and re-ingesting {jsonl_path:?} \
+                     (and its rotated copies) from the start",
                     inst.id
                 );
                 if let Err(e) = task::block_in_place(|| self.wipe_stats_derived_trees()) {
@@ -2389,112 +2688,30 @@ impl StatsDb {
                         inst.id
                     );
                 } else {
-                    let _ = self.0.jsonl_cursor.insert(&inst_key, &0u64);
+                    cur = jsonl_start_cursor(&jsonl_path);
+                    let _ = self.store_jsonl_cursor(&inst_key, &cur);
                     *inst.current_sortie.lock().unwrap() = None;
-                    last_pos = 0;
                     ctx = StatCtx::default();
                 }
             }
 
-            let read_result = task::block_in_place(|| -> Result<JsonlRead> {
-                let file = match std::fs::File::open(&jsonl_path) {
-                    Ok(f) => f,
-                    Err(e) => return Ok(JsonlRead::Missing(format!("{e}"))),
-                };
-                let metadata = file.metadata()?;
-                let file_len = metadata.len();
-                if file_len < last_pos {
-                    return Ok(JsonlRead::Replaced { len: file_len });
-                }
-                if file_len == last_pos {
-                    return Ok(JsonlRead::Idle);
-                }
-                use std::io::Seek;
-                let mut reader = std::io::BufReader::new(file);
-                reader.seek(std::io::SeekFrom::Start(last_pos))?;
-                let mut line = std::string::String::new();
-                let mut new_pos = last_pos;
-                let mut stats = Vec::new();
-                // Bad lines arrive in runs, not one at a time: a torn write
-                // (the engine hard-killed mid-append) leaves one truncated
-                // record followed by a stretch of fragments, and logging each
-                // one produced 151 consecutive ERROR lines from a single
-                // startup read. Count them and report once per pass, keeping
-                // the first reason -- which is the one that says what actually
-                // happened.
-                let mut unparsed = 0u64;
-                let mut first_unparsed: Option<std::string::String> = None;
-                let mut undecodable = 0u64;
-                let mut first_undecodable: Option<std::string::String> = None;
-                while reader.read_line(&mut line)? > 0 {
-                    // A last line with no newline is one the engine is still
-                    // writing. Leave the cursor before it and read it whole
-                    // next pass -- advancing past it split a record in two,
-                    // and both halves were dropped as unparseable (413 stats
-                    // lost across four restarts, Sept 22-24).
-                    if !line.ends_with('\n') {
-                        break;
-                    }
-                    new_pos = reader.stream_position()?;
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        line.clear();
-                        continue;
-                    }
-                    match serde_json::from_str::<serde_json::Value>(trimmed) {
-                        Ok(val) => {
-                            let ts_str = val.get("ts").and_then(|v| v.as_str()).unwrap_or("");
-                            let ts = ts_str.parse::<DateTime<Utc>>().unwrap_or_else(|_| Utc::now());
-                            if let Some(stat_val) = val.get("stat") {
-                                match serde_json::from_value::<Stat>(stat_val.clone()) {
-                                    Ok(st) => stats.push((ts, st)),
-                                    Err(e) => {
-                                        undecodable += 1;
-                                        if first_undecodable.is_none() {
-                                            let preview: std::string::String =
-                                                trimmed.chars().take(200).collect();
-                                            first_undecodable =
-                                                Some(format!("{e}, raw: {preview}"));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            unparsed += 1;
-                            if first_unparsed.is_none() {
-                                first_unparsed = Some(format!("{e}"));
-                            }
-                        }
-                    }
-                    line.clear();
-                }
-                if let Some(first) = first_unparsed {
-                    error!(
-                        "[{}] skipped {unparsed} unparsable JSONL line(s) (stats.jsonl is torn or \
-                         truncated -- the records themselves are lost, the cursor moves past \
-                         them); first: {first}",
-                        inst.id
-                    );
-                }
-                if let Some(first) = first_undecodable {
-                    error!(
-                        "[{}] skipped {undecodable} JSONL line(s) that parsed but are not a known \
-                         Stat (bflib/bfdb schema mismatch); first: {first}",
-                        inst.id
-                    );
-                }
-                Ok(JsonlRead::Read {
-                    pos: new_pos,
-                    stats,
-                })
-            });
+            let read_result =
+                task::block_in_place(|| jsonl_step(&inst.id, &jsonl_path, cur));
             let quiet_for = quiet_since.elapsed().as_secs();
             // Say it once, then at most once every JSONL_QUIET_WARN_SECS.
             let warn_due = last_quiet_warn
                 .map_or(true, |t| t.elapsed().as_secs() >= JSONL_QUIET_WARN_SECS);
-            match read_result {
-                Ok(JsonlRead::Missing(e)) => {
+            let step = match read_result {
+                Ok(step) => step,
+                Err(e) => {
+                    error!("[{}] JSONL read error: {e:?}", inst.id);
+                    chained = 0;
+                    continue;
+                }
+            };
+            chained = if step.more { chained + 1 } else { 0 };
+            match &step.kind {
+                JsonlStepKind::Missing(e) => {
                     if warn_due {
                         last_quiet_warn = Some(std::time::Instant::now());
                         warn!(
@@ -2506,67 +2723,67 @@ impl StatsDb {
                         );
                     }
                 }
-                Ok(JsonlRead::Idle) => {
+                JsonlStepKind::Idle => {
                     if quiet_for >= JSONL_QUIET_WARN_SECS && warn_due {
                         last_quiet_warn = Some(std::time::Instant::now());
                         warn!(
-                            "[{}] {jsonl_path:?} has not grown in {}m (stuck at {last_pos} bytes) \
+                            "[{}] {jsonl_path:?} has not grown in {}m (stuck at {} bytes) \
                              -- this instance's engine is not writing stats there, so everything \
                              round-scoped on the dashboard stays as it is. Either that DCS server \
                              is down, or `stats_jsonl` points at another instance's folder.",
                             inst.id,
-                            quiet_for / 60
+                            quiet_for / 60,
+                            cur.pos
                         );
                     }
                 }
-                Ok(JsonlRead::Replaced { len }) => {
-                    // A shrinking append-only file means a *different* file is
-                    // now at that path: deleted and recreated by a log cleanup,
-                    // a fresh server install, a restore from a copy. Without
+                JsonlStepKind::Replaced { len } => {
+                    // The file we were reading is gone and the live file is a
+                    // different one: deleted and recreated by a log cleanup, a
+                    // fresh server install, a restore from a copy. Without
                     // this the cursor sat past EOF forever and the instance
                     // went dark with nothing in the log -- exactly the "server
                     // 2 shows no live data" failure. Re-read from the top;
                     // repeated kills are caught by `kill_seen`.
                     warn!(
-                        "[{}] {jsonl_path:?} shrank to {len} bytes, below the cursor at \
-                         {last_pos} -- it is a new file; re-reading it from the start",
-                        inst.id
+                        "[{}] {jsonl_path:?} ({len} bytes) is not the file the cursor (offset {}) \
+                         was in, and no rotated copy matches -- re-reading it from the start",
+                        inst.id,
+                        cur.pos
                     );
-                    if let Err(e) = self.0.jsonl_cursor.insert(&inst_key, &0u64) {
-                        error!("failed to reset JSONL cursor: {e:?}");
-                    }
-                    last_pos = 0;
                     quiet_since = std::time::Instant::now();
                     last_quiet_warn = None;
                 }
-                Ok(JsonlRead::Read { pos, stats }) => {
+                JsonlStepKind::Rotated { from } => {
+                    info!("[{}] finished rotated stats file {from:?}", inst.id);
                     quiet_since = std::time::Instant::now();
                     last_quiet_warn = None;
-                    if !stats.is_empty() {
-                        let count = stats.len();
-                        for (ts, st) in stats {
-                            if let Err(e) =
-                                task::block_in_place(|| self.add_stat(&inst, &mut ctx, ts, st))
-                            {
-                                warn!("[{}] failed to add stat from JSONL: {e:?}", inst.id);
-                            }
-                        }
-                        // Every few seconds on a live server: over a third of
-                        // the whole log at info. Debug only.
-                        debug!(
-                            "[{}] processed {count} stats from JSONL (pos {last_pos} -> {pos})",
-                            inst.id
-                        );
-                    }
-                    if pos != last_pos {
-                        if let Err(e) = self.0.jsonl_cursor.insert(&inst_key, &pos) {
-                            error!("failed to persist JSONL cursor: {e:?}");
-                        }
-                    }
-                    last_pos = pos;
                 }
-                Err(e) => error!("[{}] JSONL read error: {e:?}", inst.id),
+                JsonlStepKind::Read => {
+                    quiet_since = std::time::Instant::now();
+                    last_quiet_warn = None;
+                }
             }
+            if !step.stats.is_empty() {
+                let count = step.stats.len();
+                for (ts, st) in step.stats {
+                    if let Err(e) = task::block_in_place(|| self.add_stat(&inst, &mut ctx, ts, st)) {
+                        warn!("[{}] failed to add stat from JSONL: {e:?}", inst.id);
+                    }
+                }
+                // Every few seconds on a live server: over a third of the
+                // whole log at info. Debug only.
+                debug!(
+                    "[{}] processed {count} stats from JSONL (pos {} -> {})",
+                    inst.id, cur.pos, step.next.pos
+                );
+            }
+            if step.next != cur {
+                if let Err(e) = self.store_jsonl_cursor(&inst_key, &step.next) {
+                    error!("failed to persist JSONL cursor: {e:?}");
+                }
+            }
+            cur = step.next;
         }
     }
 
@@ -5789,6 +6006,7 @@ impl StatsDb {
         // trees are shared).
         self.replay_cursor.clear()?;
         self.jsonl_cursor.clear()?;
+        self.jsonl_file_cursor.clear()?;
         for st in self.0.states.values() {
             *st.current_sortie.lock().unwrap() = None;
         }
@@ -5859,6 +6077,7 @@ impl StatsDb {
         }
         for st in readers {
             self.jsonl_cursor.insert(&st.id.to_string(), &0u64)?;
+            self.jsonl_file_cursor.remove(&st.id.to_string())?;
             st.jsonl_reset.store(true, Ordering::SeqCst);
         }
         Ok(())
@@ -6593,5 +6812,146 @@ mod off_slot_credit_tests {
             .unwrap()
             .is_some_and(|a| a.ground_kills == 2));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod jsonl_tail_tests {
+    use super::*;
+
+    /// A fresh scratch directory with an empty `stats.jsonl` path in it.
+    fn scratch(name: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "bfdb-jsonl-{name}-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let live = dir.join("stats.jsonl");
+        (dir, live)
+    }
+
+    fn line(sortie: &str) -> std::string::String {
+        let st = Stat::NewRound { sortie: sortie.into() };
+        format!("{}\n", serde_json::json!({"ts": Utc::now().to_rfc3339(), "stat": st}))
+    }
+
+    fn append(path: &Path, sorties: &[&str]) {
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap();
+        for s in sorties {
+            f.write_all(line(s).as_bytes()).unwrap();
+        }
+    }
+
+    /// Step the reader until it has nothing more to do right now, collecting
+    /// the sorties it delivered.
+    fn drain(live: &Path, cur: &mut JsonlCursor) -> Vec<std::string::String> {
+        let mut out = vec![];
+        for _ in 0..32 {
+            let step = jsonl_step(&"test", live, *cur).unwrap();
+            for (_, st) in step.stats {
+                match st {
+                    Stat::NewRound { sortie } => out.push(sortie.to_string()),
+                    st => panic!("unexpected {st:?}"),
+                }
+            }
+            *cur = step.next;
+            if !step.more {
+                return out;
+            }
+        }
+        panic!("reader did not settle")
+    }
+
+    #[test]
+    fn follows_rotation_without_loss_or_duplicates() {
+        let (dir, live) = scratch("rotate");
+        append(&live, &["a", "b"]);
+        let mut cur = jsonl_start_cursor(&live);
+        assert_eq!(drain(&live, &mut cur), ["a", "b"]);
+        assert!(cur.fp.is_some(), "fingerprint adopted once the file has a line");
+        // written after the last read, then the engine rotates and carries on
+        append(&live, &["c"]);
+        std::fs::rename(&live, dir.join("stats-20261025T120000Z.jsonl")).unwrap();
+        append(&live, &["d", "e"]);
+        assert_eq!(drain(&live, &mut cur), ["c", "d", "e"]);
+        append(&live, &["f"]);
+        assert_eq!(drain(&live, &mut cur), ["f"]);
+        assert_eq!(drain(&live, &mut cur), Vec::<std::string::String>::new());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rotation_before_the_new_file_has_a_line() {
+        let (dir, live) = scratch("empty-new");
+        append(&live, &["a"]);
+        let mut cur = JsonlCursor::default();
+        assert_eq!(drain(&live, &mut cur), ["a"]);
+        append(&live, &["b"]);
+        std::fs::rename(&live, dir.join("stats-20261025T120000Z.jsonl")).unwrap();
+        std::fs::write(&live, b"").unwrap();
+        assert_eq!(drain(&live, &mut cur), ["b"]);
+        assert_eq!(cur, JsonlCursor::default());
+        append(&live, &["c"]);
+        assert_eq!(drain(&live, &mut cur), ["c"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn several_rotations_while_away_and_a_rebuild() {
+        let (dir, live) = scratch("multi");
+        append(&live, &["a"]);
+        let mut cur = JsonlCursor::default();
+        assert_eq!(drain(&live, &mut cur), ["a"]);
+        append(&live, &["b"]);
+        std::fs::rename(&live, dir.join("stats-20261025T120000Z.jsonl")).unwrap();
+        append(&live, &["c"]);
+        std::fs::rename(&live, dir.join("stats-20261025T130000Z.jsonl")).unwrap();
+        append(&live, &["d"]);
+        assert_eq!(drain(&live, &mut cur), ["b", "c", "d"]);
+        // a rebuild starts with the oldest rotated file
+        let mut cur = jsonl_start_cursor(&live);
+        assert_eq!(drain(&live, &mut cur), ["a", "b", "c", "d"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn offset_only_cursor_finds_the_rotated_file() {
+        let (dir, live) = scratch("legacy");
+        append(&live, &["a", "b"]);
+        let pos = std::fs::metadata(&live).unwrap().len();
+        append(&live, &["c"]);
+        // a cursor from jsonl_cursor_v2: an offset, no fingerprint
+        let mut cur = JsonlCursor { pos, fp: None };
+        std::fs::rename(&live, dir.join("stats-20261025T120000Z.jsonl")).unwrap();
+        append(&live, &["d"]);
+        assert_eq!(drain(&live, &mut cur), ["c", "d"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn partial_last_line_is_left_for_the_next_pass() {
+        let (dir, live) = scratch("partial");
+        append(&live, &["a"]);
+        let full = line("b");
+        let (head, tail) = full.split_at(10);
+        std::fs::OpenOptions::new().append(true).open(&live).unwrap().write_all(head.as_bytes()).unwrap();
+        let mut cur = JsonlCursor::default();
+        assert_eq!(drain(&live, &mut cur), ["a"]);
+        std::fs::OpenOptions::new().append(true).open(&live).unwrap().write_all(tail.as_bytes()).unwrap();
+        assert_eq!(drain(&live, &mut cur), ["b"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn replaced_file_is_read_from_the_top() {
+        let (dir, live) = scratch("replaced");
+        append(&live, &["a", "b"]);
+        let mut cur = JsonlCursor::default();
+        assert_eq!(drain(&live, &mut cur), ["a", "b"]);
+        std::fs::remove_file(&live).unwrap();
+        append(&live, &["x", "y", "z"]);
+        assert_eq!(drain(&live, &mut cur), ["x", "y", "z"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
