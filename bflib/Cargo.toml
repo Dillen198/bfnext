@@ -17,16 +17,17 @@ compact_str = { workspace = true }
 crossbeam = { workspace = true }
 dcso3 = { version = "0.1", path = "../dcso3", features = ["perf"] }
 enumflags2 = { workspace = true, features = ["serde"] }
+# Not named in bflib's source: dcso3's simple_enum! derives JsonSchema,
+# and that derive refers to the `schemars` crate by name in the caller.
 schemars = { workspace = true }
 futures = { workspace = true }
 fxhash = { workspace = true }
-hdrhistogram = { workspace = true }
 humantime = { workspace = true }
 immutable-chunkmap = { workspace = true }
 indexmap = { workspace = true }
 livewx = { version = "0.1", path = "../livewx" }
 log = { workspace = true }
-mlua = { version = "0.9.9", features = ["lua51", "module", "serialize"] }
+mlua = { workspace = true, features = ["module", "serialize"] }
 nalgebra = { workspace = true }
 netidx = { workspace = true }
 netidx-protocols = { workspace = true }
@@ -35,7 +36,6 @@ once_cell = { workspace = true }
 parking_lot = { workspace = true }
 paste = { workspace = true }
 rand = { workspace = true }
-rstar = { workspace = true }
 regex = { workspace = true }
 serde_derive = { workspace = true }
 serde_json = { workspace = true }
@@ -43,6 +43,4 @@ serde = { workspace = true }
 simplelog = { workspace = true }
 smallvec = { workspace = true }
 tokio = { workspace = true }
-ureq = { workspace = true }
-zip = { workspace = true }
 zstd = { workspace = true }

@@ -17,7 +17,7 @@ name = "bfcockpit_net"
 crate-type = ["cdylib"]
 
 [dependencies]
-mlua = { version = "0.9.9", features = ["lua51", "module"] }
+mlua = { workspace = true, features = ["module"] }
 ureq = { workspace = true }
 # An update's installer is run only if it verifies against the release key
 # compiled in from updater.pub -- the same minisign check (and the same key

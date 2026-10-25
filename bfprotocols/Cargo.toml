@@ -14,11 +14,10 @@ compact_str = { workspace = true }
 dcso3 = { version = "0.1", path = "../dcso3" }
 enumflags2 = { workspace = true }
 fxhash = { workspace = true }
-hdrhistogram = { workspace = true }
 immutable-chunkmap = { workspace = true }
 indexmap = { workspace = true }
 log = { workspace = true }
-mlua = { version = "0.9.9", features = ["lua51", "serialize"] }
+mlua = { workspace = true, features = ["serialize"] }
 netidx = { workspace = true }
 paste = { workspace = true }
 regex = { workspace = true }

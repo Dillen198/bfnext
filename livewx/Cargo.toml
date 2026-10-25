@@ -12,7 +12,9 @@ bfprotocols = { version = "0.1", path = "../bfprotocols" }
 chrono = { workspace = true }
 dcso3 = { version = "0.1", path = "../dcso3" }
 log = { workspace = true }
-mlua = { version = "0.9.9", features = ["lua51", "module", "serialize"] }
+# No "module": livewx is an rlib, the cdylibs that link it (bflib, bfrange)
+# turn module mode on themselves, and bftools links it with vendored Lua.
+mlua = { workspace = true, features = ["serialize"] }
 serde_json = { workspace = true }
 ureq = { workspace = true }
 
