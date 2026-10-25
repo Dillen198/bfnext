@@ -3295,6 +3295,16 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
         ctx.admin_commands.drain(..n).collect();
     let mut batch = batch.into_iter();
     while let Some((caller, cmd)) = batch.next() {
+        // A menu click runs the item's F10 handler, which takes the campaign
+        // state itself -- it must not run while this loop holds it. Queue it
+        // for `run_menu_invokes`, which the drain calls once it has let go.
+        let cmd = match cmd {
+            AdminCommand::CockpitMenuInvoke { ucid, path } => {
+                ctx.pending_menu_invokes.push((caller, ucid, path));
+                continue;
+            }
+            cmd => cmd,
+        };
         let audit = cmd.audited().then(|| (audit_who(ctx, &caller), format!("{cmd:?}")));
         let ends_session = matches!(cmd, AdminCommand::Reset { .. } | AdminCommand::Shutdown);
         if let (true, Some((who, what))) = (ends_session, &audit) {
@@ -3344,6 +3354,24 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
         }
     }
     Ok(AdminResult::Continue)
+}
+
+/// Run the cockpit menu clicks `run_admin_commands` queued. Only call this
+/// when nothing holds the campaign state (the admin drain, after it has
+/// finished with it): each click runs its F10 handler, which takes the state
+/// itself, exactly as when DCS calls it. Replies with what the handler told
+/// the player, so the panel shows the answer ("Need 3 crates", "you must
+/// land first") rather than a bare "ok".
+pub(super) fn run_menu_invokes(lua: MizLua) {
+    let pending = std::mem::take(&mut unsafe { Context::get_mut() }.pending_menu_invokes);
+    for (caller, ucid, path) in pending {
+        let reply = match crate::cockpit::invoke_and_report(lua, &ucid, &path) {
+            Ok(Some(said)) => NetIdxValue::from(said),
+            Ok(None) => NetIdxValue::Error(format!("no such menu item: {}", path.join(" > ")).into()),
+            Err(e) => NetIdxValue::Error(format!("{e:?}").into()),
+        };
+        reply_external(caller, smallvec![reply]);
+    }
 }
 
 fn reply_external(caller: Caller, mut replies: SmallVec<[NetIdxValue; 4]>) {
@@ -3968,15 +3996,9 @@ fn run_admin_command(
                     Err(e) => reply_err!("{e:?}"),
                 }
             }
-            AdminCommand::CockpitMenuInvoke { ucid, path } => {
-                // Replies with what the handler told the player, so the panel
-                // shows the answer ("Need 3 crates", "you must land first")
-                // rather than a bare "ok".
-                match crate::cockpit::invoke_and_report(ctx, lua, &ucid, &path) {
-                    Ok(Some(said)) => reply_ok!("{said}"),
-                    Ok(None) => reply_err!("no such menu item: {}", path.join(" > ")),
-                    Err(e) => reply_err!("{e:?}"),
-                }
+            // queued by run_admin_commands and run by run_menu_invokes
+            AdminCommand::CockpitMenuInvoke { .. } => {
+                reply_err!("menu clicks are run after the admin commands")
             }
             AdminCommand::CockpitMessages { ucid, since } => {
                 match crate::cockpit::messages(ctx, &ucid, since)

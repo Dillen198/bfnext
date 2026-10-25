@@ -367,6 +367,9 @@ struct Context {
     db: Db,
     external_admin_commands: Arc<SegQueue<(AdminCommand, oneshot::Sender<Value>)>>,
     admin_commands: Vec<(admin::Caller, AdminCommand)>,
+    /// Cockpit menu clicks waiting for the admin drain to let go of the state
+    /// (`admin::run_menu_invokes`).
+    pending_menu_invokes: Vec<(admin::Caller, Ucid, Vec<std::string::String>)>,
     action_commands: Vec<(PlayerId, String)>,
     /// `-weather` requests, answered from the mission Lua state: the chat
     /// hook runs in the hooks state, which has no `atmosphere` or mission
@@ -903,7 +906,14 @@ struct DismountInfo {
 
 fn try_capture_dismount_info(ctx: &Context, unit: &Unit) -> Option<DismountInfo> {
     let id = unit.object_id().ok()?;
-    let uid = ctx.db.ephemeral.get_uid_by_object_id(&id)?;
+    let pos = unit.get_position().ok().map(|p| Vector2::new(p.p.x, p.p.z));
+    dismount_info_for(ctx, &id, pos)
+}
+
+/// The dismount a dying vehicle leaves, from its id and the ground position
+/// it died at (x north, y east).
+fn dismount_info_for(ctx: &Context, id: &DcsOid<ClassUnit>, pos: Option<Vector2>) -> Option<DismountInfo> {
+    let uid = ctx.db.ephemeral.get_uid_by_object_id(id)?;
     let su = ctx.db.persisted.units.get(uid)?;
     // Skip aircraft — only ground vehicles dismount
     if su.tags.contains(UnitTag::Helicopter) || su.tags.contains(UnitTag::Aircraft) {
@@ -911,8 +921,7 @@ fn try_capture_dismount_info(ctx: &Context, unit: &Unit) -> Option<DismountInfo>
     }
     // Skip if no dismount config for this vehicle type
     ctx.db.ephemeral.cfg.dismount.get(&su.typ)?;
-    let pos3 = unit.get_position().ok()?;
-    let pos = dcso3::Vector2::new(pos3.p.x, pos3.p.z);
+    let pos = pos?;
     Some(DismountInfo {
         vehicle_typ: su.typ.clone(),
         side: su.side,
@@ -963,9 +972,71 @@ thread_local! {
     /// Greater than zero while a timed-events tick (or the mission init) is
     /// running with `&mut Context` in hand. See `DeferEvents`.
     static DEFER_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    /// Objects whose Birth arrived while `DEFER_DEPTH > 0`, in arrival order.
-    static DEFERRED_BIRTHS: std::cell::RefCell<Vec<DcsOid<dcso3::object::ClassObject>>> =
+    /// Events that arrived while `DEFER_DEPTH > 0`, in arrival order.
+    static DEFERRED: std::cell::RefCell<Vec<DeferredEvent>> =
         const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// What a Dead / UnitLost handler needs from the object, taken while it still
+/// exists: by the end of the call that destroyed it, it doesn't.
+#[derive(Debug, Clone)]
+enum DeathObj {
+    Unit {
+        oid: DcsOid<ClassUnit>,
+        name: Option<String>,
+        /// Ground position (x north, y east), for dismounts.
+        pos: Option<Vector2>,
+    },
+    Static(DcsOid<dcso3::static_object::ClassStatic>),
+    /// No initiator, or one that is neither a unit nor a static.
+    Other,
+}
+
+impl DeathObj {
+    fn capture(initiator: Option<&dcso3::object::Object>) -> Result<Self> {
+        let Some(obj) = initiator else { return Ok(Self::Other) };
+        if let Ok(unit) = obj.as_unit() {
+            return Ok(Self::Unit {
+                oid: unit.object_id()?,
+                name: unit.get_name().ok(),
+                pos: unit.get_position().ok().map(|p| Vector2::new(p.p.x, p.p.z)),
+            });
+        }
+        if let Ok(st) = obj.as_static() {
+            return Ok(Self::Static(st.object_id()?));
+        }
+        Ok(Self::Other)
+    }
+}
+
+/// A DCS event that arrived while events were deferred, in a form that
+/// outlives the callback (no Lua references).
+#[derive(Debug, Clone)]
+enum DeferredEvent {
+    /// The unit still exists afterwards; re-resolved from its id.
+    Birth(DcsOid<dcso3::object::ClassObject>),
+    /// Dead (`lost == false`) or UnitLost, with the object captured.
+    Death { lost: bool, obj: DeathObj },
+    /// Already nothing but an object id.
+    PlayerLeaveUnit(dcso3::event::LeaveUnit),
+}
+
+impl DeferredEvent {
+    /// The deferrable form of `ev`, or `None` for an event that is handled
+    /// on the spot even while deferring (see `DeferEvents`).
+    fn capture(ev: &Event) -> Result<Option<Self>> {
+        Ok(match ev {
+            // No initiator means the object is already gone -- nothing to map.
+            Event::Birth(b) => match &b.initiator {
+                Some(initiator) => Some(Self::Birth(initiator.object_id()?)),
+                None => None,
+            },
+            Event::Dead(e) => Some(Self::Death { lost: false, obj: DeathObj::capture(e.initiator.as_ref())? }),
+            Event::UnitLost(e) => Some(Self::Death { lost: true, obj: DeathObj::capture(e.initiator.as_ref())? }),
+            Event::PlayerLeaveUnit(e) => Some(Self::PlayerLeaveUnit(e.clone())),
+            _ => None,
+        })
+    }
 }
 
 /// DCS fires some events synchronously *inside* the API call that caused
@@ -976,22 +1047,24 @@ thread_local! {
 /// however carefully the code on either side is written (the compiler may
 /// assume the caller's view of the state didn't change across the call).
 ///
-/// While one of these guards is alive, `on_event` queues Birth instead of
-/// handling it, and the tick drains the queue (`drain_deferred_events`)
-/// between subsystems, where no borrow of the state is held. Birth is the
-/// event our own calls fire in bulk -- every spawn -- and the only one whose
-/// handler needs nothing that is gone by the time the tick gets to it: the
-/// unit still exists, so it is re-resolved from its object id.
+/// While one of these guards is alive, `on_event` queues the events our own
+/// calls fire instead of handling them, without touching `Context`, and the
+/// holder drains the queue (`drain_deferred_events`) between subsystems,
+/// where no borrow of the state is held:
 ///
-/// The events our `destroy()` calls fire (Dead, UnitLost, PlayerLeaveUnit,
-/// Kill) are NOT deferred. Their handlers read the dying object (life,
-/// position for dismounts / CSAR / passenger ejection, the player's slot),
-/// and that object no longer exists by the end of the call that destroyed
-/// it. The despawn paths are written for this: they drop the unit's object-id
-/// mappings *before* calling destroy, so those handlers find nothing of ours
-/// to touch. Events a player causes (slotting in, a real death, an F10 mark)
-/// come from the simulation, never from inside our calls, and are handled
-/// immediately as before.
+/// - Birth, fired in bulk by every spawn. The unit still exists afterwards,
+///   so it is re-resolved from its object id.
+/// - Dead and UnitLost, fired by `destroy()`. Their handlers read the dying
+///   object (its name, its position for dismounts), and it no longer exists
+///   by the end of the call that destroyed it, so that is captured into a
+///   `DeathObj` while it does and the handler reads the capture.
+/// - PlayerLeaveUnit (forcing a player out of a slot, destroying their
+///   aircraft), which carries nothing but an object id anyway.
+///
+/// Anything else is still handled on the spot, as before: events a player
+/// causes (a hit, a shot, a takeoff, an F10 mark) come from the simulation,
+/// not from inside our calls. See docs/plans/bflib-context-aliasing.md for
+/// what is left.
 struct DeferEvents;
 
 impl DeferEvents {
@@ -1004,6 +1077,42 @@ impl DeferEvents {
 impl Drop for DeferEvents {
     fn drop(&mut self) {
         DEFER_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
+    }
+}
+
+/// The campaign state for code DCS calls directly, outside our own ticks: an
+/// F10 menu handler. While it is held, events the handler's own DCS calls
+/// fire (the Birth of every crate or group it spawns) are deferred, and they
+/// are handled when it is dropped -- otherwise each one re-entered `on_event`,
+/// which took a second `&mut Context` while the handler still had the first.
+///
+/// When something on this thread already holds the state (a menu handler run
+/// from inside a tick -- the menus are also built there), this changes
+/// nothing: that holder drains the events. See
+/// docs/plans/bflib-context-aliasing.md.
+pub(crate) struct Entered<'lua> {
+    lua: MizLua<'lua>,
+    outermost: bool,
+    _defer: DeferEvents,
+}
+
+impl<'lua> Entered<'lua> {
+    pub(crate) fn enter(lua: MizLua<'lua>) -> (Self, &'static mut Context) {
+        let outermost = DEFER_DEPTH.with(|d| d.get()) == 0;
+        let guard = Entered { lua, outermost, _defer: DeferEvents::begin() };
+        (guard, unsafe { Context::get_mut() })
+    }
+}
+
+impl Drop for Entered<'_> {
+    fn drop(&mut self) {
+        if self.outermost {
+            // the handler that had the state has returned
+            let ctx = unsafe { Context::get_mut() };
+            if let Err(e) = catch_unwind(AssertUnwindSafe(|| drain_deferred_events(self.lua, ctx))) {
+                error!("handling deferred events after a menu command panicked: {}", bg::panic_msg(&e))
+            }
+        }
     }
 }
 
@@ -1028,28 +1137,41 @@ pub(crate) fn with_context<R>(
     res
 }
 
-/// Handle every Birth queued while events were deferred. Handlers can spawn
-/// in turn (queueing more), so keep going until the queue stays empty --
-/// bounded, in case something spawns on every birth.
+/// Handle every event queued while events were deferred. Handlers can spawn
+/// and destroy in turn (queueing more), so keep going until the queue stays
+/// empty -- bounded, in case something spawns on every birth.
 fn drain_deferred_events(lua: MizLua, ctx: &mut Context) {
     for _ in 0..16 {
-        let births = DEFERRED_BIRTHS.with(|q| std::mem::take(&mut *q.borrow_mut()));
-        if births.is_empty() {
+        let events = DEFERRED.with(|q| std::mem::take(&mut *q.borrow_mut()));
+        if events.is_empty() {
             return;
         }
-        for oid in births {
-            match dcso3::object::Object::get_instance(lua, &oid) {
-                Ok(obj) => {
-                    if let Err(e) = handle_birth(lua, ctx, &obj) {
-                        error!("deferred birth of {oid:?} failed {e:?}")
+        let now = Utc::now();
+        for ev in events {
+            match ev {
+                DeferredEvent::Birth(oid) => match dcso3::object::Object::get_instance(lua, &oid) {
+                    Ok(obj) => {
+                        if let Err(e) = handle_birth(lua, ctx, &obj) {
+                            error!("deferred birth of {oid:?} failed {e:?}")
+                        }
+                    }
+                    // spawned and removed again within the same tick
+                    Err(e) => debug!("deferred birth: {oid:?} no longer exists {e:?}"),
+                },
+                DeferredEvent::Death { lost, obj } => {
+                    if let Err(e) = handle_death(lua, ctx, lost, obj, now) {
+                        error!("deferred death failed {e:?}")
                     }
                 }
-                // spawned and removed again within the same tick
-                Err(e) => debug!("deferred birth: {oid:?} no longer exists {e:?}"),
+                DeferredEvent::PlayerLeaveUnit(e) => {
+                    if let Err(e) = handle_event(lua, ctx, Event::PlayerLeaveUnit(e), now) {
+                        error!("deferred player leave failed {e:?}")
+                    }
+                }
             }
         }
     }
-    warn!("deferred births still arriving after 16 passes, leaving the rest for the next drain");
+    warn!("deferred events still arriving after 16 passes, leaving the rest for the next drain");
 }
 
 fn handle_birth(lua: MizLua, ctx: &mut Context, initiator: &dcso3::object::Object) -> Result<()> {
@@ -1206,22 +1328,135 @@ fn on_hit(
     Ok(())
 }
 
+/// Dead (`lost == false`) and UnitLost, live or deferred (see `DeathObj`).
+fn handle_death(
+    lua: MizLua,
+    ctx: &mut Context,
+    lost: bool,
+    obj: DeathObj,
+    start_ts: DateTime<Utc>,
+) -> Result<()> {
+    match obj {
+        DeathObj::Other => (),
+        DeathObj::Unit { oid: id, name, pos } => {
+            // UNIT_LOST fires for any unit leaving the world, not only for
+            // deaths -- a despawn (ours, via destroy()) or a player's aircraft
+            // going away with them. Handled exactly like Dead it ran
+            // unit_killed on those too, which credits a kill to whoever last
+            // hit the unit and calls "splash" on GCI. Our despawns drop the
+            // unit's object-id mapping before destroying it, and a real death
+            // normally reaches Dead / Kill first (which drop it too), so a
+            // unit that is still mapped here is one that died without either
+            // -- the case UnitLost exists to catch. Anything else is a
+            // despawn: ignore it.
+            if lost
+                && ctx.db.ephemeral.get_uid_by_object_id(&id).is_none()
+                && ctx.db.ephemeral.get_slot_by_object_id(&id).is_none()
+            {
+                debug!("UnitLost for a unit we no longer track (despawn), ignored");
+                return Ok(());
+            }
+            let unmanaged = name
+                .as_ref()
+                .filter(|n| airlife::is_civil(n.as_str()) || modern_war::is_unmanaged(n.as_str()));
+            if let Some(name) = unmanaged {
+                if airlife::is_civil(name.as_str()) {
+                    airlife::civil_down(ctx, name.as_str(), start_ts);
+                }
+                return Ok(());
+            }
+            let dismount = dismount_info_for(ctx, &id, pos);
+            // Live voice GCI: hostile air killed -> "splash".
+            if let Some((vside, vtags, vpos)) = ctx
+                .db
+                .ephemeral
+                .get_uid_by_object_id(&id)
+                .and_then(|uid| ctx.db.unit(uid).ok())
+                .map(|u| (u.side, u.tags.0, u.pos))
+            {
+                if vside != Side::Neutral
+                    && (vtags.contains(UnitTag::Aircraft) || vtags.contains(UnitTag::Helicopter))
+                {
+                    ctx.ewr.record_air_kill(vpos, vside, start_ts);
+                }
+            }
+            if let Err(e) = unit_killed(lua, ctx, id, start_ts) {
+                error!("1 unit killed failed {:?}", e)
+            }
+            spawn_dismount(lua, ctx, dismount);
+        }
+        DeathObj::Static(id) => {
+            if let Err(e) = ctx.db.respawn_protected_static(lua, &ctx.idx, &id) {
+                error!("respawn protected static failed {e:?}")
+            }
+            if let Err(e) = ctx.db.static_dead(&id, start_ts) {
+                error!("static killed failed {e:?}")
+            }
+        }
+    }
+    Ok(())
+}
+
 fn on_event(lua: MizLua, ev: Event) -> Result<()> {
     if DEFER_DEPTH.with(|d| d.get()) > 0 {
-        if let Event::Birth(b) = &ev {
-            // Don't touch Context (or Perf) here at all -- the tick that
-            // caused this birth is holding them. See DeferEvents.
-            // No initiator means the object is already gone -- nothing to map.
-            if let Some(initiator) = &b.initiator {
-                let oid = initiator.object_id()?;
-                DEFERRED_BIRTHS.with(|q| q.borrow_mut().push(oid));
-            }
+        // Don't touch Context (or Perf) here at all -- whoever made the call
+        // that fired this event is holding them. See DeferEvents.
+        match &ev {
+            // nothing to handle (see the same cases in handle_event)
+            Event::Birth(dcso3::event::Birth { initiator: None, .. })
+            | Event::MarkAdded(MarkPanel { initiator: None, .. })
+            | Event::MarkChange(MarkPanel { initiator: None, .. })
+            | Event::MarkRemoved(MarkPanel { initiator: None, .. })
+            | Event::Invalid
+            | Event::SimulationFreeze
+            | Event::SimulationUnfreeze
+            | Event::HumanAircraftRepairStart
+            | Event::HumanAircraftRepairFinish
+            | Event::GroupChangeOption
+            | Event::MacLmsRestart => return Ok(()),
+            _ => (),
+        }
+        if let Some(deferred) = DeferredEvent::capture(&ev)? {
+            DEFERRED.with(|q| q.borrow_mut().push(deferred));
             return Ok(());
         }
     }
     let start_ts = Utc::now();
     let ctx = unsafe { Context::get_mut() };
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    if let Event::MissionEnd = ev {
+        return unsafe { mission_end(lua, ctx) };
+    }
+    handle_event(lua, ctx, ev, start_ts)?;
+    record_perf(&mut perf.dcs_events, start_ts);
+    Ok(())
+}
+
+/// The mission is ending: save, then reset the state for the next one.
+unsafe fn mission_end(lua: MizLua, ctx: &mut Context) -> Result<()> {
+    // The Db is about to be dropped. Everything since the last slow-tick
+    // snapshot used to go with it, along with every open sortie. Not after a
+    // shutdown (a campaign reset has deleted the save on purpose, and
+    // admin_shutdown already saved otherwise), and never before a campaign
+    // was actually loaded -- that would write an empty Db over the real save.
+    if ctx.db_loaded && ctx.exit_attempts.is_none() {
+        info!("mission ending, saving the campaign");
+        return_lives(lua, ctx, DateTime::<Utc>::MAX_UTC);
+        ctx.db.close_open_sorties();
+        let snap = ctx.db.snapshot();
+        ctx.do_bg_task(Task::SaveState(ctx.miz_state_path.clone(), snap));
+    }
+    unsafe {
+        Context::reset();
+        Perf::reset();
+        Context::get_mut().init_async_bg(lua.inner())?;
+    }
+    // no perf record: the perf context was just reset
+    Ok(())
+}
+
+/// Handle one DCS event, from `on_event` or from the deferred queue.
+fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Utc>) -> Result<()> {
     match &ev {
         Event::MarkAdded(e) | Event::MarkChange(e) | Event::MarkRemoved(e)
             if e.initiator.is_none() =>
@@ -1435,29 +1670,6 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
             // `counter_battery` cfg key is now ignored.)
             ()
         }
-        // UNIT_LOST fires for any unit leaving the world, not only for
-        // deaths -- a despawn (ours, via destroy()) or a player's aircraft
-        // going away with them. Handled exactly like Dead it ran unit_killed
-        // on those too, which credits a kill to whoever last hit the unit and
-        // calls "splash" on GCI. Our despawns drop the unit's object-id
-        // mapping before destroying it, and a real death normally reaches Dead
-        // / Kill first (which drop it too), so a unit that is still mapped
-        // here is one that died without either -- the case UnitLost exists to
-        // catch. Anything else is a despawn: ignore it.
-        Event::UnitLost(e)
-            if e
-                .initiator
-                .as_ref()
-                .and_then(|u| u.as_unit().ok())
-                .and_then(|u| u.object_id().ok())
-                .map(|id| {
-                    ctx.db.ephemeral.get_uid_by_object_id(&id).is_none()
-                        && ctx.db.ephemeral.get_slot_by_object_id(&id).is_none()
-                })
-                .unwrap_or(false) =>
-        {
-            debug!("UnitLost for a unit we no longer track (despawn), ignored")
-        }
         Event::Crash(e) => {
             // Only civil airliners are handled here (campaign units are done
             // on Dead/UnitLost); a crash is how a shot-up airliner usually ends.
@@ -1471,49 +1683,8 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 airlife::civil_down(ctx, name.as_str(), start_ts);
             }
         }
-        Event::Dead(e) | Event::UnitLost(e) => {
-            let unmanaged = e
-                .initiator
-                .as_ref()
-                .and_then(|u| u.as_unit().ok())
-                .and_then(|u| u.get_name().ok())
-                .filter(|n| airlife::is_civil(n.as_str()) || modern_war::is_unmanaged(n.as_str()));
-            if let Some(name) = unmanaged {
-                if airlife::is_civil(name.as_str()) {
-                    airlife::civil_down(ctx, name.as_str(), start_ts);
-                }
-            } else if let Some(unit) = e.initiator.as_ref().and_then(|u| u.as_unit().ok()) {
-                let dismount = try_capture_dismount_info(ctx, &unit);
-                let id = unit.object_id()?;
-                // Live voice GCI: hostile air killed -> "splash".
-                if let Some((vside, vtags, vpos)) = ctx
-                    .db
-                    .ephemeral
-                    .get_uid_by_object_id(&id)
-                    .and_then(|uid| ctx.db.unit(uid).ok())
-                    .map(|u| (u.side, u.tags.0, u.pos))
-                {
-                    if vside != Side::Neutral
-                        && (vtags.contains(UnitTag::Aircraft) || vtags.contains(UnitTag::Helicopter))
-                    {
-                        ctx.ewr.record_air_kill(vpos, vside, start_ts);
-                    }
-                }
-                if let Err(e) = unit_killed(lua, ctx, id, start_ts) {
-                    error!("1 unit killed failed {:?}", e)
-                }
-                spawn_dismount(lua, ctx, dismount);
-            } else if let Some(st) = e.initiator.as_ref().and_then(|s| s.as_static().ok())
-            {
-                let id = st.object_id()?;
-                if let Err(e) = ctx.db.respawn_protected_static(lua, &ctx.idx, &id) {
-                    error!("respawn protected static failed {e:?}")
-                }
-                if let Err(e) = ctx.db.static_dead(&id, start_ts) {
-                    error!("static killed failed {e:?}")
-                }
-            }
-        }
+        Event::Dead(e) => handle_death(lua, ctx, false, DeathObj::capture(e.initiator.as_ref())?, start_ts)?,
+        Event::UnitLost(e) => handle_death(lua, ctx, true, DeathObj::capture(e.initiator.as_ref())?, start_ts)?,
         Event::PilotDead(e) => {
             if let Some(unit) = e.initiator.as_ref().and_then(|u| u.as_unit().ok()) {
                 // CSAR is only for a pilot who actually got out -- that's the
@@ -1643,28 +1814,10 @@ fn on_event(lua: MizLua, ev: Event) -> Result<()> {
                 }
             }
         }
-        Event::MissionEnd => unsafe {
-            // The Db is about to be dropped. Everything since the last
-            // slow-tick snapshot used to go with it, along with every open
-            // sortie. Not after a shutdown (a campaign reset has deleted the
-            // save on purpose, and admin_shutdown already saved otherwise),
-            // and never before a campaign was actually loaded -- that would
-            // write an empty Db over the real save.
-            if ctx.db_loaded && ctx.exit_attempts.is_none() {
-                info!("mission ending, saving the campaign");
-                return_lives(lua, ctx, DateTime::<Utc>::MAX_UTC);
-                ctx.db.close_open_sorties();
-                let snap = ctx.db.snapshot();
-                ctx.do_bg_task(Task::SaveState(ctx.miz_state_path.clone(), snap));
-            }
-            Context::reset();
-            Perf::reset();
-            Context::get_mut().init_async_bg(lua.inner())?;
-            return Ok(()); // avoid record perf with a reset perf context
-        },
+        // handled in on_event, before this
+        Event::MissionEnd => (),
         _ => (),
     }
-    record_perf(&mut perf.dcs_events, start_ts);
     Ok(())
 }
 
@@ -5632,6 +5785,9 @@ fn start_msgq_drain(lua: MizLua) -> Result<()> {
     let timer = Timer::singleton(lua)?;
     let period = 1f64 / MSGQ_DRAIN_HZ as f64;
     timer.schedule_function(timer.get_time()? + period, mlua::Value::Nil, move |lua, _, now| {
+        // Marks and messages can fire events (mark events with no
+        // initiator); they must not reach Context while this holds it.
+        let _defer = DeferEvents::begin();
         let ctx = unsafe { Context::get_mut() };
         // Round up so a rate that does not divide evenly is never throttled
         // below its configured value.
@@ -5659,6 +5815,7 @@ fn start_msgq_drain(lua: MizLua) -> Result<()> {
                 }
             }
         }
+        drain_deferred_events(lua, ctx);
         Ok(Some(now + period))
     })?;
     Ok(())
@@ -5699,6 +5856,10 @@ fn start_admin_drain(lua: MizLua) -> Result<()> {
                 try_exit_dcs(lua, ctx);
                 return Ok(None);
             }
+        }
+        // Last, with the state let go of: the handlers take it themselves.
+        if let Err(e) = catch_unwind(AssertUnwindSafe(|| admin::run_menu_invokes(lua))) {
+            error!("cockpit menu clicks panicked: {}", bg::panic_msg(&e))
         }
         Ok(Some(now + period))
     })?;

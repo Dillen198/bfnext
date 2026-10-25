@@ -229,15 +229,6 @@ pub(crate) fn menu(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Result<Vec<Mirror
     mirrored_menu(lua, menu_group(ctx, ucid)?)
 }
 
-/// Click one F10 menu item on the player's behalf.
-///
-/// Resolves the group *first* and drops every borrow of `ctx` before the
-/// handler runs, because the handler will take its own `Context::get_mut()`
-/// exactly as it does when DCS calls it.
-pub(crate) fn invoke(ctx: &Context, lua: MizLua, ucid: &Ucid, path: &[String]) -> Result<bool> {
-    let group = menu_group(ctx, ucid)?;
-    invoke_mirrored_menu(lua, group, path)
-}
 
 // ── Message feed ──────────────────────────────────────────────────────────
 //
@@ -330,16 +321,19 @@ pub(crate) fn messages(ctx: &Context, ucid: &Ucid, since: u64) -> Result<Cockpit
     Ok(CockpitMsgs { next: q.feed_seq(), messages: out })
 }
 
-/// Click a menu item and return what its handler told the player, joined --
-/// the text the player would have read in the top right of the screen.
-pub(crate) fn invoke_and_report(
-    ctx: &Context,
-    lua: MizLua,
-    ucid: &Ucid,
-    path: &[String],
-) -> Result<Option<String>> {
-    let before = ctx.db.ephemeral.msgs_ref().feed_seq();
-    if !invoke(ctx, lua, ucid, path)? {
+/// Click a menu item on the player's behalf and return what its handler told
+/// the player, joined -- the text the player would have read in the top right
+/// of the screen.
+///
+/// Must be called with nothing holding the campaign state (see
+/// `admin::run_menu_invokes`): the handler takes its own, exactly as when DCS
+/// calls it, so this only borrows the state before and after it runs.
+pub(crate) fn invoke_and_report(lua: MizLua, ucid: &Ucid, path: &[String]) -> Result<Option<String>> {
+    let (group, before) = {
+        let ctx = unsafe { Context::get_mut() };
+        (menu_group(ctx, ucid)?, ctx.db.ephemeral.msgs_ref().feed_seq())
+    };
+    if !invoke_mirrored_menu(lua, group, path)? {
         return Ok(None);
     }
     // The handler took its own Context::get_mut() while it ran; re-borrow.

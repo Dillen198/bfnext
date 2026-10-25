@@ -216,8 +216,8 @@ fn build_navaids(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactStr
 
 // ── callbacks ──────────────────────────────────────────────────────────────
 
-fn my_status(_lua: MizLua, arg: ArgTuple<GroupId, SlotId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+fn my_status(lua: MizLua, arg: ArgTuple<GroupId, SlotId>) -> Result<()> {
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let report = build_my_status(ctx, &arg.snd);
     ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
     Ok(())
@@ -226,7 +226,7 @@ fn my_status(_lua: MizLua, arg: ArgTuple<GroupId, SlotId>) -> Result<()> {
 /// Render one page of the auto-generated situational briefing. `trd` is the
 /// page index into [`crate::situation::PAGES`].
 fn situation_page(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let from = from_pos(ctx, lua, &arg.fst);
     let rep = crate::situation::build(
         ctx,
@@ -245,7 +245,7 @@ fn situation_page(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> 
 }
 
 fn support(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let from = from_pos(ctx, lua, &arg.fst);
     let report = build_support(ctx, arg.snd, from);
     ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
@@ -253,7 +253,7 @@ fn support(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
 }
 
 fn convoys(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let from = from_pos(ctx, lua, &arg.fst);
     let report = build_convoys(ctx, arg.snd, from);
     ctx.db.ephemeral.msgs().panel_to_group(30, false, arg.fst, report);
@@ -261,15 +261,15 @@ fn convoys(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
 }
 
 fn navaids_directory(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let from = from_pos(ctx, lua, &arg.fst);
     let report = build_navaids(ctx, arg.snd, from);
     ctx.db.ephemeral.msgs().panel_to_group(45, false, arg.fst, report);
     Ok(())
 }
 
-fn time_and_server(_lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+fn time_and_server(lua: MizLua, gid: GroupId) -> Result<()> {
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let now = chrono::Utc::now();
     let msg = match ctx.shutdown.as_ref() {
         None => CompactString::from("Server restart: not scheduled automatically."),
@@ -289,7 +289,7 @@ fn time_and_server(_lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn weather(lua: MizLua, arg: ArgTuple<GroupId, SlotId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
 
     // Server weather from DCSServerBot (pushed in by bfdb) is the source of
     // truth when we have it -- it agrees with the dashboard and doesn't
@@ -528,15 +528,15 @@ automatically in your Actions menu -- no separate setup needed.";
 
 // ── HQ ───────────────────────────────────────────────────────────────────────
 
-fn hq_intent(_lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+fn hq_intent(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let text = crate::hq::intent_text(ctx, arg.snd);
     ctx.db.ephemeral.msgs().panel_to_group(45, false, arg.fst, text);
     Ok(())
 }
 
-fn hq_ops(_lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+fn hq_ops(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let text = crate::hq::ops_text(ctx, arg.snd);
     ctx.db.ephemeral.msgs().panel_to_group(45, false, arg.fst, text);
     Ok(())
@@ -545,7 +545,7 @@ fn hq_ops(_lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
 /// Ask the HQ for support at the objective nearest the player. `trd` is the
 /// index into `RequestKind::ALL`.
 fn hq_request(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let Some(kind) = bfprotocols::hq::RequestKind::ALL.get(arg.trd as usize).copied() else {
         return Ok(());
     };
@@ -584,8 +584,8 @@ fn add_hq_menu(mc: &MissionCommands, p: &mut Pager, miz_gid: GroupId, side: Side
 }
 
 fn help_topic(text: &'static str) -> impl Fn(MizLua, GroupId) -> Result<()> {
-    move |_lua, gid| {
-        let ctx = unsafe { Context::get_mut() };
+    move |lua, gid| {
+        let (_entered, ctx) = crate::Entered::enter(lua);
         ctx.db.ephemeral.msgs().panel_to_group(60, false, gid, text);
         Ok(())
     }

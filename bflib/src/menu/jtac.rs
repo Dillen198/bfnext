@@ -157,7 +157,7 @@ pub(crate) fn flush_jtac_notices(ctx: &mut Context) {
 }
 
 pub(crate) fn jtac_nine_line(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let jtac = ctx
         .jtac
         .get(&arg.snd)
@@ -196,7 +196,7 @@ fn jtac_radio(lua: MizLua, ctx: &Context, gid: &DbGid) -> Option<compact_str::Co
 }
 
 pub fn jtac_status(lua: MizLua, arg: ArgTuple<Option<Ucid>, JtId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let jtac = ctx
         .jtac
         .get(&arg.snd)
@@ -246,8 +246,8 @@ Radio: {radio} (comms menu for coordinates)"));
 
 /// The lone entry of an empty Artillery / ALCM submenu. These used to run
 /// `jtac_status`, so clicking the "nothing here" line dropped a status pin.
-fn jtac_no_fire_support(_: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+fn jtac_no_fire_support(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
+    let (_entered, ctx) = crate::Entered::enter(lua);
     tell(ctx, 10,
         &arg.fst,
         format_compact!(
@@ -294,7 +294,7 @@ fn jtac_msg_auto_shift(db: &Db, jtid: JtId, jtac: &Jtac, ucid: &Ucid) -> String 
 }
 
 pub fn jtac_toggle_auto_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.toggle_auto_shift(&mut ctx.db, lua)
         .with_context(|| format_compact!("toggle auto shift {}", arg.snd))?;
@@ -308,7 +308,7 @@ pub fn jtac_toggle_auto_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<
 }
 
 pub fn jtac_toggle_ir_pointer(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.toggle_ir_pointer(&mut ctx.db, lua)
         .context("toggling ir pointer")?;
@@ -325,7 +325,7 @@ pub fn jtac_toggle_ir_pointer(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<
 }
 
 pub fn jtac_smoke_target(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     let (near, name) = change_info(jtac, &ctx.db, &arg.fst);
     match jtac.smoke_target(lua).context("smoking jtac target") {
@@ -368,7 +368,7 @@ fn jtac_msg_shift(db: &Db, jtid: JtId, jtac: &Jtac, ucid: &Ucid) -> String {
 }
 
 pub fn jtac_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.shift(&mut ctx.db, lua).context("shifting jtac target")?;
     // Nothing in laser range to shift to. This used to announce "JTAC
@@ -387,7 +387,7 @@ pub fn jtac_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
 }
 
 pub fn jtac_designate_building(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     let side = jtac.side();
     let oid = jtac.location().oid;
@@ -444,7 +444,7 @@ pub fn jtac_set_focus(
     jtid: JtId,
     pos: Option<Vector2>,
 ) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let jtac = get_jtac_mut(&mut ctx.jtac, &jtid)?;
     let n = jtac.set_focus(&mut ctx.db, lua, pos).context("setting jtac focus")?;
     let (near, name) = change_info(jtac, &ctx.db, ucid);
@@ -474,7 +474,7 @@ pub fn jtac_set_focus(
 }
 
 fn jtac_focus_my_mark(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     match latest_player_mark(ctx, lua, &arg.fst)? {
         Some(pos) => jtac_set_focus(lua, &arg.fst, arg.snd, Some(pos)),
         None => {
@@ -493,7 +493,7 @@ fn jtac_clear_focus(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
 }
 
 pub fn jtac_artillery_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, u8, Ucid>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     match ctx
         .jtac
         .artillery_mission(&ctx.db, lua, &arg.fst, &arg.snd, arg.trd)
@@ -519,7 +519,7 @@ pub fn jtac_artillery_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, u8, Ucid>) 
 }
 
 pub fn jtac_artillery_fire_all(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     match ctx
         .jtac
         .artillery_fire_all(&ctx.db, lua, &arg.fst, &arg.snd)
@@ -569,7 +569,7 @@ fn group_fire(
     ucid: Ucid,
     at: Option<ObjectiveId>,
 ) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     match ctx
         .jtac
         .fire_all_artillery_together(&ctx.db, lua, &jtid, n, at)
@@ -610,7 +610,7 @@ fn group_fire(
 }
 
 pub fn jtac_get_artillery_ammo(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     match ctx
         .jtac
         .get_artillery_ammo(&ctx.db, lua, &arg.snd)
@@ -627,7 +627,7 @@ pub fn jtac_get_artillery_ammo(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -
 }
 
 pub fn jtac_artillery_combo_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u8>, Ucid>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let mut params = arg.trd;
     let num_targets = params.pop().ok_or_else(|| anyhow!("missing combo target count"))?;
     let rounds_per_target = params.pop().ok_or_else(|| anyhow!("missing combo round count"))?;
@@ -652,7 +652,7 @@ pub fn jtac_artillery_combo_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u
 }
 
 pub fn jtac_alcm_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u8>, Ucid>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     match ctx
         .jtac
         .alcm_mission(&ctx.db, lua, &arg.fst, &arg.snd, arg.trd)
@@ -678,7 +678,7 @@ pub fn jtac_alcm_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u8>, Ucid>) 
 }
 
 fn jtac_relay_target(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.fst)?;
     match jtac.relay_target(&ctx.db, lua, &arg.snd) {
         Ok(()) => {
@@ -701,7 +701,7 @@ fn jtac_relay_target(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -> Result<(
 }
 
 pub(crate) fn jtac_clear_filter(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.clear_filter(&mut ctx.db, lua)
         .context("clearing jtac target filter")?;
@@ -717,7 +717,7 @@ pub(crate) fn jtac_clear_filter(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Resul
 }
 
 pub(crate) fn jtac_filter(lua: MizLua, arg: ArgTriple<JtId, u64, Ucid>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let filter =
         BitFlags::<UnitTag>::from_bits(arg.snd).map_err(|_| anyhow!("invalid filter bits"))?;
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.fst)?;
@@ -736,7 +736,7 @@ pub(crate) fn jtac_filter(lua: MizLua, arg: ArgTriple<JtId, u64, Ucid>) -> Resul
 }
 
 pub fn jtac_set_code(lua: MizLua, arg: ArgTriple<JtId, u16, Ucid>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     if let Err(e) = ctx.jtac.set_code_part(&mut ctx.db, lua, &arg.fst, arg.snd) {
         // a bad code is the requester's to fix, and should say why
         tell(ctx, 10,
@@ -1026,7 +1026,7 @@ fn add_alcm_menu_for_jtac(
 }
 
 pub fn call_bomber(lua: MizLua, arg: ArgTriple<JtId, Ucid, String>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let spctx = SpawnCtx::new(lua)?;
     let jtac = get_jtac(&ctx.jtac, &arg.fst)?;
@@ -1078,7 +1078,7 @@ pub fn call_bomber(lua: MizLua, arg: ArgTriple<JtId, Ucid, String>) -> Result<()
 }
 
 fn toggle_pin_jtac(lua: MizLua, arg: ArgTuple<SlotId, JtId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let subd = ctx.subscribed_jtac_menus.entry(arg.fst).or_default();
     if subd.pinned.contains(&arg.snd) {
         subd.pinned.remove(&arg.snd);
@@ -1098,7 +1098,7 @@ pub(super) fn add_menu_for_jtac(
     ucid: &Ucid,
     slot: SlotId,
 ) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let mc = MissionCommands::singleton(lua)?;
     let pinned = ctx
         .subscribed_jtac_menus
@@ -1411,7 +1411,7 @@ fn add_jtacs_by_location(
     lua: MizLua,
     arg: ArgPent<Ucid, GroupId, ObjectiveId, GroupSubMenu, String>,
 ) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let player = ctx
         .db
         .player(&arg.fst)
@@ -1458,7 +1458,7 @@ fn add_jtacs_by_location(
 }
 
 fn jtac_refresh_locations(lua: MizLua, arg: Ucid) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let player = ctx
         .db
         .player(&arg)
@@ -1471,7 +1471,7 @@ fn jtac_refresh_locations(lua: MizLua, arg: Ucid) -> Result<()> {
 }
 
 fn add_jtac_locations(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let slot = arg.trd;
     let mc = MissionCommands::singleton(lua)?;
     let player = ctx

@@ -79,7 +79,7 @@ pub(crate) fn build_ground_intel_report(ctx: &mut Context, ucid: &Ucid) -> Compa
 // ─── F10 menu glue ──────────────────────────────────────────────────────────
 
 fn toggle_ewr(lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         let st = if ewr_toggle_for(ctx, &ucid) { "enabled" } else { "disabled" };
@@ -94,7 +94,7 @@ fn toggle_ewr(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn ewr_report(lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         let report = build_braa_report(ctx, &ucid, false);
@@ -104,7 +104,7 @@ fn ewr_report(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn friendly_ewr_report(lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         let report = build_braa_report(ctx, &ucid, true);
@@ -114,7 +114,7 @@ fn friendly_ewr_report(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn ewr_units_imperial(lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         ewr_set_units_for(ctx, &ucid, true);
@@ -127,7 +127,7 @@ fn ewr_units_imperial(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn ewr_units_metric(lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         ewr_set_units_for(ctx, &ucid, false);
@@ -140,7 +140,7 @@ fn ewr_units_metric(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn gci_toggle(lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         let st = if ctx.ewr.gci_toggle(&ucid) { "enabled" } else { "disabled" };
@@ -158,7 +158,7 @@ fn gci_toggle(lua: MizLua, gid: GroupId) -> Result<()> {
 /// player from the controller's picture altogether: with auto off the
 /// controller still answers a request, it just never speaks first.
 fn gci_toggle_auto(lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         let on = ctx.ewr.gci_toggle_auto(&ucid);
@@ -176,7 +176,7 @@ fn gci_toggle_auto(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn gci_units_set(lua: MizLua, gid: GroupId, units: Option<crate::ewr::EwrUnits>, label: &str) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         ctx.ewr.gci_set_units(&ucid, units);
@@ -203,7 +203,7 @@ fn gci_units_auto(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn gci_ref_set(lua: MizLua, gid: GroupId, refmode: Option<u8>, label: &str) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         ctx.ewr.gci_set_reference(&ucid, refmode);
@@ -230,7 +230,7 @@ fn gci_ref_clock(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn ground_intel_report(lua: MizLua, gid: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         let report = build_ground_intel_report(ctx, &ucid);
