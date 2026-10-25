@@ -81,6 +81,11 @@ export const LU_BANDS = [0.5, 1.0, 3.0] as const
 /** Automatic waveoff limits inside the in-close window. */
 export const WAVEOFF_LIMITS = { lue: 3.0, gse_low: -1.2, gse_high: 1.8 } as const
 
+/** Outside the automatic waveoff limits; mirrors `grading::waveoff_limits`. */
+export function waveoffLimits(gse: number, lue: number): boolean {
+  return Math.abs(lue) > WAVEOFF_LIMITS.lue || gse < WAVEOFF_LIMITS.gse_low || gse > WAVEOFF_LIMITS.gse_high
+}
+
 /** The drawn band lines on a trap sheet: ±0.4 / ±0.8 / ±1.5 degrees. */
 export const TRAP_SHEET_BANDS = [
   { deg: 0.4, color: 'var(--band-1)' },

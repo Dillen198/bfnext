@@ -12,6 +12,8 @@
 //! and old lines keep parsing.
 
 pub mod cfg;
+#[cfg(test)]
+mod fixtures;
 pub mod grading;
 pub mod lso;
 pub mod pattern_legs;

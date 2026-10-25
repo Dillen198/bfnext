@@ -144,23 +144,29 @@ export function patternSummary(s: RelPt[], tTouch = 0): FieldPattern {
   }
   if (p.base_at_m != null && p.base_at_m < -1.5 * NM) p.calls.push(`extended downwind, base ${(-p.base_at_m / NM).toFixed(1)} nm past the threshold`)
   if (p.kind !== 'straight_in' && p.rollout_nm != null && p.rollout_nm < 0.3) p.calls.push(`short final, rolled out ${p.rollout_nm.toFixed(2)} nm`)
+  // overshooting the final: the track crosses well beyond the centreline after the roll-out
+  const over = fin.filter(x => x.along < -300).reduce((m, x) => (Math.abs(x.across) > Math.abs(m) ? x.across : m), 0)
+  if (Math.abs(over) > 150) p.calls.push(`overshot the final, ${Math.round(Math.abs(over))} m ${over > 0 ? 'right' : 'left'} of centreline`)
   return p
 }
 
 export const TAXI_LIMIT_KTS = 30
 
-/** The engine's taxi summary (pattern_legs.rs `taxi`); `s` from the touchdown on. */
-export function taxiSummary(s: { t: number; along: number; across: number; gs_kts: number; x: number; y: number }[], rwyLen: number, rwyWidth: number, end: FieldTaxi['end']): FieldTaxi {
+/**
+ * The engine's taxi summary (pattern_legs.rs `taxi`); `s` from the touchdown
+ * on, `tTouch` the touchdown time (the first sample's by default).
+ */
+export function taxiSummary(s: { t: number; along: number; across: number; gs_kts: number; x: number; y: number }[], rwyLen: number, rwyWidth: number, end: FieldTaxi['end'], tTouch = s[0]?.t ?? 0): FieldTaxi {
   const t: FieldTaxi = { rollout_m: 0, rollout_s: 0, taxi_time_s: 0, taxi_distance_m: 0, max_taxi_kts: 0, stops: 0, end, calls: [] }
   if (!s.length) return t
   const td = s[0]
   let slow = s.findIndex(x => x.gs_kts <= TAXI_LIMIT_KTS)
   if (slow < 0) slow = s.length - 1
   t.rollout_m = Math.max(0, s[slow].along - td.along)
-  t.rollout_s = s[slow].t - td.t
+  t.rollout_s = s[slow].t - tTouch
   const onRwy = (x: (typeof s)[number]) => Math.abs(x.across) <= rwyWidth / 2 + 4 && x.along >= -30 && x.along <= rwyLen + 30
   const e = s.findIndex(x => !onRwy(x))
-  if (e >= 0) { t.runway_clear_s = s[e].t - td.t; t.exit_at_m = s[e].along }
+  if (e >= 0) { t.runway_clear_s = s[e].t - tTouch; t.exit_at_m = s[e].along }
   const taxi = s.slice(slow)
   t.taxi_time_s = taxi.length ? taxi[taxi.length - 1].t - taxi[0].t : 0
   for (let i = 1; i < taxi.length; i++) t.taxi_distance_m += Math.hypot(taxi[i].x - taxi[i - 1].x, taxi[i].y - taxi[i - 1].y)
