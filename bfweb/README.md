@@ -81,6 +81,28 @@ code shared with the other front ends is in `shared/web` and `shared/icons`
 | `scripts/` | One-off generators: replay models, terrain, wireframes, flags, the icon contact sheet |
 | `public/` | Static files: models, aircraft images, wireframes, logos |
 
+## Two map libraries, on purpose
+
+Most maps (the tacmap, ground war, HQ, briefing, scope, replay) use MapLibre
+GL through react-map-gl. Six files still use Leaflet, and were left there
+after the audit asked whether to port them:
+
+- `components/TacMap.tsx`, the SITREP map on the dashboard home page, the
+  objectives page and `/snapshot`. The home page is in the entry chunk, and
+  MapLibre is about 790 kB (210 kB gzipped) against Leaflet's ~150 kB.
+  `/snapshot` is screenshotted by a headless browser for the Discord status
+  embed, where WebGL is the thing most likely to be missing.
+- `pages/CockpitPage.tsx` (the CARP map) runs in the in-DCS overlay, DCS
+  World's embedded Chromium 106. Leaflet draws with DOM and SVG; nobody has
+  checked that WebGL works there.
+- `pages/Intel*.tsx`: the recon intel map pins photos with a projective warp
+  computed on Leaflet's layer points (`IntelWarpOverlay.tsx`), with drag
+  handles and markup drawn in a custom pane. MapLibre's four-corner image
+  source could replace it, but only with real captures to test against.
+
+Port any of them when those checks have been done; then the `leaflet`,
+`react-leaflet` and `@types/leaflet` dependencies can go.
+
 ## Security headers (documented, not enabled)
 
 `vercel.json` only rewrites routes to `index.html`. The headers below are the
