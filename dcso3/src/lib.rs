@@ -11,6 +11,10 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
+// A DLL that DCS loads must use the Lua runtime DCS already has.
+#[cfg(all(feature = "vendored-lua", not(debug_assertions)))]
+compile_error!("dcso3's vendored-lua feature is for tests, not release builds");
+
 extern crate nalgebra as na;
 pub use schemars;
 use anyhow::{anyhow, bail, Result};

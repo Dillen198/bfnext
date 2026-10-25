@@ -759,3 +759,101 @@ fn apply_live_obscurants(weather: &Table, lat: f64, lon: f64, visibility_m: f64)
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn cloud_preset_by_cover_and_rain() {
+        assert_eq!(select_cloud_preset(0., 0.), (None, 4200));
+        assert_eq!(select_cloud_preset(6., 0.), (None, 4200));
+        assert_eq!(select_cloud_preset(20., 0.), (Some("Preset2"), 2500));
+        assert_eq!(select_cloud_preset(40., 0.), (Some("Preset6"), 2500));
+        assert_eq!(select_cloud_preset(60., 0.), (Some("Preset14"), 2500));
+        assert_eq!(select_cloud_preset(100., 0.), (Some("Preset22"), 2500));
+        // any real rain wins over cover, heavier rain lowers the base
+        assert_eq!(select_cloud_preset(0., 0.5), (Some("RainyPreset1"), 2900));
+        assert_eq!(select_cloud_preset(100., 3.), (Some("RainyPreset2"), 2500));
+        assert_eq!(select_cloud_preset(100., 8.), (Some("RainyPreset3"), 1700));
+        // a trace is not rain
+        assert_eq!(select_cloud_preset(0., 0.2), (None, 4200));
+    }
+
+    #[test]
+    fn wind_units() {
+        assert_eq!(wind_to_ms(5., "m/s"), 5.);
+        assert_eq!(wind_to_ms(5., "ms"), 5.);
+        assert!((wind_to_ms(36., "km/h") - 10.).abs() < 1e-9);
+        assert!((wind_to_ms(10., "kn") - 5.14444).abs() < 1e-9);
+        assert!((wind_to_ms(10., "mph") - 4.4704).abs() < 1e-9);
+        // unlabelled: plausible values pass, a "gale" is taken as km/h
+        assert_eq!(wind_to_ms(12., ""), 12.);
+        assert!((wind_to_ms(72., "") - 20.).abs() < 1e-9);
+    }
+
+    #[test]
+    fn metar_decode() {
+        let resp = json!({ "data": [{
+            "temperature": { "celsius": 27 },
+            "barometer": { "hpa": 1009 },
+            "wind": { "degrees": 90, "speed_kts": 10 },
+            "clouds": [{ "code": "FEW" }, { "code": "BKN" }],
+            "conditions": [{ "code": "-RA" }, { "code": "BR" }],
+            "station": { "geometry": { "coordinates": [144.79, 13.48] } }
+        }]});
+        let m = decode_checkwx_metar(&resp).unwrap();
+        assert_eq!(m.temp_c, 27.);
+        assert_eq!(m.pressure_hpa, Some(1009.));
+        assert!((m.wind_speed_ms - 5.14444).abs() < 1e-9);
+        assert_eq!(m.wind_from_dir, 90.);
+        // the densest layer wins
+        assert_eq!(m.cloud_cover_pct, 75.);
+        // light rain; mist is not precipitation
+        assert_eq!(m.precipitation_mm, 0.5);
+        // GeoJSON order: [lon, lat]
+        assert_eq!((m.lat, m.lon), (Some(13.48), Some(144.79)));
+    }
+
+    #[test]
+    fn metar_decode_edge_cases() {
+        // calm, no clouds, pressure only in inHg, no station position
+        let resp = json!({ "data": [{
+            "temperature": { "celsius": -5 },
+            "barometer": { "hg": 29.92 },
+            "wind": null,
+            "conditions": [{ "code": "+SN" }]
+        }]});
+        let m = decode_checkwx_metar(&resp).unwrap();
+        assert_eq!((m.wind_speed_ms, m.wind_from_dir), (0., 0.));
+        assert_eq!(m.cloud_cover_pct, 0.);
+        assert_eq!(m.precipitation_mm, 8.);
+        assert!((m.pressure_hpa.unwrap() - 1013.21).abs() < 0.01);
+        assert_eq!((m.lat, m.lon), (None, None));
+        // no pressure in any unit is not an error
+        let resp = json!({ "data": [{ "temperature": { "celsius": 10 } }] });
+        assert_eq!(decode_checkwx_metar(&resp).unwrap().pressure_hpa, None);
+        // a bad station or key comes back with no data
+        assert!(decode_checkwx_metar(&json!({ "results": 0, "data": [] })).is_err());
+        assert!(decode_checkwx_metar(&json!({ "data": [{}] })).is_err());
+    }
+
+    #[test]
+    fn live_time_writes_the_offset_clock() {
+        let lua = mlua::Lua::new();
+        let mission: Table = lua
+            .load("{ date = { Day = 1, Month = 1, Year = 2000 }, start_time = 0 }")
+            .eval()
+            .unwrap();
+        apply_live_time(&mission, Some(10.)).unwrap();
+        let now = Utc::now().with_timezone(&FixedOffset::east_opt(10 * 3600).unwrap());
+        let date: Table = mission.raw_get("date").unwrap();
+        assert_eq!(date.raw_get::<_, i64>("Year").unwrap(), now.year() as i64);
+        let start: i64 = mission.raw_get("start_time").unwrap();
+        let expect = now.hour() as i64 * 3600 + now.minute() as i64 * 60 + now.second() as i64;
+        // within a few seconds, allowing for midnight
+        assert!((start - expect).rem_euclid(86400) < 5 || (expect - start).rem_euclid(86400) < 5);
+        assert!(apply_live_time(&mission, Some(30.)).is_err());
+    }
+}

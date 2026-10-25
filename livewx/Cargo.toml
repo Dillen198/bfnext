@@ -6,6 +6,10 @@ license = "MIT"
 publish = false
 description = "Real-world weather and time for a DCS mission file: fetches METAR (CheckWX) and open-meteo, and rewrites the .miz before the mission next loads. Shared by bflib (campaign) and bfrange (training range)."
 
+[features]
+# Tests only, see dcso3's feature of the same name.
+vendored-lua = ["dcso3/vendored-lua"]
+
 [dependencies]
 anyhow = { workspace = true }
 bfprotocols = { version = "0.1", path = "../bfprotocols" }

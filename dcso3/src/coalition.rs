@@ -113,3 +113,24 @@ impl<'lua> Coalition<'lua> {
         Ok(self.t.call_function("getCountryCoalition", country)?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_ids_round_trip_and_tolerate_new_ones() {
+        let lua = Lua::new();
+        for (id, s) in [(0, Service::Atc), (1, Service::Awacs), (2, Service::Tanker), (3, Service::Fac)] {
+            assert_eq!(Service::from_lua(Value::Integer(id), &lua).unwrap(), s);
+            assert!(matches!(s.into_lua(&lua).unwrap(), Value::Integer(i) if i == id));
+        }
+        let new = Service::from_lua(Value::Integer(9), &lua).unwrap();
+        assert_eq!(new, Service::Unknown(9));
+        assert!(matches!(new.into_lua(&lua).unwrap(), Value::Integer(9)));
+        // ordering follows the DCS id, as the old #[repr] derive did
+        assert!(Service::Tanker < Service::Fac);
+        // Side is still strict
+        assert!(Side::from_lua(Value::Integer(7), &lua).is_err());
+    }
+}

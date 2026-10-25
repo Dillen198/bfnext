@@ -15,6 +15,13 @@ categories = ["api-bindings", "game-development"]
 [features]
 default = []
 perf = []
+# Tests only: build Lua 5.1 from source (mlua's vendored copy) instead of
+# linking DCS's lua.dll, so `cargo test -p dcso3 --features vendored-lua`
+# runs on a machine without DCS (or on Linux). Never for a DLL that DCS
+# loads: it would carry a second Lua runtime. A release build with it on
+# refuses to compile. Give it its own CARGO_TARGET_DIR, or every switch
+# between it and lua.dll rebuilds mlua.
+vendored-lua = ["mlua/vendored"]
 
 [dependencies]
 # The Lua-free types (ids, sides, slots, perf), re-exported at their old paths.
