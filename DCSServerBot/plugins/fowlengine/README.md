@@ -184,3 +184,26 @@ silently drops back to unicode until the new name is installed).
   [`deploy/multi-instance.md`](../../deploy/multi-instance.md).
 
 `lua/callbacks.lua` / `lua/commands.lua` are unwired legacy stubs.
+
+### Code layout
+
+DCSServerBot loads `plugins.fowlengine.commands` and calls its `setup()`. The cog,
+`FowlEngine`, is one class assembled from mixins, one module per area. discord.py
+finds each part's slash commands, `/feops` and `/range` groups, task loops and listeners
+through the MRO.
+
+| Module | What |
+|---|---|
+| `commands.py` | `FowlEngine`: config, load/unload, the status / perf / server-info embeds, staged-binary apply, rank sync, GCI, welcome |
+| `cog_events.py` | engine-log relay, capture / neutral / kill-streak alerts, round results, theatre rotation |
+| `cog_coalition.py` | per-coalition briefings, `/fe_briefing`, the Discord roles mirrored from the engine |
+| `cog_player.py` | `/fe_*` player and admin commands, the Commander Terminal |
+| `cog_ops.py` | `/feops` |
+| `cog_range.py` | training-range status embed, results feed, `/range` |
+| `cog_news.py` | the war diary feed |
+| `common.py`, `views.py` | shared constants and bfdb helpers; the Discord views |
+| `procman.py`, `autoupdate.py`, `opsapi.py`, `loganalyzer.py`, `heartbeat.py`, ... | the services the cog owns (unchanged) |
+
+Like every module here, a changed part takes effect when the bot restarts, not on a plugin
+reload. `tests/test_fowlengine_cog_wiring.py` checks that every part is wired in and that
+no member is defined twice.

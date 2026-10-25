@@ -1,6 +1,6 @@
 """
 Offline tests for the war diary -> Discord feed (newsfeed.py, and the posting
-path in commands.py). No bot, no Discord, no bfdb, no image API: bfdb's
+path in cog_news.py). No bot, no Discord, no bfdb, no image API: bfdb's
 /api/news replies are fixtures and the channel / HTTP session are fakes.
 
     python -m pytest DCSServerBot/tests -q
@@ -165,14 +165,14 @@ def test_only_bfdbs_own_image_route_is_followed():
     assert nf.attachment_name({"day": "../../x"}, None) == "dispatch-x.png"
 
 
-# ---- commands.py _post_news_for, against fakes -----------------------------------
+# ---- cog_news.py _post_news_for, against fakes -----------------------------------
 
 
 def _posting_cog(channel, *, iid="vs1"):
-    """commands.py's _post_news_for + _fetch_news_image on a stand-in cog. The
+    """cog_news.py's _post_news_for + _fetch_news_image on a stand-in cog. The
     module itself needs discord and DCSServerBot, so the two methods are
     lifted out of its source."""
-    src = (PLUGIN / "commands.py").read_text(encoding="utf-8")
+    src = (PLUGIN / "cog_news.py").read_text(encoding="utf-8")
     fns = [n for n in ast.walk(ast.parse(src))
            if isinstance(n, ast.AsyncFunctionDef) and n.name in ("_post_news_for", "_fetch_news_image")]
     assert len(fns) == 2
@@ -194,7 +194,7 @@ def _posting_cog(channel, *, iid="vs1"):
     ns = {"discord": fake_discord, "newsfeed": nf, "NO_PINGS": "NO_PINGS", "io": io, "asyncio": asyncio,
           "time": types.SimpleNamespace(time=lambda: clock.now),
           "srv_params": lambda name, **kw: {"server": name, **kw}}
-    exec(compile(ast.Module(body=fns, type_ignores=[]), "commands.py", "exec"), ns)
+    exec(compile(ast.Module(body=fns, type_ignores=[]), "cog_news.py", "exec"), ns)
 
     saves = []
 

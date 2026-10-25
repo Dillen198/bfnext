@@ -1311,7 +1311,7 @@ def test_archive_source_cannot_escape():
 
 def _apply_roles_fn():
     import ast
-    src = (PLUGIN / "commands.py").read_text(encoding="utf-8")
+    src = (PLUGIN / "cog_coalition.py").read_text(encoding="utf-8")
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, ast.AsyncFunctionDef) and n.name == "_apply_coalition_roles")
     fake = types.SimpleNamespace(Forbidden=type("Forbidden", (Exception,), {}))
@@ -1321,7 +1321,7 @@ def _apply_roles_fn():
                  "revoked": "no matching coalition registration", "empty_ok": False}
     ns = {"discord": fake, "REVOKE_MIN_PER_TICK": 10, "REVOKE_MAX_FRACTION": 0.25,
           "ROLE_KINDS": [coalition]}
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), "commands.py", "exec"), ns)
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "cog_coalition.py", "exec"), ns)
     return ns["_apply_coalition_roles"]
 
 
@@ -1388,10 +1388,10 @@ def test_incomplete_roster_never_revokes():
 # ---- persistent Discord embeds are edited in place, never re-posted per tick -------
 
 def _upsert_embed_fn():
-    """commands.py's _upsert_embed on its own (the module itself needs discord
+    """cog_range.py's _upsert_embed on its own (the module itself needs discord
     and DCSServerBot), with stand-in discord exceptions."""
     import ast
-    src = (PLUGIN / "commands.py").read_text(encoding="utf-8")
+    src = (PLUGIN / "cog_range.py").read_text(encoding="utf-8")
     fn = next(n for n in ast.walk(ast.parse(src))
               if isinstance(n, ast.AsyncFunctionDef) and n.name == "_upsert_embed")
     fn.decorator_list = []
@@ -1402,7 +1402,7 @@ def _upsert_embed_fn():
     fake.NotFound = type("NotFound", (fake.HTTPException,), {})
     fake.Forbidden = type("Forbidden", (fake.HTTPException,), {})
     ns = {"discord": fake}
-    exec(compile(ast.Module(body=[fn], type_ignores=[]), "commands.py", "exec"), ns)
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), "cog_range.py", "exec"), ns)
     return ns["_upsert_embed"], fake
 
 
