@@ -188,6 +188,24 @@ pub(crate) fn centroid(points: impl IntoIterator<Item = Vector2>) -> Vector2 {
     }
 }
 
+/// The wall clock running this much further than DCS model time between two
+/// ticks is worth a warning.
+pub(crate) const CLOCK_GAP_WARN_SECS: i64 = 30;
+
+/// How many seconds the wall clock ran ahead of model time between two
+/// ticks, if it is worth a warning (see `CLOCK_GAP_WARN_SECS`).
+pub(crate) fn clock_gap_secs(
+    model_then: f64,
+    model_now: f64,
+    wall_then: DateTime<Utc>,
+    wall_now: DateTime<Utc>,
+) -> Option<i64> {
+    let model = (model_now - model_then).max(0.);
+    let wall = (wall_now - wall_then).num_milliseconds() as f64 / 1000.;
+    let gap = (wall - model).round() as i64;
+    (gap >= CLOCK_GAP_WARN_SECS).then_some(gap)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,6 +315,17 @@ mod tests {
         assert_eq!(scramble_reason(0, 2, 0, 10, 0), Scramble::No);
         // a real threat wins over balance
         assert_eq!(scramble_reason(3, 2, 0, 10, 1), Scramble::Threat);
+    }
+
+    #[test]
+    fn clock_gap_only_for_a_real_stall() {
+        let t = Utc.with_ymd_and_hms(2026, 10, 25, 12, 0, 0).unwrap();
+        // a normal tick
+        assert_eq!(clock_gap_secs(100., 101., t, t + Duration::seconds(1)), None);
+        // a slow frame or two
+        assert_eq!(clock_gap_secs(100., 101., t, t + Duration::seconds(10)), None);
+        // paused for five minutes
+        assert_eq!(clock_gap_secs(100., 101., t, t + Duration::seconds(301)), Some(300));
     }
 
     #[test]

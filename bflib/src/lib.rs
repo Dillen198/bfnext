@@ -483,6 +483,9 @@ struct Context {
     /// flag, and when we started waiting for it. `try_exit_dcs` holds off
     /// exiting until it is set (or `SHUTDOWN_WAIT` has passed).
     shutdown_wait: Option<(Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>, std::time::Instant)>,
+    /// DCS model time and the wall clock at the last 1 s tick, to notice the
+    /// simulation stopping while the campaign's (wall-clock) timers ran on.
+    last_tick_clocks: Option<(f64, DateTime<Utc>)>,
     last_bg_check: DateTime<Utc>,
 }
 
@@ -5980,6 +5983,14 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
                 // already shutting down and the last exit call failed; don't
                 // run the campaign any further, just try to exit again
                 return Ok(try_exit_dcs(lua, ctx).then_some(now + 1.));
+            }
+            let wall = Utc::now();
+            if let Some((model_then, wall_then)) = ctx.last_tick_clocks.replace((now.0, wall)) {
+                if let Some(gap) = rules::clock_gap_secs(model_then, now.0, wall_then, wall) {
+                    warn!(
+                        "the simulation stood still for about {gap} s while the wall clock ran                          (paused, loading or hung). Campaign timers run on the wall clock, so                          anything that came due meanwhile fires now; see                          docs/plans/bflib-model-time.md"
+                    );
+                }
             }
             let res = {
                 let _defer = DeferEvents::begin();
