@@ -731,6 +731,48 @@ const SPA_CSP: &str = "default-src 'self'; \
      base-uri 'self'; \
      frame-ancestors 'none'";
 
+/// The tighter policy `--csp-enforce` sends, as an enforced header. Every
+/// third-party host the dashboard loads from is named instead of `https:`:
+/// Esri basemap tiles, the AWS terrain tiles of the 3D replay, Discord
+/// avatars, Google Fonts. `--csp-extra-src` appends to connect-src and
+/// img-src for anything a deployment adds.
+const SPA_CSP_STRICT: &str = "default-src 'self'; \
+     script-src 'self'; \
+     style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; \
+     font-src 'self' data: https://fonts.gstatic.com; \
+     img-src 'self' data: blob: https://server.arcgisonline.com https://s3.amazonaws.com https://cdn.discordapp.com{EXTRA}; \
+     connect-src 'self' https://server.arcgisonline.com https://s3.amazonaws.com{EXTRA}; \
+     worker-src 'self' blob:; \
+     child-src 'self' blob:; \
+     object-src 'none'; \
+     base-uri 'self'; \
+     form-action 'self'; \
+     frame-ancestors 'none'";
+
+/// (header name, value) for the dashboard page, set once in `main`.
+static SPA_CSP_HEADER: std::sync::OnceLock<(&'static str, HeaderValue)> = std::sync::OnceLock::new();
+
+/// Choose the dashboard's CSP: report-only and broad (the default), or
+/// enforced and tight (`--csp-enforce`), with `extra` sources appended.
+pub(crate) fn set_spa_csp(enforce: bool, extra: &[std::string::String]) {
+    let _ = SPA_CSP_HEADER.set(spa_csp(enforce, extra));
+}
+
+fn spa_csp(enforce: bool, extra: &[std::string::String]) -> (&'static str, HeaderValue) {
+    if !enforce {
+        return ("content-security-policy-report-only", HeaderValue::from_static(SPA_CSP));
+    }
+    let extra: std::string::String = extra
+        .iter()
+        // a source is one token: nothing that could end the directive
+        .filter(|s| !s.is_empty() && !s.contains([';', ',', ' ', '\'', '"', '\n', '\r']))
+        .map(|s| format!(" {s}"))
+        .collect();
+    let v = SPA_CSP_STRICT.replace("{EXTRA}", &extra);
+    let v = HeaderValue::from_str(&v).unwrap_or_else(|_| HeaderValue::from_static(SPA_CSP));
+    ("content-security-policy", v)
+}
+
 /// Add the baseline headers to any response that does not already carry its
 /// own. A route that needs something different (uploads served with
 /// `sandbox`) sets it itself and is left alone.
@@ -755,7 +797,13 @@ pub(crate) fn harden(mut r: Response) -> Response {
     default("x-frame-options", "DENY");
     default("referrer-policy", "strict-origin-when-cross-origin");
     if is_html {
-        default("content-security-policy-report-only", SPA_CSP);
+        let (name, value) = SPA_CSP_HEADER
+            .get()
+            .cloned()
+            .unwrap_or(("content-security-policy-report-only", HeaderValue::from_static(SPA_CSP)));
+        if !h.contains_key(name) {
+            h.insert(name, value);
+        }
     } else if !is_code {
         // Nothing the API returns is meant to be rendered as a page. If a
         // browser is ever talked into doing so anyway, it gets no script, no
@@ -1006,6 +1054,19 @@ mod tests {
         m.entry(&9999); // over the cap: evicts key 1, the oldest untouched
         assert_eq!(m.len(), CACHE_MAP_KEYS);
         assert!(Arc::ptr_eq(&hot, &m.entry(&0)), "the hot entry survived");
+    }
+
+    #[test]
+    fn csp_modes() {
+        let (n, v) = spa_csp(false, &[]);
+        assert_eq!(n, "content-security-policy-report-only");
+        assert!(v.to_str().unwrap().contains("connect-src 'self' https: wss: ws:"));
+        let (n, v) = spa_csp(true, &["https://tiles.example.org".into(), "evil; script-src *".into()]);
+        assert_eq!(n, "content-security-policy");
+        let v = v.to_str().unwrap();
+        assert!(v.contains("connect-src 'self' https://server.arcgisonline.com https://s3.amazonaws.com https://tiles.example.org;"));
+        assert!(!v.contains("evil"));
+        assert!(!v.contains("https:;") && !v.contains(" https: "));
     }
 
     #[test]

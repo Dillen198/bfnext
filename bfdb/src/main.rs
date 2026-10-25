@@ -433,6 +433,17 @@ struct Args {
     /// `--local-login-from 0.0.0.0/0 --local-login-from ::/0` to get that back.
     #[arg(long = "local-login-from", value_name = "IP[/PREFIX]")]
     local_login_from: Vec<websec::IpNet>,
+    /// Send the dashboard page's Content-Security-Policy as an enforced
+    /// header with tight connect-src/img-src lists, instead of the default
+    /// report-only policy that allows any https: host. Check the browser
+    /// console on the TACMAP, the replay and the 3D debrief before turning
+    /// it on: a host missing from the list blanks that view.
+    #[arg(long = "csp-enforce")]
+    csp_enforce: bool,
+    /// With --csp-enforce: one more source (e.g. https://tiles.example.org)
+    /// for connect-src and img-src. Repeat for several.
+    #[arg(long = "csp-extra-src", value_name = "SOURCE")]
+    csp_extra_src: Vec<String>,
     /// GETs under /api/ one client IP may make per minute (a token bucket
     /// with a third of that as its burst). Generous: a dashboard tab polls a
     /// few dozen a minute. Loopback callers (the bot) are never metered.
@@ -8023,6 +8034,8 @@ async fn main() -> Result<()> {
         args.trusted_proxies.clone(),
         args.trust_cf_connecting_ip,
     ));
+
+    websec::set_spa_csp(args.csp_enforce, &args.csp_extra_src);
 
     // Secrets may come from a file or the environment instead of argv.
     args.admin_password = secret_from(
