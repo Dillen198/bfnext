@@ -3273,6 +3273,16 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
     while let Some((cmd, ch)) = ctx.external_admin_commands.pop() {
         ctx.admin_commands.push((Caller::External(ch), cmd));
     }
+    // An RPC whose caller has given up (rpcs::REPLY_TIMEOUT dropped the
+    // receiver, and already told the caller it timed out) must not run late:
+    // an admin action the caller saw fail would otherwise happen anyway.
+    ctx.admin_commands.retain(|(caller, cmd)| match caller {
+        Caller::External(ch) if ch.is_closed() => {
+            warn!("dropping admin command its caller stopped waiting for: {}", short_debug(cmd));
+            false
+        }
+        _ => true,
+    });
     // More waiting than one tick takes means bfdb's queries are waiting
     // seconds for an answer -- and timing out. Say so, once a minute.
     let waiting = ctx.admin_commands.len();
