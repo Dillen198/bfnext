@@ -397,6 +397,9 @@ struct Context {
     menu_init_retries: FxHashMap<SlotId, u8>,
     last_frame: Option<DateTime<Utc>>,
     last_slow_timed_events: DateTime<Utc>,
+    /// The slow pass in progress, if it is spread over several ticks: the
+    /// next bucket to run, how many there are, and when the pass started.
+    slow_pass: Option<(usize, usize, DateTime<Utc>)>,
     /// Fingerprint of the objective set (id+owner+kind) at the last navaid
     /// reallocation. When it changes, `crate::navaids::reallocate` reruns.
     navaid_sig: Option<u64>,
@@ -4855,6 +4858,46 @@ fn step<R>(
     r
 }
 
+/// The phases of the slow pass, in order. Each runs once per pass, and a
+/// later phase never runs before an earlier one of the same pass (the HQ
+/// still plans before the campaign events apply its effects, and both
+/// before the ground war follows it).
+const SLOW_PHASES: [fn(MizLua, &mut Context, &mut PerfInner, &PathBuf, DateTime<Utc>, DateTime<Utc>) -> Result<AdminResult>; 5] =
+    [slow_phase_0, slow_phase_1, slow_phase_2, slow_phase_3, slow_phase_4];
+
+/// Environment variable: how many consecutive 1 s ticks the slow pass is
+/// spread over (1 to 5). Unset means as many as fit in
+/// `slow_timed_events_freq`, up to 5. `1` restores the old behaviour, the
+/// whole pass in one frame.
+const SLOW_TICK_SPREAD_ENV: &str = "FOWL_SLOW_TICK_SPREAD";
+
+/// How many 1 s ticks one slow pass is spread over.
+fn slow_tick_buckets(freq_secs: u64) -> usize {
+    let max = SLOW_PHASES.len();
+    let spread = std::env::var(SLOW_TICK_SPREAD_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(max);
+    spread.clamp(1, max).min((freq_secs as usize).max(1))
+}
+
+/// The phases bucket `bucket` (of `buckets`) runs: consecutive, in order,
+/// every phase exactly once across the buckets.
+fn slow_bucket_phases(bucket: usize, buckets: usize) -> std::ops::Range<usize> {
+    let n = SLOW_PHASES.len();
+    (bucket * n / buckets)..((bucket + 1) * n / buckets)
+}
+
+/// The slow pass: every `slow_timed_events_freq` seconds, every subsystem in
+/// `SLOW_PHASES` runs once.
+///
+/// All ~50 subsystems used to run in the same DCS frame, every 10 s -- a
+/// visible hitch on a busy server. Now the pass is spread over the next few
+/// 1 s ticks (`slow_tick_buckets`), a share of the phases per tick, keeping
+/// their order and the pass's start time. The cadence is unchanged: a pass
+/// starts `slow_timed_events_freq` after the previous one started, and not
+/// before the previous one has finished. `perf.slow_timed` is now the time
+/// spent in one tick's share, which is what the frame actually pays.
 fn run_slow_timed_events(
     lua: MizLua,
     ctx: &mut Context,
@@ -4862,12 +4905,41 @@ fn run_slow_timed_events(
     path: &PathBuf,
     ts: DateTime<Utc>,
 ) -> Result<AdminResult> {
-    let freq = Duration::seconds(ctx.db.ephemeral.cfg.slow_timed_events_freq as i64);
-    if ts - ctx.last_slow_timed_events < freq {
-        return Ok(AdminResult::Continue);
+    let (bucket, buckets, start_ts) = match ctx.slow_pass {
+        Some(p) => p,
+        None => {
+            let freq_secs = ctx.db.ephemeral.cfg.slow_timed_events_freq as u64;
+            let freq = Duration::seconds(freq_secs as i64);
+            if ts - ctx.last_slow_timed_events < freq {
+                return Ok(AdminResult::Continue);
+            }
+            let start_ts = Utc::now();
+            ctx.last_slow_timed_events = start_ts;
+            (0, slow_tick_buckets(freq_secs), start_ts)
+        }
+    };
+    let t0 = Utc::now();
+    ctx.slow_pass = (bucket + 1 < buckets).then_some((bucket + 1, buckets, start_ts));
+    for phase in slow_bucket_phases(bucket, buckets) {
+        if let AdminResult::Shutdown = SLOW_PHASES[phase](lua, ctx, perf, path, ts, start_ts)? {
+            ctx.slow_pass = None;
+            return Ok(AdminResult::Shutdown);
+        }
     }
-    let start_ts = Utc::now();
-    ctx.last_slow_timed_events = start_ts;
+    record_perf(&mut perf.slow_timed, t0);
+    Ok(AdminResult::Continue)
+}
+
+/// Slow pass, phase 0: save, players, lives, kills, repairs, C-130 and actions.
+#[allow(unused_variables)]
+fn slow_phase_0(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    path: &PathBuf,
+    ts: DateTime<Utc>,
+    start_ts: DateTime<Utc>,
+) -> Result<AdminResult> {
 
     // Save first. The snapshot used to be taken near the end of this tick,
     // after two dozen subsystems, so any one of them panicking or bailing out
@@ -5017,6 +5089,19 @@ fn run_slow_timed_events(
             error!("could not advance actions {e:?}")
         }
     });
+    Ok(AdminResult::Continue)
+}
+
+/// Slow pass, phase 1: EWR, intel, recon and unit culling.
+#[allow(unused_variables)]
+fn slow_phase_1(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    path: &PathBuf,
+    ts: DateTime<Utc>,
+    start_ts: DateTime<Utc>,
+) -> Result<AdminResult> {
     step(lua, ctx, "ewr tracks", |ctx| {
         let ts = Utc::now();
         if let Err(e) = ctx.ewr.update_tracks(
@@ -5124,6 +5209,19 @@ fn run_slow_timed_events(
         }
         record_perf(&mut perf.unit_culling, ts);
     });
+    Ok(AdminResult::Continue)
+}
+
+/// Slow pass, phase 2: markup, production, carriers, frontline, tasks and JTAC.
+#[allow(unused_variables)]
+fn slow_phase_2(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    path: &PathBuf,
+    ts: DateTime<Utc>,
+    start_ts: DateTime<Utc>,
+) -> Result<AdminResult> {
     step(lua, ctx, "objective markup", |ctx| {
         let ts = Utc::now();
         if let Err(e) = ctx.db.update_objectives_markup() {
@@ -5202,6 +5300,19 @@ fn run_slow_timed_events(
     step(lua, ctx, "jtac contacts", |ctx| update_jtac_contacts(ctx, lua));
     step(lua, ctx, "jtac marks", |ctx| ctx.jtac.reconcile_marks(lua, &mut ctx.db));
     record_perf(&mut perf.update_jtac_contacts, ts);
+    Ok(AdminResult::Continue)
+}
+
+/// Slow pass, phase 3: points, commander, HQ and campaign events.
+#[allow(unused_variables)]
+fn slow_phase_3(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    path: &PathBuf,
+    ts: DateTime<Utc>,
+    start_ts: DateTime<Utc>,
+) -> Result<AdminResult> {
     step(lua, ctx, "periodic points", |ctx| award_periodic_points(ctx, start_ts));
     step(lua, ctx, "commander", |ctx| tick_smart_commander(lua, ctx, start_ts));
     // The theatre HQ plans and dispatches the war's missions and logistics
@@ -5209,7 +5320,6 @@ fn run_slow_timed_events(
     // effects it queues are applied this tick, and before the ground war so
     // the ground AI follows this pass's main effort.
     step(lua, ctx, "hq", |ctx| hq::tick(lua, ctx, perf, start_ts));
-    record_perf(&mut perf.slow_timed, start_ts);
 
     // Tick campaign events: active event processing (expiry, effects,
     // escalation). This, and the upkeep of the helo missions, CAP flights and
@@ -5267,6 +5377,19 @@ fn run_slow_timed_events(
             retarget_cap_groups(lua, ctx, start_ts)
         });
     }
+    Ok(AdminResult::Continue)
+}
+
+/// Slow pass, phase 4: air life, modern war, ground war and housekeeping.
+#[allow(unused_variables)]
+fn slow_phase_4(
+    lua: MizLua,
+    ctx: &mut Context,
+    perf: &mut PerfInner,
+    path: &PathBuf,
+    ts: DateTime<Utc>,
+    start_ts: DateTime<Utc>,
+) -> Result<AdminResult> {
     // Wingmen, autonomous AI packages and civil traffic (`Cfg::air_life`).
     step(lua, ctx, "air life", |ctx| airlife::tick(lua, ctx, perf, start_ts));
     // EW, SAM magazines, strike raids, sea drones, tempo (`Cfg::modern_war`).
@@ -6075,4 +6198,28 @@ fn bflib(lua: &Lua) -> LuaResult<LuaTable<'_>> {
     install_panic_hook();
     unsafe { Context::get_mut() }.init_async_bg(lua.inner()).map_err(dcso3::lua_err)?;
     dcso3::create_root_module(lua, init_hooks, init_miz)
+}
+
+#[cfg(test)]
+mod slow_tick_tests {
+    use super::*;
+
+    #[test]
+    fn every_phase_runs_once_in_order_however_the_pass_is_split() {
+        for buckets in 1..=SLOW_PHASES.len() {
+            let ran: Vec<usize> = (0..buckets).flat_map(|b| slow_bucket_phases(b, buckets)).collect();
+            assert_eq!(ran, (0..SLOW_PHASES.len()).collect::<Vec<_>>(), "{buckets} buckets");
+            // no tick is left with nothing to do
+            assert!((0..buckets).all(|b| !slow_bucket_phases(b, buckets).is_empty()));
+        }
+    }
+
+    #[test]
+    fn a_short_slow_period_spreads_less() {
+        if std::env::var(SLOW_TICK_SPREAD_ENV).is_err() {
+            assert_eq!(slow_tick_buckets(10), SLOW_PHASES.len());
+            assert_eq!(slow_tick_buckets(3), 3);
+            assert_eq!(slow_tick_buckets(0), 1);
+        }
+    }
 }
