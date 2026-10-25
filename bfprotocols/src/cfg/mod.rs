@@ -1158,6 +1158,57 @@ pub struct HeloCargoConfig {
     pub auto_unpack: bool,
 }
 
+/// A credential in the config (an API key). Serializes as the plain string,
+/// so the config file round-trips and `Cfg::load` can write it back, but
+/// `Debug` and `Display` print `<redacted>`: a logged or `{:?}`-dumped config
+/// must not leak it.
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    /// The secret itself, for the one place that sends it.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for Secret {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for Secret {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for Secret {
+    fn from(s: &str) -> Self {
+        Self(s.into())
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(if self.0.is_empty() { "\"\"" } else { "<redacted>" })
+    }
+}
+
+impl fmt::Display for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
+}
+
 /// Syncs the mission file's ground-level weather (and optionally date/time)
 /// with real-world conditions before each scheduled restart. DCS has no API
 /// to change an already-running mission's weather or clock, so this rewrites
@@ -1188,7 +1239,7 @@ pub struct LiveWeatherConfig {
     /// air), and a failed/empty METAR fetch falls back to open-meteo for
     /// everything.
     #[serde(default)]
-    pub checkwx_api_key: Option<String>,
+    pub checkwx_api_key: Option<Secret>,
     /// ICAO of the station whose METAR drives the surface layer -- pick the
     /// real-world field nearest the operating area (e.g. "LTAG" Incirlik,
     /// "OSDI" Damascus, "OLBA" Beirut, "OJAI" Amman). Only used when
@@ -6021,5 +6072,26 @@ impl Cfg {
             },
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod secret_tests {
+    use super::*;
+
+    #[test]
+    fn secret_round_trips_but_does_not_print() {
+        let cfg: LiveWeatherConfig = serde_json::from_str(
+            r#"{"lat":1,"lon":2,"checkwx_api_key":"abc123","metar_station":"PGUA"}"#,
+        )
+        .unwrap();
+        let key = cfg.checkwx_api_key.as_ref().unwrap();
+        assert_eq!(key.expose(), "abc123");
+        assert_eq!(cfg.checkwx_api_key.as_deref(), Some("abc123"));
+        assert!(!format!("{cfg:?}").contains("abc123"));
+        assert_eq!(key.to_string(), "<redacted>");
+        // what Cfg::load writes back still has the real key
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains(r#""checkwx_api_key":"abc123""#));
     }
 }
