@@ -1377,7 +1377,7 @@ class OpsApi:
                 doc = json.load(fh)
         except FileNotFoundError:
             return None, ("remote backups are not turned on in this box's Fowl Engine Manager "
-                          "(on the box: Manager -> SETTINGS -> Remote backups; needs Manager 0.4 or later)")
+                          "(on the box: Manager -> SETTINGS -> Remote backups; needs a Manager newer than 0.3.2)")
         except PermissionError:
             return None, ("the bot can't read the Manager's remote folder -- on the box, check SETTINGS -> "
                           "desktop user, then turn Remote backups off and on again (that grants the bot's user)")

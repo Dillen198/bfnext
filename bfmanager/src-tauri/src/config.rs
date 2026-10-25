@@ -127,6 +127,37 @@ pub struct ManagerConfig {
     /// either way.
     #[serde(default = "default_true")]
     pub start_with_windows: bool,
+    /// This PC only controls other server boxes over Tailscale: no
+    /// DCSServerBot here, so Setup doesn't ask for one.
+    #[serde(default)]
+    pub controller_only: bool,
+    /// Other server boxes this app controls through their OPS API
+    /// (deploy/manager-remote.md). This box's own bot isn't listed: it is
+    /// always there as "local" while bot_dir is set.
+    #[serde(default)]
+    pub servers: Vec<RemoteServer>,
+    /// The name this box's own bot shows under in the server picker
+    /// (blank = the PC's name).
+    #[serde(default)]
+    pub local_name: Option<String>,
+    /// Let a controller PC start / list / check whole-box backups here
+    /// through this box's OPS API (remote.rs). Restore stays local.
+    #[serde(default)]
+    pub remote_backups: bool,
+}
+
+/// One server box this app controls from afar.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RemoteServer {
+    /// Stable, short ([a-z0-9-]); "local" is this box.
+    pub id: String,
+    pub name: String,
+    /// The OPS API's base, e.g. http://100.101.2.86:9876/stats/fowlengine/ops
+    pub url: String,
+    /// The box's ops_api.api_key. In memory it is the plain key; on disk it
+    /// is DPAPI-encrypted (`key_dpapi`), and it never goes to the UI.
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 impl Default for ManagerConfig {
@@ -139,6 +170,8 @@ impl Default for ManagerConfig {
 /// in memory, and over IPC to the UI (masked there), it is the plain
 /// `github_token` as before.
 const TOKEN_PROTECTED: &str = "github_token_dpapi";
+/// Each servers[] entry keeps its OPS key DPAPI-encrypted under this key.
+const SERVER_KEY_PROTECTED: &str = "key_dpapi";
 
 impl ManagerConfig {
     pub fn load() -> ManagerConfig {
@@ -162,6 +195,23 @@ impl ManagerConfig {
             .and_then(|t| t.as_str())
             .map(|t| !t.is_empty())
             .unwrap_or(false);
+        let mut plain_server_key = false;
+        if let Some(list) = v.get_mut("servers").and_then(|s| s.as_array_mut()) {
+            for s in list.iter_mut().filter_map(|s| s.as_object_mut()) {
+                plain_server_key |= s.get("key").and_then(|k| k.as_str()).map(|k| !k.is_empty()).unwrap_or(false);
+                if let Some(blob) = s.remove(SERVER_KEY_PROTECTED).and_then(|b| b.as_str().map(String::from)) {
+                    let key = dpapi::unprotect_b64_for(&blob, dpapi::SERVER_KEY)
+                        .map_err(|e| {
+                            log::warn!(
+                                "manager.json: the OPS key of server {} can't be decrypted on this PC ({e:#}) -- enter it again",
+                                s.get("name").and_then(|n| n.as_str()).unwrap_or("?")
+                            );
+                        })
+                        .ok();
+                    s.insert("key".into(), key.map(Into::into).unwrap_or(serde_json::Value::Null));
+                }
+            }
+        }
         if let Some(blob) = v.get(TOKEN_PROTECTED).and_then(|b| b.as_str()).map(String::from) {
             let token = dpapi::unprotect_b64(&blob)
                 .map_err(|e| {
@@ -179,7 +229,7 @@ impl ManagerConfig {
         let cfg: ManagerConfig = serde_json::from_value(v).unwrap_or_default();
         // Written by a version that kept the token in plain text: encrypt it
         // now (best effort -- only an elevated GUI or the service can write).
-        if plain_on_disk && dpapi::AVAILABLE {
+        if (plain_on_disk || plain_server_key) && dpapi::AVAILABLE {
             if let Err(e) = cfg.save_to(path) {
                 log::debug!("manager.json: encrypting the GitHub token deferred: {e:#}");
             }
@@ -202,6 +252,25 @@ impl ManagerConfig {
                     Err(e) => log::warn!(
                         "manager.json: could not encrypt the GitHub token ({e:#}); saved as plain text"
                     ),
+                }
+            }
+            if let Some(list) = o.get_mut("servers").and_then(|s| s.as_array_mut()) {
+                for s in list.iter_mut().filter_map(|s| s.as_object_mut()) {
+                    s.remove(SERVER_KEY_PROTECTED);
+                    let key = s.get("key").and_then(|k| k.as_str()).filter(|k| !k.is_empty()).map(String::from);
+                    match key {
+                        None => {
+                            s.remove("key");
+                        }
+                        Some(k) if dpapi::AVAILABLE => match dpapi::protect_b64_for(&k, dpapi::SERVER_KEY) {
+                            Ok(blob) => {
+                                s.remove("key");
+                                s.insert(SERVER_KEY_PROTECTED.into(), blob.into());
+                            }
+                            Err(e) => log::warn!("manager.json: could not encrypt a server's OPS key ({e:#}); saved as plain text"),
+                        },
+                        Some(_) => {}
+                    }
                 }
             }
         }
@@ -240,20 +309,30 @@ pub mod dpapi {
     pub const AVAILABLE: bool = cfg!(windows);
     /// Ties the blobs to this use, so another program's DPAPI blob can't be
     /// swapped in.
-    #[cfg(windows)]
-    const ENTROPY: &[u8] = b"FowlEngineManager/manager.json/github_token/v1";
+    pub const GITHUB_TOKEN: &[u8] = b"FowlEngineManager/manager.json/github_token/v1";
+    /// A server's OPS key (servers[].key_dpapi): its own entropy, so a key
+    /// blob can't be moved into github_token_dpapi and sent to GitHub.
+    pub const SERVER_KEY: &[u8] = b"FowlEngineManager/manager.json/server_key/v1";
 
     pub fn protect_b64(plain: &str) -> Result<String> {
-        Ok(base64::engine::general_purpose::STANDARD.encode(protect(plain.as_bytes())?))
+        protect_b64_for(plain, GITHUB_TOKEN)
     }
 
     pub fn unprotect_b64(blob: &str) -> Result<String> {
+        unprotect_b64_for(blob, GITHUB_TOKEN)
+    }
+
+    pub fn protect_b64_for(plain: &str, entropy: &[u8]) -> Result<String> {
+        Ok(base64::engine::general_purpose::STANDARD.encode(protect(plain.as_bytes(), entropy)?))
+    }
+
+    pub fn unprotect_b64_for(blob: &str, entropy: &[u8]) -> Result<String> {
         let raw = base64::engine::general_purpose::STANDARD.decode(blob.trim())?;
-        Ok(String::from_utf8(unprotect(&raw)?)?)
+        Ok(String::from_utf8(unprotect(&raw, entropy)?)?)
     }
 
     #[cfg(windows)]
-    fn call(data: &[u8], encrypt: bool) -> Result<Vec<u8>> {
+    fn call(data: &[u8], encrypt: bool, entropy: &[u8]) -> Result<Vec<u8>> {
         use windows_sys::Win32::Foundation::LocalFree;
         use windows_sys::Win32::Security::Cryptography::{
             CryptProtectData, CryptUnprotectData, CRYPTPROTECT_LOCAL_MACHINE,
@@ -261,7 +340,7 @@ pub mod dpapi {
         };
         let input = CRYPT_INTEGER_BLOB { cbData: data.len() as u32, pbData: data.as_ptr() as *mut u8 };
         let entropy =
-            CRYPT_INTEGER_BLOB { cbData: ENTROPY.len() as u32, pbData: ENTROPY.as_ptr() as *mut u8 };
+            CRYPT_INTEGER_BLOB { cbData: entropy.len() as u32, pbData: entropy.as_ptr() as *mut u8 };
         let mut out = CRYPT_INTEGER_BLOB { cbData: 0, pbData: std::ptr::null_mut() };
         let flags = CRYPTPROTECT_UI_FORBIDDEN | CRYPTPROTECT_LOCAL_MACHINE;
         // SAFETY: every pointer is valid for the duration of the call; `out`
@@ -299,19 +378,19 @@ pub mod dpapi {
     }
 
     #[cfg(windows)]
-    fn protect(data: &[u8]) -> Result<Vec<u8>> {
-        call(data, true)
+    fn protect(data: &[u8], entropy: &[u8]) -> Result<Vec<u8>> {
+        call(data, true, entropy)
     }
     #[cfg(windows)]
-    fn unprotect(data: &[u8]) -> Result<Vec<u8>> {
-        call(data, false)
+    fn unprotect(data: &[u8], entropy: &[u8]) -> Result<Vec<u8>> {
+        call(data, false, entropy)
     }
     #[cfg(not(windows))]
-    fn protect(_: &[u8]) -> Result<Vec<u8>> {
+    fn protect(_: &[u8], _: &[u8]) -> Result<Vec<u8>> {
         anyhow::bail!("DPAPI is Windows-only")
     }
     #[cfg(not(windows))]
-    fn unprotect(_: &[u8]) -> Result<Vec<u8>> {
+    fn unprotect(_: &[u8], _: &[u8]) -> Result<Vec<u8>> {
         anyhow::bail!("DPAPI is Windows-only")
     }
 }
@@ -387,10 +466,48 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Server OPS keys: encrypted on disk under their own entropy, plain in
+    /// memory; a config from before the registry loads with none.
+    #[cfg(windows)]
+    #[test]
+    fn server_keys_are_dpapi_encrypted() {
+        let dir = std::env::temp_dir().join(format!("fowl-srv-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("manager.json");
+        // an existing install: no servers key at all
+        std::fs::write(&path, r#"{"bot_dir":"C:\\DCSServerBot","channel":"stable"}"#).unwrap();
+        let mut c = ManagerConfig::load_from(&path);
+        assert!(c.servers.is_empty() && !c.controller_only && !c.remote_backups);
+        assert_eq!(c.bot_dir.as_deref(), Some("C:\\DCSServerBot"));
+        c.servers.push(RemoteServer {
+            id: "range".into(),
+            name: "Range".into(),
+            url: "http://100.101.2.86:9876/fowlengine/ops".into(),
+            key: Some("opskey-0123456789abcdef".into()),
+        });
+        c.servers.push(RemoteServer { id: "nokey".into(), name: "No key".into(), url: "http://100.1.1.1:1/fowlengine/ops".into(), key: None });
+        c.save_to(&path).unwrap();
+        let disk = std::fs::read_to_string(&path).unwrap();
+        assert!(!disk.contains("opskey-0123456789abcdef") && disk.contains(SERVER_KEY_PROTECTED), "{disk}");
+        let back = ManagerConfig::load_from(&path);
+        assert_eq!(back.servers, c.servers);
+        // a server key blob can't be passed off as the GitHub token
+        let v: serde_json::Value = serde_json::from_str(&disk).unwrap();
+        let blob = v["servers"][0][SERVER_KEY_PROTECTED].as_str().unwrap();
+        assert!(dpapi::unprotect_b64(blob).is_err());
+        // a key typed into manager.json by hand is encrypted on the next load
+        std::fs::write(&path, r#"{"servers":[{"id":"a","name":"A","url":"http://100.1.1.1:1/fowlengine/ops","key":"plain-key-0123456789"}]}"#).unwrap();
+        assert_eq!(ManagerConfig::load_from(&path).servers[0].key.as_deref(), Some("plain-key-0123456789"));
+        assert!(!std::fs::read_to_string(&path).unwrap().contains("plain-key-0123456789"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn defaults() {
         let c = ManagerConfig::default();
         assert!(c.auto_update && c.sync_plugin && c.start_with_windows);
+        assert!(!c.controller_only && !c.remote_backups && c.servers.is_empty());
         assert_eq!(c.channel, "stable");
         assert_eq!(c.bot_command(), "run.cmd");
     }

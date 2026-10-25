@@ -13,6 +13,8 @@ pub mod botcfg;
 pub mod config;
 pub mod desktop;
 pub mod newbox;
+pub mod remote;
+pub mod servers;
 pub mod update;
 #[cfg(windows)]
 pub mod winsvc;
@@ -64,6 +66,11 @@ struct AppState {
     sessions: Vec<desktop::Session>,
     /// The logon task that starts this app with Windows.
     autostart: autostart::AutostartStatus,
+    /// Every server box the picker offers (this one's bot first), keys never included.
+    servers: Vec<servers::ServerView>,
+    /// This box's remote-backup bridge (remote.rs), when it is on: a job a
+    /// controller PC started shows on the BACKUP tab here too.
+    remote_backup: Option<serde_json::Value>,
 }
 
 #[tauri::command]
@@ -73,6 +80,11 @@ async fn get_state() -> CmdResult<serde_json::Value> {
         let mut cfg = ManagerConfig::load();
         if cfg.github_token.as_deref().map(|t| !t.is_empty()).unwrap_or(false) {
             cfg.github_token = Some(MASK.into());
+        }
+        let server_views = servers::list(&cfg);
+        // the OPS keys stay on this side; the views say whether one is set
+        for s in &mut cfg.servers {
+            s.key = None;
         }
         #[cfg(windows)]
         let (service, old_service, elevated) = (
@@ -109,6 +121,7 @@ async fn get_state() -> CmdResult<serde_json::Value> {
             },
             _ => (None, None),
         };
+        let cfg_remote_backups = cfg.remote_backups;
         let st = AppState {
             version: update::current_version().to_string(),
             exe: std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default(),
@@ -131,6 +144,8 @@ async fn get_state() -> CmdResult<serde_json::Value> {
             autologon: desktop::autologon_status(),
             sessions: desktop::sessions(),
             autostart: autostart::status(),
+            servers: server_views,
+            remote_backup: if cfg_remote_backups { remote::read_status() } else { None },
         };
         Ok(serde_json::to_value(st)?)
     })
@@ -154,9 +169,13 @@ async fn disable_autologon() -> CmdResult<()> {
 async fn save_config(config: ManagerConfig) -> CmdResult<()> {
     blocking(move || {
         let mut config = config;
+        let saved = ManagerConfig::load();
         if config.github_token.as_deref() == Some(MASK) {
-            config.github_token = ManagerConfig::load().github_token;
+            config.github_token = saved.github_token;
         }
+        // the server list (and its keys) is only changed by save_server /
+        // remove_server; what the UI sends back has no keys in it
+        config.servers = saved.servers;
         if !["stable", "beta"].contains(&config.channel.as_str()) {
             anyhow::bail!("channel must be stable or beta");
         }
@@ -336,43 +355,72 @@ async fn install_update(app: tauri::AppHandle) -> CmdResult<String> {
     Ok("installing -- the app closes and comes back when it's done".into())
 }
 
-#[derive(Serialize)]
-struct OpsResponse {
-    status: u16,
-    content_type: String,
-    body: String,
+/// The FowlEngine plugin's OPS API on one server box: this one's own bot
+/// (`server` None or "local" -- no Discord login: whoever can run this app
+/// as admin already owns the box) or another box over Tailscale, with the
+/// key saved for it. Keys are added here and never reach the UI.
+#[tauri::command]
+async fn ops_request(
+    server: Option<String>,
+    method: String,
+    path: String,
+    body: Option<String>,
+) -> CmdResult<servers::OpsResponse> {
+    blocking(move || {
+        let t = servers::target(&ManagerConfig::load(), server.as_deref())?;
+        servers::request(&t, &method, &path, body)
+    })
+    .await
 }
 
-/// The FowlEngine plugin's OPS API, straight from this PC (no Discord login:
-/// whoever can run this app as admin already owns the box).
+/// Add or change a server box (SERVERS tab); returns the new list.
 #[tauri::command]
-async fn ops_request(method: String, path: String, body: Option<String>) -> CmdResult<OpsResponse> {
+async fn save_server(server: servers::ServerInput) -> CmdResult<Vec<servers::ServerView>> {
+    blocking(move || {
+        let mut cfg = ManagerConfig::load();
+        servers::upsert(&mut cfg, server)?;
+        cfg.save()?;
+        Ok(servers::list(&cfg))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn remove_server(id: String) -> CmdResult<Vec<servers::ServerView>> {
+    blocking(move || {
+        let mut cfg = ManagerConfig::load();
+        servers::remove(&mut cfg, &id)?;
+        cfg.save()?;
+        Ok(servers::list(&cfg))
+    })
+    .await
+}
+
+/// "Test connection" for a saved server or one being typed in. A draft
+/// without a key uses the one saved under its id.
+#[tauri::command]
+async fn test_server(server: servers::ServerInput) -> CmdResult<servers::TestResult> {
     blocking(move || {
         let cfg = ManagerConfig::load();
-        let dir = cfg.bot_dir().ok_or_else(|| anyhow::anyhow!("no DCSServerBot folder configured -- run Setup"))?;
-        let t = bot::ops_target(&dir)?;
-        let path = path.trim_start_matches('/');
-        if path.contains("..") {
-            anyhow::bail!("bad path");
+        let id = server.id.clone().filter(|i| !i.trim().is_empty());
+        if id.as_deref() == Some(servers::LOCAL_ID) {
+            return Ok(servers::test(&servers::target(&cfg, None)?));
         }
-        let url = format!("{}/{}", t.base, path);
-        let c = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(300)).build()?;
-        let req = if method.eq_ignore_ascii_case("POST") {
-            c.post(&url).header("content-type", "application/json").body(body.unwrap_or_else(|| "{}".into()))
-        } else {
-            c.get(&url)
+        let saved = id.as_deref().and_then(|i| cfg.servers.iter().find(|s| s.id == i));
+        let key = server
+            .key
+            .clone()
+            .filter(|k| !k.trim().is_empty())
+            .or_else(|| saved.and_then(|s| s.key.clone()))
+            .ok_or_else(|| anyhow::anyhow!("paste the box's ops_api.api_key first"))?;
+        let t = servers::Target {
+            id: id.unwrap_or_default(),
+            name: if server.name.trim().is_empty() { "the server".into() } else { server.name.trim().into() },
+            base: servers::normalize_url(&server.url)?,
+            key: key.trim().to_string(),
+            local: false,
         };
-        let resp = req.header("X-API-Key", t.key).send().map_err(|e| {
-            anyhow::anyhow!("the bot's WebService is not answering at {} ({e}) -- is DCSServerBot running?", t.base)
-        })?;
-        let status = resp.status().as_u16();
-        let content_type = resp
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("application/json")
-            .to_string();
-        Ok(OpsResponse { status, content_type, body: resp.text()? })
+        Ok(servers::test(&t))
     })
     .await
 }
@@ -722,6 +770,9 @@ pub fn run() {
             check_update,
             install_update,
             ops_request,
+            save_server,
+            remove_server,
+            test_server,
             read_log,
             open_path,
             list_bot_configs,
