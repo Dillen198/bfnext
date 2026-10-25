@@ -1,6 +1,6 @@
-# Vector Strike DCSServerBot Plugin
+# Fowl Engine DCSServerBot plugin (`fowlengine`)
 
-The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaign to Discord. It features a continuously updating live campaign status, objective capture alerts, killstreak achievements, and interactive Discord slash commands for player stats and commander logistics.
+The Fowl Engine plugin for DCSServerBot bridges your DCS Vector Strike campaign to Discord. It features a continuously updating live campaign status, objective capture alerts, killstreak achievements, and interactive Discord slash commands for player stats and commander logistics.
 
 ## Features
 
@@ -26,13 +26,25 @@ The Vector Strike plugin for DCSServerBot bridges your DCS Vector Strike campaig
 
 ## Installation
 
-1. Copy the `vectorstrike` folder into your `DCSServerBot\plugins` directory.
-2. Ensure you have the `vectorstrike.yaml` configuration file set up (see Configuration below).
-3. Restart your DCSServerBot instance so it loads the plugin.
+**With Fowl Engine Manager** (`bfmanager/`): Setup → **Install plugin**. The Manager copies
+this folder, the community plugins and the `bf*` extensions into the bot, and keeps them
+current on every service start.
+
+**By hand:**
+
+1. Copy this `fowlengine` folder into your `DCSServerBot\plugins` directory, and add
+   `fowlengine` to `opt_plugins` in the bot's `config\main.yaml`.
+2. Copy `fowlengine.sample.yaml` to `config\plugins\fowlengine.yaml` and fill it in (see
+   Configuration below).
+3. Optional dependencies for the community plugins, and for faster signature checks:
+   `pip install -r requirements-plugins.txt` in the bot's venv. The file is in this repo's
+   `DCSServerBot/` folder.
+4. Restart DCSServerBot so it loads the plugin.
 
 ## Configuration
 
-In your DCSServerBot `config/plugins/` folder, create a file named `vectorstrike.yaml` and populate it with your channel IDs and secrets:
+In your DCSServerBot `config/plugins/` folder, create `fowlengine.yaml` (start from
+`fowlengine.sample.yaml`) with your channel IDs and secrets. The essentials:
 
 ```yaml
 DEFAULT:
@@ -49,7 +61,7 @@ DEFAULT:
   dashboard_url: "https://bfweb.your-domain.com"
 
   # The base URL to your bfdb REST API
-  api_url: "http://localhost:8765"
+  api_url: "http://localhost:8880"
 
   # (Optional) Discord channel for the live engine log relay. Omit to disable.
   engine_log_channel: 123456789012345678

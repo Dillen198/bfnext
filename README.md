@@ -10,18 +10,32 @@ dashboard — built in Rust.
 
 ## What's in this repo
 
-| Crate/app | What it is |
+**Rust workspace** (`cargo build --release`):
+
+| Crate | What it is |
 |---|---|
 | `dcso3` | Rust bindings to DCS's Lua scripting API |
-| `bflib` | The campaign engine itself — compiled to `bflib.dll`, loaded into DCS via `require()` |
+| `bflib` | The campaign engine itself, compiled to `bflib.dll` and loaded into DCS via `require()` |
+| `bfrange` | The Vector Strike training range engine (`bfrange.dll`): scores bombing, strafing, carrier passes, AAR, missile defence, anti-ship, helicopter and combined-arms drills. Its mission is built by `bfrange/mission/build_range_miz.py` |
+| `livewx` | Live weather and time for a `.miz` (METAR + open-meteo), shared by `bflib` and `bfrange` |
 | `bfprotocols` | Shared config/data types used across the other crates |
-| `bfdb` | Stats database + web server: serves the JSON/WebSocket API and (by default) the dashboard/site below |
-| `bftools` | CLI: builds the final `.miz` mission file from templates, and generates `special_sam_sites` config from a mission editor template |
-| `bfweb` | The admin/stats dashboard (React) |
-| `bfsite` | The public-facing campaign website (React) |
-| `bfwiki` | The player/gameplay wiki (React) — public to read, admin login to edit; content lives in `bfdb`, seeded from `bfdb/seed_wiki/*.md` |
-| `user-guide` | Static mdBook version of the gameplay docs |
+| `bfdb` | Stats database and web server: the JSON/WebSocket API for every web app, plus the embedded dashboard and site |
 | `yats` | Small typed wrapper around the Sled embedded database |
+| `bfcockpit/installer`, `bfcockpit/net` | The client-side cockpit plugin's installer (`bfcockpit-install`) and its HTTPS helper DLL (`bfcockpit_net.dll`). The plugin's Lua lives in `bfcockpit/Scripts` and `bfcockpit/Mods` |
+
+**Built on their own:**
+
+| Path | What it is |
+|---|---|
+| `bftools` | CLI: builds the final `.miz` from templates, and generates `special_sam_sites` config from a mission editor template (own `Cargo.lock`) |
+| `bfmanager` | Fowl Engine Manager: Tauri app, Windows service and auto-updater for a server box (own `Cargo.lock`; its UI is built from `bfweb`) |
+| `bfweb` | The campaign dashboard (React + Vite); also builds the Manager's UI |
+| `bfsite` | The public Vector Strike website (React), embedded in `bfdb` |
+| `bfwiki` | The player wiki (React). Public to read, admin login to edit; content lives in `bfdb`, seeded from `bfdb/seed_wiki/*.md` |
+| `bfrange-web` | The training range site (React) |
+| `DCSServerBot/plugins/fowlengine` | DCSServerBot plugin: Discord status, alerts, briefings, `/feops` ops commands, bfdb/netidx supervision (procman), signed engine auto-update. Related: the community plugins next to it, and the `bf*` extensions in `DCSServerBot/extensions/` |
+| `user-guide` | Static mdBook version of the gameplay docs |
+| `deploy` | Deployment docs: server setup, auto-update, multi-instance, the training range, backups, monitoring, signing keys; Caddy config and `publish-release.ps1` |
 
 ## Prerequisites
 
@@ -60,7 +74,8 @@ test in-game.
 **3. Build everything else:**
 
 ```bash
-cargo build --release          # bfdb, bftools, dcso3, bfprotocols, yats
+cargo build --release          # the workspace: bflib, bfrange, bfdb, the cockpit crates, ...
+cargo build --release --manifest-path bftools/Cargo.toml   # bftools (own Cargo.lock)
 cd bfweb  && npm ci && npm run build   # dashboard
 cd bfsite && npm ci && npm run build   # public site
 cd bfwiki && npm ci && npm run build   # player wiki (deployed separately, e.g. Vercel)
@@ -80,8 +95,8 @@ files for the *initial* content of a fresh database.
 ```bash
 bfdb.exe \
   --db "path/to/bfdb-data" \
-  --listen-address 0.0.0.0:8765 \
-  --site-address 0.0.0.0:8766 \
+  --listen-address 127.0.0.1:8880 \
+  --site-address 127.0.0.1:8766 \
   --config "path/to/campaign.json" \
   --admin-username admin --admin-password changeme
 ```
@@ -113,8 +128,10 @@ Full flag reference: `bfdb.exe --help`. Notable ones:
   copies. See **[deploy/README.md](deploy/README.md)** for that whole setup
   (Docker/nginx for the frontends, Caddy for TLS in front of `bfdb`).
 
-`bfsystem.ps1` is a ready-made PowerShell launcher wiring these flags
-together for a Windows game server — copy and edit the variables at the top.
+On a server box the bot runs bfdb for you: the fowlengine plugin's procman
+builds these flags from `fowlengine.yaml` (`bfdb.manage: true`), and Fowl
+Engine Manager runs the bot as a service. `bfsystem.ps1` is the legacy
+hand-run launcher that wires the same flags together, kept as a fallback.
 
 ## Generating the final mission (bftools)
 
@@ -145,11 +162,17 @@ writes the result straight into an existing campaign config's
 
 ## Testing
 
-Limited automated coverage; most testing is done live in DCS. See
-`TESTING.md` for the manual QA checklist, and:
+CI (`.github/workflows/build.yml`) runs, on every push:
+
 ```bash
-cargo run --bin test --package=bfdb
+cargo test --workspace --locked                               # ~450 Rust tests; lua.dll's folder on PATH
+cargo test --locked --manifest-path bfmanager/src-tauri/Cargo.toml
+npm ci && npm run lint && npm test && npm run build           # in each of bfweb, bfsite, bfwiki, bfrange-web
+python -m pytest -q                                           # in DCSServerBot/tests (requirements.txt there)
 ```
+
+plus `cargo fmt --check` and `cargo clippy`, which only report for now.
+Gameplay is still checked in DCS: `TESTING.md` is the in-game checklist.
 
 ## Hosting the dashboard/site separately from bfdb
 
