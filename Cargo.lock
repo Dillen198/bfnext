@@ -5231,6 +5231,7 @@ dependencies = [
  "bincode",
  "pin-project",
  "serde",
+ "serde_derive",
  "sled",
 ]
 

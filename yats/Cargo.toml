@@ -10,5 +10,8 @@ pin-project = { workspace = true }
 sled = { workspace = true }
 anyhow = { workspace = true }
 
+[dev-dependencies]
+serde_derive = { workspace = true }
+
 [lints]
 workspace = true
