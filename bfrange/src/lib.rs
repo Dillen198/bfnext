@@ -201,6 +201,12 @@ fn on_player_disconnect(_: HooksLua, id: PlayerId) -> Result<()> {
 
 fn on_player_try_send_chat(lua: HooksLua, id: PlayerId, msg: String, _all: bool) -> Result<Option<String>> {
     let m = msg.as_str().trim();
+    // The bfcockpit overlay registers its secret key with a "-cockpitkey
+    // <key>" chat line. The range has no use for it, but must not show it to
+    // everyone either.
+    if m.starts_with("-cockpitkey") {
+        return Ok(Some(String::from("")));
+    }
     if !m.starts_with("-range") {
         return Ok(None);
     }
