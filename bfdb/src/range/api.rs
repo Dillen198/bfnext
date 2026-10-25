@@ -984,15 +984,21 @@ async fn h_atc(ctx: Arc<RangeCtx>, q: Q) -> Response {
 /// The live ATC feed (LiveATC style): every transmission on `?station=`
 /// (a station id, several comma-separated, or `all`) as it is said, over a
 /// WebSocket.
-async fn h_atc_live(ws: warp::ws::Ws, ctx: Arc<RangeCtx>, q: Q) -> Response {
+async fn h_atc_live(ws: warp::ws::Ws, ip: std::net::IpAddr, ctx: Arc<RangeCtx>, q: Q) -> Response {
     let sc = scope_or_400!(ctx, q);
     let inst = sc.primary().id.clone();
     let station = nonempty(&q, "station").unwrap_or("all").to_string();
+    // Counted against the caller's per-IP WebSocket allowance as well as the
+    // feed's own listener cap, so one address cannot take every listener.
+    let Some(ip_slot) = crate::websec::ws_slot(ip) else {
+        return crate::websec::ws_refused(StatusCode::TOO_MANY_REQUESTS, "too many open connections");
+    };
     let Some(slot) = crate::milatc::live::Slot::take() else {
         return crate::websec::ws_refused(StatusCode::SERVICE_UNAVAILABLE, "too many listeners on the ATC feed");
     };
     ws.on_upgrade(move |socket| async move {
         let _slot = slot;
+        let _ip_slot = ip_slot;
         atc_live(socket, inst, station).await
     })
     .into_response()
@@ -1089,7 +1095,7 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
         .and(crate::websec::ws_limited())
         .and(c.clone())
         .and(q.clone())
-        .then(|ws, _ip, ctx: Arc<RangeCtx>, q: Q| h_atc_live(ws, ctx, q));
+        .then(|ws, ip, ctx: Arc<RangeCtx>, q: Q| h_atc_live(ws, ip, ctx, q));
     let atc_audio = warp::path!("api" / "range" / "atc" / "audio" / u64).and(c.clone()).and(q.clone()).then(
         |id: u64, ctx: Arc<RangeCtx>, q: Q| h_atc_audio(ctx, q, id),
     );

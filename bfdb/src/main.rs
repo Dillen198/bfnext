@@ -76,6 +76,29 @@ mod admin;
 #[cfg(test)]
 mod route_tests;
 
+#[cfg(test)]
+mod cfg_backup_tests {
+    #[test]
+    fn keeps_only_the_newest_config_backups() {
+        let dir = std::env::temp_dir().join(format!("bfdb-cfgbak-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("ODF_CFG");
+        std::fs::write(&cfg, "{}").unwrap();
+        for i in 0..5 {
+            std::fs::write(dir.join(format!("ODF_CFG.bak.2026010100000{i}")), "").unwrap();
+        }
+        std::fs::write(dir.join("ODF_CFG.bak.notes"), "").unwrap();
+        super::prune_cfg_backups(&cfg, 2);
+        let mut left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["ODF_CFG", "ODF_CFG.bak.20260101000003", "ODF_CFG.bak.20260101000004", "ODF_CFG.bak.notes"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 use crate::db::InstanceState;
 use crate::instance::{InstanceCfg, InstanceId, Registry, DEFAULT_INSTANCE};
 
@@ -4528,11 +4551,17 @@ async fn api_admin_ops_proxy(
         url.push('?');
         url.push_str(&query);
     }
-    let http = reqwest::Client::builder()
-        // an update check downloads the release; give it room
-        .timeout(std::time::Duration::from_secs(300))
-        .build()
-        .map_err(|e| anyhow::anyhow!("http client: {e}"))?;
+    // One client for every OPS call: its connection pool to the bot is
+    // reused instead of rebuilt (TLS and all) per request.
+    static OPS_HTTP: std::sync::LazyLock<std::result::Result<reqwest::Client, std::string::String>> =
+        std::sync::LazyLock::new(|| {
+            reqwest::Client::builder()
+                // an update check downloads the release; give it room
+                .timeout(std::time::Duration::from_secs(300))
+                .build()
+                .map_err(|e| e.to_string())
+        });
+    let http = OPS_HTTP.as_ref().map_err(|e| anyhow::anyhow!("http client: {e}"))?;
     let req = if method == warp::http::Method::POST {
         http.post(&url)
             .header("content-type", "application/json")
@@ -4581,6 +4610,38 @@ async fn api_admin_ops_proxy(
     out.headers_mut()
         .insert("cache-control", warp::http::HeaderValue::from_static("no-store"));
     Ok(out)
+}
+
+/// How many `<cfg>.bak.<time>` copies a config save leaves beside the file.
+const CFG_BACKUPS_KEPT: usize = 20;
+
+/// Delete all but the newest `keep` `<cfg>.bak.<YYYYmmddHHMMSS>` copies of
+/// `cfg`. Every save made one and nothing removed them.
+fn prune_cfg_backups(cfg: &std::path::Path, keep: usize) {
+    let (Some(dir), Some(name)) = (cfg.parent(), cfg.file_name().and_then(|n| n.to_str())) else { return };
+    let prefix = format!("{name}.bak.");
+    let Ok(rd) = std::fs::read_dir(if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir }) else {
+        return;
+    };
+    let mut baks: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_prefix(&prefix))
+                .map_or(false, |ts| ts.len() == 14 && ts.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .collect();
+    // the timestamp sorts as text
+    baks.sort();
+    if baks.len() > keep {
+        for old in &baks[..baks.len() - keep] {
+            if let Err(e) = std::fs::remove_file(old) {
+                log::warn!("could not remove old config backup {}: {e}", old.display());
+            }
+        }
+    }
 }
 
 /// GET /api/admin/cfg  — read the current campaign engine config JSON (admin only)
@@ -4650,6 +4711,7 @@ async fn api_admin_cfg_post(
             ));
             std::fs::copy(&path, &backup)
                 .map_err(|e| anyhow::anyhow!("backing up {:?} to {:?}: {e}", path, backup))?;
+            prune_cfg_backups(&path, CFG_BACKUPS_KEPT);
         }
         std::fs::write(&path, pretty)
             .map_err(|e| anyhow::anyhow!("writing {:?}: {e}", path))?;
