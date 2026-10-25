@@ -14,6 +14,9 @@ loud deprecation warning. bfdb exposes the routes to a logged-in dashboard
 admin as /api/admin/ops/..., so the browser never sees the key. Keep the
 WebService on 127.0.0.1 (services/webservice.yaml `listen:`): bfdb and Fowl
 Engine Manager both call it from this box, and the routes are plain HTTP.
+The one exception is opt-in: a Fowl Engine Manager on another PC reaching
+this box over Tailscale (deploy/manager-remote.md) -- listen 0.0.0.0 behind
+a firewall rule that only lets the tailnet in, ops_api.require_own_key: true.
 
 POST config can't change anything that names a program, a path, a URL or an
 update source (see protected_changes): those are edited on the box itself, so

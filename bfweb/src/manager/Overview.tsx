@@ -18,6 +18,12 @@ export default function Overview({ state: s, onSetup }: { state?: AppState; onSe
   return (
     <div className="p-5 space-y-4">
       <Result r={act.result} onClose={act.clear} />
+      {s.config.controller_only && (
+        <Note>
+          This PC is a <b>controller</b>: it runs no DCSServerBot of its own, so the service and bot cards below stay empty.
+          Your server boxes are under ALL SERVERS; this page still updates Fowl Engine Manager itself.
+        </Note>
+      )}
       {svc?.installed && (svc.account ?? 'LocalSystem').toLowerCase() !== 'localsystem' && (
         <Note tone="bad">
           The service runs as <b>{svc.account}</b>, so everything it starts lives in Windows' hidden service session,
