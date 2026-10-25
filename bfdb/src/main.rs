@@ -72,6 +72,8 @@ mod range;
 mod replay;
 mod websec;
 mod maint;
+#[cfg(test)]
+mod route_tests;
 
 use crate::db::InstanceState;
 use crate::instance::{InstanceCfg, InstanceId, Registry, DEFAULT_INSTANCE};
@@ -8262,8 +8264,334 @@ async fn main() -> Result<()> {
         }
     }
 
-    let cross_origin = !args.cors_origins.is_empty();
-    let allowed_login_origins: Arc<Vec<std::string::String>> = Arc::new(args.cors_origins.clone());
+    // ── Live telemetry, per DCS server instance ────────────────────────
+    // Each instance gets its own Export.lua UDP listener (on its own port),
+    // its own live-unit broadcast, and its own fog-of-war tactical cache. The
+    // websocket routes resolve `?instance=` and pick the matching one, so two
+    // servers never bleed contacts into each other's scope.
+    // The war diary's writer, shared by every instance's generator. None when
+    // no endpoint is configured, in which case the diary renders from its own
+    // template bank -- see `news_llm.rs`.
+    let news_writer = news_llm::WriterCfg::resolve(
+        args.news_llm_url.clone(),
+        args.news_llm_key.clone(),
+        args.news_llm_model.clone(),
+    );
+    match &news_writer {
+        Some(w) => log::info!("news: dispatches written by {} at {}", w.model, w.url),
+        None => log::info!(
+            "news: no --news-llm-url/--news-llm-key -- the war diary will use its template bank"
+        ),
+    }
+    // The HQ strategist's model: its own flags, else the diary's. See
+    // `hq_strategist.rs`.
+    let hq_writer = if args.hq_strategist_minutes == 0 {
+        None
+    } else if args.hq_llm_url.is_some() || args.hq_llm_key.is_some() {
+        news_llm::WriterCfg::resolve(args.hq_llm_url.clone(), args.hq_llm_key.clone(), args.hq_llm_model.clone())
+    } else {
+        news_writer.clone().map(|mut w| {
+            if let Some(m) = args.hq_llm_model.clone() {
+                w.model = m;
+            }
+            w
+        })
+    };
+    match &hq_writer {
+        Some(w) => log::info!(
+            "hq strategist: {} at {}, every {} min",
+            w.model,
+            w.url,
+            args.hq_strategist_minutes
+        ),
+        None => log::info!("hq strategist: off -- the engine's HQ runs on its own rules"),
+    }
+    // Pictures for the diary. Off unless named -- see `news_image.rs`.
+    // A misconfigured provider turns pictures off with an error rather than
+    // stopping bfdb: they are decoration, the rest of the server is not.
+    let news_images = match news_image::ImageCfg::resolve(news_image::ImageArgs {
+        provider: args.news_image_provider.clone(),
+        url: args.news_image_url.clone(),
+        key: args.news_image_key.clone(),
+        model: args.news_image_model.clone(),
+        size: args.news_image_size.clone(),
+        quality: args.news_image_quality.clone(),
+        style: args.news_image_style.clone(),
+        cf_account_id: args.news_image_cf_account_id.clone(),
+        steps: args.news_image_steps,
+        fallback: args.news_image_fallback.clone(),
+        min_interval_secs: args.news_image_min_interval,
+        per_instance_daily: args.news_image_daily_per_instance,
+        global_daily: args.news_image_daily_global,
+    }) {
+        Ok(c) => c.map(Arc::new),
+        Err(e) => {
+            log::error!("news: dispatch pictures are OFF -- {e}");
+            None
+        }
+    };
+    match &news_images {
+        Some(c) => log::info!(
+            "news: dispatch pictures by {} ({}{}, at most {}/instance and {} in all per day)",
+            c.label(),
+            c.size,
+            c.fallback.map(|f| format!(", falling back to {}", f.name())).unwrap_or_default(),
+            c.per_instance_daily,
+            c.global_daily
+        ),
+        None => log::info!("news: no --news-image-provider -- dispatches run without pictures"),
+    }
+
+    let export_listen = ExportListenCfg {
+        bind: args.export_bind,
+        secret: args.export_secret.clone().map(Arc::new),
+    };
+    let live_map: LiveMap = {
+        let mut m = std::collections::HashMap::new();
+        for cfg in db.instances().all() {
+            let id: InstanceId = Arc::from(cfg.id.as_str());
+            let inst = db.state(&id);
+            let live: LiveState = Arc::new(tokio::sync::RwLock::new((0.0, Vec::new(), Vec::new())));
+            let (live_tx, _) = broadcast::channel::<String>(64);
+            let tac: TacState = Arc::new(tokio::sync::RwLock::new(TacCache::default()));
+            let ground: groundfeed::GroundState = Default::default();
+
+            match cfg.export_port {
+                Some(port) => {
+                    tokio::spawn(udp_export_listener(
+                        live.clone(),
+                        live_tx.clone(),
+                        db.clone(),
+                        inst.clone(),
+                        port,
+                        export_listen.clone(),
+                    ));
+                }
+                None => log::info!(
+                    "[{}] no export_port configured -- the live unit feed (/ws/units) is off for this instance",
+                    cfg.id
+                ),
+            }
+            // Campaign-only: a training range (bfrange) publishes none of
+            // query-tacmap / query-unitdb, and has no war to write a diary
+            // about. Its live state is polled on demand by `range::api`.
+            if cfg.base.is_some() && !cfg.is_range() {
+                tokio::spawn(tacmap_poller(db.clone(), inst.clone(), tac.clone()));
+                tokio::spawn(groundfeed::poller(db.clone(), inst.clone(), ground.clone()));
+                tokio::spawn(command::pusher(db.clone(), inst.clone()));
+                tokio::spawn(unitdb_refresher(db.clone(), inst.clone()));
+                tokio::spawn(news_generator(
+                    db.clone(),
+                    inst.clone(),
+                    news_writer.clone(),
+                    news_images.clone(),
+                ));
+                if let Some(w) = hq_writer.clone() {
+                    tokio::spawn(hq_strategist::run(
+                        db.clone(),
+                        inst.clone(),
+                        w,
+                        std::time::Duration::from_secs(args.hq_strategist_minutes.max(1) * 60),
+                    ));
+                }
+            }
+            m.insert(id, InstanceLive { live, live_tx, tac, ground });
+        }
+        Arc::new(m)
+    };
+
+    // ── Live GCI: proactive AWACS-style SRS callouts, per instance ────────
+    // A broadcast stream of every GCI call, for the dashboard transcript panel
+    // (/ws/gci) and the last-N snapshot (/api/gci/transcript). Each instance
+    // runs its own GCI (its own SRS server, frequencies and callsigns) and so
+    // gets its own transcript channel.
+    let mut gci_map: std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)> =
+        std::collections::HashMap::new();
+    for cfg in db.instances().all() {
+        let id: InstanceId = Arc::from(cfg.id.as_str());
+        let inst = db.state(&id);
+        let (tx, _) = broadcast::channel::<String>(128);
+        let hist: LogHistory = Arc::new(Mutex::new(VecDeque::new()));
+        // A dedicated per-instance gci_config wins; otherwise the single-server
+        // --gci-config / campaign.json `gci` block applies to the default
+        // instance only (there is only one of it).
+        let cfg_for_inst = cfg
+            .gci_config
+            .as_ref()
+            .and_then(|p| gci::from_file(p))
+            .or_else(|| {
+                // never a range's: it has no GCI picture to serve
+                if id == *db.instances().default_id() && !cfg.is_range() {
+                    gci_cfg.clone()
+                } else {
+                    None
+                }
+            });
+        match (cfg.base.is_some(), cfg_for_inst) {
+            // A range has no GCI picture or campaign towers; its voice
+            // service is the military ATC.
+            (true, Some(c)) if cfg.is_range() => {
+                match c.range_atc.clone() {
+                    Some(r) if r.enabled => {
+                        log::info!("[{}] range ATC enabled", cfg.id);
+                        tokio::spawn(milatc::run(db.clone(), inst, c.clone(), r));
+                    }
+                    _ => log::info!("[{}] range instance has a gci_config but no rangeAtc block", cfg.id),
+                }
+            }
+            (true, Some(c)) => {
+                log::info!("[{}] live GCI enabled", cfg.id);
+                // ATC rides the same config file and the same voice bus, on
+                // its own SRS clients so a busy tower can never delay a threat
+                // call on the GCI net.
+                if let Some(atc_cfg) = c.atc.clone() {
+                    let atc_transcript: atc::AtcTranscript = Default::default();
+                    tokio::spawn(atc::run(
+                        db.clone(),
+                        inst.clone(),
+                        c.clone(),
+                        atc_cfg,
+                        atc_transcript,
+                    ));
+                }
+                tokio::spawn(gci::run(db.clone(), inst, c, tx.clone(), hist.clone()));
+            }
+            (false, Some(_)) => {
+                log::warn!(
+                    "[{}] GCI configured but disabled: this instance has no netidx base (no live engine to query)",
+                    cfg.id
+                );
+            }
+            _ => {}
+        }
+        gci_map.insert(id, (tx, hist));
+    }
+    let gci_map = Arc::new(gci_map);
+
+    let routes = build_routes(RouteCtx {
+        db: db.clone(),
+        bot_link_cfg: bot_link_cfg.clone(),
+        auth_cfg,
+        local_admin_cfg,
+        live_map,
+        gci_map,
+        log_tx,
+        log_history,
+        range_routes,
+        replay_routes,
+        campaign_json,
+        effective_srs_url,
+        news_images,
+        shutdown: shutdown.clone(),
+        cors_origins: args.cors_origins.clone(),
+        public_api_url: args.public_api_url.clone(),
+        listen_port: args.listen_address.port(),
+        local_login_from: args.local_login_from.clone(),
+        log_read_token: args.log_read_token.clone(),
+        shutdown_token: args.shutdown_token.clone(),
+    });
+
+    log::info!("API server listening on http://{}", args.listen_address);
+
+    // Optional separate site server
+    if let Some(site_addr) = args.site_address {
+        let site_cors = warp::cors()
+            .allow_any_origin()
+            .allow_methods(&[Method::GET])
+            .build();
+        let site_only = warp::get()
+            .and(warp::path::tail())
+            .map(|tail: warp::path::Tail| serve_site_asset(tail.as_str()))
+            .with(site_cors);
+        log::info!("Site server listening on http://{}", site_addr);
+        tokio::spawn(warp::serve(site_only).run(site_addr));
+    }
+
+    // Serve until a shutdown is requested, then flush and exit. Not warp's
+    // own graceful shutdown: it waits for every open connection to finish,
+    // and dashboard WebSockets never do, so it would wait until the
+    // supervisor gave up and hard-killed us -- the very thing this avoids.
+    let server = async {
+        match (&args.cert, &args.key) {
+            (_, None) | (None, _) => warp::serve(routes).run(args.listen_address).await,
+            (Some(cert), Some(key)) => {
+                warp::serve(routes)
+                    .tls()
+                    .cert_path(cert)
+                    .key_path(key)
+                    .run(args.listen_address)
+                    .await
+            }
+        }
+    };
+    tokio::select! {
+        _ = server => log::warn!("web server stopped"),
+        _ = shutdown.wait() => (),
+    }
+    let flush_db = db.clone();
+    let _ = task::spawn_blocking(move || maint::flush_db(&flush_db)).await;
+    log::info!("bfdb exiting");
+    log::logger().flush();
+    std::process::exit(0)
+}
+
+/// Everything the HTTP layer needs, gathered by `main` (which also starts the
+/// background tasks that feed the live maps). Split out so the whole route
+/// chain can be built -- and exercised with `warp::test` -- without a DCS
+/// server, a netidx resolver or a socket.
+struct RouteCtx {
+    db: StatsDb,
+    bot_link_cfg: Arc<Option<BotLinkConfig>>,
+    auth_cfg: Option<AuthConfig>,
+    local_admin_cfg: Option<LocalAdminConfig>,
+    live_map: LiveMap,
+    gci_map: GciMap,
+    log_tx: broadcast::Sender<String>,
+    log_history: LogHistory,
+    range_routes: warp::filters::BoxedFilter<(Response,)>,
+    replay_routes: warp::filters::BoxedFilter<(Response,)>,
+    campaign_json: Arc<String>,
+    effective_srs_url: Option<String>,
+    news_images: Option<Arc<news_image::ImageCfg>>,
+    shutdown: maint::Shutdown,
+    cors_origins: Vec<String>,
+    public_api_url: String,
+    listen_port: u16,
+    local_login_from: Vec<websec::IpNet>,
+    log_read_token: Option<String>,
+    shutdown_token: Option<String>,
+}
+
+/// Per-instance GCI transcript channel and backlog.
+type GciMap = Arc<std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)>>;
+
+/// The whole route chain, in the order it is matched.
+fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
+    let RouteCtx {
+        db,
+        bot_link_cfg,
+        auth_cfg,
+        local_admin_cfg,
+        live_map,
+        gci_map,
+        log_tx,
+        log_history,
+        range_routes,
+        replay_routes,
+        campaign_json,
+        effective_srs_url,
+        news_images,
+        shutdown,
+        cors_origins,
+        public_api_url,
+        listen_port,
+        local_login_from,
+        log_read_token,
+        shutdown_token,
+    } = rc;
+
+    let cross_origin = !cors_origins.is_empty();
+    let allowed_login_origins: Arc<Vec<std::string::String>> = Arc::new(cors_origins.clone());
     let cors = warp::cors()
         .allow_methods(&[Method::GET, Method::POST, Method::OPTIONS])
         // x-intel-filename: sent by the recon-intel photo upload, which is a
@@ -8277,9 +8605,9 @@ async fn main() -> Result<()> {
         // WebSocket handshake and on a POST, and every one of those was 403'd
         // ("origin not allowed"): TACMAP, logs, login, admin actions all dead
         // on that copy of the dashboard. The CSRF policy already trusts it.
-        let own = websec::origin_of(&args.public_api_url);
+        let own = websec::origin_of(&public_api_url);
         cors.allow_origins(
-            args.cors_origins
+            cors_origins
                 .iter()
                 .map(|s| s.as_str())
                 .chain(own.as_deref())
@@ -8290,13 +8618,13 @@ async fn main() -> Result<()> {
         // address or opened locally on the listen port. allow_any_origin with
         // credentials let any site a signed-in user visited read the API as
         // them.
-        let port = args.listen_address.port();
+        let port = listen_port;
         let local = [format!("http://localhost:{port}"), format!("http://127.0.0.1:{port}")];
-        let own = websec::origin_of(&args.public_api_url);
+        let own = websec::origin_of(&public_api_url);
         cors.allow_origins(local.iter().map(|s| s.as_str()).chain(own.as_deref()).collect::<Vec<_>>())
     };
     if cross_origin {
-        log::info!("Cross-origin mode enabled for: {:?} (cookies use SameSite=None; Secure — bfdb must be served over TLS)", args.cors_origins);
+        log::info!("Cross-origin mode enabled for: {:?} (cookies use SameSite=None; Secure — bfdb must be served over TLS)", cors_origins);
     }
 
     // The DCS server instances this bfdb fronts -- backs the dashboard's
@@ -8571,142 +8899,6 @@ async fn main() -> Result<()> {
         .and(with_instance(db.clone()))
         .then(api_aircraft_usage);
 
-    // ── Live telemetry, per DCS server instance ────────────────────────
-    // Each instance gets its own Export.lua UDP listener (on its own port),
-    // its own live-unit broadcast, and its own fog-of-war tactical cache. The
-    // websocket routes resolve `?instance=` and pick the matching one, so two
-    // servers never bleed contacts into each other's scope.
-    // The war diary's writer, shared by every instance's generator. None when
-    // no endpoint is configured, in which case the diary renders from its own
-    // template bank -- see `news_llm.rs`.
-    let news_writer = news_llm::WriterCfg::resolve(
-        args.news_llm_url.clone(),
-        args.news_llm_key.clone(),
-        args.news_llm_model.clone(),
-    );
-    match &news_writer {
-        Some(w) => log::info!("news: dispatches written by {} at {}", w.model, w.url),
-        None => log::info!(
-            "news: no --news-llm-url/--news-llm-key -- the war diary will use its template bank"
-        ),
-    }
-    // The HQ strategist's model: its own flags, else the diary's. See
-    // `hq_strategist.rs`.
-    let hq_writer = if args.hq_strategist_minutes == 0 {
-        None
-    } else if args.hq_llm_url.is_some() || args.hq_llm_key.is_some() {
-        news_llm::WriterCfg::resolve(args.hq_llm_url.clone(), args.hq_llm_key.clone(), args.hq_llm_model.clone())
-    } else {
-        news_writer.clone().map(|mut w| {
-            if let Some(m) = args.hq_llm_model.clone() {
-                w.model = m;
-            }
-            w
-        })
-    };
-    match &hq_writer {
-        Some(w) => log::info!(
-            "hq strategist: {} at {}, every {} min",
-            w.model,
-            w.url,
-            args.hq_strategist_minutes
-        ),
-        None => log::info!("hq strategist: off -- the engine's HQ runs on its own rules"),
-    }
-    // Pictures for the diary. Off unless named -- see `news_image.rs`.
-    // A misconfigured provider turns pictures off with an error rather than
-    // stopping bfdb: they are decoration, the rest of the server is not.
-    let news_images = match news_image::ImageCfg::resolve(news_image::ImageArgs {
-        provider: args.news_image_provider.clone(),
-        url: args.news_image_url.clone(),
-        key: args.news_image_key.clone(),
-        model: args.news_image_model.clone(),
-        size: args.news_image_size.clone(),
-        quality: args.news_image_quality.clone(),
-        style: args.news_image_style.clone(),
-        cf_account_id: args.news_image_cf_account_id.clone(),
-        steps: args.news_image_steps,
-        fallback: args.news_image_fallback.clone(),
-        min_interval_secs: args.news_image_min_interval,
-        per_instance_daily: args.news_image_daily_per_instance,
-        global_daily: args.news_image_daily_global,
-    }) {
-        Ok(c) => c.map(Arc::new),
-        Err(e) => {
-            log::error!("news: dispatch pictures are OFF -- {e}");
-            None
-        }
-    };
-    match &news_images {
-        Some(c) => log::info!(
-            "news: dispatch pictures by {} ({}{}, at most {}/instance and {} in all per day)",
-            c.label(),
-            c.size,
-            c.fallback.map(|f| format!(", falling back to {}", f.name())).unwrap_or_default(),
-            c.per_instance_daily,
-            c.global_daily
-        ),
-        None => log::info!("news: no --news-image-provider -- dispatches run without pictures"),
-    }
-
-    let export_listen = ExportListenCfg {
-        bind: args.export_bind,
-        secret: args.export_secret.clone().map(Arc::new),
-    };
-    let live_map: LiveMap = {
-        let mut m = std::collections::HashMap::new();
-        for cfg in db.instances().all() {
-            let id: InstanceId = Arc::from(cfg.id.as_str());
-            let inst = db.state(&id);
-            let live: LiveState = Arc::new(tokio::sync::RwLock::new((0.0, Vec::new(), Vec::new())));
-            let (live_tx, _) = broadcast::channel::<String>(64);
-            let tac: TacState = Arc::new(tokio::sync::RwLock::new(TacCache::default()));
-            let ground: groundfeed::GroundState = Default::default();
-
-            match cfg.export_port {
-                Some(port) => {
-                    tokio::spawn(udp_export_listener(
-                        live.clone(),
-                        live_tx.clone(),
-                        db.clone(),
-                        inst.clone(),
-                        port,
-                        export_listen.clone(),
-                    ));
-                }
-                None => log::info!(
-                    "[{}] no export_port configured -- the live unit feed (/ws/units) is off for this instance",
-                    cfg.id
-                ),
-            }
-            // Campaign-only: a training range (bfrange) publishes none of
-            // query-tacmap / query-unitdb, and has no war to write a diary
-            // about. Its live state is polled on demand by `range::api`.
-            if cfg.base.is_some() && !cfg.is_range() {
-                tokio::spawn(tacmap_poller(db.clone(), inst.clone(), tac.clone()));
-                tokio::spawn(groundfeed::poller(db.clone(), inst.clone(), ground.clone()));
-                tokio::spawn(command::pusher(db.clone(), inst.clone()));
-                tokio::spawn(unitdb_refresher(db.clone(), inst.clone()));
-                tokio::spawn(news_generator(
-                    db.clone(),
-                    inst.clone(),
-                    news_writer.clone(),
-                    news_images.clone(),
-                ));
-                if let Some(w) = hq_writer.clone() {
-                    tokio::spawn(hq_strategist::run(
-                        db.clone(),
-                        inst.clone(),
-                        w,
-                        std::time::Duration::from_secs(args.hq_strategist_minutes.max(1) * 60),
-                    ));
-                }
-            }
-            m.insert(id, InstanceLive { live, live_tx, tac, ground });
-        }
-        Arc::new(m)
-    };
-
     let ws_units_route = warp::path!("ws" / "units")
         .and(websec::ws_limited())
         .and(extract_session_cookie())
@@ -8717,74 +8909,6 @@ async fn main() -> Result<()> {
             let l = live_for(&map, &inst);
             ws_units_handler(ws, ip, sid, db, l.live, l.live_tx).await
         });
-
-    // ── Live GCI: proactive AWACS-style SRS callouts, per instance ────────
-    // A broadcast stream of every GCI call, for the dashboard transcript panel
-    // (/ws/gci) and the last-N snapshot (/api/gci/transcript). Each instance
-    // runs its own GCI (its own SRS server, frequencies and callsigns) and so
-    // gets its own transcript channel.
-    let mut gci_map: std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)> =
-        std::collections::HashMap::new();
-    for cfg in db.instances().all() {
-        let id: InstanceId = Arc::from(cfg.id.as_str());
-        let inst = db.state(&id);
-        let (tx, _) = broadcast::channel::<String>(128);
-        let hist: LogHistory = Arc::new(Mutex::new(VecDeque::new()));
-        // A dedicated per-instance gci_config wins; otherwise the single-server
-        // --gci-config / campaign.json `gci` block applies to the default
-        // instance only (there is only one of it).
-        let cfg_for_inst = cfg
-            .gci_config
-            .as_ref()
-            .and_then(|p| gci::from_file(p))
-            .or_else(|| {
-                // never a range's: it has no GCI picture to serve
-                if id == *db.instances().default_id() && !cfg.is_range() {
-                    gci_cfg.clone()
-                } else {
-                    None
-                }
-            });
-        match (cfg.base.is_some(), cfg_for_inst) {
-            // A range has no GCI picture or campaign towers; its voice
-            // service is the military ATC.
-            (true, Some(c)) if cfg.is_range() => {
-                match c.range_atc.clone() {
-                    Some(r) if r.enabled => {
-                        log::info!("[{}] range ATC enabled", cfg.id);
-                        tokio::spawn(milatc::run(db.clone(), inst, c.clone(), r));
-                    }
-                    _ => log::info!("[{}] range instance has a gci_config but no rangeAtc block", cfg.id),
-                }
-            }
-            (true, Some(c)) => {
-                log::info!("[{}] live GCI enabled", cfg.id);
-                // ATC rides the same config file and the same voice bus, on
-                // its own SRS clients so a busy tower can never delay a threat
-                // call on the GCI net.
-                if let Some(atc_cfg) = c.atc.clone() {
-                    let atc_transcript: atc::AtcTranscript = Default::default();
-                    tokio::spawn(atc::run(
-                        db.clone(),
-                        inst.clone(),
-                        c.clone(),
-                        atc_cfg,
-                        atc_transcript,
-                    ));
-                }
-                tokio::spawn(gci::run(db.clone(), inst, c, tx.clone(), hist.clone()));
-            }
-            (false, Some(_)) => {
-                log::warn!(
-                    "[{}] GCI configured but disabled: this instance has no netidx base (no live engine to query)",
-                    cfg.id
-                );
-            }
-            _ => {}
-        }
-        gci_map.insert(id, (tx, hist));
-    }
-    let gci_map = Arc::new(gci_map);
 
     let ws_groundwar_route = warp::path!("ws" / "groundwar")
         .and(websec::ws_limited())
@@ -8908,7 +9032,7 @@ async fn main() -> Result<()> {
         .and(warp::any().map(move || cross_origin))
         .then(api_auth_logout);
 
-    let local_login_from = Arc::new(args.local_login_from.clone());
+    let local_login_from = Arc::new(local_login_from.clone());
     if local_admin_cfg.is_some() {
         if local_login_from.is_empty() {
             log::info!("local admin login accepted from loopback only (see --local-login-from)");
@@ -9092,13 +9216,13 @@ async fn main() -> Result<()> {
         .then(api_admin_engine_errors);
 
     // ── Plain-text log tail (/api/logs/:source) — static-token auth ──────────
-    let log_read_token = Arc::new(args.log_read_token.clone());
+    let logs_token = Arc::new(log_read_token.clone());
     let logs_hist_api = log_history.clone();
     let logs_route = warp::path!("api" / "logs" / String)
         .and(warp::get())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(warp::header::optional::<std::string::String>("authorization"))
-        .and(warp::any().map(move || log_read_token.clone()))
+        .and(warp::any().map(move || logs_token.clone()))
         .and(with_db(db.clone()))
         .and(warp::any().map(move || logs_hist_api.clone()))
         .and(with_instance(db.clone()))
@@ -9657,7 +9781,7 @@ async fn main() -> Result<()> {
         .boxed();
 
     // ── Maintenance routes: shutdown, session revocation, metrics ──────────
-    let shutdown_token = Arc::new(args.shutdown_token.clone());
+    let shutdown_token = Arc::new(shutdown_token.clone());
     let shutdown_route = warp::path!("api" / "admin" / "shutdown")
         .and(warp::post())
         .and(websec::with_direct_loopback())
@@ -9679,7 +9803,7 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_admin_revoke_sessions);
 
-    let metrics_token = Arc::new(args.log_read_token.clone());
+    let metrics_token = Arc::new(log_read_token.clone());
     let metrics_route = warp::path!("api" / "metrics")
         .and(warp::get())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
@@ -9689,10 +9813,10 @@ async fn main() -> Result<()> {
         .then(api_metrics);
 
     let origin_policy = websec::OriginPolicy::new(
-        args.cors_origins
+        cors_origins
             .iter()
             .map(|s| s.as_str())
-            .chain(std::iter::once(args.public_api_url.as_str())),
+            .chain(std::iter::once(public_api_url.as_str())),
     );
 
     // The dashboard's own files (/assets/*.js, *.css, fonts, and the site's
@@ -9794,48 +9918,5 @@ async fn main() -> Result<()> {
             .boxed())
         .map(|r| websec::harden(warp::Reply::into_response(r)))
         .with(cors);
-    let routes = embedded_files.or(cors_routes);
-
-    log::info!("API server listening on http://{}", args.listen_address);
-
-    // Optional separate site server
-    if let Some(site_addr) = args.site_address {
-        let site_cors = warp::cors()
-            .allow_any_origin()
-            .allow_methods(&[Method::GET])
-            .build();
-        let site_only = warp::get()
-            .and(warp::path::tail())
-            .map(|tail: warp::path::Tail| serve_site_asset(tail.as_str()))
-            .with(site_cors);
-        log::info!("Site server listening on http://{}", site_addr);
-        tokio::spawn(warp::serve(site_only).run(site_addr));
-    }
-
-    // Serve until a shutdown is requested, then flush and exit. Not warp's
-    // own graceful shutdown: it waits for every open connection to finish,
-    // and dashboard WebSockets never do, so it would wait until the
-    // supervisor gave up and hard-killed us -- the very thing this avoids.
-    let server = async {
-        match (&args.cert, &args.key) {
-            (_, None) | (None, _) => warp::serve(routes).run(args.listen_address).await,
-            (Some(cert), Some(key)) => {
-                warp::serve(routes)
-                    .tls()
-                    .cert_path(cert)
-                    .key_path(key)
-                    .run(args.listen_address)
-                    .await
-            }
-        }
-    };
-    tokio::select! {
-        _ = server => log::warn!("web server stopped"),
-        _ = shutdown.wait() => (),
-    }
-    let flush_db = db.clone();
-    let _ = task::spawn_blocking(move || maint::flush_db(&flush_db)).await;
-    log::info!("bfdb exiting");
-    log::logger().flush();
-    std::process::exit(0)
+    embedded_files.or(cors_routes).map(|r| warp::Reply::into_response(r)).boxed()
 }
