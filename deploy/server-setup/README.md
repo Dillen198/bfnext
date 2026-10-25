@@ -1,5 +1,14 @@
 # Server Setup Overview
 
+The generic Fowl Engine setup: what runs where, on one machine or across
+several. For the Vector Strike servers' own bot-managed install, see
+[`../vector-strike-server-setup.md`](../vector-strike-server-setup.md); for
+hosting the web apps apart from bfdb, [`../README.md`](../README.md).
+
+(These pages used to be the "Server Setup" part of the mdBook user guide. The
+player half of that guide now lives only in the wiki, seeded from
+`bfdb/seed_wiki/`.)
+
 Fowl Engine consists of three components that work together:
 
 | Component | What it does |

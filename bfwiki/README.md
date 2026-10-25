@@ -2,7 +2,7 @@
 
 Player/gameplay wiki for the Fowl Engine (BFNEXT) dynamic campaign system. A React + Vite SPA, styled to match `bfweb`'s military ops-dashboard identity — reading is public, editing requires an admin login (same Discord OAuth / local admin login as the `bfweb` dashboard, since both talk to the same `bfdb` backend).
 
-Content lives in `bfdb`'s database (a `wiki_pages` Sled tree), not as files in this repo — it's seeded once from `bfdb/seed_wiki/*.md` on first run, then editable live through the site by anyone with admin access. This is a separate, standalone site from `user-guide` (the mdBook guide, one level up in the repo).
+Content lives in `bfdb`'s database (a `wiki_pages` Sled tree), not as files in this repo — it's seeded once from `bfdb/seed_wiki/*.md` on first run, then editable live through the site by anyone with admin access. `bfdb/seed_wiki/` is the only copy of the player docs in the repo (the old mdBook `user-guide/` was folded into it); server setup docs live in `deploy/server-setup/`.
 
 ## Development
 
