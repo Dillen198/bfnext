@@ -31,7 +31,7 @@ pub struct Loc {
 }
 
 /// A point on the map, degrees.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LatLon {
     pub lat: f64,
     pub lon: f64,
@@ -39,7 +39,7 @@ pub struct LatLon {
 
 /// What a sector of the theatre is for. The mission draws each kind in its
 /// own colour on the F10 map; the engine names it when a player flies in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SectorKind {
     AirToGround,
@@ -91,7 +91,7 @@ impl SectorKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SectorCircle {
     pub lat: f64,
     pub lon: f64,
@@ -100,7 +100,7 @@ pub struct SectorCircle {
 
 /// A tanker race-track: the leg starts at `lat`/`lon` and runs `leg_m` along
 /// `heading_deg`; the sector is everything within `width_m / 2` of that leg.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SectorTrack {
     pub lat: f64,
     pub lon: f64,
@@ -111,7 +111,7 @@ pub struct SectorTrack {
 
 /// Exactly one of the three. A struct of options rather than an enum for the
 /// same reason as [`Loc`].
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SectorShape {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub polygon: Option<Vec<LatLon>>,
@@ -150,7 +150,7 @@ impl SectorShape {
 /// tanker track, the carrier's operating area... The mission draws the same
 /// sectors on the F10 map; the engine lists them on F10 > Range > Sectors and
 /// tells a player what a sector is for when they fly into it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SectorCfg {
     /// `[a-z0-9-]`, e.g. "r-1".
     pub id: String,
@@ -1061,6 +1061,22 @@ pub struct SpawnPolicyCfg {
     /// Instructor UCIDs (in addition to dashboard admins, which bfdb flags).
     #[serde(default)]
     pub instructors: Vec<String>,
+    /// Honour the `instructor` flag bfdb sends with the spawn, despawn and
+    /// reset-station RPCs (it marks dashboard admins). The range's netidx
+    /// RPCs are not authenticated: anything that can reach the publisher
+    /// can set the flag and name any ucid. With `netidx_bind` left at
+    /// `local` only this PC can, which is the usual set-up. Set this false
+    /// when the publisher is reachable from other machines: only the
+    /// `instructors` above are instructors, and dashboard admins without a
+    /// listed ucid can no longer reset locked stations from the website.
+    #[serde(default = "yes")]
+    pub trust_rpc_instructor: bool,
+    /// Refuse a despawn or station reset RPC whose ucid is not connected to
+    /// the server (instructors listed above excepted), so a caller can't act
+    /// in the name of someone who isn't there. Off by default: players can
+    /// clear their spawns from the website after leaving.
+    #[serde(default)]
+    pub rpc_requires_connected: bool,
 }
 
 fn default_max_active() -> u32 {
@@ -1089,6 +1105,8 @@ impl Default for SpawnPolicyCfg {
             despawn_on_leave: true,
             instructor_only: default_instructor_only(),
             instructors: vec![],
+            trust_rpc_instructor: true,
+            rpc_requires_connected: false,
         }
     }
 }
@@ -1652,6 +1670,20 @@ pub struct RangeCfg {
     /// "utc_offset_hours": 10}`.
     #[serde(default)]
     pub live_weather: Option<crate::cfg::LiveWeatherConfig>,
+    /// At mission start, rotate `Logs/range.jsonl` once it is bigger than
+    /// this many MB: it is renamed `range<UTC timestamp>.jsonl` and a new
+    /// one started. Unset (the default), it grows forever as before. bfdb's
+    /// range ingest finishes a rotated file before moving on to the new one
+    /// (older bfdb builds re-read the new file and can miss records written
+    /// while they weren't keeping up), so update bfdb first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range_jsonl_rotate_mb: Option<u64>,
+    /// The same for `Logs/stats.jsonl`. bfdb's stats reader (`db.rs`) does
+    /// not yet look for a rotated file: it re-reads the new one from the
+    /// top, so stats written after its last read and before the rotation
+    /// are lost if it was behind (it reads every 2 s, so normally nothing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stats_jsonl_rotate_mb: Option<u64>,
 }
 
 fn default_range_name() -> String {
@@ -1668,9 +1700,27 @@ impl Default for RangeCfg {
 }
 
 impl RangeCfg {
+    /// Load and log every key serde ignored. Unknown keys are dropped
+    /// silently otherwise (unknown fields are allowed so old configs keep
+    /// loading), so a typo just ran the setting at its default.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let txt = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&txt)?)
+        let (cfg, unknown) = Self::parse(&txt)?;
+        for key in unknown {
+            log::warn!("range config {path:?}: unknown key {key} is ignored (typo, or removed setting?)")
+        }
+        Ok(cfg)
+    }
+
+    /// Parse a config, returning it and the keys serde ignored.
+    pub fn parse(txt: &str) -> anyhow::Result<(Self, Vec<String>)> {
+        let cfg: Self = serde_json::from_str(txt)?;
+        let mut unknown = vec![];
+        match serde_json::from_str::<serde_json::Value>(txt).and_then(|raw| Ok((raw, serde_json::to_value(&cfg)?))) {
+            Ok((raw, known)) => unknown_keys(&raw, &known, &mut String::new(), &mut unknown),
+            Err(e) => log::warn!("range config: could not check for unknown keys: {e}"),
+        }
+        Ok((cfg, unknown))
     }
 
     pub fn save(&self, path: &Path) -> anyhow::Result<()> {
@@ -1837,9 +1887,66 @@ impl RangeCfg {
     }
 }
 
+/// The object keys in `raw` (the config as written) with no counterpart in
+/// `known` (the parsed config serialized back): the keys serde ignored. Only
+/// descends where both sides have the same shape. A local copy of the
+/// campaign config's helper (`cfg::unknown_keys`, private there), plus:
+/// an explicit `null` is not reported, since `Option` fields skip
+/// serializing `None`.
+fn unknown_keys(raw: &serde_json::Value, known: &serde_json::Value, path: &mut String, out: &mut Vec<String>) {
+    use serde_json::Value as J;
+    match (raw, known) {
+        (J::Object(r), J::Object(k)) => {
+            for (key, rv) in r {
+                // `_note`-style keys are comments by convention
+                if key.starts_with('_') {
+                    continue;
+                }
+                let len = path.len();
+                if !path.is_empty() {
+                    path.push('.');
+                }
+                path.push_str(key);
+                match k.get(key) {
+                    None if rv.is_null() => (),
+                    None => out.push(path.clone()),
+                    Some(kv) => unknown_keys(rv, kv, path, out),
+                }
+                path.truncate(len);
+            }
+        }
+        (J::Array(r), J::Array(k)) if r.len() == k.len() => {
+            for (i, (rv, kv)) in r.iter().zip(k).enumerate() {
+                let len = path.len();
+                path.push_str(&format!("[{i}]"));
+                unknown_keys(rv, kv, path, out);
+                path.truncate(len);
+            }
+        }
+        _ => (),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_keys_are_reported() {
+        let txt = r#"{"name": "R", "_note": "a comment", "netidx_bind": null,
+            "spawn": {"max_active_per_player": 2, "max_activ_per_player": 9},
+            "messag_s": 5}"#;
+        let (c, unknown) = RangeCfg::parse(txt).unwrap();
+        assert_eq!(c.spawn.max_active_per_player, 2);
+        assert_eq!(unknown, vec!["messag_s".to_string(), "spawn.max_activ_per_player".to_string()]);
+    }
+
+    #[test]
+    fn default_config_has_no_unknown_keys() {
+        let txt = serde_json::to_string(&RangeCfg::default()).unwrap();
+        let (_, unknown) = RangeCfg::parse(&txt).unwrap();
+        assert!(unknown.is_empty(), "{unknown:?}");
+    }
 
     #[test]
     fn empty_config_has_defaults() {
@@ -1889,8 +1996,8 @@ mod tests {
 
     #[test]
     fn sample_config_parses_and_validates() {
-        let c: RangeCfg =
-            serde_json::from_str(include_str!("../../../bfrange/RANGE_CFG.sample.json")).unwrap();
+        let (c, unknown) = RangeCfg::parse(include_str!("../../../bfrange/RANGE_CFG.sample.json")).unwrap();
+        assert!(unknown.is_empty(), "unknown keys in the sample: {unknown:?}");
         c.validate().unwrap();
         assert_eq!(c.carriers[0].recovery_tanker.as_ref().unwrap().typ, "A6E");
         assert!(c.stations.iter().any(|s| s.kind == StationKind::StrafePit));

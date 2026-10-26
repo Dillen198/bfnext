@@ -288,13 +288,13 @@ pub fn taxi(s: &[TaxiSample], t_touch: f64, rwy_len: f64, rwy_width: f64, end: &
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A left-hand overhead pattern to a runway heading 0 (north): initial at
     /// 1500 ft up the runway, break at the far end, downwind at 1000 ft 1.2 nm
     /// to the left, base past the threshold, a 0.6 nm final.
-    fn overhead() -> Vec<RelSample> {
+    pub(crate) fn overhead() -> Vec<RelSample> {
         let mut s = vec![];
         let mut t = 0.;
         let mut push = |along: f64, across: f64, agl_ft: f64, rel: f64, gs: f64| {

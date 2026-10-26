@@ -15,7 +15,11 @@
 //!     and unchanged for 30 s is taken as-is if it parses (an engine that died
 //!     after writing a whole record but before the newline);
 //!   * unparsable lines are counted and reported once per pass with the first
-//!     reason, and the cursor moves past them.
+//!     reason, and the cursor moves past them;
+//!   * a new file may be a rotation (the engine's `range_jsonl_rotate_mb`
+//!     renames the old one `range<UTC timestamp>.jsonl`): the rotated file the
+//!     cursor belongs to is finished from the cursor, and any rotated after
+//!     it read whole, before the new file is read from the top.
 //!
 //! Records are deduplicated by id in the store, so re-reading a file (after a
 //! rotation, a restored copy or a lost cursor) never double-counts.
@@ -109,6 +113,91 @@ fn read_pass(path: &Path, pos: u64, known_head: Option<u64>) -> std::io::Result<
         .collect::<Vec<_>>();
     let consumed = last_nl as u64 + 1;
     Ok((Pass::Read { pos: pos + consumed, full: want == CHUNK, lines }, head))
+}
+
+/// The rotated copies of `path` beside it, oldest first: for `range.jsonl`,
+/// `range20261025T101500Z.jsonl` (bfrange's `bg::rotate`).
+fn rotated_siblings(path: &Path) -> Vec<PathBuf> {
+    let (Some(dir), Some(stem), Some(ext)) = (
+        path.parent(),
+        path.file_stem().and_then(|s| s.to_str()),
+        path.extension().and_then(|s| s.to_str()),
+    ) else {
+        return vec![];
+    };
+    let is_stamp = |s: &str| {
+        let b = s.as_bytes();
+        b.len() == 16
+            && b[8] == b'T'
+            && b[15] == b'Z'
+            && b[..8].iter().chain(&b[9..15]).all(|c| c.is_ascii_digit())
+    };
+    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
+    let mut v: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let n = e.file_name();
+            let Some(n) = n.to_str() else { return false };
+            n.strip_prefix(stem)
+                .and_then(|r| r.strip_suffix(ext))
+                .and_then(|r| r.strip_suffix('.'))
+                .map_or(false, is_stamp)
+        })
+        .map(|e| e.path())
+        .collect();
+    v.sort();
+    v
+}
+
+fn head_of(path: &Path) -> Option<u64> {
+    let mut f = std::fs::File::open(path).ok()?;
+    let mut b = vec![0u8; HEAD];
+    f.read_exact(&mut b).ok()?;
+    Some(fnv1a(&b))
+}
+
+/// The live file was replaced. If it was rotated, the records the cursor
+/// had not reached are in rotated copies: the one the cursor belongs to
+/// (matched by its head fingerprint, or with no fingerprint yet, the newest
+/// at least as long as the cursor) from the cursor on, and every copy
+/// rotated after it from the top. Empty if no copy matches (the file was
+/// truncated or replaced by hand). Records are deduplicated by id, so a
+/// wrong guess only costs a re-read.
+fn rotated_backlog(path: &Path, pos: u64, known_head: Option<u64>) -> Vec<(PathBuf, u64)> {
+    let sib = rotated_siblings(path);
+    let len = |p: &Path| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+    let found = sib.iter().rposition(|p| {
+        len(p) >= pos
+            && match known_head {
+                Some(h) => head_of(p) == Some(h),
+                None => true,
+            }
+    });
+    let Some(i) = found else { return vec![] };
+    let mut v = vec![(sib[i].clone(), pos)];
+    v.extend(sib[i + 1..].iter().map(|p| (p.clone(), 0)));
+    v
+}
+
+/// Read a rotated (finished, no longer written) file from `pos` to the end,
+/// its unterminated last record included if it parses.
+fn drain_rotated(ctx: &RangeCtx, inst: &str, path: &Path, mut pos: u64, t: &mut Tally) -> std::io::Result<()> {
+    loop {
+        match read_pass(path, pos, None)?.0 {
+            Pass::Read { pos: new_pos, lines, .. } => {
+                ingest_lines(ctx, inst, lines, t);
+                pos = new_pos;
+            }
+            Pass::Partial { .. } => {
+                let tail = read_tail(path, pos)?;
+                if serde_json::from_slice::<serde_json::Value>(&tail).is_ok() {
+                    ingest_lines(ctx, inst, vec![tail], t);
+                }
+                return Ok(());
+            }
+            Pass::Idle | Pass::Missing(_) | Pass::Replaced(_) => return Ok(()),
+        }
+    }
 }
 
 /// Read the unterminated tail from `pos` to EOF.
@@ -207,7 +296,9 @@ pub(crate) async fn ingest_loop(ctx: Arc<RangeCtx>, inst: String, path: PathBuf)
                     break;
                 }
             };
-            if let Some(h) = head {
+            // A replaced file's head is the NEW file's; the old one is still
+            // needed to find the rotated copy, so it is taken below.
+            if let (Some(h), false) = (head, matches!(pass, Pass::Replaced(_))) {
                 if known_head != Some(h) {
                     known_head = Some(h);
                     let _ = ctx.store.meta_set(&head_key, &h.to_be_bytes()[..]);
@@ -237,6 +328,25 @@ pub(crate) async fn ingest_loop(ctx: Arc<RangeCtx>, inst: String, path: PathBuf)
                          start (records already stored are skipped by id)",
                         path.display()
                     );
+                    for (old, from) in rotated_backlog(&path, pos, known_head) {
+                        let mut t = Tally::default();
+                        match tokio::task::block_in_place(|| drain_rotated(&ctx, &inst, &old, from, &mut t)) {
+                            Ok(()) => info!(
+                                "[{inst}] range: finished rotated {} from offset {from}: {} new \
+                                 result(s), {} already stored, {} unparsable",
+                                old.display(),
+                                t.inserted,
+                                t.duplicate,
+                                t.unparsable
+                            ),
+                            Err(e) => error!("[{inst}] range: reading rotated {} failed: {e}", old.display()),
+                        }
+                    }
+                    // Only now does the new file's head replace the old one:
+                    // a restart part-way through finishes the rotated copy
+                    // again rather than losing its tail.
+                    known_head = head;
+                    let _ = ctx.store.meta_set(&head_key, &head.map(|h| h.to_be_bytes().to_vec()).unwrap_or_default());
                     pos = 0;
                     partial = None;
                     if let Err(e) = ctx.store.set_cursor(&inst, 0) {
@@ -361,6 +471,43 @@ mod tests {
         assert!(matches!(pass, Pass::Replaced(_)));
         let (pass, _) = read_pass(&dir.join("nope.jsonl"), 0, None).unwrap();
         assert!(matches!(pass, Pass::Missing(_)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rotated_copies_are_found() {
+        let dir = std::env::temp_dir().join(format!("bfdb-range-rotate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let live = dir.join("range.jsonl");
+        let first = format!("{}\n{}\n", "a".repeat(600), "a".repeat(100));
+        std::fs::write(dir.join("range20261001T000000Z.jsonl"), &first).unwrap();
+        let second = format!("{}\n", "b".repeat(600));
+        std::fs::write(dir.join("range20261002T000000Z.jsonl"), &second).unwrap();
+        // not rotated copies
+        std::fs::write(dir.join("range-old.jsonl"), "x").unwrap();
+        std::fs::write(dir.join("range20261003T000000Z.txt"), "x").unwrap();
+        std::fs::write(&live, "{\"c\":1}\n").unwrap();
+        let sib = rotated_siblings(&live);
+        assert_eq!(sib.len(), 2);
+        assert!(sib[0].ends_with("range20261001T000000Z.jsonl"));
+        // the cursor was 601 bytes into the first copy: finish it from there,
+        // then read the second whole
+        let h1 = head_of(&sib[0]);
+        assert!(h1.is_some());
+        let b = rotated_backlog(&live, 601, h1);
+        assert_eq!(b, vec![(sib[0].clone(), 601), (sib[1].clone(), 0)]);
+        // the cursor belongs to the newest copy
+        let b = rotated_backlog(&live, 601, head_of(&sib[1]));
+        assert_eq!(b, vec![(sib[1].clone(), 601)]);
+        // no copy has that head: truncated by hand, nothing to finish
+        assert!(rotated_backlog(&live, 601, Some(1)).is_empty());
+        // no fingerprint yet: the newest copy at least as long as the cursor
+        assert_eq!(rotated_backlog(&live, 650, None), vec![(sib[0].clone(), 650), (sib[1].clone(), 0)]);
+        // reading the rest of the first copy gives its last line
+        let (pass, _) = read_pass(&sib[0], 601, None).unwrap();
+        let Pass::Read { lines, .. } = pass else { panic!("expected a read") };
+        assert_eq!(lines, vec!["a".repeat(100).into_bytes()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

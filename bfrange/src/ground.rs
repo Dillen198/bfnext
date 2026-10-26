@@ -193,8 +193,8 @@ impl Ground {
         if let Some(g) = &j.unit_group {
             match &j.spot {
                 Some(k) => {
-                    if let Ok(t) = lua.inner().registry_value::<LuaTable>(k) {
-                        let _ = t.call_method::<_, ()>("setPoint", LuaVec3(aim));
+                    if let Ok(t) = lua.inner().registry_value::<dcso3::spot::Spot>(k) {
+                        let _ = t.set_point(LuaVec3(aim));
                     }
                 }
                 None => {

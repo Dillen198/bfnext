@@ -35,7 +35,7 @@ use dcso3::{
     coalition::Side,
     land::Land,
     object::DcsOid,
-    weapon::{ClassWeapon, GuidanceType, Weapon, WeaponDesc},
+    weapon::{ClassWeapon, Weapon, WeaponDesc},
     LuaVec3, MizLua,
 };
 use fxhash::{FxHashMap, FxHashSet};
@@ -476,7 +476,7 @@ impl Iads {
         if !shooter.is_player() {
             return;
         }
-        let arm = desc.guidance == Some(GuidanceType::PassiveRadar);
+        let arm = crate::weapons::is_arm(desc.guidance);
         // the site aimed at: the weapon's own target, or for an ARM fired
         // without a lock, the emitting site nearest its line of flight
         let mut hit = target.as_ref().and_then(|t| self.site_of(t));

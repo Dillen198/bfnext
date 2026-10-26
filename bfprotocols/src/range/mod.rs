@@ -12,11 +12,14 @@
 //! and old lines keep parsing.
 
 pub mod cfg;
+#[cfg(test)]
+mod fixtures;
 pub mod grading;
 pub mod lso;
 pub mod pattern_legs;
 
 use chrono::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -24,7 +27,7 @@ use std::collections::BTreeMap;
 pub const RECORD_VERSION: u32 = 1;
 
 /// Who flew it. `ucid` is `None` for an AI shooter/target.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PilotRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ucid: Option<String>,
@@ -32,7 +35,7 @@ pub struct PilotRef {
 }
 
 /// A point on the map.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GeoPt {
     pub lat: f64,
     pub lon: f64,
@@ -42,7 +45,7 @@ pub struct GeoPt {
 }
 
 /// One graded event.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RangeRecord {
     /// Unique, engine-assigned: `<sortie>-<unix ms>-<seq>`.
     pub id: String,
@@ -92,7 +95,7 @@ impl RangeRecord {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RangeResult {
     Bomb(BombResult),
@@ -268,7 +271,7 @@ impl RangeResult {
 
 // ---------------------------------------------------------------- A/G range
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WeaponClass {
     Unguided,
@@ -279,7 +282,7 @@ pub enum WeaponClass {
     Gun,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BombQuality {
     Poor,
@@ -315,7 +318,7 @@ impl BombQuality {
 /// mission (`atmosphere.getWind`, `atmosphere.getTemperatureAndPressure`).
 /// Every wind-dependent number the range reports or calculates comes from
 /// these, never from the mission file or an assumed standard day.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AtmoLayer {
     /// metres MSL
     pub alt_m: f64,
@@ -327,7 +330,7 @@ pub struct AtmoLayer {
 }
 
 /// The aircraft's state at weapon release.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Release {
     pub pos: GeoPt,
     pub alt_agl_m: f64,
@@ -353,7 +356,7 @@ pub struct Release {
     pub atmo: Vec<AtmoLayer>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct BombResult {
     pub station_id: String,
     /// Range (station) display name, e.g. "Range A - Bomb Circle".
@@ -405,7 +408,7 @@ pub struct BombResult {
     pub gps_denied: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum StrafeQuality {
     Invalid,
@@ -440,7 +443,7 @@ impl StrafeQuality {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StrafeResult {
     pub station_id: String,
     pub range: String,
@@ -467,7 +470,7 @@ pub struct StrafeResult {
 
 // ---------------------------------------------------------------- carrier
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PassOutcome {
     Trap,
@@ -493,7 +496,7 @@ impl PassOutcome {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GradeSource {
     /// DCS's own Supercarrier LSO (LANDING_QUALITY_MARK)
@@ -503,7 +506,7 @@ pub enum GradeSource {
 }
 
 /// Summary of the pattern before the groove (Case I).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PatternSummary {
     #[serde(default)]
     pub break_alt_ft: Option<f64>,
@@ -524,7 +527,7 @@ pub struct PatternSummary {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TrapResult {
     pub carrier: String,
     pub carrier_type: String,
@@ -569,7 +572,7 @@ pub struct TrapResult {
 }
 
 /// The engine's own AIRBOSS-style grade.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EngineGrade {
     pub grade: String,
     pub points: Option<f64>,
@@ -578,7 +581,7 @@ pub struct EngineGrade {
 }
 
 /// One sample in the groove / pattern, in the landing-area frame.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GrooveSample {
     /// seconds since the start of the recorded track
     pub t: f64,
@@ -606,14 +609,14 @@ pub struct GrooveSample {
 
 // ---------------------------------------------------------------- AAR
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RefuelMethod {
     Boom,
     Drogue,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct Stability {
     /// standard deviation of the receiver's position in the tanker frame while
     /// connected, metres
@@ -626,7 +629,7 @@ pub struct Stability {
     pub mean_up_m: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AarResult {
     pub tanker: String,
     pub tanker_type: String,
@@ -658,7 +661,7 @@ pub struct AarResult {
 }
 
 /// Receiver position in the tanker's body frame.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 pub struct RelSample {
     pub t: f64,
     /// + = ahead of the tanker's reference point
@@ -673,7 +676,7 @@ pub struct RelSample {
 
 // ---------------------------------------------------------------- A/A
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MissileOutcome {
     /// The trainer destroyed it inside the kill radius: the target would have
@@ -698,7 +701,7 @@ impl MissileOutcome {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct LaunchGeom {
     pub range_m: f64,
     /// target aspect angle at launch (0 = hot, 180 = cold), degrees
@@ -713,7 +716,7 @@ pub struct LaunchGeom {
     pub target_pos: GeoPt,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DefenseSummary {
     /// seconds from launch until the target's heading changed > 30 degrees
     #[serde(default)]
@@ -730,7 +733,7 @@ pub struct DefenseSummary {
     pub went_low: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MissileResult {
     pub weapon: String,
     /// "aam" / "sam" / "other"
@@ -752,7 +755,7 @@ pub struct MissileResult {
     pub perspective: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EngagementOutcome {
     Win,
@@ -772,7 +775,7 @@ impl EngagementOutcome {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EngagementResult {
     /// "BFM offensive", "BVR 30 nm hot", "Duel" ...
     pub setup: String,
@@ -793,7 +796,7 @@ pub struct EngagementResult {
 
 // ---------------------------------------------------------------- anti-ship
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AntiShipResult {
     pub ship: String,
     pub ship_type: String,
@@ -816,7 +819,7 @@ pub struct AntiShipResult {
 
 // ---------------------------------------------------------------- rotary
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PrecisionQuality {
     Poor,
@@ -850,7 +853,7 @@ impl PrecisionQuality {
 
 /// Fixed-wing cargo: a load airdropped onto a drop zone, or air-landed at
 /// another field (the ground crew's own cargo, F8, in a C-130J or the like).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AirdropResult {
     /// "airdrop" or "airland"
     pub method: String,
@@ -889,7 +892,7 @@ pub struct AirdropResult {
 }
 
 /// The aircraft at the moment the load left the cargo bay.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AirdropRelease {
     pub pos: GeoPt,
     pub alt_agl_ft: f64,
@@ -903,7 +906,7 @@ pub struct AirdropRelease {
 
 /// A helicopter cargo delivery: a sling load, or DCS dynamic cargo carried
 /// inside (loaded with the ground crew's cargo loader).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SlingResult {
     /// "sling" or "internal"
     #[serde(default = "sling_method")]
@@ -928,7 +931,7 @@ fn sling_method() -> String {
     "sling".into()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LandingResult {
     /// "precision", "confined", "pinnacle", "ship", "fclp"
     pub drill: String,
@@ -952,7 +955,7 @@ pub struct LandingResult {
     pub ship_speed_kts: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TroopResult {
     pub lz: String,
     pub troops: u32,
@@ -964,7 +967,7 @@ pub struct TroopResult {
 
 // ---------------------------------------------------------------- ground / CAS
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GunneryResult {
     pub lane: String,
     pub targets_total: u32,
@@ -976,7 +979,7 @@ pub struct GunneryResult {
     pub first_round_hits: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CasResult {
     pub jtac: String,
     pub target: String,
@@ -995,7 +998,7 @@ pub struct CasResult {
 // ---------------------------------------------------------------- SEAD
 
 /// A player killed part of an IADS site.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SeadResult {
     /// IADS name, e.g. "S-1 Gardabani IADS"
     pub network: String,
@@ -1032,7 +1035,7 @@ pub struct SeadResult {
 
 // ---------------------------------------------------------------- hot zone
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HotZoneOutcome {
     /// flew out and came home
@@ -1057,7 +1060,7 @@ impl HotZoneOutcome {
 }
 
 /// One player's sortie through a hot zone.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HotZoneResult {
     pub zone: String,
     pub time_in_zone_s: f64,
@@ -1076,7 +1079,7 @@ pub struct HotZoneResult {
 
 // ---------------------------------------------------------------- low level
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GateTime {
     pub gate: String,
     /// seconds after the first gate; None = missed
@@ -1090,7 +1093,7 @@ pub struct GateTime {
     pub pos: GeoPt,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LowLevelResult {
     pub route: String,
     pub gates_hit: u32,
@@ -1120,7 +1123,7 @@ pub struct LowLevelResult {
 
 // ---------------------------------------------------------------- field landing
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldLandingOutcome {
     FullStop,
@@ -1140,7 +1143,7 @@ impl FieldLandingOutcome {
 }
 
 /// A runway landing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FieldLandingResult {
     pub airfield: String,
     /// e.g. "25" or "07L"
@@ -1193,7 +1196,7 @@ pub struct FieldLandingResult {
 /// The traffic pattern into a field landing, worked out from the track in the
 /// runway frame: distances along the runway from the landing threshold (+ =
 /// past it, in the landing direction), across it (+ = right), heights AGL.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct FieldPattern {
     /// "overhead" (initial, break, downwind), "downwind" (joined downwind),
     /// "straight_in", or "other"
@@ -1234,7 +1237,7 @@ pub struct FieldPattern {
 }
 
 /// After the wheels are down: the rollout, clearing the runway, the taxi.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct FieldTaxi {
     /// touchdown to taxi speed (30 kt), metres down the runway, and seconds
     pub rollout_m: f64,
@@ -1256,7 +1259,7 @@ pub struct FieldTaxi {
 
 // ---------------------------------------------------------------- CSAR
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CsarOutcome {
     /// picked up and brought home
@@ -1277,7 +1280,7 @@ impl CsarOutcome {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CsarResult {
     pub area: String,
     /// enemy troops were hunting the survivor
@@ -1301,7 +1304,7 @@ pub struct CsarResult {
 // ---------------------------------------------------------------- tracks
 
 /// Sampled geometry behind a result card.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Track {
     /// weapon flight, release to impact
@@ -1316,7 +1319,7 @@ pub enum Track {
     Path { paths: BTreeMap<String, Vec<TrackPt>> },
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TrackPt {
     pub t: f64,
     pub lat: f64,
@@ -1329,7 +1332,7 @@ pub struct TrackPt {
 // ---------------------------------------------------------------- live
 
 /// Everything the range site's live page shows. `query-range` RPC.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct RangeLive {
     pub server_time: DateTime<Utc>,
     #[serde(default)]
@@ -1370,7 +1373,7 @@ pub struct RangeLive {
     pub sky: Option<SkyInfo>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LiveSamSite {
     pub id: String,
     pub name: String,
@@ -1385,7 +1388,7 @@ pub struct LiveSamSite {
     pub range_m: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LiveIads {
     pub id: String,
     pub name: String,
@@ -1394,7 +1397,7 @@ pub struct LiveIads {
     pub sites: Vec<LiveSamSite>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LiveHotZone {
     pub id: String,
     pub name: String,
@@ -1410,7 +1413,7 @@ pub struct LiveHotZone {
     pub awacs: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LiveJammer {
     pub id: String,
     pub name: String,
@@ -1424,7 +1427,7 @@ pub struct LiveJammer {
     pub alive: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LiveCsar {
     pub area: String,
     pub pilot: String,
@@ -1438,7 +1441,7 @@ pub struct LiveCsar {
     pub hostile: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LiveShipDeck {
     pub id: String,
     pub name: String,
@@ -1452,7 +1455,7 @@ pub struct LiveShipDeck {
 
 /// The sky over the range, from the mission's weather (`env.mission.weather`)
 /// and, for fog, the live `world.weather`, for the site's weather briefing.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SkyInfo {
     /// the Mission Editor's cloud preset ("Scattered 3"), when one is used
     #[serde(default)]
@@ -1486,7 +1489,7 @@ pub struct SkyInfo {
     pub ground_m: f64,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WindInfo {
     /// DCS's atmosphere over the reference point, lowest first
     #[serde(default)]
@@ -1502,7 +1505,7 @@ pub struct WindInfo {
     pub qnh_hpa: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LivePlayer {
     pub ucid: String,
     pub name: String,
@@ -1520,7 +1523,7 @@ pub struct LivePlayer {
     pub activity: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StationKind {
     BombCircle,
@@ -1534,7 +1537,7 @@ pub enum StationKind {
     SamSite,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LiveStation {
     pub id: String,
     pub name: String,
@@ -1559,7 +1562,7 @@ pub struct LiveStation {
     pub atmo: Vec<AtmoLayer>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TankerState {
     Spawning,
@@ -1568,7 +1571,7 @@ pub enum TankerState {
     Dead,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LiveTanker {
     pub id: String,
     pub callsign: String,
@@ -1594,7 +1597,7 @@ pub struct LiveTanker {
     pub recovery_for: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LiveCarrier {
     pub id: String,
     pub name: String,
@@ -1638,7 +1641,7 @@ pub struct LiveCarrier {
     pub deck_angle_deg: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LiveSpawn {
     pub id: String,
     pub item: String,
@@ -1654,7 +1657,7 @@ pub struct LiveSpawn {
     pub units: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LiveArena {
     pub id: String,
     pub name: String,
@@ -1667,7 +1670,7 @@ pub struct LiveArena {
 
 // ---------------------------------------------------------------- spawning
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpawnCategory {
     AirToAir,
@@ -1681,20 +1684,20 @@ pub enum SpawnCategory {
     Ew,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ParamKind {
     Choice { options: Vec<ParamOption> },
     Number { min: f64, max: f64, step: f64, unit: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ParamOption {
     pub value: String,
     pub label: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ParamSpec {
     pub key: String,
     pub label: String,
@@ -1702,7 +1705,7 @@ pub struct ParamSpec {
     pub default: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CatalogItem {
     pub id: String,
     pub category: SpawnCategory,
@@ -1718,7 +1721,7 @@ pub struct CatalogItem {
 }
 
 /// `query-range-catalog` RPC.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SpawnCatalog {
     pub items: Vec<CatalogItem>,
     pub max_active_per_player: u32,
@@ -1727,7 +1730,7 @@ pub struct SpawnCatalog {
 
 /// `range-spawn` RPC argument (as JSON) -- bfdb fills `ucid` from the
 /// caller's session, never from the request body.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SpawnRequest {
     pub ucid: String,
     pub item: String,
@@ -1739,7 +1742,7 @@ pub struct SpawnRequest {
     pub instructor: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SpawnReply {
     pub ok: bool,
     pub message: String,
@@ -1749,7 +1752,7 @@ pub struct SpawnReply {
 
 /// Bomb ballistic data harvested from DCS's own weapon database in the hooks
 /// state (`query-weapons` RPC), for the release calculator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct WeaponBallistics {
     pub name: String,
     #[serde(default)]
@@ -1770,7 +1773,7 @@ pub struct WeaponBallistics {
     pub class: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WeaponDb {
     #[serde(default)]
     pub dcs_version: String,

@@ -449,22 +449,12 @@ impl Helo {
         let Some(a) = self.approaches.remove(&f.unit_name) else { return };
         let Some(pad) = self.pads.get(a.pad) else { return };
         let d = util::dist2(pad.pos, f.pos);
-        if d > 60. {
+        if d > PAD_REACH_M {
             return;
         }
-        // the steepest descent in the last second before the touchdown
-        let fpm = a
-            .vs
-            .iter()
-            .filter(|(t, _)| now - t < 1.2)
-            .map(|(_, v)| -v * 60. * util::M_TO_FT)
-            .fold(0., f64::max);
+        let fpm = touchdown_fpm(&a.vs, now);
         let herr = pad.cfg.heading_deg.map(|h| util::angdiff(f.hdg, h).abs());
-        let mut q = grading::precision_quality(pad.cfg.perfect_m, d);
-        // a hard landing caps the grade
-        if fpm > 500. && q > bfprotocols::range::PrecisionQuality::Fair {
-            q = bfprotocols::range::PrecisionQuality::Fair;
-        }
+        let q = pad_landing_quality(pad.cfg.perfect_m, d, fpm);
         let res = LandingResult {
             drill: pad.cfg.drill.clone(),
             pad: pad.cfg.name.clone(),
@@ -808,6 +798,26 @@ fn fixed_wing_delivery(
     false
 }
 
+/// A landing further than this from the mark is not graded.
+const PAD_REACH_M: f64 = 60.;
+
+/// The steepest descent in the last second before the touchdown, feet per
+/// minute (0 when only climbing). `vs`: (time, vertical speed m/s).
+fn touchdown_fpm<'a>(vs: impl IntoIterator<Item = &'a (f64, f64)>, now: f64) -> f64 {
+    vs.into_iter().filter(|(t, _)| now - t < 1.2).map(|(_, v)| -v * 60. * util::M_TO_FT).fold(0., f64::max)
+}
+
+/// Precision against the pad's perfect radius; a hard landing (over 500
+/// fpm) caps it at FAIR.
+fn pad_landing_quality(perfect_m: f64, d: f64, fpm: f64) -> bfprotocols::range::PrecisionQuality {
+    let q = grading::precision_quality(perfect_m, d);
+    if fpm > 500. && q > bfprotocols::range::PrecisionQuality::Fair {
+        bfprotocols::range::PrecisionQuality::Fair
+    } else {
+        q
+    }
+}
+
 fn cargo<'lua>(lua: MizLua<'lua>, name: &str) -> Option<StaticObject<'lua>> {
     match StaticObject::get_by_name(lua, name) {
         Ok(Static::Static(s)) => Some(s),
@@ -858,5 +868,33 @@ fn draw_pad(lua: MizLua, p: V3, name: &str, radius: f64) {
     })();
     if let Err(e) = r {
         warn!("could not draw {name}: {e:?}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bfprotocols::range::PrecisionQuality;
+
+    #[test]
+    fn touchdown_rate_is_the_last_second_only() {
+        // a 1500 fpm descent 3 s out, then 300 fpm at the end
+        let vs = [(7., -7.6), (9.0, -1.0), (9.5, -1.52), (10., -0.5)];
+        let fpm = touchdown_fpm(&vs, 10.);
+        assert!((fpm - 1.52 * 60. * util::M_TO_FT).abs() < 1e-9, "{fpm}");
+        // climbing away is not a negative rate
+        assert_eq!(touchdown_fpm(&[(9.9, 2.)], 10.), 0.);
+        assert_eq!(touchdown_fpm(&[] as &[(f64, f64)], 10.), 0.);
+    }
+
+    #[test]
+    fn pad_grades() {
+        // 2 m perfect radius
+        assert_eq!(pad_landing_quality(2., 1.5, 200.), PrecisionQuality::Perfect);
+        assert_eq!(pad_landing_quality(2., 7., 200.), PrecisionQuality::Good);
+        assert_eq!(pad_landing_quality(2., 30., 200.), PrecisionQuality::Poor);
+        // on the mark but hard: capped at FAIR, never raised
+        assert_eq!(pad_landing_quality(2., 1., 700.), PrecisionQuality::Fair);
+        assert_eq!(pad_landing_quality(2., 30., 700.), PrecisionQuality::Poor);
     }
 }

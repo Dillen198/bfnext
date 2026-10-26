@@ -303,13 +303,8 @@ impl AirToGround {
         let w = &imp.w;
         let tpos = tgt.pos;
         let d = imp.pos - tpos;
-        let miss = (d.x * d.x + d.z * d.z).sqrt();
-        let radial = util::hdg(d);
         let rel_v = w.rel_vel;
-        let attack_hdg = util::hdg(rel_v);
-        let rel = util::angdiff(radial, attack_hdg);
-        let long = miss * rel.to_radians().cos();
-        let cross = miss * rel.to_radians().sin();
+        let BombMiss { miss, radial, attack_hdg, rel, long, cross } = bomb_miss(tpos, imp.pos, rel_v);
         let quality = grading::bomb_quality(&cfg.scoring, w.class, miss);
         let (wind_from, wind_kts, wind_v) = util::wind_at(lua, w.rel_pos);
         let tas = (rel_v - wind_v).norm() * util::MS_TO_KTS;
@@ -464,9 +459,7 @@ impl AirToGround {
         }
         let st = &mut self.stations[run.station];
         let pit = st.cfg.strafe.clone().unwrap_or_default();
-        let rounds = run.ammo_start.saturating_sub(ammo_now).max(run.hits);
-        let acc = if rounds > 0 { (run.hits as f64 / rounds as f64 * 100.).min(100.) } else { 0. };
-        let valid = !run.foul && rounds > 0;
+        let (rounds, acc, valid) = strafe_tally(run.ammo_start, ammo_now, run.hits, run.foul);
         let quality = grading::strafe_quality(&cfg.scoring, acc, valid);
         let invalid_reason = if run.foul {
             Some(format!("fired inside the {:.0} m foul line", pit.foul_line_m))
@@ -575,6 +568,41 @@ impl AirToGround {
             })
             .collect()
     }
+}
+
+/// Where a bomb landed relative to its target and the attack.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BombMiss {
+    /// horizontal miss distance, metres
+    miss: f64,
+    /// bearing from the target to the impact, degrees
+    radial: f64,
+    /// the weapon's track at release, degrees
+    attack_hdg: f64,
+    /// `radial` relative to the attack heading, -180..180 (0 = long)
+    rel: f64,
+    /// along the attack heading, + long / - short
+    long: f64,
+    /// across it, + right / - left
+    cross: f64,
+}
+
+fn bomb_miss(target: V3, impact: V3, rel_vel: V3) -> BombMiss {
+    let d = impact - target;
+    let miss = (d.x * d.x + d.z * d.z).sqrt();
+    let radial = util::hdg(d);
+    let attack_hdg = util::hdg(rel_vel);
+    let rel = util::angdiff(radial, attack_hdg);
+    BombMiss { miss, radial, attack_hdg, rel, long: miss * rel.to_radians().cos(), cross: miss * rel.to_radians().sin() }
+}
+
+/// (rounds fired, accuracy %, valid) for a strafe pass. Rounds come from
+/// the gun's ammo count, but never fewer than the hits (DCS's count can
+/// lag); a pass that crossed the foul line or fired nothing is invalid.
+fn strafe_tally(ammo_start: u32, ammo_now: u32, hits: u32, foul: bool) -> (u32, f64, bool) {
+    let rounds = ammo_start.saturating_sub(ammo_now).max(hits);
+    let acc = if rounds > 0 { (hits as f64 / rounds as f64 * 100.).min(100.) } else { 0. };
+    (rounds, acc, !foul && rounds > 0)
 }
 
 fn elev(y: f64) -> String {
@@ -830,8 +858,8 @@ fn update_laser(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) ->
     }
     let Some(tp) = target else {
         if let Some(k) = st.spot.take() {
-            if let Ok(t) = lua.inner().registry_value::<LuaTable>(&k) {
-                let _ = t.call_method::<_, ()>("destroy", ());
+            if let Ok(t) = lua.inner().registry_value::<dcso3::spot::Spot>(&k) {
+                let _ = t.destroy();
             }
             let _ = lua.inner().remove_registry_value(k);
         }
@@ -840,8 +868,8 @@ fn update_laser(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) ->
     let aim = V3::new(tp.x, tp.y + 1.5, tp.z);
     match &st.spot {
         Some(k) => {
-            let t: LuaTable = lua.inner().registry_value(k)?;
-            t.call_method::<_, ()>("setPoint", LuaVec3(aim))?;
+            let t: dcso3::spot::Spot = lua.inner().registry_value(k)?;
+            t.set_point(LuaVec3(aim))?;
         }
         None => {
             let d = st.designator.clone().unwrap_or_default();
@@ -861,4 +889,59 @@ fn update_laser(lua: MizLua, st: &mut Station, spawns: &mut Spawns, now: f64) ->
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bfprotocols::range::{cfg::ScoringCfg, BombQuality, StrafeQuality};
+
+    /// DCS's frame: x north, z east.
+    fn ne(north: f64, east: f64) -> V3 {
+        V3::new(north, 0., east)
+    }
+
+    #[test]
+    fn a_bomb_short_of_the_target_on_a_northbound_run() {
+        let m = bomb_miss(ne(0., 0.), ne(-12., 0.), ne(200., 0.));
+        assert!((m.miss - 12.).abs() < 1e-9);
+        assert!((m.attack_hdg - 0.).abs() < 1e-9);
+        assert!((m.radial - 180.).abs() < 1e-9);
+        assert!((m.long + 12.).abs() < 1e-9 && m.cross.abs() < 1e-9, "{m:?}");
+        assert_eq!(grading::clock(m.rel), 6);
+        let cfg = ScoringCfg::default();
+        assert_eq!(grading::bomb_quality(&cfg, WeaponClass::Unguided, m.miss), BombQuality::Excellent);
+        assert_eq!(grading::bomb_quality(&cfg, WeaponClass::Guided, m.miss), BombQuality::Ineffective);
+    }
+
+    #[test]
+    fn long_and_right_on_an_eastbound_run() {
+        // run east; impact 30 m east (long) and 40 m south (right of track)
+        let m = bomb_miss(ne(500., 500.), ne(460., 530.), ne(0., 150.));
+        assert!((m.miss - 50.).abs() < 1e-9);
+        assert!((m.long - 30.).abs() < 1e-9, "{m:?}");
+        assert!((m.cross - 40.).abs() < 1e-9, "{m:?}");
+        assert_eq!(grading::clock(m.rel), 2);
+        // height differences don't count
+        let m2 = bomb_miss(ne(500., 500.), V3::new(460., -30., 530.), ne(0., 150.));
+        assert_eq!(m.miss, m2.miss);
+    }
+
+    #[test]
+    fn strafe_tallies() {
+        let cfg = ScoringCfg::default();
+        // 100 rounds, 60 hits
+        let (r, acc, valid) = strafe_tally(500, 400, 60, false);
+        assert_eq!((r, valid), (100, true));
+        assert!((acc - 60.).abs() < 1e-9);
+        assert_eq!(grading::strafe_quality(&cfg, acc, valid), StrafeQuality::Good);
+        // the ammo count lagged behind the hits: never over 100 %
+        let (r, acc, _) = strafe_tally(500, 495, 12, false);
+        assert_eq!((r, acc), (12, 100.));
+        // inside the foul line
+        let (_, acc, valid) = strafe_tally(500, 400, 95, true);
+        assert_eq!(grading::strafe_quality(&cfg, acc, valid), StrafeQuality::Invalid);
+        // nothing fired
+        assert_eq!(strafe_tally(500, 500, 0, false), (0, 0., false));
+    }
 }

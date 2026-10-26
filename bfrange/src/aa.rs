@@ -427,12 +427,11 @@ impl AirToAir {
                 m.last_sample = now;
                 let thdg = util::hdg(tvel);
                 let off = util::angdiff(util::bearing(tpos, wpos), thdg).abs();
-                if off < 45. {
-                    m.hot_s += dt
-                } else if (70. ..=110.).contains(&off) {
-                    m.beam_s += dt
-                } else if off > 135. {
-                    m.drag_s += dt
+                match defence_aspect(off) {
+                    Some(DefenceAspect::Hot) => m.hot_s += dt,
+                    Some(DefenceAspect::Beam) => m.beam_s += dt,
+                    Some(DefenceAspect::Drag) => m.drag_s += dt,
+                    None => (),
                 }
                 if m.reaction_s.is_none() {
                     if let Some(h0) = m.tgt_hdg0 {
@@ -464,20 +463,7 @@ impl AirToAir {
                 self.finish(lua, players, rec, m, Some(tname), msg_s, now);
                 continue;
             }
-            // adaptive re-check interval (FOX's table)
-            let km = d / 1000.;
-            m.next_check = now
-                + if km > 50. {
-                    5.
-                } else if km > 10. {
-                    1.
-                } else if km > 5. {
-                    0.5
-                } else if km > 1. {
-                    0.1
-                } else {
-                    0.02
-                };
+            m.next_check = now + recheck_after(d);
             i += 1;
         }
         kills
@@ -496,15 +482,7 @@ impl AirToAir {
         _now: f64,
     ) {
         let Some(tname) = killed.clone().or(m.target.clone()) else { return };
-        let outcome = if killed.is_some() {
-            MissileOutcome::Kill
-        } else if m.hit {
-            MissileOutcome::Hit
-        } else if m.min_dist < f64::MAX {
-            MissileOutcome::Defeated
-        } else {
-            MissileOutcome::Timeout
-        };
+        let outcome = missile_outcome(killed.is_some(), m.hit, m.min_dist);
         let tf = players.flying.get(&tname);
         let target_ref = PilotRef {
             ucid: tf.map(|f| f.ucid.to_string()),
@@ -545,11 +523,7 @@ impl AirToAir {
         if let Some(f) = tf {
             let mut r = base.clone();
             r.perspective = "target".into();
-            let score = match outcome {
-                MissileOutcome::Defeated => Some(5.),
-                MissileOutcome::Kill | MissileOutcome::Hit => Some(1.),
-                MissileOutcome::Timeout => None,
-            };
+            let score = missile_scores(outcome).0;
             let text = match outcome {
                 MissileOutcome::Kill => format!(
                     "SPLASH! {} from {} ({}) would have killed you - closest {:.0} m",
@@ -578,11 +552,7 @@ impl AirToAir {
         if m.shooter.is_player() {
             let mut r = base;
             r.perspective = "shooter".into();
-            let score = match outcome {
-                MissileOutcome::Kill | MissileOutcome::Hit => Some(5.),
-                MissileOutcome::Defeated => Some(1.),
-                MissileOutcome::Timeout => None,
-            };
+            let score = missile_scores(outcome).1;
             if let Some(g) = m.shooter.group_id {
                 let text = match outcome {
                     MissileOutcome::Kill => format!("SPLASH! Your {} would have killed {}", m.weapon, target_ref.name),
@@ -1037,6 +1007,70 @@ impl AirToAir {
     }
 }
 
+/// Where the missile is relative to the defender's nose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DefenceAspect {
+    Hot,
+    Beam,
+    Drag,
+}
+
+/// `off`: angle between the defender's heading and the bearing to the
+/// missile, degrees (0 = nose on). The gaps between the bands count as
+/// none of them.
+fn defence_aspect(off: f64) -> Option<DefenceAspect> {
+    if off < 45. {
+        Some(DefenceAspect::Hot)
+    } else if (70. ..=110.).contains(&off) {
+        Some(DefenceAspect::Beam)
+    } else if off > 135. {
+        Some(DefenceAspect::Drag)
+    } else {
+        None
+    }
+}
+
+/// Seconds to the next check of a missile `d` metres from its target
+/// (FOX's adaptive table): close ones are checked every frame.
+fn recheck_after(d: f64) -> f64 {
+    let km = d / 1000.;
+    if km > 50. {
+        5.
+    } else if km > 10. {
+        1.
+    } else if km > 5. {
+        0.5
+    } else if km > 1. {
+        0.1
+    } else {
+        0.02
+    }
+}
+
+/// How a missile's flight ended: killed by the trainer, really hit, flew
+/// past (it was tracked closing: `min_dist` was measured), or timed out.
+fn missile_outcome(killed: bool, hit: bool, min_dist: f64) -> MissileOutcome {
+    if killed {
+        MissileOutcome::Kill
+    } else if hit {
+        MissileOutcome::Hit
+    } else if min_dist < f64::MAX {
+        MissileOutcome::Defeated
+    } else {
+        MissileOutcome::Timeout
+    }
+}
+
+/// The (defender, shooter) scores for an outcome: defeating a missile is
+/// the defender's 5, a kill or hit the shooter's. A timeout is not graded.
+fn missile_scores(outcome: MissileOutcome) -> (Option<f64>, Option<f64>) {
+    match outcome {
+        MissileOutcome::Defeated => (Some(5.), Some(1.)),
+        MissileOutcome::Kill | MissileOutcome::Hit => (Some(1.), Some(5.)),
+        MissileOutcome::Timeout => (None, None),
+    }
+}
+
 fn side_of(f: &Flying) -> Side_ {
     Side_ {
         unit: f.unit_name.clone(),
@@ -1046,5 +1080,49 @@ fn side_of(f: &Flying) -> Side_ {
         side: f.side,
         group: Some(f.group_id),
         callsign: f.group_name.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missile_outcomes() {
+        // the trainer's kill wins over everything
+        assert_eq!(missile_outcome(true, true, 5.), MissileOutcome::Kill);
+        assert_eq!(missile_outcome(false, true, 5.), MissileOutcome::Hit);
+        // tracked closing and went past: defeated, however close it came
+        assert_eq!(missile_outcome(false, false, 30.), MissileOutcome::Defeated);
+        // never tracked against a target
+        assert_eq!(missile_outcome(false, false, f64::MAX), MissileOutcome::Timeout);
+    }
+
+    #[test]
+    fn missile_scores_are_mirrored() {
+        assert_eq!(missile_scores(MissileOutcome::Defeated), (Some(5.), Some(1.)));
+        assert_eq!(missile_scores(MissileOutcome::Kill), (Some(1.), Some(5.)));
+        assert_eq!(missile_scores(MissileOutcome::Hit), (Some(1.), Some(5.)));
+        assert_eq!(missile_scores(MissileOutcome::Timeout), (None, None));
+    }
+
+    #[test]
+    fn defence_aspects() {
+        assert_eq!(defence_aspect(0.), Some(DefenceAspect::Hot));
+        assert_eq!(defence_aspect(44.9), Some(DefenceAspect::Hot));
+        assert_eq!(defence_aspect(60.), None);
+        assert_eq!(defence_aspect(70.), Some(DefenceAspect::Beam));
+        assert_eq!(defence_aspect(110.), Some(DefenceAspect::Beam));
+        assert_eq!(defence_aspect(120.), None);
+        assert_eq!(defence_aspect(170.), Some(DefenceAspect::Drag));
+    }
+
+    #[test]
+    fn recheck_gets_faster_as_the_missile_closes() {
+        let ds = [80_000., 20_000., 7_000., 2_000., 500.];
+        let t: Vec<f64> = ds.iter().map(|d| recheck_after(*d)).collect();
+        assert_eq!(t, vec![5., 1., 0.5, 0.1, 0.02]);
+        // at 2.5 Mach (~850 m/s) the last band moves under 20 m between checks
+        assert!(850. * recheck_after(900.) < 20.);
     }
 }

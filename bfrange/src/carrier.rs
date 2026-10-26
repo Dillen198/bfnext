@@ -126,23 +126,28 @@ impl Carrier {
     }
 
     fn wire_estimate(&self, stop_fwd_of_stern: f64, typ: &str) -> Option<u8> {
-        if self.deck.wires_m[0] <= 0. {
-            return None;
-        }
-        // an arrested aircraft rolls out well past its wire: MOOSE's
-        // correction is 100 m for the Hornet and Tomcat, 56 m otherwise
-        let corr = if typ.starts_with("FA-18") || typ.starts_with("F-14") { 100. } else { 56. };
-        let d = stop_fwd_of_stern - corr;
-        let w = &self.deck.wires_m;
-        let mut best = (1u8, f64::MAX);
-        for (i, x) in w.iter().enumerate() {
-            let e = (d - x).abs();
-            if e < best.1 {
-                best = ((i + 1) as u8, e);
-            }
-        }
-        Some(best.0)
+        estimate_wire(&self.deck.wires_m, stop_fwd_of_stern, typ)
     }
+}
+
+/// The wire an aircraft that stopped `stop_fwd_of_stern` metres forward of
+/// the stern most likely caught. `None` on a deck without wires.
+fn estimate_wire(wires_m: &[f64; 4], stop_fwd_of_stern: f64, typ: &str) -> Option<u8> {
+    if wires_m[0] <= 0. {
+        return None;
+    }
+    // an arrested aircraft rolls out well past its wire: MOOSE's
+    // correction is 100 m for the Hornet and Tomcat, 56 m otherwise
+    let corr = if typ.starts_with("FA-18") || typ.starts_with("F-14") { 100. } else { 56. };
+    let d = stop_fwd_of_stern - corr;
+    let mut best = (1u8, f64::MAX);
+    for (i, x) in wires_m.iter().enumerate() {
+        let e = (d - x).abs();
+        if e < best.1 {
+            best = ((i + 1) as u8, e);
+        }
+    }
+    Some(best.0)
 }
 
 #[derive(Debug, Default)]
@@ -878,4 +883,108 @@ fn finish_pass(
 
 pub fn carrier_by_place(cs: &Carriers, place: &str) -> bool {
     cs.carriers.iter().any(|c| c.cfg.unit_name == place)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bfprotocols::range::cfg::{CarrierKind, ScoringCfg};
+
+    /// A groove from 0.8 nm to the ramp, one sample every 10 m, with the
+    /// errors `f` gives at each distance aft (gse, lue, aoa).
+    fn groove(f: impl Fn(f64) -> (f64, f64, Option<f64>)) -> Vec<GrooveSample> {
+        let mut v = vec![];
+        let mut x = 0.8 * 1852.;
+        let mut t = 0.;
+        while x > 0. {
+            let (gse_deg, lue_deg, aoa_deg) = f(x);
+            v.push(GrooveSample { t, x_m: x, gse_deg, lue_deg, aoa_deg, closure_kts: 135., ..Default::default() });
+            x -= 10.;
+            t += 0.15;
+        }
+        v
+    }
+
+    fn hornet() -> AoaBand {
+        ScoringCfg::default().aoa.get("FA-18C_hornet").cloned().expect("a Hornet AoA band")
+    }
+
+    #[test]
+    fn a_clean_pass_to_the_three_wire_is_an_ok_underline() {
+        let b = hornet();
+        let s = groove(|_| (0.1, -0.2, Some(b.on_speed)));
+        let g = engine_grade(&s, Some(&b), PassOutcome::Trap, Some(17.), Some(3));
+        assert_eq!(g.grade, "_OK_", "{g:?}");
+        assert_eq!(g.comment, "");
+        assert_eq!(g.points, Some(5.));
+        // the same pass to the 2 wire, or a short groove, is a plain OK
+        assert_eq!(engine_grade(&s, Some(&b), PassOutcome::Trap, Some(17.), Some(2)).grade, "OK");
+        let g = engine_grade(&s, Some(&b), PassOutcome::Trap, Some(11.), Some(3));
+        assert_eq!((g.grade.as_str(), g.comment.as_str()), ("OK", "NESA"));
+        let g = engine_grade(&s, Some(&b), PassOutcome::Trap, Some(22.), Some(3));
+        assert_eq!((g.grade.as_str(), g.comment.as_str()), ("OK", "LIG"));
+    }
+
+    #[test]
+    fn deviations_are_called_by_window_and_size() {
+        let b = hornet();
+        // a little high at the start, very low at the ramp, lined up left in close
+        let s = groove(|x| {
+            let gse = if x >= IM_START { 0.6 } else if x < AR_START { -1.0 } else { 0. };
+            let lue = if (AR_START..IC_START).contains(&x) { -1.5 } else { 0. };
+            (gse, lue, Some(b.on_speed))
+        });
+        let g = engine_grade(&s, Some(&b), PassOutcome::Trap, Some(17.), Some(2));
+        assert_eq!(g.comment, "(HX) LULIC _LOAR_");
+        // the worst call is a lot: no-count pass
+        assert_eq!(g.grade, "--");
+        assert_eq!(g.points, Some(2.));
+        // normal-sized calls at worst: (OK)
+        let s = groove(|x| (if x < IM_START && x >= IC_START { 1.0 } else { 0. }, 0., Some(b.on_speed)));
+        let g = engine_grade(&s, Some(&b), PassOutcome::Trap, Some(16.), Some(3));
+        assert_eq!((g.grade.as_str(), g.comment.as_str()), ("(OK)", "HIM"));
+    }
+
+    #[test]
+    fn aoa_needs_a_band() {
+        let b = hornet();
+        let s = groove(|_| (0., 0., Some(b.slow_lot + 0.5)));
+        let g = engine_grade(&s, Some(&b), PassOutcome::Trap, Some(17.), Some(3));
+        assert_eq!(g.comment, "_SLOX_ _SLOIM_ _SLOIC_ _SLOAR_");
+        // no band for the type: AoA is not graded
+        let g = engine_grade(&s, None, PassOutcome::Trap, Some(17.), Some(3));
+        assert_eq!(g.grade, "_OK_");
+    }
+
+    #[test]
+    fn waveoffs_bolters_and_crashes() {
+        let b = hornet();
+        let clean = groove(|_| (0., 0., Some(b.on_speed)));
+        // waved off without being outside the limits: an own-waveoff grade
+        assert_eq!(engine_grade(&clean, Some(&b), PassOutcome::Waveoff, None, None).grade, "OWO");
+        // outside the lineup limit in close: a real waveoff
+        let wild = groove(|x| (0., if x < IC_START { 4.0 } else { 0. }, Some(b.on_speed)));
+        let g = engine_grade(&wild, Some(&b), PassOutcome::Waveoff, None, None);
+        assert_eq!(g.grade, "WO");
+        assert_eq!(g.points, Some(1.));
+        assert_eq!(engine_grade(&clean, Some(&b), PassOutcome::Bolter, Some(17.), None).grade, "B");
+        assert_eq!(engine_grade(&clean, Some(&b), PassOutcome::OwnWaveoff, None, None).grade, "OWO");
+        let g = engine_grade(&clean, Some(&b), PassOutcome::Crash, None, None);
+        assert_eq!((g.grade.as_str(), g.points), ("C", Some(0.)));
+    }
+
+    #[test]
+    fn wire_from_the_stopping_point() {
+        let w = CarrierKind::Nimitz.deck().wires_m;
+        // a Hornet stops ~100 m past its wire
+        assert_eq!(estimate_wire(&w, 70. + 100., "FA-18C_hornet"), Some(3));
+        assert_eq!(estimate_wire(&w, 46. + 100., "FA-18C_hornet"), Some(1));
+        assert_eq!(estimate_wire(&w, 81. + 140., "F-14B"), Some(4));
+        // others ~56 m
+        assert_eq!(estimate_wire(&w, 58. + 56., "T-45"), Some(2));
+        // way short is still the 1 wire, never 0
+        assert_eq!(estimate_wire(&w, 0., "T-45"), Some(1));
+        // a deck without wires
+        assert_eq!(estimate_wire(&CarrierKind::Tarawa.deck().wires_m, 150., "AV8BNA"), None);
+    }
 }

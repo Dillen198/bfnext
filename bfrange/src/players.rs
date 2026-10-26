@@ -88,6 +88,11 @@ impl Players {
         Some(p.ucid)
     }
 
+    /// Is this ucid connected to the server (flying or not)?
+    pub fn is_connected(&self, ucid: &Ucid) -> bool {
+        self.by_id.values().any(|p| &p.ucid == ucid)
+    }
+
     pub fn pilot_by_id(&self, id: PlayerId) -> Option<&Pilot> {
         self.by_id.get(&id)
     }

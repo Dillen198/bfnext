@@ -78,6 +78,8 @@ pub enum Task {
     Stat(Stat),
     Record(Box<RangeRecord>),
     Start { sortie: String, net: NetCfg, q: CmdQueue },
+    /// Rotate the JSONL feeds that are bigger than these many bytes.
+    RotateJsonl { range_max: Option<u64>, stats_max: Option<u64> },
 }
 
 thread_local! {
@@ -117,20 +119,50 @@ fn open_append(p: &Path) -> Option<File> {
     }
 }
 
-fn rotate(p: &Path) {
-    if p.exists() {
-        let ts = Utc::now().format("%Y%m%dT%H%M%SZ");
-        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("bfrange");
-        let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("txt");
-        let to = p.with_file_name(format!("{stem}{ts}.{ext}"));
-        let _ = fs::rename(p, to);
+/// Rename `p` to `<stem><UTC timestamp>.<ext>` beside it, the name bfdb's
+/// range ingest looks for when it finishes a rotated `range.jsonl`.
+fn rotate(p: &Path) -> io::Result<Option<PathBuf>> {
+    if !p.exists() {
+        return Ok(None);
     }
+    let ts = Utc::now().format("%Y%m%dT%H%M%SZ");
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("bfrange");
+    let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("txt");
+    let to = p.with_file_name(format!("{stem}{ts}.{ext}"));
+    if to.exists() {
+        // two rotations within a second: keep the first
+        return Ok(None);
+    }
+    fs::rename(p, &to)?;
+    Ok(Some(to))
+}
+
+/// Rotate a JSONL feed once it is over `max` bytes. The handle is closed
+/// first (Windows won't rename a file this process holds open for writing
+/// without delete sharing), and the feed is reopened either way.
+fn rotate_jsonl(f: &mut Option<File>, p: &Path, max: u64) {
+    let len = match fs::metadata(p) {
+        Ok(m) => m.len(),
+        Err(_) => return,
+    };
+    if len <= max {
+        return;
+    }
+    *f = None;
+    match rotate(p) {
+        Ok(Some(to)) => info!("rotated {p:?} ({len} bytes) to {to:?}"),
+        Ok(None) => (),
+        Err(e) => error!("could not rotate {p:?}: {e:?}"),
+    }
+    *f = open_append(p);
 }
 
 struct Sinks {
     log: Option<File>,
     stats: Option<File>,
     range: Option<File>,
+    stats_path: PathBuf,
+    range_path: PathBuf,
 }
 
 impl Sinks {
@@ -138,11 +170,24 @@ impl Sinks {
         let logs = write_dir.join("Logs");
         let _ = fs::create_dir_all(&logs);
         let log_path = logs.join("bfrange.txt");
-        rotate(&log_path);
+        let _ = rotate(&log_path);
+        let stats_path = logs.join("stats.jsonl");
+        let range_path = logs.join("range.jsonl");
         Self {
             log: open_append(&log_path),
-            stats: open_append(&logs.join("stats.jsonl")),
-            range: open_append(&logs.join("range.jsonl")),
+            stats: open_append(&stats_path),
+            range: open_append(&range_path),
+            stats_path,
+            range_path,
+        }
+    }
+
+    fn rotate_jsonl(&mut self, range_max: Option<u64>, stats_max: Option<u64>) {
+        if let Some(max) = range_max {
+            rotate_jsonl(&mut self.range, &self.range_path, max);
+        }
+        if let Some(max) = stats_max {
+            rotate_jsonl(&mut self.stats, &self.stats_path, max);
         }
     }
 
@@ -353,6 +398,7 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
             }
             Task::Stat(st) => sinks.stat(&st),
             Task::Record(r) => sinks.record(&r),
+            Task::RotateJsonl { range_max, stats_max } => sinks.rotate_jsonl(range_max, stats_max),
             Task::Start { sortie, net, q } => {
                 let Some(base) = net.base else {
                     info!("no netidx_base in the range config: RPCs disabled, JSONL only");

@@ -25,28 +25,78 @@ local function file_exists(name)
     return false
 end
 
-local function copy_file(from, to)
-    local fromf, fe = io.open(from, "rb")
-    if fromf == nil then
-        return fe
+-- Read a whole file; nil, err on failure.
+local function read_all(name)
+    local f, e = io.open(name, "rb")
+    if f == nil then
+        return nil, e
     end
-    local tof, te = io.open(to, "wb")
+    local data = f:read("*a")
+    f:close()
+    if data == nil then
+        return nil, "could not read " .. name
+    end
+    return data
+end
+
+-- Install `from` as `to`, never leaving `to` missing or half-written: the
+-- bytes go to `to`.new first and are read back and compared; the old file
+-- is moved aside to `to`.old (Windows' rename won't replace a file) and put
+-- back if the swap fails. Returns nil on success, an error string otherwise.
+local function install_file(from, to)
+    local data, e = read_all(from)
+    if data == nil then
+        return tostring(e)
+    end
+    if #data == 0 then
+        return from .. " is empty"
+    end
+    local tmp = to .. ".new"
+    local old = to .. ".old"
+    local tof, te = io.open(tmp, "wb")
     if tof == nil then
-        fromf:close()
-        return te
+        return tostring(te)
     end
-    tof:write(fromf:read("*a"))
-    fromf:close()
-    tof:close()
+    local ok, we = tof:write(data)
+    local closed, ce = tof:close()
+    if not ok or not closed then
+        os.remove(tmp)
+        return "writing " .. tmp .. ": " .. tostring(we or ce)
+    end
+    local check = read_all(tmp)
+    if check == nil or #check ~= #data or check ~= data then
+        os.remove(tmp)
+        return tmp .. " did not read back what was written"
+    end
+    os.remove(old)
+    local had_old = file_exists(to)
+    if had_old then
+        local moved, me = os.rename(to, old)
+        if not moved then
+            os.remove(tmp)
+            return "moving the old " .. to .. " aside: " .. tostring(me)
+        end
+    end
+    local swapped, se = os.rename(tmp, to)
+    if not swapped then
+        if had_old then
+            os.rename(old, to)
+        end
+        os.remove(tmp)
+        return "moving " .. tmp .. " into place: " .. tostring(se)
+    end
+    os.remove(old)
+    return nil
 end
 
 local update = lfs.writedir() .. "\\Scripts\\_bfrange.dll"
 local dll = lfs.writedir() .. "\\Scripts\\bfrange.dll"
 
 if file_exists(update) then
-    local e = copy_file(update, dll)
+    local e = install_file(update, dll)
     if e ~= nil then
-        net.log("could not install updated bfrange.dll " .. tostring(e))
+        -- the staged file stays, so the next start tries again
+        net.log("could not install updated bfrange.dll, keeping " .. update .. ": " .. tostring(e))
     else
         os.remove(update)
         net.log("installed updated bfrange.dll")
