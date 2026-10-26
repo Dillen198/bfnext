@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { existsSync, readFileSync } from 'node:fs'
 import db from '../../../shared/models/tacview.json'
+import catalog from '../../../shared/models/catalog.ts?raw'
 import { realOf, tacviewType, shortNameOf } from './models'
 import live from './live-types.json'
 
-const catalog = readFileSync(new URL('../../../shared/models/catalog.ts', import.meta.url), 'utf8')
+// the installed model files, by name (web-only: the app's tsconfig has no Node types)
+const installed = new Set(Object.keys(import.meta.glob('../../public/models/*.glb')).map(p => decodeURIComponent(p.slice(p.lastIndexOf('/') + 1, -4))))
+const existsModel = (r: string) => installed.has(r)
 
 describe('realOf', () => {
   it("draws the common DCS types with Tacview's meshes, matched as Tacview matches them", () => {
@@ -55,7 +57,7 @@ describe('realOf', () => {
     const named = new Set<string>(db.shapes)
     for (const m of catalog.matchAll(/'((?:FixedWing|Rotorcraft|Rotocraft|AntiAircraft|Vehicle|Watercraft|Missile|Bomb|Rocket|Core|Other)\.[^']+)'/g)) named.add(m[1])
     named.delete('Core.Empty') // Tacview's invisible placeholder: no geometry
-    const missing = [...named].filter(r => !existsSync(new URL(`../../public/models/${r}.glb`, import.meta.url)))
+    const missing = [...named].filter(r => !existsModel(r))
     expect(missing).toEqual([])
   })
 
@@ -63,7 +65,7 @@ describe('realOf', () => {
     for (const [k, n] of live as [string, string, number][]) {
       const r = realOf(k, n)
       expect(r, `${k} ${n}`).toBeTruthy()
-      expect(existsSync(new URL(`../../public/models/${r}.glb`, import.meta.url)), `${n} -> ${r}.glb`).toBe(true)
+      expect(existsModel(r!), `${n} -> ${r}.glb`).toBe(true)
     }
   })
 })

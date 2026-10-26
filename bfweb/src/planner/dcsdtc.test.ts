@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { gunzipSync } from 'node:zlib'
 import { buildDcsDtc, dcsdtcFor, ddm, dms, shareString, DCSDTC_TARGETS } from './dcsdtc'
 import { newPlan, type Plan } from './types'
 
@@ -81,8 +80,10 @@ describe('DCS-DTC presets', () => {
 
   it('makes the clipboard share string DCS-DTC decodes', async () => {
     const json = '{"Aircraft":"F16C","Version":2}'
-    const raw = Buffer.from(await shareString(json), 'base64')
-    expect(raw.readInt32LE(0)).toBe(json.length)
-    expect(gunzipSync(raw.subarray(4)).toString('utf8')).toBe(json)
+    // web APIs only (no node: modules): the app's tsconfig has no Node types
+    const raw = Uint8Array.from(atob(await shareString(json)), ch => ch.charCodeAt(0))
+    expect(new DataView(raw.buffer).getInt32(0, true)).toBe(json.length)
+    const body = new Blob([raw.subarray(4)]).stream().pipeThrough(new DecompressionStream('gzip'))
+    expect(await new Response(body).text()).toBe(json)
   })
 })
