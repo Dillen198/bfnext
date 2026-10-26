@@ -3,8 +3,21 @@
  * Tauri bridge with a believable server box, so the manager's screens can be
  * laid out and clicked through in a browser. Dev only: main.tsx imports this
  * behind `import.meta.env.DEV`, so it never ships.
+ *
+ * Two server boxes (devMockBoxes.ts): this one is the campaign box, the
+ * range box is remote. `?mock&controller`: this PC is a controller with no
+ * bot, and both boxes are remote.
  */
+import { opsRequest } from './devMockBoxes'
+
 const now = () => new Date().toISOString()
+const controller = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('controller')
+
+const servers = [
+  ...(controller ? [] : [{ id: 'local', name: 'CAMPAIGN', url: 'http://127.0.0.1:9876/stats/fowlengine/ops', has_key: true, local: true, problem: null }]),
+  ...(controller ? [{ id: 'campaign', name: 'CAMPAIGN', url: 'http://100.101.2.84:9876/stats/fowlengine/ops', has_key: true, local: false, problem: null }] : []),
+  { id: 'range', name: 'RANGE', url: 'http://100.101.2.86:9876/stats/fowlengine/ops', has_key: true, local: false, problem: null as string | null },
+]
 
 const state = {
   version: '0.1.0',
@@ -17,8 +30,11 @@ const state = {
     bot_dir: 'E:\\Github\\DCSServerBot', bot_command: null, sync_plugin: true, auto_update: true,
     channel: 'stable', repo: 'Dillen198/bfnext', check_hours: 6, update_window: '04:00-08:00', github_token: null,
     desktop_session: true, desktop_user: '.\\ATPAdmin', lock_after_autologon: true,
-    start_with_windows: true,
+    start_with_windows: true, controller_only: controller, local_name: controller ? null : 'CAMPAIGN', remote_backups: false,
+    servers: servers.filter(s => !s.local).map(s => ({ id: s.id, name: s.name, url: s.url, key: null })),
   },
+  servers,
+  remote_backup: null,
   service: {
     name: 'FowlEngine', installed: true, state: 'running', start_type: 'automatic', account: 'LocalSystem',
     executable: '"C:\\Program Files\\Fowl Engine Manager\\FowlEngineManager.exe" --service', foreign_exe: false, pid: 4412,
@@ -43,7 +59,7 @@ const state = {
     update_state: null,
   },
   agent_fresh: true,
-  bot_dir_valid: true,
+  bot_dir_valid: !controller,
   bundle_version: '0.1.0+5772770d025f',
   plugin_pending: [],
   plugin_link: null,
@@ -69,7 +85,30 @@ const handlers: Record<string, (args: Record<string, unknown>) => unknown> = {
     '2026-09-26T04:15:00Z [INFO] plugin sync: 1 file(s) updated from bundle 0.1.0+5772770d025f',
     '2026-09-26T04:15:00Z [INFO] started DCSServerBot: cmd /c run.cmd in E:\\Github\\DCSServerBot (pid 9120)',
   ],
-  ops_request: () => ({ status: 502, content_type: 'application/json', body: JSON.stringify({ error: 'mock: no bot here' }) }),
+  ops_request: (a) => opsRequest((a.server as string | null) ?? null, a.method as string, a.path as string, (a.body as string | null) ?? null),
+  save_server: (a) => {
+    const s = a.server as { id: string | null; name: string; url: string; key: string | null }
+    if (!/^(https?:\/\/)?(100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|[^/]+\.ts\.net|127\.)/.test(s.url) && s.id !== 'local') {
+      throw new Error(`${s.url} is not a Tailscale address (those are 100.64.0.0 - 100.127.255.255)`)
+    }
+    const url = (/^https?:\/\//.test(s.url) ? s.url : `http://${s.url}`).replace(/\/+$/, '').replace(/(\/fowlengine\/ops)?$/, '/fowlengine/ops')
+    const cur = servers.find(x => x.id === s.id)
+    if (cur) Object.assign(cur, { name: s.name, ...(cur.local ? {} : { url }) })
+    else servers.push({ id: s.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), name: s.name, url, has_key: !!s.key, local: false, problem: s.key ? null : 'no OPS key saved for it' })
+    return servers
+  },
+  remove_server: (a) => {
+    const i = servers.findIndex(x => x.id === a.id)
+    if (i >= 0) servers.splice(i, 1)
+    return servers
+  },
+  test_server: (a) => {
+    const s = a.server as { id: string | null; name: string }
+    const range = s.id === 'range' || /range/i.test(s.name)
+    return { ok: true, url: 'http://100.101.2.86:9876/stats/fowlengine/ops', hostname: range ? 'RANGE-PC' : 'VS-SERVER',
+             bot_version: 'v3.0.4.27', servers: range ? ['range'] : ['vs1', 'vs2'], plugin_current: true,
+             message: `connected to ${range ? 'RANGE-PC' : 'VS-SERVER'}, DCSServerBot v3.0.4.27 -- ${range ? 1 : 2} DCS server(s)` }
+  },
 }
 
 // ── BOT CONFIG: a few in-memory bot config files ────────────────────────────

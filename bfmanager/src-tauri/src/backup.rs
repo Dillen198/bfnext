@@ -1269,8 +1269,7 @@ pub fn backup_plan() -> Result<BackupPlan> {
         warnings.push("no database URL found in the bot's nodes.yaml / main.yaml -- the bot's database is not backed up".into());
     }
 
-    let drives = data_drives();
-    let default_dest = format!("{}\\FowlEngineBackups", drives[0]);
+    let default_dest = default_dest();
     let service_running = agent_status().is_some();
 
     Ok(BackupPlan {
@@ -2283,6 +2282,11 @@ fn repair_zip(zip_path: &Path, m: &Manifest, bad: &[String], password: Option<&s
     }
     std::fs::rename(&tmp, zip_path).context("replacing the zip with the repaired one")?;
     Ok(())
+}
+
+/// Where a backup goes unless the admin picks another folder.
+pub fn default_dest() -> String {
+    format!("{}\\FowlEngineBackups", data_drives()[0])
 }
 
 // ---- finding backups -------------------------------------------------------------------

@@ -14,6 +14,9 @@ loud deprecation warning. bfdb exposes the routes to a logged-in dashboard
 admin as /api/admin/ops/..., so the browser never sees the key. Keep the
 WebService on 127.0.0.1 (services/webservice.yaml `listen:`): bfdb and Fowl
 Engine Manager both call it from this box, and the routes are plain HTTP.
+The one exception is opt-in: a Fowl Engine Manager on another PC reaching
+this box over Tailscale (deploy/manager-remote.md) -- listen 0.0.0.0 behind
+a firewall rule that only lets the tailnet in, ops_api.require_own_key: true.
 
 POST config can't change anything that names a program, a path, a URL or an
 update source (see protected_changes): those are edited on the box itself, so
@@ -39,7 +42,27 @@ while bfdb restarts -- which is exactly when an admin wants to watch.
   POST stage/cancel              {name, server?}
   GET  config                    fowlengine.yaml with secrets masked
   POST config                    {yaml, base_mtime, restart_bfdb?}
-  GET  logs?which=...&lines=N    tail of bot | service | bfdb | bfdb_boot | netidx
+  GET  logs?which=...&lines=N    tail of one log (an id from logs/list)
+  GET  logs/list                 every log this box has: bot | service | bfdb | bfdb_boot | netidx,
+                                 engine:<server> (bfnext.txt / bfrange.txt), dcs:<server> (dcs.log),
+                                 file:<name> (issues.extra_files)
+  GET  logs/follow?which=&offset=&ident=
+                                 the lines added since `offset` (a byte offset an earlier call
+                                 returned) + the new offset; no offset = the tail. A rotated or
+                                 truncated log starts again (see follow_file)
+  GET  dcs                       each DCS instance: state, players, mission, what may be done now
+  POST dcs/start|stop|restart|mission_restart  {server}
+                                 answers at once, the action runs on; GET dcs shows how it went.
+                                 Refused (409) while the auto-updater checks/stages a release or
+                                 the server is already being restarted
+  GET  backup                    the box's Fowl Engine Manager: remote backup job + backups found
+  POST backup/start              {password?}  -- a backup the way the box's own plan has it
+  POST backup/verify             {zip, password?}  -- one of the zips GET backup lists
+  POST backup/cancel
+                                 Handed to the Manager's service through a folder it watches
+                                 (<manager data>\\remote\\requests), only when the box's Manager
+                                 has "remote backups" on. Restore is never remote: it overwrites
+                                 the box and needs someone at it.
   GET  issues?closed=0|1         the log analyzer's issue list
   POST issues/scan               scan the logs now
   POST issues/status             {id | ids: [...], status: open|acknowledged|ignored|fixed, note?}
@@ -72,12 +95,21 @@ except Exception:  # noqa: BLE001 - imported outside the bot (unit tests)
     Request = Any  # type: ignore[misc,assignment]
 
 __all__ = ["OpsApi", "mask_secrets", "unmask_secrets", "SECRET_MASK", "is_secret_key",
-           "tail_lines", "validate_plugin_yaml", "protected_changes", "is_protected_key"]
+           "tail_lines", "follow_file", "file_ident", "validate_plugin_yaml", "protected_changes",
+           "is_protected_key"]
 
 SECRET_MASK = "__SECRET__"
 _SECRET_HINTS = ("password", "secret", "api_key", "apikey", "token", "webhook", "llm_key", "image_key", "tts_key")
 CONFIG_BACKUPS_KEEP = 20
 LOG_FILES = ("bot", "service", "bfdb", "bfdb_boot", "netidx")
+_LOG_LABELS = {"bot": "DCSServerBot", "service": "Bot service wrapper", "bfdb": "bfdb",
+               "bfdb_boot": "bfdb start-up output", "netidx": "netidx resolver"}
+FOLLOW_MAX_BYTES = 256 * 1024      # one logs/follow answer reads at most this much
+FOLLOW_TAIL_LINES = 300            # a first call (or a restart) shows this many lines
+DCS_ACTIONS = ("start", "stop", "restart", "mission_restart")
+# How old the Manager service's remote status may be before the box counts
+# as "service not running" (it rewrites it every tick, ~2 s).
+REMOTE_STATUS_STALE_SECS = 60
 
 
 # ---- secrets in fowlengine.yaml ------------------------------------------------
@@ -271,6 +303,88 @@ def tail_lines(path: str, lines: int = 200, max_bytes: int = 2 * 1024 * 1024) ->
     return out[-lines:]
 
 
+def file_ident(st) -> str:
+    """Which file this is, beyond its name. NTFS keeps a file's index and
+    creation time across a rename, and a new file (DCS writing a fresh
+    dcs.log, bflib renaming bfnext.txt aside at start) gets new ones. Off
+    Windows st_ctime changes on every write, so only device + inode count."""
+    ident = f"{getattr(st, 'st_dev', 0)}:{getattr(st, 'st_ino', 0)}"
+    if os.name == "nt":
+        born = getattr(st, "st_birthtime", None) or getattr(st, "st_ctime", 0)
+        ident += f":{int(born)}"
+    return ident
+
+
+def _read_span(path: str, start: int, end: int) -> bytes:
+    with open(path, "rb") as fh:
+        fh.seek(start)
+        return fh.read(max(0, end - start))
+
+
+def _tail_span(path: str, size: int, lines: int, max_bytes: int) -> list[str]:
+    start = max(0, size - max_bytes)
+    out = _read_span(path, start, size).decode("utf-8", "replace").splitlines()
+    if start > 0 and out:
+        out = out[1:]  # first line is probably cut in half
+    return out[-lines:] if lines > 0 else []
+
+
+def follow_file(path: str, offset: Optional[int] = None, ident: Optional[str] = None,
+                max_bytes: int = FOLLOW_MAX_BYTES, tail: int = FOLLOW_TAIL_LINES) -> dict:
+    """One step of following a log that is being written.
+
+    `offset` is what the previous answer returned (None = first call), and
+    `ident` the file_ident it saw. The answer: {lines, offset, ident, size,
+    reset, reason, more, skipped}. Lines are complete ones only -- a
+    half-written last line waits for the next call -- unless a single line
+    is longer than max_bytes, which then comes in pieces.
+
+    - first call (no offset): the last `tail` lines, offset = the size
+    - the file was replaced (ident differs: rotated, or DCS started a new
+      dcs.log): reset, the new file from its start (its tail if it is big)
+    - offset > size (truncated in place): reset, the tail
+    - more than 4 x max_bytes behind: jump to the tail, `skipped` = bytes left out
+    - otherwise: the next complete lines, at most max_bytes; `more` = there
+      is more to read right now
+    """
+    base = {"lines": [], "offset": 0, "ident": None, "size": 0, "reset": False, "reason": None,
+            "more": False, "skipped": 0}
+    try:
+        st = os.stat(path)
+    except OSError:
+        return {**base, "missing": True, "reset": bool(offset), "reason": "missing" if offset else None}
+    size, cur = st.st_size, file_ident(st)
+    base.update(ident=cur, size=size)
+    try:
+        if offset is None or offset < 0:
+            return {**base, "lines": _tail_span(path, size, tail, max_bytes), "offset": size, "reason": "start"}
+        if ident and ident != cur:
+            if size <= max_bytes:
+                lines = _read_span(path, 0, size).decode("utf-8", "replace").splitlines()
+            else:
+                lines = _tail_span(path, size, tail, max_bytes)
+            return {**base, "lines": lines, "offset": size, "reset": True, "reason": "rotated"}
+        if offset > size:
+            return {**base, "lines": _tail_span(path, size, tail, max_bytes), "offset": size, "reset": True,
+                    "reason": "truncated"}
+        if size - offset > 4 * max_bytes:
+            return {**base, "lines": _tail_span(path, size, tail, max_bytes), "offset": size,
+                    "reason": "skipped", "skipped": size - offset - min(size, max_bytes)}
+        data = _read_span(path, offset, min(size, offset + max_bytes))
+    except OSError:
+        return {**base, "offset": offset or 0, "reason": "unreadable"}
+    cut = data.rfind(b"\n")
+    if cut >= 0:
+        data = data[:cut + 1]
+    elif len(data) < max_bytes:
+        data = b""  # a line still being written
+    new_offset = offset + len(data)
+    # capped by max_bytes (not just a half-written last line left): ask again now
+    capped = offset + max_bytes < size
+    return {**base, "lines": data.decode("utf-8", "replace").splitlines(), "offset": new_offset,
+            "more": capped and new_offset < size}
+
+
 # ---- host facts (Windows first, harmless elsewhere) ----------------------------
 
 def _run(cmd: list[str], timeout: float = 8.0) -> str:
@@ -420,6 +534,9 @@ class OpsApi:
         self.prefix = ""
         self._host_cache: Optional[tuple[float, dict]] = None
         self._started = time.time()
+        # server name -> the last DCS action asked for over this API
+        # ({action, state: running|done|failed, at, finished, error})
+        self._dcs_actions: dict[str, dict] = {}
 
     # ---- config ---------------------------------------------------------
 
@@ -545,6 +662,16 @@ class OpsApi:
         r.add_api_route("/config", self.config_get, methods=["GET"])
         r.add_api_route("/config", self.config_post, methods=["POST"])
         r.add_api_route("/logs", self.logs, methods=["GET"])
+        r.add_api_route("/logs/list", self.logs_list, methods=["GET"])
+        r.add_api_route("/logs/follow", self.logs_follow, methods=["GET"])
+        r.add_api_route("/dcs", self.dcs_list, methods=["GET"])
+        for action in DCS_ACTIONS:
+            r.add_api_route(f"/dcs/{action}", self._dcs_handler(action), methods=["POST"])
+        r.add_api_route("/backup", self.backup_get, methods=["GET"])
+        r.add_api_route("/backup/start", self.backup_start, methods=["POST"])
+        r.add_api_route("/backup/verify", self.backup_verify, methods=["POST"])
+        r.add_api_route("/backup/cancel", self.backup_cancel, methods=["POST"])
+        r.add_api_route("/backup/restore", self.backup_restore, methods=["POST"])
         r.add_api_route("/issues", self.issues_list, methods=["GET"])
         r.add_api_route("/issues/scan", self.issues_scan, methods=["POST"])
         r.add_api_route("/issues/status", self.issues_status, methods=["POST"])
@@ -1031,25 +1158,303 @@ class OpsApi:
             return os.path.join(home, "procman-bfdb-boot.log") if home else None
         if which == "netidx":
             return os.path.join(home, "procman-netidx.log") if home else None
-        return None
+        entry = next((e for e in self._log_catalog() if e["id"] == which), None)
+        return entry["path"] if entry else None
+
+    def _log_catalog(self) -> list[dict]:
+        """Every log the OPS API will read on this box: {id, label, group,
+        server, path}. Ids are the only way in -- no path ever comes from the
+        caller. Per DCS instance on this PC: the engine log (bfnext.txt, or
+        bfrange.txt on a range) and dcs.log."""
+        out: list[dict] = []
+        for which in LOG_FILES:
+            path = self._log_path(which)
+            if path:
+                out.append({"id": which, "label": _LOG_LABELS[which], "group": "bot", "server": None, "path": path})
+        try:
+            from .upload import is_remote_node
+        except Exception:  # noqa: BLE001
+            is_remote_node = lambda n: False  # noqa: E731
+        for s in list(self.cog.bot.servers.values()):
+            if is_remote_node(getattr(s, "node", None)):
+                continue  # its files are on another PC
+            home = getattr(getattr(s, "instance", None), "home", None)
+            if not home:
+                continue
+            is_range = False
+            try:
+                is_range = bool(self.cog._is_range(s))
+            except Exception:  # noqa: BLE001
+                pass
+            engine = "bfrange.txt" if is_range else "bfnext.txt"
+            out.append({"id": f"engine:{s.name}", "label": f"{s.name}: engine ({engine})", "group": "engine",
+                        "server": s.name, "path": os.path.join(home, "Logs", engine)})
+            out.append({"id": f"dcs:{s.name}", "label": f"{s.name}: DCS (dcs.log)", "group": "dcs",
+                        "server": s.name, "path": os.path.join(home, "Logs", "dcs.log")})
+        an = self._an()
+        for x in (getattr(getattr(an, "cfg", None), "extra_files", None) or []):
+            try:
+                name = str(x.get("name") or os.path.basename(x["path"]))
+                out.append({"id": f"file:{name}", "label": name, "group": "extra", "server": None,
+                            "path": os.path.expandvars(x["path"])})
+            except (KeyError, TypeError, AttributeError):
+                continue
+        return out
+
+    def _redact_lines(self, lines: list[str]) -> list[str]:
+        secrets = [s for s in self._secret_values() if len(s) >= 6]
+        return [self._redact(line, secrets) for line in lines] if secrets else lines
 
     async def logs(self, which: str = "bot", lines: int = 300):
-        if which not in LOG_FILES:
-            return self._err(400, f"which must be one of {', '.join(LOG_FILES)}")
         path = self._log_path(which)
+        if path is None and which not in LOG_FILES:
+            return self._err(400, f"no log {which!r} here -- see logs/list")
         if not path or not os.path.exists(path):
             return {"which": which, "path": path, "lines": [], "missing": True}
         out = await asyncio.get_running_loop().run_in_executor(None, tail_lines, path, lines)
-        secrets = [s for s in self._secret_values() if len(s) >= 6]
-        if secrets:
-            clean = []
-            for line in out:
-                for s in secrets:
-                    if s in line:
-                        line = line.replace(s, "***")
-                clean.append(line)
-            out = clean
-        return {"which": which, "path": path, "lines": out, "size": os.path.getsize(path)}
+        return {"which": which, "path": path, "lines": self._redact_lines(out), "size": os.path.getsize(path)}
+
+    async def logs_list(self):
+        def stat(e: dict) -> dict:
+            try:
+                st = os.stat(e["path"])
+                return {**e, "exists": True, "size": st.st_size, "modified": st.st_mtime}
+            except OSError:
+                return {**e, "exists": False, "size": 0, "modified": None}
+        cat = self._log_catalog()
+        rows = await asyncio.get_running_loop().run_in_executor(None, lambda: [stat(e) for e in cat])
+        return {"logs": rows}
+
+    async def logs_follow(self, which: str = "bot", offset: Optional[int] = None, ident: Optional[str] = None):
+        path = self._log_path(which)
+        if path is None:
+            return self._err(400 if which not in LOG_FILES else 404, f"no log {which!r} here -- see logs/list")
+        res = await asyncio.get_running_loop().run_in_executor(None, follow_file, path, offset, ident)
+        res["lines"] = self._redact_lines(res["lines"])
+        return {"which": which, "path": path, **res}
+
+    # ---- DCS server control ----------------------------------------------------------
+
+    @staticmethod
+    def _dcs_can(status_name: str) -> dict:
+        """Which DCS actions make sense in this DCSServerBot state.
+        SHUTDOWN = DCS not running; STOPPED = DCS up, no mission running."""
+        up = status_name in ("RUNNING", "PAUSED", "STOPPED")
+        down = status_name in ("SHUTDOWN", "UNREGISTERED")
+        return {"start": down or status_name == "STOPPED",
+                "stop": up or status_name in ("LOADING", "UNREGISTERED"),
+                "restart": up or down, "mission_restart": up}
+
+    def _dcs_blocked(self, server) -> Optional[str]:
+        """Why no DCS action may start on `server` right now, or None."""
+        upd = getattr(self.cog, "updater", None)
+        lock = getattr(upd, "_lock", None) if upd is not None else None
+        if lock is not None and lock.locked():
+            what = getattr(upd, "_busy", None) or "checking for / staging a release"
+            return f"the auto-updater is busy ({what}) -- try again when it is done"
+        if server.name in (getattr(self.cog, "_stage_restarting", None) or {}):
+            return f"{server.name} is already restarting to apply a staged build"
+        act = self._dcs_actions.get(server.name)
+        if act and act.get("state") == "running":
+            return f"a {act['action'].replace('_', ' ')} of {server.name} is already under way"
+        return None
+
+    def _dcs_row(self, server) -> dict:
+        st = getattr(server.status, "name", str(server.status))
+        row: dict = {"name": server.name, "status": st,
+                     "node": getattr(getattr(server, "node", None), "name", None)}
+        try:
+            row["players"] = len(server.get_active_players())
+        except Exception:  # noqa: BLE001
+            row["players"] = None
+        mission = getattr(server, "current_mission", None)
+        row["mission"] = getattr(mission, "name", None)
+        row["map"] = getattr(mission, "map", None)
+        try:
+            row["kind"] = "range" if self.cog._is_range(server) else "campaign"
+        except Exception:  # noqa: BLE001
+            row["kind"] = None
+        row["can"] = self._dcs_can(st)
+        row["blocked"] = self._dcs_blocked(server)
+        row["last_action"] = self._dcs_actions.get(server.name)
+        return row
+
+    async def dcs_list(self):
+        return {"servers": [self._dcs_row(s) for s in list(self.cog.bot.servers.values())],
+                "actions": list(DCS_ACTIONS)}
+
+    def _dcs_handler(self, action: str):
+        async def handler(request: Request):
+            return await self.dcs_action(action, await self._body(request))
+        handler.__name__ = f"dcs_{action}"
+        return handler
+
+    async def dcs_action(self, action: str, body: dict):
+        if action not in DCS_ACTIONS:
+            return self._err(400, f"action must be one of {', '.join(DCS_ACTIONS)}")
+        name = str(body.get("server") or "")
+        server = self._server(name)
+        if server is None:
+            known = ", ".join(sorted(self.cog.bot.servers)) or "none"
+            return self._err(404, f"no DCS server named {name!r} on this bot (it has: {known})")
+        why = self._dcs_blocked(server)
+        if why:
+            return self._err(409, why)
+        st = getattr(server.status, "name", str(server.status))
+        if not self._dcs_can(st)[action]:
+            hint = {"start": "it is already running" if st in ("RUNNING", "PAUSED") else None,
+                    "stop": "DCS is not running" if st == "SHUTDOWN" else None,
+                    "mission_restart": "DCS is not running -- start it instead"}.get(action)
+            return self._err(409, f"{server.name} is {st}: can't {action.replace('_', ' ')} now"
+                                  + (f" ({hint})" if hint else " -- try again in a moment"))
+        if action == "mission_restart" and not callable(getattr(server, "restart", None)):
+            return self._err(501, "this DCSServerBot version has no mission restart (Server.restart)")
+        upd = getattr(self.cog, "updater", None)
+        rec = {"action": action, "state": "running", "at": datetime.now(timezone.utc).isoformat(),
+               "finished": None, "error": None, "from_status": st}
+        self._dcs_actions[server.name] = rec
+        if action in ("stop", "restart") and upd is not None and hasattr(upd, "_orderly"):
+            # asked for, so the crash watch (engine probation) doesn't count it
+            upd._orderly[server.name] = time.time()
+
+        async def run():
+            what = action.replace("_", " ")
+            try:
+                if action == "start":
+                    if st == "STOPPED" and callable(getattr(server, "start", None)):
+                        await server.start()
+                    else:
+                        await server.startup()
+                elif action == "stop":
+                    await server.shutdown()
+                elif action == "restart":
+                    if st in ("SHUTDOWN", "UNREGISTERED"):
+                        await server.startup()
+                    elif upd is not None and hasattr(upd, "restart_dcs"):
+                        await upd.restart_dcs(server, "restart asked for over the OPS API")
+                    else:
+                        await server.shutdown()
+                        await server.startup()
+                else:
+                    await server.restart()
+                rec.update(state="done")
+                await self.cog.notify_ops(f"{icon('restart')} **{server.name}**: DCS {what} (asked for over "
+                                          f"the OPS API) -- done.")
+            except Exception as ex:  # noqa: BLE001
+                rec.update(state="failed", error=str(ex) or type(ex).__name__)
+                self.log.error(f"FowlEngine/ops: DCS {what} of {server.name} failed: {ex}")
+                await self.cog.notify_ops(f"{icon('warning')} **{server.name}**: DCS {what} failed: {ex}")
+            finally:
+                rec["finished"] = datetime.now(timezone.utc).isoformat()
+
+        asyncio.create_task(run())
+        players = None
+        try:
+            players = len(server.get_active_players())
+        except Exception:  # noqa: BLE001
+            pass
+        msg = {"start": "starting DCS", "stop": "shutting DCS down", "restart": "restarting DCS",
+               "mission_restart": "restarting the mission"}[action]
+        return self._ok(f"{server.name}: {msg}" + (f" ({players} player(s) on)" if players else ""),
+                        server=server.name, action=rec)
+
+    # ---- backups, through the box's Fowl Engine Manager ---------------------------------
+
+    def _manager_dir(self) -> str:
+        configured = (self._cfg().get("ops_api") or {}).get("manager_dir")
+        if configured:
+            return os.path.expandvars(str(configured))
+        env = os.environ.get("FOWL_MANAGER_DATA")
+        if env:
+            return env
+        return os.path.join(os.environ.get("ProgramData") or r"C:\ProgramData", "FowlEngine")
+
+    def _remote_dir(self) -> str:
+        return os.path.join(self._manager_dir(), "remote")
+
+    def _remote_status(self) -> tuple[Optional[dict], Optional[str]]:
+        """(the Manager service's remote status, why not)."""
+        path = os.path.join(self._remote_dir(), "backup-status.json")
+        try:
+            with open(path, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except FileNotFoundError:
+            return None, ("remote backups are not turned on in this box's Fowl Engine Manager "
+                          "(on the box: Manager -> SETTINGS -> Remote backups; needs a Manager newer than 0.3.2)")
+        except PermissionError:
+            return None, ("the bot can't read the Manager's remote folder -- on the box, check SETTINGS -> "
+                          "desktop user, then turn Remote backups off and on again (that grants the bot's user)")
+        except (OSError, ValueError) as ex:
+            return None, f"can't read the Manager's remote status: {ex}"
+        if not isinstance(doc, dict):
+            return None, "the Manager's remote status is not a JSON object"
+        age = time.time() - float(doc.get("updated_unix") or 0)
+        doc["age_secs"] = int(age)
+        doc["stale"] = age > REMOTE_STATUS_STALE_SECS
+        return doc, None
+
+    def _remote_request(self, kind: str, **fields) -> tuple[Optional[str], Optional[object]]:
+        """Drop a request where the Manager service picks it up: (id, error response)."""
+        doc, why = self._remote_status()
+        if why:
+            return None, self._err(409, why)
+        if doc.get("stale"):
+            return None, self._err(409, f"the Fowl Engine Manager service on this box hasn't reported for "
+                                        f"{doc['age_secs'] // 60} min -- is it running?")
+        if not doc.get("enabled"):
+            return None, self._err(409, "remote backups are turned off in this box's Fowl Engine Manager")
+        req_id = f"{time.time_ns()}-{kind}"
+        d = os.path.join(self._remote_dir(), "requests")
+        try:
+            os.makedirs(d, exist_ok=True)
+            tmp = os.path.join(d, req_id + ".tmp")
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump({"id": req_id, "kind": kind, **fields}, fh)
+            os.replace(tmp, os.path.join(d, req_id + ".json"))
+        except OSError as ex:
+            return None, self._err(500, f"could not hand the request to the Manager: {ex}")
+        return req_id, None
+
+    async def backup_get(self):
+        doc, why = self._remote_status()
+        if why:
+            return self._err(409, why)
+        return {"ok": True, **doc}
+
+    async def backup_start(self, request: Request):
+        body = await self._body(request)
+        pw = body.get("password")
+        if pw is not None and not isinstance(pw, str):
+            return self._err(400, "password must be a string")
+        if pw and len(pw) < 8:
+            return self._err(400, "the backup password must be at least 8 characters")
+        req_id, err = self._remote_request("backup", password=pw or None)
+        if err:
+            return err
+        await self.cog.notify_ops(f"{icon('settings')} A whole-box backup was asked for over the OPS API.")
+        return self._ok("backup asked for -- the Manager service starts it within a few seconds", request=req_id)
+
+    async def backup_verify(self, request: Request):
+        body = await self._body(request)
+        zip_path = body.get("zip")
+        if not isinstance(zip_path, str) or not zip_path.strip():
+            return self._err(400, "need zip: one of the backups GET backup lists")
+        pw = body.get("password")
+        req_id, err = self._remote_request("verify", zip=zip_path.strip(),
+                                           password=pw if isinstance(pw, str) and pw else None)
+        if err:
+            return err
+        return self._ok("check asked for -- the Manager service reads the zip back", request=req_id)
+
+    async def backup_cancel(self):
+        req_id, err = self._remote_request("cancel")
+        if err:
+            return err
+        return self._ok("cancel asked for", request=req_id)
+
+    async def backup_restore(self):
+        return self._err(403, "a restore overwrites the box and is only done there: open Fowl Engine Manager on "
+                              "the box itself -> BACKUP -> Restore")
 
     # ---- log analyzer ---------------------------------------------------------------
 
@@ -1119,9 +1524,7 @@ class OpsApi:
             return self._err(409, "the log analyzer is not loaded")
         out = await asyncio.get_running_loop().run_in_executor(
             None, an.archive_read, source, date, lines, grep or None)
-        secrets = [s for s in self._secret_values() if len(s) >= 6]
-        if secrets:
-            out = [self._redact(line, secrets) for line in out]
+        out = self._redact_lines(out)
         if format == "text":
             return PlainTextResponse("\n".join(out) + "\n")
         return {"source": source, "date": date, "lines": out}

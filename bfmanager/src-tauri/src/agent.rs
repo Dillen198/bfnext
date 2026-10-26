@@ -140,6 +140,8 @@ pub struct Agent {
     next_start: Instant,
     paused: bool,
     last_update_check: Option<Instant>,
+    /// Backups a controller PC asks for through this box's OPS API.
+    remote: crate::remote::Remote,
 }
 
 fn now() -> String {
@@ -175,6 +177,7 @@ impl Agent {
             paused: false,
             // first update check a few minutes after boot, not during it
             last_update_check: Some(Instant::now()),
+            remote: crate::remote::Remote::new(),
         }
     }
 
@@ -648,6 +651,7 @@ impl Agent {
         if due || first_due {
             self.check_update(false);
         }
+        self.remote.tick(&self.cfg);
         self.write_status();
     }
 

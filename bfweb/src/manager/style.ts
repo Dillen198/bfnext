@@ -60,7 +60,8 @@ export function fmtWhen(iso?: string | null): string {
   return isNaN(d.getTime()) ? iso : d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-/** First run: no bot folder yet, or no service. */
+/** First run: no bot folder yet, or no service -- unless this PC only
+ *  controls other boxes. */
 export function needsSetup(s?: AppState): boolean {
-  return !!s && (!s.bot_dir_valid || !s.service?.installed)
+  return !!s && !s.config.controller_only && (!s.bot_dir_valid || !s.service?.installed)
 }

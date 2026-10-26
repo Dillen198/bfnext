@@ -19,7 +19,11 @@ A Windows application that installs, runs and updates a Vector Strike server box
   - checks GitHub for a newer manager and installs it (within an optional time window).
     The install restarts the bot, not DCS.
 - **The app:** overview (service, bot, plugin, updates), **Server OPS** (the dashboard's
-  OPS page, unchanged, talking to the local bot), settings, and logs.
+  OPS page, unchanged), DCS control, live logs, backups, settings.
+- **Several boxes from one PC:** a server picker at the top; every server tab acts on the
+  picked box -- this box's own bot, or another box reached over Tailscale through its OPS
+  API (keys DPAPI-encrypted, never in the UI). A PC without a bot runs it as a controller
+  only. Opt-in on each box: [../deploy/manager-remote.md](../deploy/manager-remote.md).
 - **Engine binaries** (`bflib.dll`, `bfdb.exe`, `bftools.exe`) are still updated by the
   Fowl Engine plugin's auto-updater, with probation and rollback (see
   [../deploy/auto-update.md](../deploy/auto-update.md)). The manager takes care of the box
@@ -43,6 +47,8 @@ Windows boot
 | `src-tauri/src/update.rs` | GitHub releases, minisign verification, running the installer |
 | `src-tauri/src/bot.rs` | finding DCSServerBot, plugin sync with backups, the bot's OPS API address |
 | `src-tauri/src/backup.rs` | whole-box backup to one zip, and restore onto a fresh Windows |
+| `src-tauri/src/servers.rs` | the server boxes this app controls: registry, Tailscale-only addresses, OPS calls |
+| `src-tauri/src/remote.rs` | the service's remote-backup bridge (requests from the box's OPS API) |
 | `src-tauri/src/lib.rs` | the desktop app's commands |
 | `src-tauri/nsis/hooks.nsh` | installer: stop the service before copying files, start it after; keep it on `/UPDATE` |
 | `../bfweb/src/manager/` | the UI. It is built from bfweb, so it shares React, the design and the OPS page |

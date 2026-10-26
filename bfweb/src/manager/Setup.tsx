@@ -20,8 +20,8 @@ function Step({ n, title, done, children }: { n: number; title: string; done: bo
   )
 }
 
-export default function Setup({ state: s, onDone, onRestore, onNewBox }: {
-  state: AppState; onDone: () => void; onRestore?: () => void; onNewBox?: () => void
+export default function Setup({ state: s, onDone, onRestore, onNewBox, onController }: {
+  state: AppState; onDone: () => void; onRestore?: () => void; onNewBox?: () => void; onController?: () => void
 }) {
   const act = useAction()
   const [dir, setDir] = useState(s.config.bot_dir ?? '')
@@ -75,6 +75,23 @@ export default function Setup({ state: s, onDone, onRestore, onNewBox }: {
           DCSServerBot's own first-run setup (Discord token, DCS servers) must already be done: run its <span style={MONO}>run.cmd</span> once by hand if not.
         </div>
       </div>
+      {s.config.controller_only ? (
+        <Note tone="ok">
+          This PC is set up as a <b>controller</b>: it runs no DCSServerBot of its own and controls your server boxes over Tailscale
+          (ALL SERVERS). The steps below are only for a PC that is a server box itself.{' '}
+          <Btn onClick={() => act.run('ctl', () => mgr.saveConfig({ ...s.config, controller_only: false }), 'this PC is set up as a server box again')}>This PC is a server box after all</Btn>
+        </Note>
+      ) : !s.bot_dir_valid && (
+        <Note>
+          Is this your own PC, used only to run the servers from afar? Then it needs no DCSServerBot: set it up as a controller and
+          add your server boxes (their Tailscale address and OPS key).{' '}
+          <Btn primary onClick={() => act.run('ctl', async () => {
+            await mgr.saveConfig({ ...s.config, controller_only: true })
+            onController?.()
+            return 'this PC is a controller -- add your server boxes under ALL SERVERS'
+          })}>This PC only controls other servers</Btn>
+        </Note>
+      )}
       {!s.bot_dir_valid && onRestore && (
         <Note>
           Reinstalled Windows or moving to a new PC? If you have a Fowl Engine backup zip, restore it instead: it puts DCSServerBot,

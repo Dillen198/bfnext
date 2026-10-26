@@ -1035,6 +1035,9 @@ fn path_vec(p: &[&str]) -> Vec<String> {
 /// read from fowlengine.yaml and webservice.yaml.
 pub fn checks(cfg_dir: &Path) -> Vec<Check> {
     let mut out = Vec::new();
+    // its own long key, and ops_api.require_own_key: true -- what opening the
+    // WebService to a tailnet needs (deploy/manager-remote.md)
+    let mut ops_locked = false;
     let ck = |id, level, title: &str, message: String| Check {
         id,
         level,
@@ -1126,6 +1129,7 @@ pub fn checks(cfg_dir: &Path) -> Vec<Check> {
             } else {
                 ("ok", "ops_api.api_key is set, long, and separate from the RestAPI key.".into())
             };
+            ops_locked = level == "ok" && matches!(at(&d, &["ops_api", "require_own_key"]), Some(Value::Bool(true)));
             out.push(Check {
                 current: (!key.is_empty()).then(|| mask(&key)),
                 fix: (level != "ok").then_some(fix).flatten(),
@@ -1208,10 +1212,27 @@ pub fn checks(cfg_dir: &Path) -> Vec<Check> {
                 });
             } else if is_loopback(&split_host_port(&listen).0) {
                 out.push(Check { current: Some(listen), ..ck("webservice_listen", "ok", "WebService listen", "the WebService listens on loopback only.".into()) });
+            } else if ops_locked {
+                let port = at(&doc, &["DEFAULT", "port"]).and_then(|p| p.as_u64()).unwrap_or(9876);
+                out.push(Check {
+                    current: Some(listen.clone()),
+                    fix: Some(format!(
+                        "Fine for remote control over Tailscale (deploy/manager-remote.md) while the Windows Firewall lets only \
+                         100.64.0.0/10 reach port {port} (deploy/manager-remote-setup.ps1 adds that rule). Otherwise: listen: 127.0.0.1."
+                    )),
+                    action,
+                    ..ck("webservice_listen", "info", "WebService listen", format!(
+                        "the WebService listens on {listen}, and the OPS API on it takes only its own key (require_own_key)."
+                    ))
+                });
             } else {
                 out.push(Check {
                     current: Some(listen.clone()),
-                    fix,
+                    fix: Some(
+                        "listen: 127.0.0.1 -- bfdb and this app call it from this box. To control this box from another PC over \
+                         Tailscale, follow deploy/manager-remote.md instead (firewall rule + ops_api.require_own_key: true)."
+                            .into(),
+                    ),
                     action,
                     ..ck("webservice_listen", "warn", "WebService listen", format!("the WebService (and the OPS API on it) listens on {listen} -- reachable from other machines."))
                 });
@@ -1588,6 +1609,18 @@ DEFAULT:
         assert_eq!(by_id(&c, "webservice_listen").level, "ok");
         // the Manager's key is the wrong key
         assert_eq!(by_id(&c, "autoupdate_public_key").level, "warn");
+
+        // opened for remote control: a warning, until the OPS API takes only its own key
+        std::fs::write(d.join(WEBSERVICE), "DEFAULT:\n  listen: 0.0.0.0\n  port: 9877\n").unwrap();
+        let ws = by_id(&checks(&d), "webservice_listen").clone();
+        assert_eq!(ws.level, "warn");
+        assert!(ws.fix.as_deref().unwrap().contains("manager-remote.md"));
+        let locked = good.replace("  ops_api:\n", "  ops_api:\n    require_own_key: true\n");
+        assert_ne!(locked, good, "the sample has an ops_api: block");
+        std::fs::write(d.join(FOWLENGINE), &locked).unwrap();
+        let ws = by_id(&checks(&d), "webservice_listen").clone();
+        assert_eq!(ws.level, "info");
+        assert!(ws.fix.as_deref().unwrap().contains("port 9877"), "{:?}", ws.fix);
 
         // short / shared keys, bad public key, uploads role
         std::fs::write(

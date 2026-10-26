@@ -53,6 +53,43 @@ export interface ManagerConfig {
   lock_after_autologon: boolean
   /** Start this app in the tray when an administrator signs in (a logon task). */
   start_with_windows: boolean
+  /** This PC only controls other boxes over Tailscale (no DCSServerBot here). */
+  controller_only: boolean
+  /** Saved remote boxes. Their keys never come over IPC (always null here). */
+  servers: { id: string; name: string; url: string; key: null }[]
+  /** This box's own name in the server picker (null = the PC's name). */
+  local_name: string | null
+  /** A controller PC may start / list / check backups of this box over its OPS API. */
+  remote_backups: boolean
+}
+
+/** One entry of the server picker: this box's bot ("local") or a remote box. */
+export interface ServerView {
+  id: string
+  name: string
+  url: string | null
+  has_key: boolean
+  local: boolean
+  problem: string | null
+}
+
+/** An add / edit. key: null keeps the saved key, '' clears it. */
+export interface ServerInput {
+  id: string | null
+  name: string
+  url: string
+  key: string | null
+}
+
+export interface ServerTest {
+  ok: boolean
+  message: string
+  url: string
+  hostname: string | null
+  bot_version: string | null
+  servers: string[]
+  /** the plugin there has the remote-control routes (dcs, logs/follow) */
+  plugin_current: boolean
 }
 
 export interface ServiceStatus {
@@ -143,6 +180,27 @@ export interface AppState {
   sessions: UserSession[]
   /** The logon task that starts this app with Windows; `current` = it starts this exe. */
   autostart: { installed: boolean; current: boolean }
+  /** This box's bot first (when it has one), then the remote boxes. */
+  servers: ServerView[]
+  /** This box's remote-backup bridge (remote.rs), when it is on. */
+  remote_backup: RemoteBackupStatus | null
+}
+
+/** remote\backup-status.json as a box's Manager service writes it (GET
+ *  /backup returns the same, plus ok / age_secs / stale). */
+export interface RemoteBackupStatus {
+  enabled: boolean
+  updated: string
+  updated_unix: number
+  hostname: string
+  manager_version: string
+  default_dest: string | null
+  job: BackupJob | null
+  backups: FoundBackup[]
+  handled: { id: string; kind: string; at: string; accepted: boolean; message: string }[]
+  problem: string | null
+  age_secs?: number
+  stale?: boolean
 }
 
 export interface Autologon {
@@ -287,6 +345,8 @@ export interface BackupOptions {
   stop_bot: boolean
   /** read every file from a Windows shadow copy (files in use come out whole) */
   shadow_copy: boolean
+  /** 8+ characters: every entry AES-256 encrypted (the manifest stays readable); null = not encrypted */
+  password?: string | null
 }
 
 export interface BackupJob {
@@ -353,6 +413,8 @@ export interface BackupManifest {
   python: string | null
   service_installed: boolean
   warnings: string[]
+  /** the entries are AES-256 encrypted: restore and verify need the password */
+  encrypted?: boolean
 }
 
 export interface RestoreMapping {
@@ -393,6 +455,8 @@ export interface RestoreOptions {
   install_postgres: boolean
   install_service: boolean
   desktop_user: string | null
+  /** for an encrypted backup */
+  password?: string | null
 }
 
 // ── New box (newbox.rs) ──────────────────────────────────────────────────────
@@ -512,7 +576,10 @@ export const mgr = {
   restoreInspect:   (zip: string) => invoke<RestorePreview>('restore_inspect', { zip }),
   restoreStart:     (opts: RestoreOptions) => invoke<void>('restore_start', { opts }),
   revealBackup:     (path: string) => invoke<void>('reveal_backup', { path }),
-  verifyBackup:     (zip: string) => invoke<void>('verify_backup', { zip }),
+  verifyBackup:     (zip: string, password: string | null = null) => invoke<void>('verify_backup', { zip, password }),
+  saveServer:       (server: ServerInput) => invoke<ServerView[]>('save_server', { server }),
+  removeServer:     (id: string) => invoke<ServerView[]>('remove_server', { id }),
+  testServer:       (server: ServerInput) => invoke<ServerTest>('test_server', { server }),
   newboxState:      () => invoke<NewBoxState>('newbox_state'),
   newboxStart:      (opts: NewBoxOptions) => invoke<void>('newbox_start', { opts }),
   newboxDiscordCheck: (token: string, guildId: string) =>
@@ -520,7 +587,55 @@ export const mgr = {
   newboxDcsLogin:   (dcsDir: string, instance: string) => invoke<void>('newbox_dcs_login', { dcsDir, instance }),
 }
 
+// ── OPS API calls to one server box ─────────────────────────────────────────
+
+/** An OPS call failed. `skew`: the box answered 404 for a route this app
+ *  knows -- its fowlengine plugin is older than this Manager. */
+export class OpsError extends Error {
+  status: number
+  skew: boolean
+  constructor(message: string, status: number, skew = false) {
+    super(message)
+    this.status = status
+    this.skew = skew
+  }
+}
+
+/** FastAPI's own 404 for a route that isn't there ({"detail": "Not Found"}),
+ *  as opposed to one of the plugin's routes saying "no such thing" ({ok: false, error}). */
+export function isMissingRoute(status: number, body: unknown): boolean {
+  return status === 404 && typeof body === 'object' && body !== null
+    && (body as { detail?: unknown }).detail === 'Not Found' && !('error' in body)
+}
+
+export function skewMessage(serverName: string): string {
+  return `${serverName} runs an older fowlengine plugin without this feature. Update the plugin there `
+    + '(on that box: Manager → OVERVIEW → Fowl Engine bot plugin → Sync now, or the next engine release), then try again.'
+}
+
+/** One OPS request to server `serverId` (null = this box's own bot): the
+ *  JSON answer, or an OpsError carrying the box's own error text. */
+export async function opsCall<T>(serverId: string | null, serverName: string, method: 'GET' | 'POST', path: string,
+                                 body?: unknown): Promise<T> {
+  const r = await invoke<{ status: number; content_type: string; body: string }>('ops_request', {
+    server: serverId, method, path, body: body === undefined ? null : JSON.stringify(body),
+  })
+  let doc: unknown = null
+  try { doc = JSON.parse(r.body) } catch { doc = null }
+  if (r.status >= 200 && r.status < 300) return doc as T
+  if (isMissingRoute(r.status, doc)) throw new OpsError(skewMessage(serverName), r.status, true)
+  const d = doc as { error?: string; detail?: unknown } | null
+  if (r.status === 403 && !d?.error) throw new OpsError(`${serverName} refused the saved key (403) -- SERVERS → edit it`, 403)
+  throw new OpsError(d?.error ?? (typeof d?.detail === 'string' ? d.detail : `${serverName} answered ${r.status}`), r.status)
+}
+
 // ── the api.ts transport: the OPS page's requests, answered locally ──────────
+
+/** The server box the OPS page talks to; the picker at the top sets it. */
+let opsServer: string | null = null
+export function setOpsServer(id: string | null): void {
+  opsServer = id
+}
 
 const LOCAL_ADMIN = {
   user: { discord_id: 'local', username: 'Local admin', avatar: null, is_admin: true, ucid: null, side: null },
@@ -531,8 +646,9 @@ function json(status: number, body: unknown): Response {
 }
 
 /**
- * `/admin/ops/*` goes to the FowlEngine plugin's OPS API through the Rust
- * side (which reads the bot's key from its config); `/auth/me` says "local
+ * `/admin/ops/*` goes to the FowlEngine plugin's OPS API of the server box
+ * picked at the top, through the Rust side (which adds that box's key);
+ * `/auth/me` says "local
  * admin" -- whoever can run this app elevated already owns the box.
  * Everything else the dashboard would ask bfdb for doesn't exist here.
  */
@@ -542,6 +658,7 @@ export const managerTransport: Transport = async (method, path, body) => {
   if (clean.startsWith('/admin/ops/')) {
     try {
       const r = await invoke<{ status: number; content_type: string; body: string }>('ops_request', {
+        server: opsServer,
         method,
         path: clean.slice('/admin/ops/'.length),
         body: body === undefined ? null : JSON.stringify(body),
