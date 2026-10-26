@@ -304,8 +304,6 @@ pub struct Perf {
     pub frame: Arc<HistogramSer>,
 }
 
-static mut PERF: Option<Perf> = None;
-
 impl Clone for Perf {
     fn clone(&self) -> Self {
         Self {
@@ -316,22 +314,9 @@ impl Clone for Perf {
 }
 
 impl Perf {
-    pub unsafe fn get_mut() -> &'static mut Perf {
-        #[allow(static_mut_refs)]
-        let perf = PERF.as_mut();
-        match perf {
-            Some(perf) => perf,
-            None => {
-                PERF = Some(Perf::default());
-                #[allow(static_mut_refs)]
-                PERF.as_mut().unwrap()
-            }
-        }
-    }
-
-    pub unsafe fn reset() {
-        PERF = None;
-    }
+    // The engine's own counters; the DCS API call counters are
+    // dcso3::perf::Perf. Same per-thread singleton as that one.
+    dcso3::thread_singleton!(Perf);
 
     pub fn stat(&self) -> PerfStat {
         self.inner.stat(&self.frame)

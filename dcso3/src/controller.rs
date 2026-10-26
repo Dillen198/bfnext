@@ -76,16 +76,7 @@ string_enum!(Designation, u8, [
     Auto => "Auto"
 ]);
 
-string_enum!(AltType, u8, [
-    BARO => "BARO",
-    RADIO => "RADIO"
-]);
-
-// TACAN channel band, as selected on the aircraft's TACAN control panel.
-string_enum!(TacanBand, u8, [
-    X => "X",
-    Y => "Y"
-]);
+pub use dcso3_core::controller::{AltType, TacanBand};
 
 simple_enum!(FACCallsign, u8, [
     Axeman	=> 1,

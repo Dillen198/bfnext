@@ -7,6 +7,8 @@
 //!   neccessary to unify sled errors with serialization errors to
 //!   maintain an ergonomic interface
 
+pub mod envelope;
+pub mod export;
 pub mod transaction;
 
 use anyhow::Result;
@@ -23,6 +25,7 @@ use std::{
     marker::PhantomData,
     ops::{Bound, RangeBounds},
 };
+pub use envelope::{Envelope, Versioned};
 use transaction::TransactionalTree;
 
 /// A flash-sympathetic persistent lock-free B+ tree.
@@ -935,6 +938,17 @@ impl<K, V> Event<K, V> {
 
 /// The function which is used to deserialize all keys and values.
 pub fn deserialize<'a, T>(bytes: &'a [u8]) -> Result<T>
+where
+    T: serde::de::Deserialize<'a>,
+{
+    // The row is made available to `Envelope`, which needs to look at it
+    // whole; for any other type this is two thread-local writes.
+    envelope::with_row(bytes, || decode_plain(bytes))
+}
+
+/// Plain bincode in yats' encoding, without `Envelope` handling: for
+/// `Versioned::upgrade` impls decoding an old layout.
+pub fn decode_plain<'a, T>(bytes: &'a [u8]) -> Result<T>
 where
     T: serde::de::Deserialize<'a>,
 {

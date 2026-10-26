@@ -16,13 +16,12 @@ anyhow = { workspace = true }
 arcstr = { workspace = true }
 bfprotocols = { version = "0.1", path = "../bfprotocols" }
 chrono = { workspace = true }
-compact_str = { workspace = true }
 crossbeam = { workspace = true }
 dcso3 = { version = "0.1", path = "../dcso3" }
 futures = { workspace = true }
 fxhash = { workspace = true }
 log = { workspace = true }
-mlua = { version = "0.9.9", features = ["lua51", "module", "serialize"] }
+mlua = { workspace = true, features = ["module", "serialize"] }
 livewx = { version = "0.1", path = "../livewx" }
 nalgebra = { workspace = true }
 netidx = { workspace = true }
@@ -30,7 +29,6 @@ netidx-protocols = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true }
-serde_derive = { workspace = true }
 serde_json = { workspace = true }
 simplelog = { workspace = true }
 tokio = { workspace = true }

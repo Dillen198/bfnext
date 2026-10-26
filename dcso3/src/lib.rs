@@ -11,17 +11,19 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
+// A DLL that DCS loads must use the Lua runtime DCS already has.
+#[cfg(all(feature = "vendored-lua", not(debug_assertions)))]
+compile_error!("dcso3's vendored-lua feature is for tests, not release builds");
+
 extern crate nalgebra as na;
 pub use schemars;
 use anyhow::{anyhow, bail, Result};
-use compact_str::CompactString;
 use fxhash::FxHashMap;
 use log::error;
 use mlua::{prelude::*, Value};
 use serde_derive::{Deserialize, Serialize};
 use std::{
     backtrace::Backtrace,
-    borrow::Borrow,
     cell::RefCell,
     collections::hash_map::Entry,
     fmt::Debug,
@@ -57,127 +59,14 @@ pub mod warehouse;
 pub mod weapon;
 pub mod world;
 
-#[macro_export]
-macro_rules! atomic_id {
-    ($name:ident) => {
-        paste::paste! {
-            #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-            pub struct $name(i64);
-
-            impl From<i64> for $name {
-                fn from(x: i64) -> Self {
-                    Self(x)
-                }
-            }
-
-            impl std::str::FromStr for $name {
-                type Err = anyhow::Error;
-
-                fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-                    Ok(Self(s.parse::<i64>()?))
-                }
-            }
-
-            impl serde::Serialize for $name {
-                fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
-                    serializer.serialize_i64(self.0)
-                }
-            }
-
-            pub struct [<$name Visitor>];
-
-            impl<'de> serde::de::Visitor<'de> for [<$name Visitor>] {
-                type Value = $name;
-
-                fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                    write!(formatter, "a i64")
-                }
-
-                fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
-                where
-                    E: serde::de::Error,
-                {
-                    $name::update_max(v);
-                    Ok($name(v))
-                }
-
-                fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
-                where
-                    E: serde::de::Error,
-                {
-                    let v = v as i64;
-                    $name::update_max(v);
-                    Ok($name(v))
-                }
-            }
-
-            impl<'de> serde::Deserialize<'de> for $name {
-                fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
-                    deserializer.deserialize_i64([<$name Visitor>])
-                }
-            }
-
-            static [<MAX_ $name:upper _ID>]: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
-
-            impl std::fmt::Display for $name {
-                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    write!(f, "{}", self.0)
-                }
-            }
-
-            impl std::default::Default for $name {
-                fn default() -> Self {
-                    Self::new()
-                }
-            }
-
-            impl<'lua> mlua::FromLua<'lua> for $name {
-                fn from_lua(value: mlua::Value<'lua>, lua: &'lua mlua::Lua) -> mlua::prelude::LuaResult<Self> {
-                    let i = i64::from_lua(value, lua)?;
-                    Ok($name(i))
-                }
-            }
-
-            impl<'lua> mlua::IntoLua<'lua> for $name {
-                fn into_lua(self, lua: &'lua mlua::Lua) -> mlua::prelude::LuaResult<mlua::Value<'lua>> {
-                    self.0.into_lua(lua)
-                }
-            }
-
-            impl $name {
-                pub fn new() -> Self {
-                    Self([<MAX_ $name:upper _ID>].fetch_add(1, std::sync::atomic::Ordering::Relaxed))
-                }
-
-                fn update_max(n: i64) {
-                    // saturating: a corrupt/hostile id of i64::MAX must
-                    // not wrap the sequence to i64::MIN and start
-                    // handing out ids that collide with existing ones
-                    [<MAX_ $name:upper _ID>].fetch_max(
-                        n.saturating_add(1),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-                }
-
-                pub fn inner(&self) -> i64 {
-                    self.0
-                }
-
-                pub fn setseq(i: i64) {
-                    [<MAX_ $name:upper _ID>].store(i, std::sync::atomic::Ordering::Relaxed)
-                }
-
-                pub fn seq() -> i64 {
-                    [<MAX_ $name:upper _ID>].load(std::sync::atomic::Ordering::Relaxed)
-                }
-
-                pub fn zero() -> Self {
-                    Self(0)
-                }
-            }
-        }
-    }
-}
+// The Lua-free types and macros live in dcso3-core so that programs which
+// never load into DCS can use them without linking Lua. Re-exported here
+// (and in each module, at the type's old path) so nothing downstream moves.
+pub use dcso3_core::{
+    atomic_id,
+    lua::{cvt_err, err, lua_err},
+    simple_enum, simple_enum_unknown, string_enum, wrapped_prim, String, Vector2, Vector3,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Quad2 {
@@ -444,10 +333,6 @@ pub fn wrap<'lua, R: Default>(name: &str, res: Result<R>) -> LuaResult<R> {
     }
 }
 
-pub fn lua_err<E: Debug>(err: E) -> LuaError {
-    LuaError::RuntimeError(format!("{:?}", err))
-}
-
 pub trait LuaEnv<'a> {
     fn inner(self) -> &'a Lua;
 }
@@ -559,94 +444,6 @@ macro_rules! wrapped_table {
 }
 
 #[macro_export]
-macro_rules! simple_enum {
-    ($name:ident, $repr:ident, [$($case:ident => $num:literal),+]) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-        #[allow(non_camel_case_types)]
-        #[repr($repr)]
-        pub enum $name {
-            $($case = $num),+
-        }
-
-        impl<'lua> FromLua<'lua> for $name {
-            fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
-                Ok(match $repr::from_lua(value, lua)? {
-                    $($num => Self::$case),+,
-                    _ => return Err(cvt_err(stringify!($name)))
-                })
-            }
-        }
-
-        impl<'lua> IntoLua<'lua> for $name {
-            fn into_lua(self, _lua: &'lua Lua) -> LuaResult<Value<'lua>> {
-                Ok(Value::Integer(self as i64))
-            }
-        }
-    };
-}
-
-/// `simple_enum!` plus an `Unknown(n)` catch-all, for ids DCS extends in
-/// updates (countries, categories, liquid types). The plain form fails the
-/// whole decode on an id it doesn't know, which took down every read that
-/// touched e.g. a new country or unit category. `Unknown` must stay the LAST
-/// variant: some of these are persisted with positional bincode (bfdb), and
-/// appending a variant keeps every existing variant index unchanged.
-///
-/// A data-carrying variant rules out `#[repr]` discriminants and `as` casts,
-/// so the numeric id is `id()`, and ordering is implemented on it to keep
-/// the same order the discriminant-based derive gave.
-#[macro_export]
-macro_rules! simple_enum_unknown {
-    ($name:ident, $repr:ident, [$($case:ident => $num:literal),+]) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-        #[allow(non_camel_case_types)]
-        pub enum $name {
-            $($case),+,
-            /// An id this build doesn't know about yet.
-            Unknown($repr)
-        }
-
-        impl $name {
-            /// The numeric id DCS uses for this value.
-            pub fn id(self) -> $repr {
-                match self {
-                    $(Self::$case => $num),+,
-                    Self::Unknown(n) => n,
-                }
-            }
-        }
-
-        impl PartialOrd for $name {
-            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                Some(self.cmp(other))
-            }
-        }
-
-        impl Ord for $name {
-            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                let key = |v: &Self| (v.id(), matches!(v, Self::Unknown(_)));
-                key(self).cmp(&key(other))
-            }
-        }
-
-        impl<'lua> FromLua<'lua> for $name {
-            fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
-                Ok(match $repr::from_lua(value, lua)? {
-                    $($num => Self::$case),+,
-                    n => Self::Unknown(n)
-                })
-            }
-        }
-
-        impl<'lua> IntoLua<'lua> for $name {
-            fn into_lua(self, _lua: &'lua Lua) -> LuaResult<Value<'lua>> {
-                Ok(Value::Integer(self.id() as i64))
-            }
-        }
-    };
-}
-
-#[macro_export]
 macro_rules! bitflags_enum {
     ($name:ident, $repr:ident, [$($case:ident => $num:literal),+]) => {
         #[bitflags]
@@ -672,88 +469,6 @@ macro_rules! bitflags_enum {
             }
         }
     };
-}
-
-#[macro_export]
-macro_rules! string_enum {
-    ($name:ident, $repr:ident, [$($case:ident => $str:literal),+]) => {
-        string_enum!($name, $repr, [$($case => $str),+], []);
-    };
-    ($name:ident,
-     $repr:ident,
-     [$($case:ident => $str:literal),+],
-     [$($altcase:ident => $altstr:literal),*]) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-        #[allow(non_camel_case_types)]
-        #[repr($repr)]
-        pub enum $name {
-            $($case),+,
-            Custom(String)
-        }
-
-        impl<'lua> FromLua<'lua> for $name {
-            fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
-                let s = String::from_lua(value, lua)?;
-                Ok(match s.as_str() {
-                    $($str => Self::$case,)+
-                    $($altstr => Self::$altcase,)*
-                    _ => Self::Custom(s)
-                })
-            }
-        }
-
-        impl<'lua> IntoLua<'lua> for $name {
-            fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
-                Ok(Value::String(match self {
-                    $(Self::$case => lua.create_string($str)?),+,
-                    Self::Custom(s) => lua.create_string(s.as_str())?
-                }))
-            }
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! wrapped_prim {
-    ($name:ident, $type:ty) => {
-        wrapped_prim!($name, $type, );
-    };
-    ($name:ident, $type:ty, $($extra_derives:ident),*) => {
-        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, $($extra_derives),*)]
-        pub struct $name($type);
-
-        impl $name {
-            pub fn inner(self) -> $type {
-                self.0
-            }
-        }
-
-        impl From<$type> for $name {
-            fn from(t: $type) -> Self {
-                Self(t)
-            }
-        }
-
-        impl<'lua> FromLua<'lua> for $name {
-            fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
-                Ok(Self(FromLua::from_lua(value, lua)?))
-            }
-        }
-
-        impl<'lua> IntoLua<'lua> for $name {
-            fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
-                Ok(self.0.into_lua(lua)?)
-            }
-        }
-    };
-}
-
-pub fn cvt_err(to: &'static str) -> LuaError {
-    LuaError::FromLuaConversionError { from: "value", to, message: None }
-}
-
-pub fn err(msg: &str) -> LuaError {
-    LuaError::runtime(msg)
 }
 
 pub fn as_tbl_ref<'a: 'lua, 'lua>(
@@ -1064,7 +779,6 @@ impl<'lua> DcsTableExt<'lua> for mlua::Table<'lua> {
     }
 }
 
-pub type Vector2 = na::base::Vector2<f64>;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 pub struct LuaVec2(pub na::base::Vector2<f64>);
@@ -1105,7 +819,6 @@ impl LuaVec2 {
     }
 }
 
-pub type Vector3 = na::base::Vector3<f64>;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 pub struct LuaVec3(pub na::base::Vector3<f64>);
@@ -1192,88 +905,6 @@ impl<'lua> FromLua<'lua> for Box3 {
     fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
         let tbl = as_tbl("Box3", None, value).map_err(lua_err)?;
         Ok(Self { min: tbl.raw_get("min")?, max: tbl.raw_get("max")? })
-    }
-}
-
-#[derive(
-    Debug, Clone, Default, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-    schemars::JsonSchema,
-)]
-pub struct String(#[schemars(with = "std::string::String")] CompactString);
-
-impl std::fmt::Display for String {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Deref for String {
-    type Target = compact_str::CompactString;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for String {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl AsRef<str> for String {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl Borrow<str> for String {
-    fn borrow(&self) -> &str {
-        self.0.borrow()
-    }
-}
-
-impl<'lua> IntoLua<'lua> for String {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
-        Ok(Value::String(lua.create_string(self.0)?))
-    }
-}
-
-impl<'lua> FromLua<'lua> for String {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
-        use compact_str::format_compact;
-        match value {
-            Value::String(s) => Ok(Self(CompactString::from(s.to_str()?))),
-            Value::Boolean(b) => Ok(Self(format_compact!("{b}"))),
-            Value::Integer(n) => Ok(Self(format_compact!("{n}"))),
-            Value::Number(n) => Ok(Self(format_compact!("{n}"))),
-            // nil and tables used to be stringified ("nil", "table: 0x..."),
-            // which leaked into logs, stats and chat as fake names. A value
-            // that may legitimately be absent must be read as Option<String>.
-            v => Err(LuaError::FromLuaConversionError {
-                from: v.type_name(),
-                to: "String",
-                message: None,
-            }),
-        }
-    }
-}
-
-impl From<&str> for String {
-    fn from(value: &str) -> Self {
-        Self(CompactString::from(value))
-    }
-}
-
-impl From<std::string::String> for String {
-    fn from(value: std::string::String) -> Self {
-        Self(CompactString::from(value))
-    }
-}
-
-impl From<CompactString> for String {
-    fn from(value: CompactString) -> Self {
-        Self(value)
     }
 }
 

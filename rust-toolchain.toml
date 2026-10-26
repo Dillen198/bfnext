@@ -1,0 +1,12 @@
+# Pins the compiler every build uses: CI, deploy/publish-release.ps1, and a
+# fresh checkout on a dev box (rustup reads this file and installs the
+# toolchain on first use). Without it each machine built with whatever
+# `stable` happened to be, so a release could differ from what CI checked.
+#
+# Bump deliberately: change the version, run the full CI set locally
+# (`cargo check --workspace --locked`, `cargo test --workspace --locked`,
+# bftools), and commit the bump on its own.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

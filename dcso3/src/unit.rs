@@ -11,6 +11,7 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
+use crate::object::DcsOidExt;
 use super::{as_tbl, controller::Controller, group::Group, object::Object, String};
 use crate::{
     env::miz::UnitId,
@@ -22,7 +23,7 @@ use anyhow::{bail, Result};
 use log::debug;
 use mlua::{prelude::*, Value};
 use na::Vector2;
-use serde_derive::{Deserialize, Serialize};
+use serde_derive::Serialize;
 use std::{marker::PhantomData, ops::Deref};
 
 simple_enum_unknown!(UnitCategory, u8, [
@@ -252,8 +253,7 @@ impl<'lua> Unit<'lua> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ClassUnit;
+pub use dcso3_core::unit::ClassUnit;
 
 impl<'lua> DcsObject<'lua> for Unit<'lua> {
     type Class = ClassUnit;

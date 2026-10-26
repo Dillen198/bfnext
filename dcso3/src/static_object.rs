@@ -11,11 +11,12 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
+use crate::object::DcsOidExt;
 use super::{as_tbl, coalition::Side, country::Country, object::Object};
 use crate::{airbase::Airbase, coalition::Static, object::{DcsObject, DcsOid}, wrapped_prim, wrapped_table, LuaEnv, MizLua};
 use anyhow::{anyhow, bail, Result};
 use mlua::{prelude::*, Value};
-use serde_derive::{Serialize, Deserialize};
+use serde_derive::Serialize;
 use std::{marker::PhantomData, ops::Deref};
 
 wrapped_prim!(StaticObjectId, i64, Hash, Copy);

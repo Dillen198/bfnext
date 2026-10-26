@@ -19,25 +19,24 @@ anyhow = { workspace = true }
 arrayvec = { workspace = true }
 base64 = { workspace = true }
 bfprotocols = { version = "0.1.0", path = "../bfprotocols" }
-bincode = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-compact_str = { workspace = true }
-dcso3 = { version = "0.1", path = "../dcso3" }
+# `dcso3` here is dcso3-core under dcso3's name: the same types at the same
+# paths (dcso3::net::Ucid, dcso3::coalition::Side, ...) without mlua, so
+# this crate builds and runs without DCS's lua.dll. Code that needs the Lua
+# side of dcso3 depends on dcso3 itself.
+dcso3 = { package = "dcso3-core", version = "0.1", path = "../dcso3-core" }
 enumflags2 = { workspace = true, features = ["serde"] }
 env_logger = { workspace = true }
 futures = { workspace = true }
 fxhash = { workspace = true }
-handlebars = { workspace = true }
 log = { workspace = true }
-mlua = { version = "0.9.9", features = ["lua51", "serialize"] }
 netidx-protocols = { workspace = true }
 netidx = { workspace = true }
 netidx-archive = { workspace = true }
 arcstr = { workspace = true }
 paste = { workspace = true }
-pin-project = { workspace = true }
 regex = { workspace = true }
 schemars = { workspace = true }
 serde_derive = { workspace = true }

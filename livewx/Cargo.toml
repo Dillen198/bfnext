@@ -6,12 +6,21 @@ license = "MIT"
 publish = false
 description = "Real-world weather and time for a DCS mission file: fetches METAR (CheckWX) and open-meteo, and rewrites the .miz before the mission next loads. Shared by bflib (campaign) and bfrange (training range)."
 
+[features]
+# Tests only, see dcso3's feature of the same name.
+vendored-lua = ["dcso3/vendored-lua"]
+
 [dependencies]
 anyhow = { workspace = true }
 bfprotocols = { version = "0.1", path = "../bfprotocols" }
 chrono = { workspace = true }
 dcso3 = { version = "0.1", path = "../dcso3" }
 log = { workspace = true }
-mlua = { version = "0.9.9", features = ["lua51", "module", "serialize"] }
+# No "module": livewx is an rlib, the cdylibs that link it (bflib, bfrange)
+# turn module mode on themselves, and bftools links it with vendored Lua.
+mlua = { workspace = true, features = ["serialize"] }
 serde_json = { workspace = true }
 ureq = { workspace = true }
+
+[lints]
+workspace = true

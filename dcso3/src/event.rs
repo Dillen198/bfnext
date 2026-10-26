@@ -511,3 +511,100 @@ impl<'lua> FromLua<'lua> for Event<'lua> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A plain Lua state with stand-ins for the DCS classes an event can
+    /// carry: a table whose metatable chain names the class is all
+    /// `as_tbl` / `check_implements` look at.
+    fn lua() -> Lua {
+        let lua = Lua::new();
+        lua.load(
+            r#"
+            Object = { className_ = "Object" }
+            Unit = { className_ = "Unit", parentClass_ = Object }
+            Airbase = { className_ = "Airbase", parentClass_ = Object }
+            function obj(class, id) return setmetatable({ id_ = id }, class) end
+            "#,
+        )
+        .exec()
+        .unwrap();
+        lua
+    }
+
+    fn event<'lua>(lua: &'lua Lua, src: &str) -> LuaResult<Event<'lua>> {
+        let v: Value = lua.load(src).eval()?;
+        Event::from_lua(v, lua)
+    }
+
+    #[test]
+    fn plain_and_unknown_ids() {
+        let lua = lua();
+        assert!(matches!(event(&lua, "{ id = 11 }").unwrap(), Event::MissionStart));
+        assert!(matches!(event(&lua, "{ id = 61 }").unwrap(), Event::GroupChangeOption));
+        // DCS adds ids in updates; an unknown one is ignored, not an error
+        assert!(matches!(event(&lua, "{ id = 999 }").unwrap(), Event::Invalid));
+        assert!(event(&lua, "{ time = 1 }").is_err());
+    }
+
+    #[test]
+    fn runway_events_use_the_live_server_ids() {
+        // 54/55 are RUNWAY_TAKEOFF/RUNWAY_TOUCH on DCS 2.9.29; an older
+        // table had these shifted by one
+        let lua = lua();
+        match event(&lua, "{ id = 55, time = 12.5, initiator = obj(Unit, 7), subPlace = 3 }")
+            .unwrap()
+        {
+            Event::RunwayTouch(e) => {
+                assert_eq!(e.time, Time(12.5));
+                assert!(e.initiator.is_some());
+                assert!(e.place.is_none());
+                assert_eq!(e.subplace, Some(3));
+            }
+            e => panic!("expected RunwayTouch, got {e:?}"),
+        }
+        assert!(matches!(
+            event(&lua, "{ id = 54, time = 1, place = obj(Airbase, 2) }").unwrap(),
+            Event::RunwayTakeoff(_)
+        ));
+    }
+
+    #[test]
+    fn hit_degrades_dead_objects_and_empty_names() {
+        let lua = lua();
+        // a bare table with no metatable is an object that no longer exists
+        let src = r#"{ id = 2, time = 3, initiator = { id_ = 1 },
+                       target = obj(Unit, 9), weapon_name = "" }"#;
+        match event(&lua, src).unwrap() {
+            Event::Hit(h) => {
+                assert!(h.initiator.is_none());
+                assert!(h.target.is_some());
+                assert_eq!(h.weapon_name, None);
+                assert!(h.weapon.is_none());
+            }
+            e => panic!("expected Hit, got {e:?}"),
+        }
+        match event(&lua, r#"{ id = 28, time = 3, weapon_name = "AIM-120C" }"#).unwrap() {
+            Event::Kill(k) => assert_eq!(k.weapon_name.as_deref().map(|s| s.as_str()), Some("AIM-120C")),
+            e => panic!("expected Kill, got {e:?}"),
+        };
+    }
+
+    #[test]
+    fn player_leave_unit_keeps_only_the_id() {
+        let lua = lua();
+        match event(&lua, "{ id = 21, initiator = { id_ = 5 } }").unwrap() {
+            Event::PlayerLeaveUnit(LeaveUnit { initiator: Some(oid) }) => {
+                assert_eq!(oid.id, 5);
+                assert_eq!(oid.class.as_str(), "Unit");
+            }
+            e => panic!("expected PlayerLeaveUnit, got {e:?}"),
+        }
+        assert!(matches!(
+            event(&lua, "{ id = 21 }").unwrap(),
+            Event::PlayerLeaveUnit(LeaveUnit { initiator: None })
+        ));
+    }
+}

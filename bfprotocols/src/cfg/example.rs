@@ -2367,6 +2367,7 @@ fn default_blue_actions() -> IndexMap<String, Action, FxBuildHasher> {
 impl Default for Cfg {
     fn default() -> Self {
         Self {
+            version: Some(CFG_VERSION),
             netidx_base: Some(NetIdxPath::from("/fowl-engine")),
             auto_reset: Some(AutoResetOnVictory {
                 condition: VictoryCondition::MapOwned { fraction: 1. },

@@ -397,6 +397,85 @@ mod tests {
         Ok(())
     }
 
+    /// A scratch .miz in the temp dir, removed on drop.
+    struct TempMiz(std::path::PathBuf);
+
+    impl TempMiz {
+        fn new(name: &str, entries: &[(&str, &[u8])]) -> Result<Self> {
+            let path = std::env::temp_dir()
+                .join(format!("dcso3-{name}-{}.miz", std::process::id()));
+            let mut w = ZipWriter::new(fs::File::create(&path)?);
+            for (entry, body) in entries {
+                w.start_file(*entry, FileOptions::default())?;
+                io::Write::write_all(&mut w, body)?;
+            }
+            w.finish()?;
+            Ok(Self(path))
+        }
+
+        fn entry(&self, name: &str) -> Result<Vec<u8>> {
+            let mut a = ZipArchive::new(fs::File::open(&self.0)?)?;
+            let mut e = a.by_name(name)?;
+            let mut buf = Vec::new();
+            io::Read::read_to_end(&mut e, &mut buf)?;
+            Ok(buf)
+        }
+    }
+
+    impl Drop for TempMiz {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    #[test]
+    fn miz_entry_round_trip() -> Result<()> {
+        // cp1251 bytes in a name, as real missions have
+        let mission: &[u8] =
+            b"mission = { start_time = 43200, name = \"\xd2\xe1\", weather = { qnh = 760 } }";
+        let options: &[u8] = b"options = { difficulty = { labels = 1 } }";
+        let image: &[u8] = &[0x89, b'P', b'N', b'G', 0, 1, 2, 3];
+        let miz = TempMiz::new(
+            "roundtrip",
+            &[("mission", mission), ("options", options), ("l10n/DEFAULT/a.png", image)],
+        )?;
+        let lua = scratch_lua()?;
+        let m = read_table_from_miz(&lua, &miz.0, "mission")?;
+        let weather: Table = m.raw_get("weather")?;
+        weather.raw_set("qnh", 745)?;
+        rewrite_entry_in_miz(&miz.0, "mission", &serialize_to_lua("mission", Value::Table(m))?)?;
+        // the rewritten entry has the change and keeps the non-UTF-8 name
+        let lua = scratch_lua()?;
+        let back = read_table_from_miz(&lua, &miz.0, "mission")?;
+        assert_eq!(back.raw_get::<_, i64>("start_time")?, 43200);
+        assert_eq!(back.raw_get::<_, mlua::String>("name")?.as_bytes(), b"\xd2\xe1");
+        assert_eq!(back.raw_get::<_, Table>("weather")?.raw_get::<_, i64>("qnh")?, 745);
+        // every other entry is byte for byte what it was
+        assert_eq!(miz.entry("options")?, options);
+        assert_eq!(miz.entry("l10n/DEFAULT/a.png")?, image);
+        // and no temp file is left behind
+        assert!(!miz.0.with_extension("miz.tmp").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn rewriting_a_missing_entry_leaves_the_miz_alone() -> Result<()> {
+        let miz = TempMiz::new("missing", &[("options", b"options = {}")])?;
+        assert!(rewrite_entry_in_miz(&miz.0, "mission", "mission = {}").is_err());
+        assert_eq!(miz.entry("options")?, b"options = {}");
+        assert!(!miz.0.with_extension("miz.tmp").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn bytecode_entries_are_refused() -> Result<()> {
+        // ESC "Lua": a precompiled chunk, which Lua 5.1 would run unverified
+        let miz = TempMiz::new("bytecode", &[("mission", b"\x1bLua\x51\x00")])?;
+        let lua = scratch_lua()?;
+        assert!(read_table_from_miz(&lua, &miz.0, "mission").is_err());
+        Ok(())
+    }
+
     #[test]
     fn scratch_lua_has_no_io() -> Result<()> {
         let lua = scratch_lua()?;

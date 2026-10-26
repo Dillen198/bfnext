@@ -11,7 +11,8 @@ ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
 FITNESS FOR A PARTICULAR PURPOSE.
 */
 
-use super::{as_tbl, coalition::Side, controller::Controller, cvt_err, unit::Unit, String};
+use crate::object::DcsOidExt;
+use super::{as_tbl, coalition::Side, controller::Controller, unit::Unit, String};
 use crate::{
     env::miz::{GroupId, GroupKind},
     object::{DcsObject, DcsOid, Object},
@@ -19,7 +20,7 @@ use crate::{
 };
 use anyhow::{Result, bail};
 use mlua::{prelude::*, Value};
-use serde_derive::{Deserialize, Serialize};
+use serde_derive::Serialize;
 use std::{marker::PhantomData, ops::Deref};
 
 simple_enum!(GroupCategory, u8, [

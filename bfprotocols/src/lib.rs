@@ -14,3 +14,4 @@ pub mod cas;
 pub mod gci;
 pub mod situation;
 pub mod tacmap;
+pub mod unitdb;

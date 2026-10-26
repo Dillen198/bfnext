@@ -41,6 +41,10 @@ humantime = { version = "2" }
 immutable-chunkmap = { version = "2.0.4", features = ["serde"] }
 indexmap = { version = "2", features = ["serde"] }
 log = "0.4.20"
+# DCS embeds Lua 5.1, so every crate uses lua51 (and links DCS's lua.dll,
+# see setup-build.ps1). Crates add "serialize" / "module" as they need;
+# bftools is outside the workspace and pins its own (vendored) copy.
+mlua = { version = "0.9.9", features = ["lua51"] }
 nalgebra = { version = "0.33", features = ["serde-serialize"] }
 netidx-archive = { version = "0.27.1" }
 netidx-protocols = { version = "0.27" }
@@ -62,10 +66,26 @@ tokio = { version = "1", features = ["full"] }
 ureq = { version = "2" }
 uuid = { version = "1", features = ["v4", "serde"] }
 warp = { version = "0.3", features = ["tls"] }
-zip = { version = "0.6.6" }
+# deflate only: .miz files and Tacview .zip.acmi are deflate, and zip's
+# defaults pulled a second zstd (0.11, beside the 0.13 above), bzip2 and AES.
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13" }
+
+# Shared lint levels. Everything here is `warn`, never `deny`, so a new hit
+# cannot break a build; crates opt in with `[lints] workspace = true`.
+# The clippy entries only fire under `cargo clippy`.
+[workspace.lints.rust]
+# `unsafe fn` bodies must still mark each unsafe operation (the 2024 edition
+# default): an unsafe fn is a contract for the caller, not a licence for the
+# whole body.
+unsafe_op_in_unsafe_fn = "warn"
+static_mut_refs = "warn"
+
+[workspace.lints.clippy]
+# Every `unsafe {}` block says why it is sound.
+undocumented_unsafe_blocks = "warn"
 
 [workspace]
 resolver = "2"
-members = ["dcso3", "livewx", "bflib", "bfrange", "bfdb", "bfprotocols", "yats", "bfcockpit/installer", "bfcockpit/net"]
+members = ["dcso3", "dcso3-core", "livewx", "bflib", "bfrange", "bfdb", "bfprotocols", "yats", "bfcockpit/installer", "bfcockpit/net"]
 exclude = ["bftools"]
