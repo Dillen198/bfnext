@@ -8,7 +8,7 @@ import { addableList, numbered, positions, slotsOn } from './places'
 import { fromDcsXY, toDcsXY, type DcsTerrain } from '../nav'
 import { lar, larCentre, larPolygon } from '../f14lar'
 import type { Plan } from '../types'
-import type { Ctx } from './editor'
+import type { Ctx } from './core'
 
 interface Props {
   ctx: Ctx

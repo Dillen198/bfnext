@@ -4,7 +4,7 @@
 // CMDS): its sub-sections become pages of their own, grouped under it.
 
 import { getAt, toPointer, type AnnotationIndex, type Json, type JsonObject, type Seg } from '../model'
-import { entriesOf, isMatrix, isMatrixList, isObj, isRecordTable, isScalar } from './editor'
+import { entriesOf, isMatrix, isMatrixList, isObj, isRecordTable, isScalar } from './core'
 import { switchFor, type LoadSwitch } from './switches'
 
 export interface Page {

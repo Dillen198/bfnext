@@ -2,7 +2,7 @@
 // logic and the tests can use them too.
 
 import {
-  fillLabel, toPointer,
+  fillLabel, getAt, toPointer,
   type AnnotationIndex, type FieldAnnotation, type Json, type JsonObject, type Overrides, type Seg,
 } from '../model'
 
@@ -131,3 +131,22 @@ export const isMatrixList = (v: Json) => {
   return !!kids && kids.length > 0 && kids.every(isMatrix)
 }
 
+// ── flat lists for search and "changed only" ─────────────────────────────
+
+export interface LeafHit { segs: Seg[]; path: string[] }
+
+/** Every editable leaf with its label path, for search. */
+export function collectLeaves(ctx: Ctx, segs: Seg[] = [], path: string[] = [], out: LeafHit[] = [], depth = 0): LeafHit[] {
+  const v = getAt(ctx.value, segs) as Json | undefined
+  if (v === undefined || depth > 10) return out
+  const a = segs.length ? ctx.idx.get(segs) : undefined
+  if (a?.hidden || a?.managed || ctx.hidden.has(toPointer(segs))) return out
+  if (isScalar(v)) {
+    if (segs.length) out.push({ segs, path })
+    return out
+  }
+  for (const [k, x] of entriesOf(v, a)) {
+    collectLeaves(ctx, [...segs, k], [...path, rowLabel(ctx, segs, k, x)], out, depth + 1)
+  }
+  return out
+}

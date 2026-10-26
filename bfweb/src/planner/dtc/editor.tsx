@@ -14,10 +14,9 @@ import { useState, type CSSProperties, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight, Plus, RotateCcw, Trash2 } from '@icons'
 import { checkValue, clone, deepEqual, getAt, toPointer, type Json, type JsonObject, type Seg } from '../model'
 
-export * from './core'
 import {
   changesUnder, entriesOf, humanise, isMatrix, isMatrixList, isObj, isRecordTable, isScalar, labelOf, rowLabel,
-  type Ctx,
+  type Ctx, type LeafHit,
 } from './core'
 
 // ── controls ──────────────────────────────────────────────────────────────
@@ -394,24 +393,6 @@ export function Body({ ctx, segs, depth = 0, scalarsOnly = false }: { ctx: Ctx; 
 }
 
 // ── flat lists for search and "changed only" ─────────────────────────────
-
-export interface LeafHit { segs: Seg[]; path: string[] }
-
-/** Every editable leaf with its label path, for search. */
-export function collectLeaves(ctx: Ctx, segs: Seg[] = [], path: string[] = [], out: LeafHit[] = [], depth = 0): LeafHit[] {
-  const v = getAt(ctx.value, segs) as Json | undefined
-  if (v === undefined || depth > 10) return out
-  const a = segs.length ? ctx.idx.get(segs) : undefined
-  if (a?.hidden || a?.managed || ctx.hidden.has(toPointer(segs))) return out
-  if (isScalar(v)) {
-    if (segs.length) out.push({ segs, path })
-    return out
-  }
-  for (const [k, x] of entriesOf(v, a)) {
-    collectLeaves(ctx, [...segs, k], [...path, rowLabel(ctx, segs, k, x)], out, depth + 1)
-  }
-  return out
-}
 
 export function HitRow({ ctx, hit }: { ctx: Ctx; hit: LeafHit }) {
   return (

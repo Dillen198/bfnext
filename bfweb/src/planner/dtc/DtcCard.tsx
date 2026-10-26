@@ -5,7 +5,8 @@ import { mirageDtc, thunderAirspace, thunderRadio, viggenIni, type OtherExport }
 import { targetsFor, type Target } from '../targets'
 import type { Overrides } from '../model'
 import { aircraftDef, type Plan } from '../types'
-import DtcWorkspace, { METHOD, type Msg } from './DtcWorkspace'
+import DtcWorkspace from './DtcWorkspace'
+import { METHOD, type Msg } from './build'
 import { CopyPath, DownloadButton, Step, Steps } from './guides'
 
 interface Props {
