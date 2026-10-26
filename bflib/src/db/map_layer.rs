@@ -17,8 +17,8 @@ for more details.
 //! Centralised F10 map drawing layer.
 //!
 //! Every feature in the engine that needs a map overlay goes through this
-//! module.  The goal is to use the full DCS draw toolkit â€” line, circle,
-//! rect, quad, text, arrow, and mark pins â€” deliberately and consistently,
+//! module.  The goal is to use the full DCS draw toolkit — line, circle,
+//! rect, quad, text, arrow, and mark pins — deliberately and consistently,
 //! so the F10 map gives players a rich tactical picture without cluttering
 //! the code across a dozen separate files.
 //!
@@ -55,9 +55,9 @@ use fxhash::{FxHashMap, FxHashSet};
 
 use crate::msgq::MsgQ;
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // Helpers
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Radius of the "under attack" ring -- just outside a typical objective's
 /// own rings, so it reads as an escalation rather than more clutter.
@@ -223,9 +223,9 @@ fn direction_arrow(pos: Vector2, from: Vector2, to: Vector2, len_m: f64) -> (Vec
     (pos + dir * (len_m * 0.5), pos - dir * (len_m * 0.5))
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 // Per-feature mark bundles
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
 struct ConvoyMarks {
@@ -483,11 +483,11 @@ const CAPTURE_MARK_TTL: i64 = 1800; // seconds
 impl FireOverlay {
     /// Draw a new fire mission overlay.
     ///
-    /// * `gun_pos`    â€“ centroid of the firing battery
-    /// * `target_pos` â€“ impact point
-    /// * `radius_m`   â€“ burst radius
-    /// * `gun_count`  â€“ number of firing groups
-    /// * `side`       â€“ which coalition is firing
+    /// * `gun_pos`    – centroid of the firing battery
+    /// * `target_pos` – impact point
+    /// * `radius_m`   – burst radius
+    /// * `gun_count`  – number of firing groups
+    /// * `side`       – which coalition is firing
     pub fn new(
         gun_pos: Vector2,
         target_pos: Vector2,
@@ -561,7 +561,7 @@ impl FireOverlay {
 
 #[derive(Debug)]
 struct CsarMarks {
-    /// Dashed white circle â€” search area around downed pilot
+    /// Dashed white circle — search area around downed pilot
     search_ring: MarkId,
     /// Map pin carrying the pilot's name and the exact time remaining.
     label: MarkId,
@@ -620,7 +620,7 @@ impl CsarMarks {
     }
 
     /// Change the ring border color as the capture timer runs down:
-    /// white â†’ yellow â†’ red.
+    /// white → yellow → red.
     ///
     /// Called every map-layer pass; it used to resend all three colours each
     /// time whether or not anything had changed.
@@ -827,9 +827,9 @@ impl JtacLayerMarks {
     }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// MapLayer â€” top-level owner of all marks
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────────────────────────────────────
+// MapLayer — top-level owner of all marks
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// The two marks that make up one coalition tasking board entry: the area
 /// circle and the pin carrying its details. Posted from the Actions menu,
@@ -883,7 +883,7 @@ impl TaskMarks {
     }
 }
 
-/// Generic timed mark bundle â€” up to 3 MarkIds that expire together.
+/// Generic timed mark bundle — up to 3 MarkIds that expire together.
 #[derive(Debug)]
 struct TimedMark {
     ids: [Option<MarkId>; 3],
@@ -893,14 +893,6 @@ struct TimedMark {
 impl TimedMark {
     fn one(id: MarkId, ttl_secs: i64, now: DateTime<Utc>) -> Self {
         Self { ids: [Some(id), None, None], expires: now + Duration::seconds(ttl_secs) }
-    }
-    #[allow(dead_code)]
-    fn two(a: MarkId, b: MarkId, ttl_secs: i64, now: DateTime<Utc>) -> Self {
-        Self { ids: [Some(a), Some(b), None], expires: now + Duration::seconds(ttl_secs) }
-    }
-    #[allow(dead_code)]
-    fn three(a: MarkId, b: MarkId, c: MarkId, ttl_secs: i64, now: DateTime<Utc>) -> Self {
-        Self { ids: [Some(a), Some(b), Some(c)], expires: now + Duration::seconds(ttl_secs) }
     }
     fn remove(self, msgs: &mut MsgQ) {
         for id in self.ids.into_iter().flatten() {
@@ -943,7 +935,7 @@ pub struct MapLayer {
 }
 
 impl MapLayer {
-    // â”€â”€ Fire missions (explicit event) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Fire missions (explicit event) ──────────────────────────────────────
 
     /// Draw a fire-mission overlay.  Call this from `db/actions.rs` instead
     /// of the inline `circle_to_all` that currently lives there.
@@ -963,7 +955,7 @@ impl MapLayer {
         self.fire_marks.push(overlay);
     }
 
-    // â”€â”€ JTAC layer (explicit events from jtac.rs) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── JTAC layer (explicit events from jtac.rs) ───────────────────────────
 
     /// Draw JTAC layer marks when a target is acquired.
     pub fn on_jtac_target(
@@ -993,7 +985,7 @@ impl MapLayer {
         }
     }
 
-    // â”€â”€ Supply critical warnings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Supply critical warnings ────────────────────────────────────────────
 
     /// Draw a persistent F10 map marker when an objective's supply is critical.
     ///
@@ -1022,7 +1014,7 @@ impl MapLayer {
         }
     }
 
-    // â”€â”€ Transient tactical events â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Transient tactical events ────────────────────────────────────────────
 
     /// Dotted square bounding the recon scan area + text label.
     pub fn on_recon_result(
@@ -1229,7 +1221,7 @@ impl MapLayer {
         }
     }
 
-    // â”€â”€ Full diff-based update (call from slow tick) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Full diff-based update (call from slow tick) ─────────────────────────
 
     /// Performs a full diff of the entire map layer against current DB state.
     ///
@@ -1257,7 +1249,7 @@ impl MapLayer {
         self.expire_timed_marks(now, msgs);
     }
 
-    // â”€â”€ Ground convoys â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Ground convoys ───────────────────────────────────────────────────────
 
     fn update_convoys(
         &mut self,
@@ -1295,7 +1287,7 @@ impl MapLayer {
                     .map(|o| o.zone.pos())
                     .unwrap_or(convoy.last_pos);
                 let cargo_str = format_compact!(
-                    "Convoy [{:?}]\n{:?} â†’ {}",
+                    "Convoy [{:?}]\n{:?} → {}",
                     convoy.side,
                     convoy.cargo_type,
                     persisted
@@ -1338,7 +1330,7 @@ impl MapLayer {
         });
     }
 
-    // â”€â”€ Air logistics routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Air logistics routes ─────────────────────────────────────────────────
 
     fn update_air_routes(
         &mut self,
@@ -1368,7 +1360,7 @@ impl MapLayer {
                 .unwrap_or(Side::Neutral);
 
             let label = format_compact!(
-                "Air Logi [{:?}]\n{:?} â†’ {}",
+                "Air Logi [{:?}]\n{:?} → {}",
                 side,
                 route.cargo_type,
                 persisted
@@ -1397,7 +1389,7 @@ impl MapLayer {
         });
     }
 
-    // â”€â”€ Sea logistics routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Sea logistics routes ─────────────────────────────────────────────────
 
     fn update_sea_routes(
         &mut self,
@@ -1426,7 +1418,7 @@ impl MapLayer {
                 .unwrap_or(Side::Neutral);
 
             let label = format_compact!(
-                "Sea Logi [{:?}]\n{:?} â†’ {}",
+                "Sea Logi [{:?}]\n{:?} → {}",
                 side,
                 route.cargo_type,
                 persisted
@@ -1451,7 +1443,7 @@ impl MapLayer {
         });
     }
 
-    // â”€â”€ CSAR / downed pilots â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── CSAR / downed pilots ─────────────────────────────────────────────────
 
     fn update_csar(
         &mut self,
@@ -1538,7 +1530,7 @@ impl MapLayer {
         });
     }
 
-    // â”€â”€ Coalition tasking board â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Coalition tasking board ─────────────────────────────────────────────
 
     /// Draw tasks that have been posted since the last pass and erase the
     /// ones that have been removed or have expired. Diffing against
@@ -1562,7 +1554,7 @@ impl MapLayer {
         });
     }
 
-    // â”€â”€ Fire mark expiry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Fire mark expiry ─────────────────────────────────────────────────────
 
     fn expire_fire_marks(&mut self, now: DateTime<Utc>, msgs: &mut MsgQ) {
         self.fire_marks.retain(|overlay| {
@@ -1577,7 +1569,7 @@ impl MapLayer {
         });
     }
 
-    // â”€â”€ Full removal (e.g. on mission reset) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Full removal (e.g. on mission reset) ────────────────────────────────
 
     pub fn remove_all(&mut self, msgs: &mut MsgQ) {
         for (_, c) in self.convoy_marks.drain() {

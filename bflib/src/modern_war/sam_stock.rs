@@ -59,7 +59,6 @@ pub(crate) struct SamStock {
 
 impl SamStock {
     /// Missiles left in `gid`'s magazine, if it has been counted.
-    #[allow(dead_code)]
     pub(crate) fn remaining(&self, gid: &GroupId) -> Option<u32> {
         self.groups.get(gid).map(|m| m.remaining)
     }

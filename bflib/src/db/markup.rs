@@ -218,28 +218,6 @@ fn carrier_path() -> &'static [(f64, f64)] {
     ]
 }
 
-/// Airbase icon — simple top-down aircraft silhouette, nose pointing north.
-#[allow(dead_code)] // DCS labels real airfields itself; kept as reference geometry
-fn airbase_path() -> &'static [(f64, f64)] {
-    &[
-        ( 0.90,  0.00), // nose
-        ( 0.15,  0.08), // fuselage, starboard wing root
-        ( 0.05,  0.75), // starboard wingtip, forward edge
-        (-0.05,  0.70), // starboard wingtip, trailing edge
-        (-0.15,  0.10), // fuselage, aft of wing
-        (-0.75,  0.25), // starboard tailplane tip
-        (-0.85,  0.08), // starboard tailplane root
-        (-0.95,  0.00), // tail
-        (-0.85, -0.08), // port tailplane root
-        (-0.75, -0.25), // port tailplane tip
-        (-0.15, -0.10), // fuselage, aft of wing
-        (-0.05, -0.70), // port wingtip, trailing edge
-        ( 0.05, -0.75), // port wingtip, forward edge
-        ( 0.15, -0.08), // fuselage, port wing root
-        ( 0.90,  0.00), // close at nose
-    ]
-}
-
 /// FOB icon — simple tent/outpost pentagon, apex to the north.
 fn fob_path() -> &'static [(f64, f64)] {
     &[

@@ -132,11 +132,6 @@ impl Db {
             .filter(move |t| t.side == side)
     }
 
-    #[allow(dead_code)]
-    pub fn task(&self, id: &TaskId) -> Option<&Task> {
-        self.persisted.tasks.get(id)
-    }
-
     /// Describe a point as "<distance> <cardinal> of <nearest objective>",
     /// falling back to raw coordinates when there are no objectives at all.
     fn describe_point(&self, pos: Vector2) -> CompactString {
@@ -397,19 +392,5 @@ impl Db {
             }
         }
         self.ephemeral.dirty();
-    }
-
-    /// A short board summary for chat / panel reports.
-    #[allow(dead_code)]
-    pub fn task_board(&self, side: Side) -> SmallVec<[CompactString; 8]> {
-        let mut board: SmallVec<[CompactString; 8]> = smallvec![];
-        for task in self.tasks(side) {
-            board.push(format_compact!(
-                "{} -- posted by {}",
-                task.label(),
-                task.created_by_name
-            ));
-        }
-        board
     }
 }

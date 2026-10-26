@@ -19,7 +19,7 @@ for more details.
 //! `airlife::process_requests` does the work on the next 1 Hz tick.
 
 use super::{slot_for_group, Pager};
-use crate::{airlife::WingmanCmd, Context};
+use crate::airlife::WingmanCmd;
 use anyhow::{Context as ErrContext, Result};
 use dcso3::{
     env::miz::GroupId,
@@ -28,7 +28,7 @@ use dcso3::{
 };
 
 fn queue(lua: MizLua, gid: GroupId, cmd: WingmanCmd) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         ctx.airlife.queue(cmd, gid, ucid);

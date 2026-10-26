@@ -48,6 +48,7 @@ fn dist(a: Vector2, b: Vector2) -> f64 {
 }
 
 fn queue(ucid: Ucid, group: GroupId, kind: CmdKind) {
+    // no DCS calls here, so nothing to defer
     let ctx = unsafe { Context::get_mut() };
     ctx.groundwar.queue(Cmd { ucid, group, kind });
 }
@@ -104,7 +105,7 @@ pub(super) fn init_ground_menu_for_slot(mc: &MissionCommands, group: GroupId, uc
 }
 
 fn build(lua: MizLua, ucid: Ucid, group: GroupId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let mc = MissionCommands::singleton(lua)?;
     mc.remove_command_for_group(group, GroupCommandItem::from(vec![ROOT_CMD.into()]))?;
     mc.remove_submenu_for_group(group, GroupSubMenu::from(vec![ROOT.into()]))?;

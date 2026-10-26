@@ -1,51 +1,17 @@
-local base = _G
-local dcsbot = base.dcsbot
-local utils = base.require("DCSServerBotUtils")
-
-function dcsbot.vs_get_campaign_state(json)
-    log.write('DCSServerBot', log.DEBUG, 'VectorStrike: vs_get_campaign_state()')
-    local msg = {}
-    msg.command = 'vs_get_campaign_state'
-    
-    if base.vector_strike and base.vector_strike.get_campaign_state then
-        msg.state = base.vector_strike.get_campaign_state()
-    else
-        msg.state = "{}"
-    end
-    
-    utils.sendBotTable(msg, json.channel)
-end
-
-function dcsbot.vs_get_objectives(json)
-    log.write('DCSServerBot', log.DEBUG, 'VectorStrike: vs_get_objectives()')
-    local msg = {}
-    msg.command = 'vs_get_objectives'
-    
-    if base.vector_strike and base.vector_strike.get_objectives then
-        msg.objectives = base.vector_strike.get_objectives()
-    else
-        msg.objectives = "[]"
-    end
-    
-    utils.sendBotTable(msg, json.channel)
-end
-
-function dcsbot.vs_join_faction(json)
-    log.write('DCSServerBot', log.DEBUG, 'VectorStrike: vs_join_faction()')
-    -- Call the bflib admin command for faction join
-    -- In a real setup, we would verify UCID or discord mapping here
-    if base.vector_strike and base.vector_strike.dispatch_admin_command then
-        base.vector_strike.dispatch_admin_command(json.ucid, json.side)
-    end
-end
-
-function dcsbot.vs_spawn_deployable(json)
-    log.write('DCSServerBot', log.DEBUG, 'VectorStrike: vs_spawn_deployable()')
-    -- Pass this logic into Vector Strike
-    -- Need lua implementation inside vector_strike.spawn_deployable
-end
-
-function dcsbot.vs_set_priority(json)
-    log.write('DCSServerBot', log.DEBUG, 'VectorStrike: vs_set_priority()')
-    -- Pass this logic into Vector Strike
-end
+-- Intentionally empty.
+--
+-- This file used to define dcsbot.vs_get_campaign_state, vs_get_objectives,
+-- vs_join_faction, vs_spawn_deployable and vs_set_priority. None of them
+-- worked: they read base.vector_strike, but bflib registers that table in the
+-- *mission* scripting environment, not the server hooks environment this
+-- file runs in, so it was always nil; vs_join_faction called a function that
+-- never existed; and the last two were empty. Nothing in the plugin sent
+-- those commands either.
+--
+-- The plugin gets campaign state, objectives and achievements from bfdb over
+-- HTTP (opsapi.py, listener.py). The vector_strike table is still there for
+-- mission-side scripts; see bflib/src/api.rs.
+--
+-- The file is kept (rather than deleted) so an existing install that copies
+-- plugin Lua into Scripts/net overwrites the old stubs instead of leaving
+-- them behind.

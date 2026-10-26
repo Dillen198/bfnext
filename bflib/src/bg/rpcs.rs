@@ -128,9 +128,9 @@ fn parse_server_info(s: &str) -> Result<AdminCommand> {
 }
 
 /// The longest an RPC waits for the mission to answer it. Admin commands are
-/// run from the once-a-second tick, so a healthy mission answers in about a
-/// second; a paused or wedged one never does, and the caller should hear so
-/// rather than wait forever.
+/// drained ten times a second (`ADMIN_DRAIN_HZ` in lib.rs), so a healthy
+/// mission answers within a few hundred ms; a paused or wedged one never
+/// does, and the caller should hear so rather than wait forever.
 const REPLY_TIMEOUT: Duration = Duration::from_secs(60);
 
 async fn reply_one(mut c: RpcCall, ch: oneshot::Receiver<Value>) {

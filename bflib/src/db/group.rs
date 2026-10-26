@@ -60,7 +60,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use log::{error, info, warn};
 use serde_derive::{Deserialize, Serialize};
 use smallvec::{smallvec, SmallVec};
-use std::{cmp::max, collections::VecDeque};
+use std::collections::VecDeque;
 
 /// How far a deployed group has to travel before its F10 pin is redrawn, in
 /// metres. See `mark_group_if_moved`: the pin costs two map commands out of a
@@ -278,6 +278,21 @@ pub struct SpawnedGroup {
     pub origin: DeployKind,
     pub units: SetS<UnitId>,
     pub tags: UnitTags,
+}
+
+/// Most units whose positions are read in one 1 s tick.
+const POSITION_SWEEP_MAX: usize = 128;
+
+/// How many of `total` movable units to read per 1 s tick: enough for a full
+/// sweep in about 16 s, at most `POSITION_SWEEP_MAX`.
+///
+/// This was `total / 16` capped at 32, so the sweep took longer the bigger
+/// the campaign -- a minute at 2000 units -- and so did noticing a unit that
+/// left DCS without a dead event. The slow pass no longer lands in one frame,
+/// which leaves room for a higher ceiling; past 2048 units the sweep still
+/// stretches beyond 16 s.
+fn position_sweep_chunk(total: usize) -> usize {
+    total.div_ceil(16).clamp(1, POSITION_SWEEP_MAX)
 }
 
 impl Db {
@@ -1116,9 +1131,10 @@ impl Db {
                 String::from(format_compact!("{}-{}", group_name, uid))
             };
             let pos = match gpos.by_type.get_mut(&typ) {
-                None => gpos.positions.pop_front().unwrap(),
-                Some(positions) => positions.pop_front().unwrap(),
-            };
+                None => gpos.positions.pop_front(),
+                Some(positions) => positions.pop_front(),
+            }
+            .ok_or_else(|| anyhow!("{group_name}: no spawn position left for unit {typ}"))?;
             let position = {
                 let mut p = Position3::default();
                 p.p.x = pos.position.x;
@@ -2160,11 +2176,10 @@ impl Db {
         if last < total {
             let mut uids: SmallVec<[UnitId; 64]> = smallvec![];
             let elts = self.ephemeral.units_able_to_move.as_slice();
-            // Process 1/16 of units per tick, capped at 32 to bound frame time.
-            // Bug fix: compare uids.len() to the CHUNK SIZE, not the absolute
-            // stop index — the old `uids.len() < stop` doubled the batch each
-            // successive tick (tick 2 processed 2× the intended amount, etc.).
-            let chunk = max(1, total >> 4).min(32);
+            // Compare uids.len() to the CHUNK SIZE, not the absolute stop
+            // index -- the old `uids.len() < stop` doubled the batch each
+            // successive tick (tick 2 processed 2x the intended amount, etc.).
+            let chunk = position_sweep_chunk(total);
             while last < total && uids.len() < chunk {
                 uids.push(elts[last]);
                 last += 1;
@@ -2293,6 +2308,15 @@ impl Db {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn position_sweep_takes_about_16_ticks_up_to_the_cap() {
+        assert_eq!(position_sweep_chunk(0), 1);
+        assert_eq!(position_sweep_chunk(20), 2);
+        assert_eq!(position_sweep_chunk(512), 32);
+        assert_eq!(position_sweep_chunk(2000), 125);
+        assert_eq!(position_sweep_chunk(10_000), POSITION_SWEEP_MAX);
+    }
 
     #[test]
     fn launch_fields_rank_nearest_first_past_the_minimum() {

@@ -179,7 +179,7 @@ fn side_slot_action(ctx: &mut Context, ucid: &Ucid, name: &str) -> Result<(Side,
 }
 
 fn run_pos_action(lua: MizLua, arg: ArgQuad<Ucid, String, LuaVec3, MarkId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_pos_action(
@@ -307,7 +307,7 @@ fn run_pos_group_action(
     lua: MizLua,
     arg: ArgPent<Ucid, String, LuaVec3, DbGid, MarkId>,
 ) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_pos_group_action(
@@ -396,7 +396,7 @@ fn do_objective_action(
 }
 
 fn run_objective_action(lua: MizLua, arg: ArgTriple<Ucid, String, ObjectiveId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_objective_action(
@@ -458,7 +458,7 @@ fn run_enemy_objective_action(
     lua: MizLua,
     arg: ArgTriple<Ucid, String, ObjectiveId>,
 ) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_enemy_objective_action(
@@ -543,7 +543,7 @@ fn run_add_objective_task(
     lua: MizLua,
     arg: ArgQuad<Ucid, String, String, ObjectiveId>,
 ) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_add_objective_task(
@@ -575,7 +575,7 @@ fn run_add_objective_task(
 }
 
 fn run_add_task(lua: MizLua, arg: ArgPent<Ucid, String, LuaVec3, MarkId, String>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_add_task(
@@ -630,7 +630,7 @@ fn do_remove_task(
 }
 
 fn run_remove_task(lua: MizLua, arg: ArgTriple<Ucid, String, TaskId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_remove_task(
@@ -661,7 +661,7 @@ fn run_remove_task(lua: MizLua, arg: ArgTriple<Ucid, String, TaskId>) -> Result<
 }
 
 fn run_global_artillery(lua: MizLua, arg: ArgQuad<Ucid, SlotId, LuaVec3, MarkId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let cfg = match ctx.db.ephemeral.cfg.artillery.clone() {
         Some(c) => c,
@@ -736,7 +736,7 @@ fn side_has_artillery(ctx: &Context, side: Side) -> bool {
 }
 
 fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let mc = MissionCommands::singleton(lua)?;
     let world = World::singleton(lua)?;
     mc.remove_command_for_group(arg.snd, vec!["Actions>>".into()].into())?;

@@ -1274,10 +1274,7 @@ impl Db {
             stage @ (LogiStage::Complete { .. }
             | LogiStage::Init
             | LogiStage::SyncFromWarehouses { .. }
-            | LogiStage::SyncToWarehouses { .. }
-            | LogiStage::ManageConvoys { .. }
-            | LogiStage::ManageAirRoutes { .. }
-            | LogiStage::ManageSeaRoutes { .. }) => {
+            | LogiStage::SyncToWarehouses { .. }) => {
                 *stage = LogiStage::ExecuteTransfers { transfers: trs };
             }
         }

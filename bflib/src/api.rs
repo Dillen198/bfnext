@@ -1,98 +1,205 @@
-use crate::{Context, admin};
-use anyhow::Result;
-use dcso3::{MizLua, Vector2, coalition::Side};
-use dcso3::LuaEnv;
+//! The `vector_strike` table: a Lua API for scripts running in the *mission*
+//! scripting environment (DO SCRIPT triggers, mission-side Lua), registered
+//! when the campaign loads. It is not visible from the server hooks
+//! environment, where DCSServerBot's plugins run; the bot reads the same
+//! data from bfdb instead.
+//!
+//! Every function returns `nil` (queries, spawns) or `false` (move_group,
+//! add_points) on failure and logs why. The mutating calls are refused until
+//! a campaign is loaded. None of them may be called from inside an engine
+//! tick -- that includes a `vector_strike.on_event` hook, which is therefore
+//! only ever called between ticks (see `dispatch_event`).
+//!
+//! Mission scripts can define `vector_strike.on_event(ev)` to receive
+//! `{ type = "achievement" | "alert", message = "..." }`.
+
+use crate::{admin, with_context, Context};
+use anyhow::{bail, Result};
 use bfprotocols::db::group::GroupId;
+use dcso3::{coalition::Side, wrap_f, LuaEnv, MizLua, Vector2};
+use std::cell::RefCell;
+
+fn loaded(ctx: &mut Context) -> Result<&mut Context> {
+    if !ctx.db_loaded {
+        bail!("the campaign is not loaded yet")
+    }
+    Ok(ctx)
+}
+
+/// Serialize a query result for Lua.
+fn json<T: serde::Serialize>(v: &T) -> Result<Option<String>> {
+    Ok(Some(serde_json::to_string(v)?))
+}
 
 pub fn register(lua: MizLua) -> Result<()> {
     let globals = lua.inner().globals();
     let api = lua.inner().create_table()?;
 
-    api.set("get_objectives", lua.inner().create_function(|_, ()| {
-        let ctx = unsafe { Context::get_mut() };
-        let objectives = admin::query_objectives(ctx);
-        Ok(serde_json::to_string(&objectives).map_err(mlua::Error::external)?)
-    })?)?;
+    api.set(
+        "get_objectives",
+        lua.inner().create_function(|lua, ()| {
+            wrap_f("vector_strike.get_objectives", MizLua(lua), |lua| {
+                with_context(lua, "get_objectives", |ctx| json(&admin::query_objectives(ctx)))
+            })
+        })?,
+    )?;
 
-    api.set("get_objective", lua.inner().create_function(|_, name: String| {
-        let ctx = unsafe { Context::get_mut() };
-        let details = admin::query_objective_details(ctx, &name).map_err(mlua::Error::external)?;
-        Ok(serde_json::to_string(&details).map_err(mlua::Error::external)?)
-    })?)?;
+    api.set(
+        "get_objective",
+        lua.inner().create_function(|lua, name: String| {
+            wrap_f("vector_strike.get_objective", MizLua(lua), |lua| {
+                with_context(lua, "get_objective", |ctx| {
+                    json(&admin::query_objective_details(ctx, &name)?)
+                })
+            })
+        })?,
+    )?;
 
-    api.set("get_players", lua.inner().create_function(|_, ()| {
-        let ctx = unsafe { Context::get_mut() };
-        let players = admin::query_players(ctx);
-        Ok(serde_json::to_string(&players).map_err(mlua::Error::external)?)
-    })?)?;
+    api.set(
+        "get_players",
+        lua.inner().create_function(|lua, ()| {
+            wrap_f("vector_strike.get_players", MizLua(lua), |lua| {
+                with_context(lua, "get_players", |ctx| json(&admin::query_players(ctx)))
+            })
+        })?,
+    )?;
 
-    api.set("get_player", lua.inner().create_function(|_, name: String| {
-        let ctx = unsafe { Context::get_mut() };
-        let player = admin::query_player_details(ctx, &name).map_err(mlua::Error::external)?;
-        Ok(serde_json::to_string(&player).map_err(mlua::Error::external)?)
-    })?)?;
+    api.set(
+        "get_player",
+        lua.inner().create_function(|lua, name: String| {
+            wrap_f("vector_strike.get_player", MizLua(lua), |lua| {
+                with_context(lua, "get_player", |ctx| {
+                    json(&admin::query_player_details(ctx, &name)?)
+                })
+            })
+        })?,
+    )?;
 
-    api.set("get_groups", lua.inner().create_function(|_, side: Option<String>| {
-        let ctx = unsafe { Context::get_mut() };
-        let side_enum = side.and_then(|s| s.parse::<Side>().ok());
-        let groups = admin::query_groups(ctx, side_enum);
-        Ok(serde_json::to_string(&groups).map_err(mlua::Error::external)?)
-    })?)?;
+    api.set(
+        "get_groups",
+        lua.inner().create_function(|lua, side: Option<String>| {
+            wrap_f("vector_strike.get_groups", MizLua(lua), |lua| {
+                with_context(lua, "get_groups", |ctx| {
+                    let side = side.and_then(|s| s.parse::<Side>().ok());
+                    json(&admin::query_groups(ctx, side))
+                })
+            })
+        })?,
+    )?;
 
-    api.set("get_campaign_state", lua.inner().create_function(|_, ()| {
-        let ctx = unsafe { Context::get_mut() };
-        let state = admin::query_campaign_state(ctx);
-        Ok(serde_json::to_string(&state).map_err(mlua::Error::external)?)
-    })?)?;
+    api.set(
+        "get_campaign_state",
+        lua.inner().create_function(|lua, ()| {
+            wrap_f("vector_strike.get_campaign_state", MizLua(lua), |lua| {
+                with_context(lua, "get_campaign_state", |ctx| {
+                    json(&admin::query_campaign_state(ctx))
+                })
+            })
+        })?,
+    )?;
 
     // Action APIs
-    api.set("spawn_deployable", lua.inner().create_function(|lua, (side_str, name, x, y, heading): (String, String, f64, f64, f64)| {
-        let ctx = unsafe { Context::get_mut() };
-        let side = side_str.parse::<Side>().map_err(mlua::Error::external)?;
-        let pos = Vector2::new(x, y);
-        let miz_lua = MizLua(lua);
-        let gid = admin::api_spawn_deployable(ctx, miz_lua, side, &name, pos, heading).map_err(mlua::Error::external)?;
-        Ok(gid.to_string())
-    })?)?;
+    api.set(
+        "spawn_deployable",
+        lua.inner().create_function(
+            |lua, (side, name, x, y, heading): (String, String, f64, f64, f64)| {
+                wrap_f("vector_strike.spawn_deployable", MizLua(lua), |lua| {
+                    with_context(lua, "spawn_deployable", |ctx| {
+                        let side = side.parse::<Side>()?;
+                        let pos = Vector2::new(x, y);
+                        let gid = admin::api_spawn_deployable(loaded(ctx)?, lua, side, &name, pos, heading)?;
+                        Ok(Some(gid.to_string()))
+                    })
+                })
+            },
+        )?,
+    )?;
 
-    api.set("spawn_troop", lua.inner().create_function(|lua, (side_str, name, x, y, heading): (String, String, f64, f64, f64)| {
-        let ctx = unsafe { Context::get_mut() };
-        let side = side_str.parse::<Side>().map_err(mlua::Error::external)?;
-        let pos = Vector2::new(x, y);
-        let miz_lua = MizLua(lua);
-        let gid = admin::api_spawn_troop(ctx, miz_lua, side, &name, pos, heading).map_err(mlua::Error::external)?;
-        Ok(gid.to_string())
-    })?)?;
+    api.set(
+        "spawn_troop",
+        lua.inner().create_function(
+            |lua, (side, name, x, y, heading): (String, String, f64, f64, f64)| {
+                wrap_f("vector_strike.spawn_troop", MizLua(lua), |lua| {
+                    with_context(lua, "spawn_troop", |ctx| {
+                        let side = side.parse::<Side>()?;
+                        let pos = Vector2::new(x, y);
+                        let gid = admin::api_spawn_troop(loaded(ctx)?, lua, side, &name, pos, heading)?;
+                        Ok(Some(gid.to_string()))
+                    })
+                })
+            },
+        )?,
+    )?;
 
-    api.set("move_group", lua.inner().create_function(|lua, (id, x, y): (i64, f64, f64)| {
-        let ctx = unsafe { Context::get_mut() };
-        let gid = GroupId::from(id);
-        let pos = Vector2::new(x, y);
-        let miz_lua = MizLua(lua);
-        admin::api_move_group(ctx, miz_lua, &gid, pos).map_err(mlua::Error::external)?;
-        Ok(true)
-    })?)?;
+    api.set(
+        "move_group",
+        lua.inner().create_function(|lua, (id, x, y): (i64, f64, f64)| {
+            wrap_f("vector_strike.move_group", MizLua(lua), |lua| {
+                with_context(lua, "move_group", |ctx| {
+                    let gid = GroupId::from(id);
+                    admin::api_move_group(loaded(ctx)?, lua, &gid, Vector2::new(x, y))?;
+                    Ok(true)
+                })
+            })
+        })?,
+    )?;
 
-    api.set("add_points", lua.inner().create_function(|_, (player, amount, reason): (String, i32, String)| {
-        let ctx = unsafe { Context::get_mut() };
-        admin::api_add_points(ctx, &player, amount, &reason).map_err(mlua::Error::external)?;
-        Ok(true)
-    })?)?;
+    api.set(
+        "add_points",
+        lua.inner().create_function(|lua, (player, amount, reason): (String, i32, String)| {
+            wrap_f("vector_strike.add_points", MizLua(lua), |lua| {
+                with_context(lua, "add_points", |ctx| {
+                    admin::api_add_points(loaded(ctx)?, &player, amount, &reason)?;
+                    Ok(true)
+                })
+            })
+        })?,
+    )?;
 
     globals.set("vector_strike", api)?;
     Ok(())
 }
 
-pub(crate) fn dispatch_event(lua: dcso3::MizLua, event_type: &str, message: &str) {
+thread_local! {
+    /// Events for `vector_strike.on_event`, queued by `dispatch_event`.
+    static PENDING: RefCell<Vec<(&'static str, String)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The most hook events kept waiting; older ones are dropped beyond this.
+const MAX_PENDING: usize = 256;
+
+/// Queue an event for the mission's `vector_strike.on_event` hook.
+///
+/// The hook used to be called right here, from inside the tick, while the
+/// tick held the campaign state -- and a hook calling back into
+/// `vector_strike.*` took a second mutable reference to it. Now it is queued
+/// and `flush_events` calls the hook once the tick has let go of the state.
+pub(crate) fn dispatch_event(event_type: &'static str, message: &str) {
+    PENDING.with(|q| {
+        let mut q = q.borrow_mut();
+        if q.len() >= MAX_PENDING {
+            q.remove(0);
+        }
+        q.push((event_type, message.to_owned()));
+    })
+}
+
+/// Call `vector_strike.on_event` for every queued event. Only call this
+/// when nothing holds the campaign state (between ticks).
+pub(crate) fn flush_events(lua: MizLua) {
+    let pending = PENDING.with(|q| std::mem::take(&mut *q.borrow_mut()));
+    if pending.is_empty() {
+        return;
+    }
     let globals = lua.inner().globals();
-    if let Ok(api) = globals.get::<_, mlua::Table>("vector_strike") {
-        if let Ok(func) = api.get::<_, mlua::Function>("on_event") {
-            if let Ok(tbl) = lua.inner().create_table() {
-                let _ = tbl.set("type", event_type);
-                let _ = tbl.set("message", message);
-                if let Err(e) = func.call::<_, ()>(tbl) {
-                    log_hook_error(event_type, &e);
-                }
+    let Ok(api) = globals.get::<_, mlua::Table>("vector_strike") else { return };
+    let Ok(func) = api.get::<_, mlua::Function>("on_event") else { return };
+    for (event_type, message) in pending {
+        if let Ok(tbl) = lua.inner().create_table() {
+            let _ = tbl.set("type", event_type);
+            let _ = tbl.set("message", message);
+            if let Err(e) = func.call::<_, ()>(tbl) {
+                log_hook_error(event_type, &e);
             }
         }
     }

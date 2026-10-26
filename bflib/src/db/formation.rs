@@ -1528,7 +1528,7 @@ impl Db {
                 d
             }) / 1000.
         };
-        let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+        let f = self.persisted.formations.get_mut_cow(&id).ok_or_else(|| anyhow!("no formation {id}"))?;
         f.order = order;
         f.posture = if path.is_empty() { Posture::Holding } else { Posture::Moving };
         f.path = path;
@@ -1666,7 +1666,7 @@ impl Db {
                 d
             }) / 1000.
         };
-        let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+        let f = self.persisted.formations.get_mut_cow(&id).ok_or_else(|| anyhow!("no formation {id}"))?;
         f.order = Order::Hold;
         f.posture = Posture::Moving;
         f.path = path;
@@ -1715,7 +1715,7 @@ impl Db {
             }
         }
         let live = rt.is_live(f);
-        let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+        let f = self.persisted.formations.get_mut_cow(&id).ok_or_else(|| anyhow!("no formation {id}"))?;
         if let Some(r) = roe {
             f.roe = (r != Roe::Auto).then_some(r);
         }
@@ -1857,7 +1857,7 @@ impl Db {
             u.position.p.0.z = p.y;
         }
         let moved = dist(head, from);
-        let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+        let f = self.persisted.formations.get_mut_cow(&id).ok_or_else(|| anyhow!("no formation {id}"))?;
         f.pos = head;
         f.heading = heading_of(ahead - head);
         self.ephemeral.dirty();
@@ -1878,7 +1878,7 @@ impl Db {
             .map(|f| (f.id, self.formation_speed_kph(cfg, f) / 3.6, self.supply_use_factor(f)))
             .collect();
         for (id, speed, use_factor) in ids {
-            let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+            let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
             let mut budget = speed * dt;
             let mut moved = 0.;
             while budget > 0. && !f.path.is_empty() {
@@ -1938,7 +1938,7 @@ impl Db {
         let ids: SmallVec<[FormationId; 16]> =
             self.formations().filter(|f| rt.is_live(f)).map(|f| f.id).collect();
         for id in ids {
-            let f = self.persisted.formations.get(&id).unwrap();
+            let Some(f) = self.persisted.formations.get(&id) else { continue };
             let pts: SmallVec<[Vector2; 32]> = f
                 .groups
                 .iter()
@@ -1954,7 +1954,7 @@ impl Db {
             }
             let c = centroid2d(pts.into_iter());
             let per_100km = self.ephemeral.cfg.ground_war.as_ref().map_or(0., |g| g.combat.supply_per_100km);
-            let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+            let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
             let moved = dist(c, f.pos);
             if moved > 5. {
                 f.heading = heading_of(c - f.pos);
@@ -2145,7 +2145,7 @@ impl Db {
             .map(|f| f.id)
             .collect();
         for id in ids {
-            let f = self.persisted.formations.get(&id).unwrap();
+            let Some(f) = self.persisted.formations.get(&id) else { continue };
             // Fighting is not being stuck: DCS stops ground units to shoot,
             // at an enemy formation or at any enemy unit in DCS in reach.
             let engaged = self.engaged(f) || self.enemy_live_ground_near(f.side, f.pos, ENGAGED_M);
@@ -2164,7 +2164,7 @@ impl Db {
             e.2 += 1;
             let attempt = e.2;
             {
-                let f = self.persisted.formations.get(&id).unwrap();
+                let Some(f) = self.persisted.formations.get(&id) else { continue };
                 let report = self.dcs_report(rt, lua, f);
                 warn!(
                     "ground war: {name} has not moved in {} min ({:?}, {:?}, {} route points): {report}",
@@ -2180,7 +2180,7 @@ impl Db {
                 2 => Some((vec![dest], true)),
                 _ => None,
             };
-            let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+            let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
             match replanned {
                 Some((path, off_road)) => {
                     info!("ground war: {name} stuck, re-route {attempt} (off road: {off_road})");
@@ -2237,7 +2237,7 @@ impl Db {
             .map(|f| f.id)
             .collect();
         for id in ids {
-            let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+            let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
             f.path.clear();
             let (side, name, order) = (f.side, f.name.clone(), f.order);
             f.posture = match order {
@@ -2304,15 +2304,15 @@ impl Db {
             .map(|f| f.id)
             .collect();
         for id in ids {
-            let f = self.persisted.formations.get(&id).unwrap();
+            let Some(f) = self.persisted.formations.get(&id) else { continue };
             let (side, name, pos) = (f.side, f.name.clone(), f.pos);
             let Order::Attack(oid) = f.order else {
-                let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+                let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
                 f.posture = Posture::Holding;
                 continue;
             };
             let Some(obj) = self.persisted.objectives.get(&oid) else {
-                let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+                let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
                 f.order = Order::Hold;
                 f.posture = Posture::Holding;
                 continue;
@@ -2321,7 +2321,7 @@ impl Db {
             if obj.owner == side {
                 // Taken (by its own assault squad or anyone else's): it holds
                 // the place now.
-                let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+                let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
                 f.order = Order::Defend(oid);
                 f.posture = Posture::Holding;
                 self.ephemeral.dirty();
@@ -2391,7 +2391,7 @@ impl Db {
         oid: ObjectiveId,
         now: DateTime<Utc>,
     ) -> Result<bool> {
-        let f = self.persisted.formations.get(&id).unwrap();
+        let f = self.persisted.formations.get(&id).ok_or_else(|| anyhow!("no formation {id}"))?;
         let (side, home) = (f.side, f.home);
         // (group the squad comes from, where it gets out, template, the
         // group itself becomes the squad)
@@ -2450,7 +2450,9 @@ impl Db {
         if rt.live.remove(&gid) {
             self.ephemeral.push_despawn(gid, Despawn::GroupByName(gname.to_string()));
         }
-        self.persisted.formations.get_mut_cow(&id).unwrap().groups.retain(|g| *g != gid);
+        if let Some(f) = self.persisted.formations.get_mut_cow(&id) {
+            f.groups.retain(|g| *g != gid);
+        }
         self.attach_to_objective(gid, side, home, false)?;
         if let Err(e) = self.update_objective_status(&home, now) {
             warn!("ground war: status of {home} after an assault: {e:?}");
@@ -2678,14 +2680,14 @@ impl Db {
     fn cleanup(&mut self, rt: &mut FormationRt, cfg: &GroundWarCfg, now: DateTime<Utc>) {
         let ids: SmallVec<[FormationId; 16]> = self.formations().map(|f| f.id).collect();
         for id in ids {
-            let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+            let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
             let before = f.groups.len();
             let groups = &self.persisted.groups;
             f.groups.retain(|g| groups.get(g).is_some());
             if f.groups.len() != before {
                 self.ephemeral.dirty();
             }
-            let f = self.persisted.formations.get(&id).unwrap();
+            let Some(f) = self.persisted.formations.get(&id) else { continue };
             let (side, name, home) = (f.side, f.name.clone(), f.home);
             if self.formation_strength(f).0 > 0 {
                 continue;
@@ -3135,7 +3137,7 @@ impl Db {
         let ids: SmallVec<[FormationId; 16]> = self.formations().map(|f| f.id).collect();
         let reach = cfg.engage_m * 1.5;
         for id in ids {
-            let f = self.persisted.formations.get(&id).unwrap();
+            let Some(f) = self.persisted.formations.get(&id) else { continue };
             let (side, pos, name) = (f.side, f.pos, f.name.clone());
             let threat = rt
                 .sightings(side)
@@ -3179,7 +3181,7 @@ impl Db {
                 continue;
             }
             let live = rt.is_live(f);
-            let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+            let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
             f.deployment = next;
             f.deployment_ts = Some(now);
             if let Some(c) = contact {
@@ -3584,7 +3586,7 @@ impl Db {
         let mut drains: FxHashMap<ObjectiveId, f64> = FxHashMap::default();
         let mut broke: SmallVec<[(FormationId, Side, CompactString, Vector2, ObjectiveId); 4]> = SmallVec::new();
         for id in ids {
-            let f = self.persisted.formations.get(&id).unwrap();
+            let Some(f) = self.persisted.formations.get(&id) else { continue };
             let (side, pos, name, home) = (f.side, f.pos, f.name.clone(), f.home);
             // Supplied by the nearest friendly base in range that has stores,
             // along a line the enemy isn't sitting on: an enemy base astride
@@ -3625,7 +3627,7 @@ impl Db {
                     rt.event(side, "supply", format_compact!("{name} {why}"), Some(pos), Some(id), now);
                 }
             }
-            let f = self.persisted.formations.get_mut_cow(&id).unwrap();
+            let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
             if let (Some(base), false) = (supplier, fighting) {
                 let gain = (cfg.resupply_per_min * mins).min(1. - f.supply).max(0.);
                 f.supply += gain;
@@ -3700,7 +3702,7 @@ impl Db {
         }
         let ids: SmallVec<[FormationId; 16]> = self.formations().map(|f| f.id).collect();
         for id in ids {
-            let f = self.persisted.formations.get(&id).unwrap();
+            let Some(f) = self.persisted.formations.get(&id) else { continue };
             let text = self.formation_pin_text(f);
             let (side, pos) = (f.side, f.pos);
             let arrow_to = match f.order {

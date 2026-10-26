@@ -501,7 +501,7 @@ fn build_detail_card(ctx: &Context, lua: MizLua, oid: &ObjectiveId, viewer: Side
 /// Show a page of the friendly/enemy status report. `trd` picks the report,
 /// `fth` says whether to jump to the first page or step the cursor.
 fn status_page(lua: MizLua, arg: ArgQuad<GroupId, Side, u8, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let want = match arg.trd {
         RPT_ENEMY => arg.snd.opposite(),
         RPT_NEUTRAL => Side::Neutral,
@@ -530,7 +530,7 @@ fn status_page(lua: MizLua, arg: ArgQuad<GroupId, Side, u8, u8>) -> Result<()> {
 }
 
 fn nearest_base(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let report = match from_pos(ctx, lua, &arg.fst) {
         None => CompactString::from("Get airborne first -- nearest base needs your position."),
         Some(p) => {
@@ -551,7 +551,7 @@ fn nearest_base(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
 }
 
 fn contested(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let from = from_pos(ctx, lua, &arg.fst);
     let mut lines: Vec<(f64, CompactString)> = vec![];
     for (oid, obj) in ctx.db.objectives() {
@@ -599,7 +599,7 @@ fn contested(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
 }
 
 fn under_attack(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let from = from_pos(ctx, lua, &arg.fst);
     let mut lines: Vec<(chrono::DateTime<chrono::Utc>, CompactString)> = vec![];
     for (_, obj) in ctx.db.objectives() {
@@ -773,7 +773,7 @@ fn build_capture_advisor_card(
 }
 
 fn capture_advisor_by_oid(lua: MizLua, arg: ArgTuple<GroupId, ObjectiveId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (viewer, from) = match slot_for_group(lua, ctx, &arg.fst) {
         Ok((side, slot)) => (side, player_world_pos(ctx, &slot)),
         Err(_) => (Side::Neutral, None),
@@ -784,7 +784,7 @@ fn capture_advisor_by_oid(lua: MizLua, arg: ArgTuple<GroupId, ObjectiveId>) -> R
 }
 
 fn capture_advisor_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let from = from_pos(ctx, lua, &arg.fst);
     let side = arg.snd;
     let pick = {
@@ -856,7 +856,7 @@ fn dispatch_helo(
 /// F10: dispatch an AI helo to a specific objective the player picked off the
 /// menu. `trd` is `HELO_TROOPS` or `HELO_SUPPLY`.
 fn helo_mission_by_oid(lua: MizLua, arg: ArgTriple<GroupId, ObjectiveId, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let side = match slot_for_group(lua, ctx, &arg.fst) {
         Ok((side, _)) => side,
         Err(e) => {
@@ -878,7 +878,7 @@ fn helo_mission_by_oid(lua: MizLua, arg: ArgTriple<GroupId, ObjectiveId, u8>) ->
 /// capturable objective (falling back to the nearest non-owned one if
 /// nothing is currently capturable, so the failure reason is explicit).
 fn helo_troop_insertion_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let side = arg.snd;
     let from = from_pos(ctx, lua, &arg.fst);
     let pick = {
@@ -907,7 +907,7 @@ fn helo_troop_insertion_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) 
 /// friendly hub to the nearest friendly objective (the one closest to the
 /// player -- presumably the one they're worried about).
 fn helo_resource_delivery_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let side = arg.snd;
     let from = from_pos(ctx, lua, &arg.fst);
     let pick = {
@@ -932,7 +932,7 @@ fn helo_resource_delivery_nearest(lua: MizLua, arg: ArgTriple<GroupId, Side, u8>
 }
 
 fn detail_by_oid(lua: MizLua, arg: ArgTuple<GroupId, ObjectiveId>) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let (_entered, ctx) = crate::Entered::enter(lua);
     let (viewer, from) = match slot_for_group(lua, ctx, &arg.fst) {
         Ok((side, slot)) => (side, player_world_pos(ctx, &slot)),
         Err(_) => (Side::Neutral, None),

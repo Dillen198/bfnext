@@ -1688,12 +1688,16 @@ impl Db {
             let name = zone.name()?;
             if name.starts_with('O') {
                 info!("[ZONE] Processing trigger zone: {}", name);
-                if name.len() > 4 {
-                    if !objective_names.insert(CompactString::from(&name[3..])) {
-                        bail!("duplicate objective name {name}")
+                // The objective's name is everything after the three
+                // character prefix. Count characters, not bytes, so a
+                // non-ASCII zone name can't slice through a character.
+                match name.char_indices().nth(3) {
+                    Some((i, _)) if name.chars().count() > 4 => {
+                        if !objective_names.insert(CompactString::from(&name[i..])) {
+                            bail!("duplicate objective name {name}")
+                        }
                     }
-                } else {
-                    bail!("malformed objective name {name}")
+                    _ => bail!("malformed objective name {name}"),
                 }
                 let name = name.strip_prefix("O").unwrap();
                 info!("[ZONE] After stripping O prefix: {}", name);

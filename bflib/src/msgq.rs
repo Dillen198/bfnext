@@ -25,7 +25,7 @@ use dcso3::{
     },
 };
 use fxhash::FxHashMap;
-use log::error;
+use log::{error, warn};
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy)]
@@ -239,6 +239,17 @@ pub struct FeedMsg {
     pub text: String,
 }
 
+/// The most chat/panel messages kept waiting for DCS. Text is the one kind
+/// of command that is safe to lose: dropping a mark create or delete would
+/// leave the F10 map wrong, and markup mutations already collapse to one per
+/// mark. When a backlog passes this, the oldest text goes first -- by then it
+/// is minutes stale. (The cockpit feed keeps every message regardless.)
+const MAX_QUEUED_TEXT: usize = 1000;
+
+/// Mark and markup commands backed up past this are worth a warning: the F10
+/// map is that far behind. They are never dropped.
+const MARK_BACKLOG_WARN: usize = 20_000;
+
 /// How many recent messages the feed keeps. Enough for a minute or two of a
 /// busy server -- the cockpit panel polls every few seconds.
 const FEED_LEN: usize = 400;
@@ -271,6 +282,10 @@ pub struct MsgQ {
     pending_create: FxHashMap<MarkId, u64>,
     /// mutations not yet sent: (mark, kind) -> (per-queue sequence, `seq`)
     pending_mut: FxHashMap<(MarkId, MutKind), (u64, u64)>,
+    /// text messages dropped since the last warning (`MAX_QUEUED_TEXT`)
+    dropped_text: u64,
+    /// when the last overflow warning was logged
+    overflow_warned: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl MsgQ {
@@ -295,7 +310,35 @@ impl MsgQ {
                 self.pending_mut.insert((id, kind), (qseq, seq));
             }
         }
-        self.q[p].push_back(Queued { seq, cmd })
+        self.q[p].push_back(Queued { seq, cmd });
+        if p == 0
+            && self.q[0].len() > MAX_QUEUED_TEXT
+            && self.q[0].front().is_some_and(|e| e.cmd.mark_id().is_none())
+        {
+            // text has no mark id, so nothing indexes it: dropping it only
+            // has to keep the queue's pop counter in step
+            self.q[0].pop_front();
+            self.popped[0] += 1;
+            self.dropped_text += 1;
+            self.warn_overflow();
+        } else if p != 0 && self.q[1].len() + self.q[2].len() > MARK_BACKLOG_WARN {
+            self.warn_overflow();
+        }
+    }
+
+    /// At most once a minute, say the queue is overflowing and by how much.
+    fn warn_overflow(&mut self) {
+        let now = chrono::Utc::now();
+        if self.overflow_warned.is_some_and(|t| now - t < chrono::Duration::seconds(60)) {
+            return;
+        }
+        self.overflow_warned = Some(now);
+        let dropped = std::mem::take(&mut self.dropped_text);
+        let (depth, by_kind) = self.depth_report();
+        warn!(
+            "[MSGQ] backlog: {dropped} stale chat/panel messages dropped since the last              warning (cap {MAX_QUEUED_TEXT}); queued text={} marks={} markup={} ({by_kind})",
+            depth[0], depth[1], depth[2]
+        );
     }
 
     /// Pop the next command of priority `p` that hasn't been cancelled.
@@ -958,6 +1001,25 @@ mod tests {
         q.set_markup_text(a, "new".into());
         assert_eq!(q.len(), 2);
         assert_eq!(texts(&q.take_batch(10)), vec!["delete", "set:new"]);
+    }
+
+    #[test]
+    fn msgq_text_overflow_drops_oldest_text_only() {
+        let mut q = MsgQ::default();
+        let a = pin(&mut q, "pin");
+        for i in 0..MAX_QUEUED_TEXT + 5 {
+            q.panel_to_all(10, false, format!("m{i}"));
+        }
+        q.set_markup_text(a, "label".into());
+        assert_eq!(q.len(), MAX_QUEUED_TEXT + 2);
+        let out = texts(&q.take_batch(MAX_QUEUED_TEXT + 10));
+        // the five oldest messages went, everything else is in order
+        assert_eq!(out.first().map(|s| s.as_str()), Some("m5"));
+        assert_eq!(out.iter().filter(|t| t.starts_with('m')).count(), MAX_QUEUED_TEXT);
+        assert!(out.contains(&"pin".to_string()));
+        assert!(out.contains(&"set:label".to_string()));
+        // the feed still has every message
+        assert_eq!(q.feed_since(0).count(), FEED_LEN.min(MAX_QUEUED_TEXT + 5));
     }
 
     #[test]

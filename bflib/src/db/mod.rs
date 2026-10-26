@@ -227,11 +227,7 @@ pub struct RadarDonor {
     /// cached, so a donor whose objective gets culled and later respawned
     /// is handled correctly with no stale reference.
     pub gid: Option<GroupId>,
-    /// Stored for future chaff mechanic — not yet consumed by physics.
-    #[allow(dead_code)]
-    pub chaff_susceptibility: f32,
-    /// Stored for future jamming mechanic — not yet consumed by physics.
-    #[allow(dead_code)]
+    /// Scales how much a nearby jammer degrades this donor's detection.
     pub ecm_susceptibility: f32,
     pub scan_interval_secs: u32,
     pub frequency_band: bfprotocols::cfg::RadarBand,
@@ -409,6 +405,17 @@ impl Db {
                 }
             }
         };
+        if let Some(w) = persisted.schema_warning() {
+            log::error!("!!! {w}");
+            crate::bg::fallback_log(format!("bflib: {w}
+").as_bytes());
+        } else if persisted.schema_version < persisted::SAVE_SCHEMA_VERSION {
+            log::info!(
+                "save file is schema {}, it will be written back as schema {}",
+                persisted.schema_version,
+                persisted::SAVE_SCHEMA_VERSION
+            );
+        }
         let mut db = Db {
             persisted,
             ephemeral: Ephemeral::default(),
@@ -463,33 +470,46 @@ impl Db {
         }
     }
 
+    /// A copy of the campaign to save, if anything changed since the last one.
     pub fn maybe_snapshot(&mut self) -> Option<Persisted> {
         if self.ephemeral.take_dirty() {
-            self.persisted.oid = ObjectiveId::seq();
-            self.persisted.gid = GroupId::seq();
-            self.persisted.uid = UnitId::seq();
-            self.persisted.last_stand_state = self.ephemeral.last_stand_state;
-            // Only the entries still inside the capture cooldown matter; the
-            // rest would just grow the save by one line per base ever flipped.
-            let cooldown = self
-                .ephemeral
-                .cfg
-                .campaign_events
-                .as_ref()
-                .map(|c| c.capture_cooldown_secs as i64)
-                .unwrap_or(120);
-            let now = chrono::Utc::now();
-            self.persisted.last_owner_change = self
-                .ephemeral
-                .last_owner_change
-                .iter()
-                .filter(|(_, ts)| (now - **ts).num_seconds() < cooldown)
-                .map(|(oid, ts)| (*oid, *ts))
-                .collect();
-            Some(self.persisted.clone())
+            Some(self.snapshot())
         } else {
             None
         }
+    }
+
+    /// A copy of the campaign to save, unconditionally. Every save must go
+    /// through here (or `maybe_snapshot`): it copies the id sequences and the
+    /// session state that only lives in `Ephemeral` into `persisted` first. A
+    /// save of a bare `persisted.clone()` carries the sequences as they were
+    /// at the last snapshot, and after a reload new objects can be handed ids
+    /// that are already taken.
+    pub fn snapshot(&mut self) -> Persisted {
+        self.ephemeral.take_dirty();
+        self.persisted.schema_version = persisted::SAVE_SCHEMA_VERSION;
+        self.persisted.oid = ObjectiveId::seq();
+        self.persisted.gid = GroupId::seq();
+        self.persisted.uid = UnitId::seq();
+        self.persisted.last_stand_state = self.ephemeral.last_stand_state;
+        // Only the entries still inside the capture cooldown matter; the
+        // rest would just grow the save by one line per base ever flipped.
+        let cooldown = self
+            .ephemeral
+            .cfg
+            .campaign_events
+            .as_ref()
+            .map(|c| c.capture_cooldown_secs as i64)
+            .unwrap_or(120);
+        let now = chrono::Utc::now();
+        self.persisted.last_owner_change = self
+            .ephemeral
+            .last_owner_change
+            .iter()
+            .filter(|(_, ts)| (now - **ts).num_seconds() < cooldown)
+            .map(|(oid, ts)| (*oid, *ts))
+            .collect();
+        self.persisted.clone()
     }
 
     /// Get convoy origin/destination if a group ID belongs to an active supply convoy
@@ -513,15 +533,6 @@ impl Db {
             .active_convoys
             .values()
             .filter(move |c| c.side == side)
-    }
-
-    /// True if there is an active supply convoy currently headed to the given objective.
-    #[allow(dead_code)]
-    pub fn convoy_inbound_to(&self, oid: ObjectiveId) -> bool {
-        self.ephemeral
-            .active_convoys
-            .values()
-            .any(|c| c.destination == oid)
     }
 
     /// True if a capture timer is currently running against this objective.
@@ -593,7 +604,6 @@ impl Db {
                 pulse_doppler: false,
                 look_down_capable: false,
                 gid: Some(*gid),
-                chaff_susceptibility: 0.3,
                 ecm_susceptibility: 0.5,
                 scan_interval_secs: 8,
                 frequency_band: bfprotocols::cfg::RadarBand::Vhf,
@@ -632,7 +642,6 @@ impl Db {
                             pulse_doppler: ewr_cfg.pulse_doppler,
                             look_down_capable: ewr_cfg.look_down_capable,
                             gid: Some(u.group),
-                            chaff_susceptibility: ewr_cfg.chaff_susceptibility,
                             ecm_susceptibility: ewr_cfg.ecm_susceptibility,
                             scan_interval_secs: ewr_cfg.scan_interval_secs,
                             frequency_band: ewr_cfg.frequency_band,
@@ -663,7 +672,6 @@ impl Db {
                             pulse_doppler: ewr_cfg.pulse_doppler,
                             look_down_capable: ewr_cfg.look_down_capable,
                             gid: None,
-                            chaff_susceptibility: ewr_cfg.chaff_susceptibility,
                             ecm_susceptibility: ewr_cfg.ecm_susceptibility,
                             scan_interval_secs: ewr_cfg.scan_interval_secs,
                             frequency_band: ewr_cfg.frequency_band,
