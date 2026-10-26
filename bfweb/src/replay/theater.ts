@@ -610,7 +610,7 @@ export class Theater {
 
     // Positions first (the camera follows the focus). Effects (flares,
     // chaff, tracers, explosions) are drawn as light, not models.
-    const placed: { o: TheaterObject; p: THREE.Vector3; f: Family; key: string; geo: THREE.BufferGeometry; length: number; grounded: boolean }[] = []
+    const placed: { o: TheaterObject; p: THREE.Vector3; f: Family; key: string; geo: THREE.BufferGeometry; length: number; ground: number | null }[] = []
     const effects: { o: TheaterObject; p: THREE.Vector3 }[] = []
     const where = new Map<number, THREE.Vector3>()
     let focusPos: THREE.Vector3 | null = null
@@ -626,10 +626,10 @@ export class Theater {
       const weapon = f === 'missile' || f === 'bomb'
       let alt = o.st.alt
       const g = effect && o.kind !== 'explosion' ? null : this.heightAt(o.st.lon, o.st.lat)
-      // an aircraft on the ground (taxiing, parked) stands on its wheels
-      const grounded = air && g != null && (o.st.agl != null ? o.st.agl < 4 : alt - g < 4)
-      if (grounded) {
-        alt = g!
+      // Our terrain is the real world's, not DCS's: an aircraft near the
+      // ground keeps its recorded height above DCS's ground, over ours.
+      if (air && g != null && o.st.agl != null && o.st.agl < 300) {
+        alt = g + o.st.agl
       } else if (air || weapon || effect) {
         if (g != null && alt < g + 1) alt = g + 1
       } else if (o.kind === 'ship' || o.kind === 'carrier') {
@@ -640,7 +640,9 @@ export class Theater {
       const p = this.toWorld(o.st.lon, o.st.lat, alt, new THREE.Vector3())
       where.set(o.idx, p)
       if (effect) { effects.push({ o, p }); continue }
-      placed.push({ o, p, f, grounded, ...this.shape(f, realOf(o.kind, o.name)) })
+      // world height of the ground under it, so no aircraft sinks into it
+      const ground = air && g != null ? p.z - (alt - g) : null
+      placed.push({ o, p, f, ground, ...this.shape(f, realOf(o.kind, o.name)) })
       if (o.idx === frame.focus) focusPos = p
       if (o.idx === frame.measure) measurePos = p
     }
@@ -680,9 +682,9 @@ export class Theater {
       const { f, key: shapeKey, geo, length } = list[0]
       const mesh = this.pool(shapeKey, geo, color, list.length)
       const seat = this.seat(list[0].o.kind, shapeKey, geo)
-      const wheels = -(geo.boundingBox ?? (geo.computeBoundingBox(), geo.boundingBox!)).min.z
+      const bottom = (geo.boundingBox ?? (geo.computeBoundingBox(), geo.boundingBox!)).min.z
       let n = 0
-      for (const { o, p, grounded } of list) {
+      for (const { o, p, ground } of list) {
         const d = this.camera.position.distanceTo(p)
         // In the cockpit, the own aircraft is not drawn over the view.
         if (frame.cam === 'cockpit' && o.focus) continue
@@ -691,8 +693,10 @@ export class Theater {
         this.tmpQ.setFromEuler(this.tmpE)
         s3.set(scale, scale, scale)
         // Models are centred on their middle: stand ground units on their
-        // lowest point and float ships at their waterline.
-        const lift = grounded ? wheels : seat
+        // lowest point and float ships at their waterline; an aircraft is
+        // raised just enough that its wheels (at this scale) clear the ground.
+        let lift = seat
+        if (ground != null) lift = Math.max(0, (ground - p.z) / scale - bottom)
         if (lift) this.tmpV.copy(p).setZ(p.z + lift * scale)
         this.tmpM.compose(lift ? this.tmpV : p, this.tmpQ, s3)
         mesh.setMatrixAt(n++, this.tmpM)
