@@ -2,6 +2,7 @@ import React from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
+  Alert,
   LogOut,
   Menu,
   Plus,
@@ -15,6 +16,7 @@ import { ThemeToggle } from '@shared/web/theme'
 import InstanceSelect from './InstanceSelect'
 import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 import { LogoMark } from '@shared/web/LogoMark'
+import { useOffline, useOfflineText } from '@shared/web/snapshot'
 
 function groupBySection(pages: WikiPageMeta[]) {
   const groups = new Map<string, WikiPageMeta[]>()
@@ -28,6 +30,10 @@ function groupBySection(pages: WikiPageMeta[]) {
 
 export default function Layout() {
   const { user, logout } = useAuth()
+  // bfdb is down: the pages come from the snapshot, read-only.
+  const { offline } = useOffline()
+  const offlineText = useOfflineText()
+  const canEdit = !!user?.is_admin && !offline
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const [query, setQuery] = React.useState('')
@@ -69,7 +75,7 @@ export default function Layout() {
 
         <ThemeToggle style={{ marginRight: 12 }} />
 
-        {user?.is_admin && (
+        {canEdit && (
           <button
             onClick={() => navigate('/new')}
             className="vs-btn vs-btn-outline"
@@ -94,12 +100,26 @@ export default function Layout() {
               <LogOut size={15} />
             </button>
           </div>
-        ) : (
+        ) : offline ? null : (
           <button onClick={() => navigate('/login')} className="vs-btn-ghost" style={{ padding: '6px 14px', borderRadius: 3, cursor: 'pointer', fontSize: '0.72rem', letterSpacing: '0.08em' }}>
             ADMIN LOGIN
           </button>
         )}
       </header>
+
+      {offlineText && (
+        <div
+          role="status"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, padding: '7px 16px',
+            background: 'rgba(239,68,68,0.10)', borderBottom: '1px solid #ef4444',
+            color: 'var(--text)', fontSize: '0.78rem',
+          }}
+        >
+          <Alert size={13} style={{ color: '#ef4444', flexShrink: 0 }} />
+          <span>{offlineText}. The wiki is read-only until it is back.</span>
+        </div>
+      )}
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         {/* Backdrop -- closes the drawer on mobile when tapped outside it */}

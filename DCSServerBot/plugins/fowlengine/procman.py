@@ -1211,6 +1211,16 @@ class Procman:
             # api.vectorstrike.org, which is wrong on a range box of its own.
             "--public-api-url": (c.get("public_api_url") or None),
             "--range-site-url": self.range_site_url,
+            # The public snapshot the front ends fall back on while this box
+            # is down (bfdb/src/snapshot.rs, deploy/snapshot-fallback.md).
+            # Off unless an endpoint is set. The two bucket keys go in through
+            # the environment (_bfdb_env), never on the command line.
+            "--snapshot-endpoint": (c.get("snapshot_endpoint") or None),
+            "--snapshot-bucket": (c.get("snapshot_bucket") or None),
+            "--snapshot-public-url": (c.get("snapshot_public_url") or None),
+            "--snapshot-interval": _opt_int(c.get("snapshot_interval")),
+            "--snapshot-prefix": (c.get("snapshot_prefix") or None),
+            "--snapshot-region": (c.get("snapshot_region") or None),
         }
         if instances_file:
             # Multi-instance: every per-server path/port/base lives in the file,
@@ -1279,7 +1289,8 @@ class Procman:
     def _bfdb_env(self) -> dict:
         """bfdb's environment: the bot's, plus the secrets bfdb can read from
         the environment instead of its command line: BFDB_NEWS_LLM_KEY
-        (bfdb/src/news_llm.rs) and BFDB_NEWS_IMAGE_KEY (news_image.rs); the
+        (bfdb/src/news_llm.rs), BFDB_NEWS_IMAGE_KEY (news_image.rs) and the
+        snapshot's BFDB_SNAPSHOT_ACCESS_KEY_ID / _SECRET_ACCESS_KEY; the
         other secrets still go as flags until bfdb reads them from the
         environment too."""
         env = dict(os.environ)
@@ -1297,6 +1308,13 @@ class Procman:
         image_key = self.cfg.get("news_image_key")
         if image_key:
             env["BFDB_NEWS_IMAGE_KEY"] = str(image_key)
+        # The public snapshot's bucket keys (bfdb/src/snapshot.rs). Unset in
+        # the YAML, a BFDB_SNAPSHOT_* the bot itself inherited still applies.
+        for yaml_key, var in (("snapshot_access_key_id", "BFDB_SNAPSHOT_ACCESS_KEY_ID"),
+                              ("snapshot_secret_access_key", "BFDB_SNAPSHOT_SECRET_ACCESS_KEY")):
+            val = self.cfg.get(yaml_key)
+            if val:
+                env[var] = str(val)
         # bfdb's OPS proxy calls use this key when set (--ops-api-key /
         # BFDB_OPS_API_KEY), falling back to dcsserverbot_api_key -- so a
         # separate ops_api.api_key doesn't lock the dashboard's OPS page out.

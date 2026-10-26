@@ -61,3 +61,7 @@ zstd = { workspace = true }
 # track files out (served with Content-Encoding: gzip).
 zip = { workspace = true }
 flate2 = "1"
+# Public snapshot (src/snapshot.rs): AWS SigV4 signing for the uploads to R2.
+# Both were already in the build through the TLS stack.
+sha2 = "0.10"
+hmac = "0.12"

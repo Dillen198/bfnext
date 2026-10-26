@@ -10,6 +10,7 @@ import { useInstance } from '../context/InstanceContext'
 import { LogoMark } from '@shared/web/LogoMark'
 import Backdrop from './Backdrop'
 import StatusBanner from './StatusBanner'
+import { useOffline } from '@shared/web/snapshot'
 import { ErrorBoundary } from '@shared/web/ErrorBoundary'
 import NotificationBell from './NotificationBell'
 import { useWireframe } from '../lib/wireframe'
@@ -308,8 +309,11 @@ export default function Layout() {
     refetchInterval: 30_000,
     retry: false,
   })
+  // bfdb down: whatever `stats` says came from the snapshot, not the server.
+  const { offline: bfdbDown } = useOffline()
   const liveState: 'live' | 'engine-down' | 'offline' =
-    health?.engine.reachable ? 'live'
+    bfdbDown ? 'offline'
+      : health?.engine.reachable ? 'live'
       : health ? (health.active_round ? 'engine-down' : 'offline')
         : (stats?.active_round ? 'live' : 'offline')
   // `rounds` spans every server in multi-instance mode, so anything that

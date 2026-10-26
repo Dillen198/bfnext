@@ -32,12 +32,15 @@ import { defaultSettings } from './settings'
 import { type TacviewObject } from './tacview'
 import { useScopeFeed } from './useScopeFeed'
 import { moveCoords, nmToMeter } from './util'
+import OfflineView from '../components/OfflineView'
+import { useOffline } from '@shared/web/snapshot'
 
 const OBJ_COLOR = (owner: string) =>
   owner === 'Blue' ? '#4a8fd4' : owner === 'Red' ? '#cc4444' : '#6a7a5a'
 
 export default function ScopePage(): ReactElement {
   const { state, terrain, denied, reason, status, threatRanges, empty } = useScopeFeed()
+  const offline = useOffline().offline
   const { theme } = useTheme()
   const mapStyle = useMemo(() => mapStyleFor(theme), [theme])
 
@@ -282,6 +285,7 @@ export default function ScopePage(): ReactElement {
   // campaign objective, so this normally clears the moment /api/objectives
   // returns.
   if (referenceLatitude === undefined || referenceLongitude === undefined || terrain === undefined) {
+    if (offline && status !== 'open') return <OfflineView what="The GCI scope" />
     return (
       <div className="scope-root flex h-full flex-col items-center justify-center gap-3" style={{ background: 'var(--bg)' }}>
         <Spinner />

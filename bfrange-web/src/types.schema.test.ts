@@ -12,11 +12,12 @@
  *   BLESS_RANGE_FIXTURES=1 cargo test -p bfprotocols range::fixtures
  * then make `types.ts` agree until this passes.
  */
-import fs from 'node:fs'
-import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import schemaFile from '../../bfprotocols/src/range/fixtures/range.schema.json'
+// Vite's ?raw import keeps this test free of Node APIs, so the app's
+// browser-only tsconfig can type-check it.
+import src from './types.ts?raw'
 
 type Schema = {
   type?: string | string[]
@@ -40,7 +41,6 @@ const tsName = (rust: string) => TS_NAME[rust] ?? rust
 
 // ─── types.ts ────────────────────────────────────────────────────────────────
 
-const src = fs.readFileSync(fileURLToPath(new URL('./types.ts', import.meta.url)), 'utf8')
 const sf = ts.createSourceFile('types.ts', src, ts.ScriptTarget.Latest, true)
 const interfaces = new Map<string, ts.InterfaceDeclaration>()
 const aliases = new Map<string, ts.TypeNode>()

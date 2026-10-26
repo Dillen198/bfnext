@@ -283,6 +283,24 @@ DEFAULT:
     #                                            # no-text / no-real-people / no-flags / no-gore rules always apply
     # news_image_daily_per_instance: 3
     # news_image_daily_global: 8
+    #
+    # PUBLIC SNAPSHOT (bfdb/src/snapshot.rs, deploy/snapshot-fallback.md):
+    # every snapshot_interval seconds bfdb uploads a copy of its public read
+    # routes (only what a signed-out visitor sees) to an S3-compatible bucket
+    # (Cloudflare R2),
+    # so the Vercel front ends show the last known state while this box is
+    # down. OFF until snapshot_endpoint is set. The two bucket keys are handed
+    # to bfdb as BFDB_SNAPSHOT_ACCESS_KEY_ID / BFDB_SNAPSHOT_SECRET_ACCESS_KEY,
+    # never on its command line. Leave them out to keep using BFDB_SNAPSHOT_*
+    # variables set for the bot's Windows account.
+    # snapshot_endpoint: "https://<account id>.r2.cloudflarestorage.com"
+    # snapshot_bucket: "vs-snapshot"
+    # snapshot_public_url: "https://snapshot.vectorstrike.org"   # optional: bfdb checks once the manifest is readable there
+    # snapshot_interval: 60                      # seconds, at least 15
+    # snapshot_prefix: ""                        # optional folder in the bucket, e.g. "prod/"
+    # snapshot_region: ""                        # blank for R2 (auto); on AWS, the bucket's region
+    # snapshot_access_key_id: ""                 # secret -- the R2 API token's Access Key ID
+    # snapshot_secret_access_key: ""             # secret -- its Secret Access Key
 
     # -------------------------------------------------------------------
     # MULTIPLE DCS SERVERS ON ONE MACHINE

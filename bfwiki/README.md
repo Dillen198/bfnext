@@ -25,7 +25,7 @@ Static output goes to `dist/`.
 ## Deploying to Vercel
 
 1. Import this repo as a new Vercel project with the project root set to `bfwiki/` (Vercel auto-detects the Vite framework preset — build command `npm run build`, output `dist`).
-2. In the project's **Settings → Environment Variables**, add `VITE_API_BASE = https://api.vectorstrike.org` (no trailing slash) — same bfdb instance bfweb/bfsite already talk to. This is a build-time var; redeploy after adding/changing it.
+2. In the project's **Settings → Environment Variables**, add `VITE_API_BASE = https://api.vectorstrike.org` (no trailing slash) — same bfdb instance bfweb/bfsite already talk to. This is a build-time var; redeploy after adding/changing it. Optionally add `VITE_SNAPSHOT_URL = https://snapshot.vectorstrike.org` too, so the wiki stays readable (read-only) while bfdb is down; see `deploy/snapshot-fallback.md`.
 3. Set the project's domain to `wiki.vectorstrike.org` (Settings → Domains), matching `vectorstrike.org` / `dashboard.vectorstrike.org`.
 4. `https://wiki.vectorstrike.org` must be in bfdb's `--cors-origin` allow-list (`$corsOrigins` in the repo root `bfsystem.ps1`) for cross-origin admin login/edit to work — already added there, takes effect the next time bfdb is (re)started.
 

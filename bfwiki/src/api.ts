@@ -2,6 +2,7 @@ import {
   createInstanceStore, deadline, errorMessage, LONG_TIMEOUT_MS,
   type AuthUser, type InstanceList as SharedInstanceList,
 } from '@shared/web/api'
+import { createSnapshotSource, fetchWithSnapshot } from '@shared/web/snapshot'
 
 // Default: relative '/api'. Set VITE_API_BASE (e.g. "https://api.example.com")
 // at build time to point a standalone-hosted wiki at a remotely-hosted bfdb
@@ -9,6 +10,10 @@ import {
 export const API_ROOT: string = import.meta.env.VITE_API_BASE ?? ''
 
 const BASE = `${API_ROOT}/api`
+
+// bfdb's public snapshot (deploy/snapshot-fallback.md): every page and the
+// campaign numbers, read-only, while bfdb is down. Unset: no fallback.
+export const snapshot = createSnapshotSource(import.meta.env.VITE_SNAPSHOT_URL)
 
 // ── Selected DCS server instance ────────────────────────────────────
 // One bfdb can front several DCS servers (see deploy/multi-instance.md), and
@@ -73,7 +78,8 @@ export interface WikiPageFull extends WikiPageMeta {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${withInstance(path)}`, { credentials: 'include', signal: deadline() })
+  const p = withInstance(path)
+  const res = await fetchWithSnapshot(`${BASE}${p}`, `/api${p}`, { credentials: 'include', signal: deadline() }, snapshot)
   if (!res.ok) throw new Error(await errorMessage(res))
   return res.json()
 }
@@ -100,7 +106,7 @@ function slugPath(slug: string): string {
 export const api = {
   /** The DCS servers this bfdb fronts. Never instance-scoped itself. */
   instances: async (): Promise<InstanceList> => {
-    const res = await fetch(`${BASE}/instances`, { credentials: 'include', signal: deadline() })
+    const res = await fetchWithSnapshot(`${BASE}/instances`, '/api/instances', { credentials: 'include', signal: deadline() }, snapshot)
     if (!res.ok) throw new Error(await errorMessage(res))
     return res.json()
   },

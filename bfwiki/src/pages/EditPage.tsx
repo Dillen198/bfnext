@@ -7,10 +7,13 @@ import {
 } from '@icons'
 import { api } from '../api'
 import { useAuth } from '../context/AuthContext'
+import { useOffline } from '@shared/web/snapshot'
 import WikiMarkdown from '../components/WikiMarkdown'
 
 export default function EditPage({ isNew = false }: { isNew?: boolean }) {
   const { user, loading: authLoading } = useAuth()
+  // bfdb is down: keep what is typed, but nothing can be saved.
+  const { offline } = useOffline()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [params] = useSearchParams()
@@ -160,7 +163,7 @@ export default function EditPage({ isNew = false }: { isNew?: boolean }) {
             className="vs-btn-outline"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', borderRadius: 2, fontSize: '0.65rem', letterSpacing: '0.08em', fontFamily: "'Bebas Neue', sans-serif", cursor: uploading ? 'wait' : 'pointer' }}
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
+            disabled={uploading || offline}
           >
             <ImageIcon size={12} /> {uploading ? 'UPLOADING…' : 'INSERT IMAGE'}
           </button>
@@ -202,9 +205,10 @@ export default function EditPage({ isNew = false }: { isNew?: boolean }) {
       </div>
 
       {error && <div style={{ color: '#ef4444', fontSize: '0.78rem', marginBottom: 10 }}>{error}</div>}
+      {offline && <div style={{ color: '#ef4444', fontSize: '0.78rem', marginBottom: 10 }}>The server is offline: saving is paused until it is back.</div>}
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <button className="vs-btn" onClick={handleSave} disabled={saving}>
+        <button className="vs-btn" onClick={handleSave} disabled={saving || offline} title={offline ? 'The server is offline: the wiki is read-only until it is back' : undefined}>
           {saving ? 'SAVING…' : 'SAVE'}
         </button>
         <button className="vs-btn-ghost" style={{ padding: '6px 14px', borderRadius: 2, cursor: 'pointer' }} onClick={() => navigate(-1)}>
@@ -215,7 +219,7 @@ export default function EditPage({ isNew = false }: { isNew?: boolean }) {
             className="vs-btn-danger"
             style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 14px', borderRadius: 2, cursor: 'pointer', fontSize: '0.72rem' }}
             onClick={handleDelete}
-            disabled={deleting}
+            disabled={deleting || offline}
           >
             <Trash2 size={13} /> {deleting ? 'DELETING…' : 'DELETE PAGE'}
           </button>

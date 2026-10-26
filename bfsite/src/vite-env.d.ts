@@ -6,6 +6,9 @@ interface ImportMetaEnv {
   readonly VITE_API_BASE?: string
   /** Where status.json lives. Defaults to the site's own copy (public/status.json). */
   readonly VITE_STATUS_URL?: string
+  /** bfdb's public snapshot (deploy/snapshot-fallback.md), read while bfdb is
+   *  down, e.g. "https://snapshot.vectorstrike.org". Unset: no fallback. */
+  readonly VITE_SNAPSHOT_URL?: string
 }
 
 interface ImportMeta {

@@ -1,12 +1,17 @@
 // Minimal client for the handful of public bfdb endpoints the site shows live.
 
 import { deadline } from '@shared/web/api'
+import { createSnapshotSource, fetchWithSnapshot, serverLastState } from '@shared/web/snapshot'
 
 // Default: relative '/api', for when bfsite is embedded in bfdb (rust-embed)
 // and served from the same origin. Set VITE_API_BASE (e.g.
 // "https://api.example.com", no trailing slash) at build time to point a
 // standalone-hosted site at a remotely-hosted bfdb instead — see deploy/README.md.
 export const API_ROOT: string = import.meta.env.VITE_API_BASE ?? ''
+
+// bfdb's public snapshot (deploy/snapshot-fallback.md): what the site shows,
+// marked as old, while bfdb is down. Unset: no fallback.
+export const snapshot = createSnapshotSource(import.meta.env.VITE_SNAPSHOT_URL)
 
 export type Side = 'Blue' | 'Red' | 'Neutral'
 
@@ -110,7 +115,7 @@ export interface Health {
 const TIMEOUT_MS = 12_000
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_ROOT}${path}`, { signal: deadline(TIMEOUT_MS) })
+  const res = await fetchWithSnapshot(`${API_ROOT}${path}`, path, { signal: deadline(TIMEOUT_MS) }, snapshot)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
   return res.json() as Promise<T>
 }
@@ -128,4 +133,6 @@ export const api = {
   online: (instance?: string) => get<OnlinePilot[]>(scoped('/api/online', instance)),
   health: (instance?: string) => get<Health>(scoped('/api/health', instance)),
   latestNews: (instance?: string) => get<{ days: NewsDay[] }>(scoped('/api/news?limit=1', instance)),
+  /** A server's last known state, from the snapshot (null without one). */
+  lastState: (instance: string) => (snapshot ? serverLastState(snapshot, instance) : Promise.resolve(null)),
 }

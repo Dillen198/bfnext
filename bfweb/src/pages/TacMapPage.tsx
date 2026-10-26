@@ -46,6 +46,8 @@ import { mockCaptures, mockObjectives, mockWarehouse } from './tacmapMock'
 import type { PressEvent } from '@shared/web/a11y'
 import './groundwar/groundwar.css'
 import './groundwar/tacmap.css'
+import OfflineView from '../components/OfflineView'
+import { useOffline } from '@shared/web/snapshot'
 
 const NO_FRONTS: Frontlines = { mid: [], blue: [], red: [] }
 const NO_OBJECTIVES: Objective[] = []
@@ -128,6 +130,7 @@ export default function TacMapPage(): ReactElement {
   }, [cmdMock])
 
   const feed = useGroundFeed(sideParam, instance, mock)
+  const offline = useOffline().offline && !mock
   const { data: pubObjs = NO_OBJECTIVES, isFetched: objsFetched, isError: objsErr } = useQuery({
     queryKey: ['objectives', instance, mock ? 'mock' : ''],
     queryFn: () => (mock ? Promise.resolve(mockObjectives(mock.picture())) : api.objectives()),
@@ -437,6 +440,7 @@ export default function TacMapPage(): ReactElement {
   }, [ready])
 
   if (!pic || !ready) {
+    if (offline) return <OfflineView what="The tactical map" />
     return <Standby reason={feed.reason} error={feed.error} link={feed.link} />
   }
 

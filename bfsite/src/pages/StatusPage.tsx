@@ -1,6 +1,7 @@
 import { Alert, CheckCircle2, Clock, ExternalLink } from '@icons'
 import { links } from '../config/campaign'
-import { roundDay, useServerStates } from '../live'
+import { ago } from '@shared/web/snapshot'
+import { roundDay, useServerStates, type ServerRow } from '../live'
 import { roundNo } from '../api'
 import { fmtUtc, stateTone } from '../status'
 import { NoticeBox, SectionHead, StatusTag } from '../components/Bits'
@@ -18,13 +19,34 @@ function Overall({ tone, title, sub }: { tone: 'ok' | 'warn' | 'bad' | 'idle'; t
   )
 }
 
+/** "Offline since Sun 19 Oct, 18:00 UTC · last mission ODFv2, round 4, 12 pilots on":
+ *  a server's last known state while bfdb is down, from the snapshot. */
+function lastSeen(r: ServerRow): string | undefined {
+  const l = r.last
+  if (!l) return undefined
+  const since = l.last_seen ? `Offline since ${fmtUtc(l.last_seen)}` : 'Offline'
+  const parts = [
+    l.mission && `last mission ${l.mission}`,
+    l.active_round && `round ${l.active_round.number ?? l.active_round.id}`,
+    // Written while the engine still answered, so it is the count at the end.
+    l.players && `${l.players.total} pilot${l.players.total === 1 ? '' : 's'} on`,
+  ].filter(Boolean)
+  return parts.length ? `${since} · ${parts.join(', ')}` : since
+}
+
 export default function StatusPage() {
-  const { rows, offline, loading, notices, upcoming, checkedAt } = useServerStates()
+  const { rows, offline, loading, notices, upcoming, checkedAt, snapshotAt } = useServerStates()
 
   const tones = rows.map(r => stateTone(r.state))
   const overall =
     loading ? { tone: 'idle' as const, title: 'Checking the servers…', sub: 'Asking each server how it is.' }
-    : offline || tones.every(t => t === 'bad') ? { tone: 'bad' as const, title: 'Servers offline', sub: 'The game servers are down. The site, dashboard and wiki stay up; live data returns with the servers.' }
+    : offline || tones.every(t => t === 'bad') ? {
+      tone: 'bad' as const,
+      title: 'Servers offline',
+      sub: snapshotAt
+        ? `The game servers are down. The site, dashboard and wiki stay up, showing the last known state from ${fmtUtc(snapshotAt)} (${ago(snapshotAt)}); live data returns with the servers.`
+        : 'The game servers are down. The site, dashboard and wiki stay up; live data returns with the servers.',
+    }
     : tones.some(t => t === 'bad' || t === 'warn') ? { tone: 'warn' as const, title: 'Partly available', sub: 'At least one server is down or in maintenance. Details below.' }
     : { tone: 'ok' as const, title: 'All servers up', sub: 'Everything is answering. See you on the flight line.' }
 
@@ -67,7 +89,7 @@ export default function StatusPage() {
                 <div className="sys-sub">Rounds, front lines, pilots on, the War Diary</div>
               </div>
               <span className={`status tone-${loading ? 'idle' : offline ? 'bad' : 'ok'}`}>
-                <span className="dot" />{loading ? 'Checking…' : offline ? 'Unreachable' : 'Up'}
+                <span className="dot" />{loading ? 'Checking…' : offline ? (snapshotAt ? `Last known, ${fmtUtc(snapshotAt)}` : 'Unreachable') : 'Up'}
               </span>
             </div>
             {rows.map(r => {
@@ -79,7 +101,7 @@ export default function StatusPage() {
                   <div>
                     <div className="sys-name">{r.theatre.label}</div>
                     <div className="sys-sub">
-                      {r.state === 'live' && round ? `Round ${roundNo(round)}${day ? `, day ${day}` : ''}` : r.state === 'standby' ? 'Up, between rounds' : r.notices[0]?.title ?? (r.state === 'engine-down' ? 'The DCS server isn’t answering' : r.state === 'offline' ? 'No answer from the host' : 'DCS server')}
+                      {r.state === 'live' && round ? `Round ${roundNo(round)}${day ? `, day ${day}` : ''}` : r.state === 'standby' ? 'Up, between rounds' : r.notices[0]?.title ?? (r.state === 'engine-down' ? 'The DCS server isn’t answering' : r.state === 'offline' ? lastSeen(r) ?? 'No answer from the host' : 'DCS server')}
                       {latency != null && (r.state === 'live' || r.state === 'standby') ? ` · ${latency} ms` : ''}
                     </div>
                   </div>

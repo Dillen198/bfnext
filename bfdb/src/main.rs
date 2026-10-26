@@ -99,6 +99,7 @@ mod cfg_backup_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+mod snapshot;
 
 use crate::db::InstanceState;
 use crate::instance::{InstanceCfg, InstanceId, Registry, DEFAULT_INSTANCE};
@@ -572,6 +573,9 @@ struct Args {
     /// $BFDB_EXPORT_SECRET.
     #[arg(long = "export-secret")]
     export_secret: Option<String>,
+    /// The public snapshot the front ends fall back on (`--snapshot-*`).
+    #[command(flatten)]
+    snapshot: snapshot::SnapshotArgs,
 }
 
 /// A secret from, in order: its command-line flag, its `--...-file` flag, or
@@ -9050,6 +9054,9 @@ async fn main() -> Result<()> {
         ),
         None => log::info!("news: no --news-image-provider -- dispatches run without pictures"),
     }
+    // Public snapshot for the front ends to fall back on while this box is
+    // down. Off unless --snapshot-endpoint or --snapshot-dir (snapshot.rs).
+    snapshot::spawn(&args.snapshot, db.clone(), bot_link_cfg.clone(), news_images.clone());
 
     let export_listen = ExportListenCfg {
         bind: args.export_bind,
