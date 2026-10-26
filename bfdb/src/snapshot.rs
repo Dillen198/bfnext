@@ -1013,7 +1013,7 @@ mod tests {
     fn temp_db(instances: serde_json::Value) -> (StatsDb, PathBuf) {
         let dir = std::env::temp_dir().join(format!("bfdb-snapshot-{}", uuid::Uuid::new_v4()));
         let file: InstancesFile = serde_json::from_value(instances).unwrap();
-        let db = StatsDb::new(&HashMap::new(), dir.join("db"), Registry::new(file).unwrap(), None, None).unwrap();
+        let db = StatsDb::new(&HashMap::new(), dir.join("db"), Registry::new(file).unwrap()).unwrap();
         (db, dir)
     }
 
@@ -1122,7 +1122,7 @@ mod tests {
         assert_eq!(again.uploaded, 0, "nothing changed, nothing uploaded");
 
         db.wiki_save_page("start", page("Start", "Hello again.")).unwrap();
-        db.wiki_delete_page("old").unwrap();
+        db.wiki_delete_page("old", "test").unwrap();
         let changed = p.publish(&src).await.unwrap();
         // The page itself and the page list (its titles are unchanged, but
         // one entry is gone).
@@ -1199,7 +1199,7 @@ mod tests {
         // A fresh publisher seeds itself from the bucket (signed GET).
         let sink = S3Sink::new(&endpoint, "snap", "auto", "prod/", "AKIDTEST".into(), "secret".into()).unwrap();
         let mut p2 = Publisher::new(Sink::S3(sink));
-        db.wiki_delete_page("start").unwrap();
+        db.wiki_delete_page("start", "test").unwrap();
         let r = p2.publish(&source(&db)).await.unwrap();
         assert_eq!(r.uploaded, 1, "only the page list changed");
         assert_eq!(r.deleted, 1);
