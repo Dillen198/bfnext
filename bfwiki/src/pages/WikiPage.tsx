@@ -9,6 +9,7 @@ import WikiMarkdown from '../components/WikiMarkdown'
 import InstanceSelect from '../components/InstanceSelect'
 import { useInstance } from '../context/InstanceContext'
 import { hasCfgTokens, hasListTokens } from '../lib/cfgTokens'
+import { useOffline } from '@shared/web/snapshot'
 
 export default function WikiPage() {
   const params = useParams()
@@ -16,6 +17,9 @@ export default function WikiPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const { current, multi } = useInstance()
+  // Read-only while bfdb is down (the page came from the snapshot).
+  const { offline } = useOffline()
+  const canEdit = !!user?.is_admin && !offline
 
   const { data: page, isLoading, error } = useQuery({
     queryKey: ['wiki', 'page', slug],
@@ -38,7 +42,7 @@ export default function WikiPage() {
         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
           No wiki page exists at <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent-bright)' }}>{slug}</code>.
         </p>
-        {user?.is_admin && (
+        {canEdit && (
           <button className="vs-btn" onClick={() => navigate(`/new?slug=${encodeURIComponent(slug)}`)}>
             CREATE THIS PAGE
           </button>
@@ -56,7 +60,7 @@ export default function WikiPage() {
         <div style={{ fontSize: '0.65rem', color: 'var(--text-dim)', letterSpacing: '0.14em', textTransform: 'uppercase' }}>
           {page.section}
         </div>
-        {user?.is_admin && (
+        {canEdit && (
           <button
             onClick={() => navigate(`/edit?slug=${encodeURIComponent(slug)}`)}
             className="vs-btn-outline"

@@ -26,6 +26,7 @@ npm run build               # -> dist/
 | Variable | Default | What it does |
 |----------|---------|--------------|
 | `VITE_API_BASE` | `''` (same origin) | bfdb's origin, no trailing slash. Set on Vercel to `https://api.vectorstrike.org`. |
+| `VITE_SNAPSHOT_URL` | unset (off) | bfdb's public snapshot, e.g. `https://snapshot.vectorstrike.org`, read while bfdb is down. See `deploy/snapshot-fallback.md`. |
 | `VITE_STATUS_URL` | `/status.json` | Where the server status file is read from. |
 | `VITE_BFDB_URL` | `http://localhost:8880` | Dev server only: where `/api` is proxied. |
 

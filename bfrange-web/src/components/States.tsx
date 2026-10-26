@@ -25,6 +25,16 @@ export function ErrorState({ error, retry }: { error: unknown; retry?: () => voi
   )
 }
 
+/** A live view while the range server is down: say so, rather than spin. */
+export function Offline({ what }: { what: string }) {
+  return (
+    <div className="panel panel-b flex flex-wrap items-center gap-3" role="status">
+      <span className="chip bad">SERVER OFFLINE</span>
+      <span>{what} comes live from the range server, which is not answering. This page picks it up again by itself when it is back.</span>
+    </div>
+  )
+}
+
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="py-8 px-4 text-center">

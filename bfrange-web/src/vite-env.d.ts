@@ -7,6 +7,9 @@ interface ImportMetaEnv {
   readonly VITE_RANGE_INSTANCE?: string
   /** the dashboard, for its flight replay (web Tacview); default VS_URLS.dashboard */
   readonly VITE_DASHBOARD_URL?: string
+  /** bfdb's public snapshot (deploy/snapshot-fallback.md), for the offline
+   *  banner, e.g. "https://snapshot.vectorstrike.org". Unset: off. */
+  readonly VITE_SNAPSHOT_URL?: string
   /** "1" = serve everything from src/mock */
   readonly VITE_MOCK?: string
 }

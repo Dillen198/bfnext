@@ -3,6 +3,7 @@ import { Alert, ExternalLink } from '@icons'
 import { api } from '../api'
 import { useInstance } from '../context/InstanceContext'
 import { appliesTo, fmtUtc, LEVEL_RANK as RANK, type NoticeLevel as Level, type Notice } from '@shared/web/status'
+import { useOfflineText } from '@shared/web/snapshot'
 import { STATUS_PAGE, useStatusFile } from '../lib/statusFile'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -14,7 +15,9 @@ import { STATUS_PAGE, useStatusFile } from '../lib/statusFile'
 // one case where the page itself is wrong: the data on it is stale, because
 // the server behind it is down. That is:
 //   * an `outage` notice in status.json, or a maintenance window running now
-//   * bfdb not answering at all, or the selected server's DCS engine down.
+//   * bfdb not answering at all -- with the time of the snapshot shown in its
+//     place, when there is one (shared/web/snapshot.ts) -- or the selected
+//     server's DCS engine down.
 // A notice wins over a probe: a probe can only say "offline", a notice says why.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -36,6 +39,8 @@ export default function StatusBanner() {
     retry: false,
   })
 
+  const offline = useOfflineText()
+
   const id = current?.id
   // The file is refetched every minute; its fetch time is "now" to within that.
   const now = file.dataUpdatedAt
@@ -52,6 +57,9 @@ export default function StatusBanner() {
     level = top.level
     const eta = fmtUtc(top.eta)
     text = top.title + (eta ? ` · ${top.level === 'maintenance' ? 'until' : 'expected back'} ${eta}` : '')
+  } else if (offline) {
+    level = 'outage'
+    text = `${offline}. Live views are paused until it is back.`
   } else if (health.isError) {
     level = 'outage'
     text = 'The game servers aren’t answering. Live data on this dashboard is paused until they’re back.'

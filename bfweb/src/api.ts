@@ -2,6 +2,7 @@ import {
   createInstanceStore, deadline, errorMessage, LONG_TIMEOUT_MS, REQUEST_TIMEOUT_MS,
   wsUrl as sharedWsUrl, type AuthUser,
 } from '@shared/web/api'
+import { createSnapshotSource, fetchWithSnapshot } from '@shared/web/snapshot'
 
 // ── API/WS base URLs ────────────────────────────────────────────────
 // Default: relative '/api' and same-origin WS, for when bfweb is embedded
@@ -54,6 +55,12 @@ function cockpitIdent(playerId: string | undefined, lead: '?' | '&'): string {
 function wsUrl(path: string): string {
   return sharedWsUrl(API_ROOT, withInstance(path))
 }
+
+// ── Public snapshot ─────────────────────────────────────────────────
+// Where bfdb publishes the last known public state (VITE_SNAPSHOT_URL, see
+// deploy/snapshot-fallback.md). A public GET that bfdb does not answer is
+// answered from there, and the banner says how old it is. Unset: off.
+export const snapshot = createSnapshotSource(import.meta.env.VITE_SNAPSHOT_URL)
 
 // ── JSON Schema (draft-07, as produced by the `schemars` crate) ───────
 export interface JsonSchema {
@@ -1962,15 +1969,14 @@ function send(method: 'GET' | 'POST', path: string, body?: unknown): Promise<Res
   // Admin operations are proxied by bfdb to the bot, which may take minutes
   // (an update, a restart); everything else gets the ordinary deadline.
   const signal = deadline(path.startsWith('/admin/') ? LONG_TIMEOUT_MS : REQUEST_TIMEOUT_MS)
-  return fetch(`${BASE}${p}`, method === 'GET'
-    ? { credentials: 'include', signal }
-    : {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal,
-      })
+  if (method === 'GET') return fetchWithSnapshot(`${BASE}${p}`, `/api${p}`, { credentials: 'include', signal }, snapshot)
+  return fetch(`${BASE}${p}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  })
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -2215,7 +2221,7 @@ export interface NewsArchive {
 export const api = {
   /** The DCS servers this bfdb fronts. Never instance-scoped itself. */
   instances: async (): Promise<InstanceList> => {
-    const res = await fetch(`${BASE}/instances`, { credentials: 'include', signal: deadline() })
+    const res = await fetchWithSnapshot(`${BASE}/instances`, '/api/instances', { credentials: 'include', signal: deadline() }, snapshot)
     if (!res.ok) throw new Error(await errorMessage(res))
     return res.json()
   },

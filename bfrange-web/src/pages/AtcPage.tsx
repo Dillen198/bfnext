@@ -1,7 +1,8 @@
 /** `/atc` — the spoken ATC's radio, frequency by frequency, as it happens. */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { API_ROOT, withInstance } from '../api'
-import { Empty, ErrorState, Loading } from '../components/States'
+import { Empty, ErrorState, Loading, Offline } from '../components/States'
+import { fetchWithSnapshot, useOffline } from '@shared/web/snapshot'
 
 interface Station {
   id: string
@@ -66,7 +67,9 @@ const OFF_POLL_MS = 60_000
 class NoAtc extends Error {}
 
 async function fetchTranscript(since: number): Promise<Transcript> {
-  const r = await fetch(withInstance(`${API_ROOT}/api/range/atc?since=${since}`), { credentials: 'include' })
+  // Through the snapshot wrapper only so an outage shows as one (there is no
+  // snapshot of the transcript).
+  const r = await fetchWithSnapshot(withInstance(`${API_ROOT}/api/range/atc?since=${since}`), '/api/range/atc', { credentials: 'include' })
   if (r.status === 404) throw new NoAtc('no ATC on this server')
   if (!r.ok) throw new Error(`ATC transcript: ${r.status} ${r.statusText}`)
   return r.json()
@@ -438,6 +441,7 @@ function loadVolume(): number {
 
 export default function AtcPage() {
   const { stations, lines, error } = useTranscript()
+  const { offline } = useOffline()
   const [tab, setTab] = useState<string>('all')
   const [listen, setListen] = useState(false)
   const [connected, setConnected] = useState(false)
@@ -561,7 +565,7 @@ export default function AtcPage() {
       {stations === null && !error ? (
         <Loading label="Tuning in" />
       ) : error && !stations ? (
-        <ErrorState error={error} retry={() => location.reload()} />
+        offline ? <Offline what="The range's ATC" /> : <ErrorState error={error} retry={() => location.reload()} />
       ) : !stations?.length ? (
         <Empty title="ATC is off">
           The range's spoken ATC is not running on this server yet. This page checks again every minute.

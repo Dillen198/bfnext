@@ -99,7 +99,8 @@ __all__ = ["OpsApi", "mask_secrets", "unmask_secrets", "SECRET_MASK", "is_secret
            "is_protected_key"]
 
 SECRET_MASK = "__SECRET__"
-_SECRET_HINTS = ("password", "secret", "api_key", "apikey", "token", "webhook", "llm_key", "image_key", "tts_key")
+_SECRET_HINTS = ("password", "secret", "api_key", "apikey", "token", "webhook", "llm_key", "image_key", "tts_key",
+                 "access_key")
 CONFIG_BACKUPS_KEEP = 20
 LOG_FILES = ("bot", "service", "bfdb", "bfdb_boot", "netidx")
 _LOG_LABELS = {"bot": "DCSServerBot", "service": "Bot service wrapper", "bfdb": "bfdb",
@@ -140,7 +141,7 @@ def mask_secrets(node: Any) -> int:
 
 def _is_endpoint_key(key: Any) -> bool:
     k = str(key).lower()
-    return ("url" in k or "uri" in k or k.endswith("host")
+    return ("url" in k or "uri" in k or k.endswith("host") or k.endswith("_endpoint")
             or k.endswith("_provider") or k.endswith("_account_id"))
 
 
@@ -193,7 +194,7 @@ _PROTECTED_EXACT = {
 }
 _PROTECTED_SUFFIXES = (
     "_exe", "_cmd", "_command", "_path", "_dir", "_url", "_uri", "_config", "_jsonl", "_file",
-    "_folder", "_address", "_origins", "_model", "_host",
+    "_folder", "_address", "_origins", "_model", "_host", "_endpoint",
 )
 
 
