@@ -8,7 +8,7 @@ use clap::Parser;
 use db::{IntelCapture, IntelMarkup, SessionData, SessionEnd, StatsDb, WikiImage, WikiPage};
 use futures::{SinkExt, StreamExt};
 use netidx::{config::Config, path::Path as NetidxPath, subscriber::SubscriberBuilder};
-use regex::Regex;
+
 use rust_embed::RustEmbed;
 use serde_derive::{Deserialize, Serialize};
 use std::{
@@ -72,6 +72,32 @@ mod range;
 mod replay;
 mod websec;
 mod maint;
+mod admin;
+#[cfg(test)]
+mod route_tests;
+
+#[cfg(test)]
+mod cfg_backup_tests {
+    #[test]
+    fn keeps_only_the_newest_config_backups() {
+        let dir = std::env::temp_dir().join(format!("bfdb-cfgbak-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cfg = dir.join("ODF_CFG");
+        std::fs::write(&cfg, "{}").unwrap();
+        for i in 0..5 {
+            std::fs::write(dir.join(format!("ODF_CFG.bak.2026010100000{i}")), "").unwrap();
+        }
+        std::fs::write(dir.join("ODF_CFG.bak.notes"), "").unwrap();
+        super::prune_cfg_backups(&cfg, 2);
+        let mut left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["ODF_CFG", "ODF_CFG.bak.20260101000003", "ODF_CFG.bak.20260101000004", "ODF_CFG.bak.notes"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
 
 use crate::db::InstanceState;
 use crate::instance::{InstanceCfg, InstanceId, Registry, DEFAULT_INSTANCE};
@@ -127,12 +153,13 @@ struct Args {
     /// Path to stats JSONL file (e.g. "E:/Saved Games/DCS/Logs/stats.jsonl")
     #[arg(long)]
     stats_jsonl: Option<PathBuf>,
-    /// Include only scenarios that match the given regex
-    #[arg(long)]
-    include: Option<Regex>,
-    /// Exclude scenarios that match the given regex
-    #[arg(long)]
-    exclude: Option<Regex>,
+    /// No longer does anything (it never did: the filter was not applied
+    /// anywhere). Still accepted so an old command line starts.
+    #[arg(long, hide = true)]
+    include: Option<String>,
+    /// No longer does anything; see --include.
+    #[arg(long, hide = true)]
+    exclude: Option<String>,
     /// Store uploaded recon-intel (TARPS) photos as files in this directory
     /// instead of as blobs in the stats DB. bfdb creates it if missing and
     /// clears it on a campaign reset. Recommended for any real deployment --
@@ -161,6 +188,19 @@ struct Args {
     /// Discord role ID that grants admin access
     #[arg(long)]
     discord_admin_role_id: Option<String>,
+    /// Optional Discord role ID whose members get only the `ops` admin role:
+    /// the OPS page, DCSServerBot start/stop, the engine config editor, perf
+    /// and logs. The admin role above always has every role.
+    #[arg(long)]
+    discord_ops_role_id: Option<String>,
+    /// Optional Discord role ID for the `content` admin role: editing the
+    /// wiki and redrawing war-diary pictures.
+    #[arg(long)]
+    discord_content_role_id: Option<String>,
+    /// Optional Discord role ID for the `moderation` admin role: bans, side
+    /// switches, commander grants, recon intel purges.
+    #[arg(long)]
+    discord_moderation_role_id: Option<String>,
     /// Path to campaign config JSON (e.g. campaign.json).
     /// Served at GET /api/config so the web UI can brand itself.
     #[arg(long)]
@@ -248,6 +288,14 @@ struct Args {
     /// entirely. Use a long random value and only expose it over TLS.
     #[arg(long = "log-read-token")]
     log_read_token: Option<String>,
+    /// A token for `GET /api/metrics` alone, so a metrics scraper does not
+    /// need the one that reads the logs. The log-read token keeps working
+    /// there too. Also --metrics-token-file or $BFDB_METRICS_TOKEN.
+    #[arg(long = "metrics-token")]
+    metrics_token: Option<String>,
+    /// File holding the --metrics-token (first line).
+    #[arg(long = "metrics-token-file")]
+    metrics_token_file: Option<PathBuf>,
     /// One-off maintenance: clear the `session` tree (per-round Cfg
     /// snapshot + perf history) and exit immediately without starting the
     /// server. Use this to recover from old Session records that predate a
@@ -297,6 +345,10 @@ struct Args {
     /// Falls back to $BFDB_NEWS_LLM_KEY, then $OPENAI_API_KEY.
     #[arg(long = "news-llm-key")]
     news_llm_key: Option<String>,
+    /// File holding the --news-llm-key (first line), to keep it off the
+    /// command line.
+    #[arg(long = "news-llm-key-file")]
+    news_llm_key_file: Option<PathBuf>,
     /// Model id for --news-llm-url (default gpt-4o-mini). The volume is a
     /// dozen or two short calls a day at the top end, so the cheap tier is the
     /// right one. Falls back to $BFDB_NEWS_LLM_MODEL.
@@ -309,8 +361,12 @@ struct Args {
     /// its own rules.
     #[arg(long = "hq-llm-url")]
     hq_llm_url: Option<String>,
+    /// API key for --hq-llm-url. Also --hq-llm-key-file or $BFDB_HQ_LLM_KEY.
     #[arg(long = "hq-llm-key")]
     hq_llm_key: Option<String>,
+    /// File holding the --hq-llm-key (first line).
+    #[arg(long = "hq-llm-key-file")]
+    hq_llm_key_file: Option<PathBuf>,
     #[arg(long = "hq-llm-model")]
     hq_llm_model: Option<String>,
     /// Minutes between strategist reviews, per instance (two model calls each,
@@ -417,6 +473,47 @@ struct Args {
     /// `--local-login-from 0.0.0.0/0 --local-login-from ::/0` to get that back.
     #[arg(long = "local-login-from", value_name = "IP[/PREFIX]")]
     local_login_from: Vec<websec::IpNet>,
+    /// Send the dashboard page's Content-Security-Policy as an enforced
+    /// header with tight connect-src/img-src lists, instead of the default
+    /// report-only policy that allows any https: host. Check the browser
+    /// console on the TACMAP, the replay and the 3D debrief before turning
+    /// it on: a host missing from the list blanks that view.
+    #[arg(long = "csp-enforce")]
+    csp_enforce: bool,
+    /// With --csp-enforce: one more source (e.g. https://tiles.example.org)
+    /// for connect-src and img-src. Repeat for several.
+    #[arg(long = "csp-extra-src", value_name = "SOURCE")]
+    csp_extra_src: Vec<String>,
+    /// GETs under /api/ one client IP may make per minute (a token bucket
+    /// with a third of that as its burst). Generous: a dashboard tab polls a
+    /// few dozen a minute. Loopback callers (the bot) are never metered.
+    /// 0 turns it off.
+    #[arg(long = "public-get-rate", default_value_t = 1800)]
+    public_get_rate: u32,
+    /// The stricter budget, per client IP per minute, for the GETs that cost
+    /// real work: range clip cuts, PNG cards, whole Tacview recordings.
+    /// 0 turns it off.
+    #[arg(long = "heavy-get-rate", default_value_t = 120)]
+    heavy_get_rate: u32,
+    /// The cockpit overlay version /api/cockpit/plugin/version advertises,
+    /// as is. Default: the version bfdb was built with, but only once its
+    /// `cockpit-v<version>` installer is confirmed published on GitHub
+    /// ("unknown" until then, which no overlay takes for an update).
+    #[arg(long = "cockpit-plugin-version", value_name = "VERSION")]
+    cockpit_plugin_version: Option<String>,
+    /// A proxy in front of Caddy (a CDN, a load balancer) whose
+    /// X-Forwarded-For entries are believed, as an IP or CIDR block; repeat
+    /// for several. Without it, the client is the address Caddy saw -- which,
+    /// behind a CDN, is the CDN's edge, so every visitor shares one rate-limit
+    /// budget. Caddy must be told the same ranges (`trusted_proxies`, see
+    /// deploy/backend/Caddyfile.vectorstrike) or it overwrites the header.
+    #[arg(long = "trusted-proxy", value_name = "IP[/PREFIX]")]
+    trusted_proxies: Vec<websec::IpNet>,
+    /// With --trusted-proxy listing Cloudflare's ranges: take the client from
+    /// `CF-Connecting-IP` when the request reached Caddy from one of them.
+    /// Ignored for any request that did not.
+    #[arg(long = "trust-cf-connecting-ip")]
+    trust_cf_connecting_ip: bool,
     /// Read the local admin password from this file (first line) instead of
     /// the command line, where every process on the box can read it. Also
     /// read from $BFDB_ADMIN_PASSWORD when neither is given.
@@ -447,6 +544,14 @@ struct Args {
     /// Hours between database backups; 0 turns them off.
     #[arg(long = "backup-interval-hours", default_value_t = 24)]
     backup_interval_hours: u64,
+    /// Also back up what lives beside the database rather than in it: the
+    /// recon photos (`<db>.intel`), flight replays (`<db>.replays`), range
+    /// clip cache (`<db>.range-clips`), every instance's engine config file,
+    /// and the --instances / --config files. Unchanged files are hard-linked
+    /// to the previous backup's copy, so seven backups of a recording cost
+    /// one. Off by default (replays can be large); see bfdb/BACKUPS.md.
+    #[arg(long = "backup-files")]
+    backup_files: bool,
     /// How many backups to keep; older ones are deleted.
     #[arg(long = "backup-keep", default_value_t = 7)]
     backup_keep: usize,
@@ -494,6 +599,8 @@ struct AuthConfig {
     redirect_uri:  String,
     guild_id:      String,
     admin_role_id: String,
+    /// Discord roles granting a single admin role (`admin::Role`).
+    roles:         admin::DiscordRoles,
 }
 
 #[derive(Debug, Clone)]
@@ -889,6 +996,42 @@ impl log::Log for BroadcastLogger {
     }
 }
 
+/// A route's query string as a map.
+type Q = std::collections::HashMap<std::string::String, std::string::String>;
+
+/// Default (and largest) page of each list route: far above what any of them
+/// holds today, so a caller that sends no `?limit=` still gets everything --
+/// they are a bound, not a page size.
+const PILOT_NAMES_CAP: usize = 100_000;
+const PILOT_LIST_CAP: usize = 10_000;
+const SQUADRON_LIST_CAP: usize = 5_000;
+const WIKI_LIST_CAP: usize = 5_000;
+const ADMIN_LIST_CAP: usize = 10_000;
+
+/// `?offset=` and `?limit=` (at most `cap`, and `cap` when absent) over a
+/// list, plus how long the whole list is.
+fn page<T>(mut rows: Vec<T>, q: &Q, cap: usize) -> (Vec<T>, usize) {
+    let total = rows.len();
+    let num = |k: &str| q.get(k).and_then(|s| s.trim().parse::<usize>().ok());
+    let offset = num("offset").unwrap_or(0).min(total);
+    let limit = num("limit").unwrap_or(cap).min(cap);
+    rows.drain(..offset);
+    rows.truncate(limit);
+    (rows, total)
+}
+
+/// [`page`], serialized.
+fn page_json<T: serde::Serialize>(rows: Vec<T>, q: &Q, cap: usize) -> Result<(String, usize)> {
+    let (rows, total) = page(rows, q, cap);
+    Ok((serde_json::to_string(&rows)?, total))
+}
+
+/// A page of a list: the JSON array as before, its full length in
+/// `X-Total-Count`.
+fn paged_response((data, total): (String, usize)) -> impl warp::Reply {
+    reply::with_header(json_response(data), "x-total-count", total.to_string())
+}
+
 fn json_response(data: String) -> impl warp::Reply {
     reply::with_header(
         reply::with_header(data, "content-type", "application/json"),
@@ -987,7 +1130,7 @@ async fn api_round_summary(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = cached_json(format!("round_summary:{}:{id}", inst.id), || -> Result<String> {
+    let data = cached_json(format!("round_summary:{}:{id}", inst.id), move || -> Result<String> {
         let rid = db::RoundId(id);
         if db.round_instance_of(rid) != inst.id {
             return Ok("null".into());
@@ -1067,11 +1210,14 @@ async fn api_round_summary(
 /// N identical full scans a second into one.
 const PUBLIC_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// How old an answer `cached_json` still hands out while it refreshes it in
+/// the background.
+const PUBLIC_CACHE_MAX_STALE: std::time::Duration = std::time::Duration::from_secs(60);
+
 static ROUTE_CACHE: std::sync::LazyLock<websec::CacheMap<std::string::String, Arc<std::string::String>>> =
     std::sync::LazyLock::new(websec::CacheMap::new);
 
-/// Serve `key` from [`ROUTE_CACHE`], computing it with `f` (a blocking DB
-/// read) at most once per TTL however many requests arrive together.
+
 /// GET /api/rounds/:id/report — the round over time: kills and captures by
 /// side per bucket, territory held, most contested objectives.
 async fn api_round_report(
@@ -1079,7 +1225,7 @@ async fn api_round_report(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = cached_json(format!("round_report:{}:{id}", inst.id), || -> Result<String> {
+    let data = cached_json(format!("round_report:{}:{id}", inst.id), move || -> Result<String> {
         let rid = db::RoundId(id);
         if db.round_instance_of(rid) != inst.id {
             return Ok("null".into());
@@ -1090,17 +1236,21 @@ async fn api_round_report(
     Ok(json_response(data))
 }
 
+/// Serve `key` from [`ROUTE_CACHE`], computing it with `f` (a blocking DB
+/// read) at most once per TTL however many requests arrive together. Past
+/// the TTL the last answer is still served (up to
+/// [`PUBLIC_CACHE_MAX_STALE`]) while `f` re-runs on the blocking pool, so a
+/// request waits on a full scan only when there is no answer at all yet.
 async fn cached_json(
     key: std::string::String,
-    f: impl FnOnce() -> Result<std::string::String>,
+    f: impl FnOnce() -> Result<std::string::String> + Send + 'static,
 ) -> std::result::Result<std::string::String, Error> {
     ROUTE_CACHE
         .entry(&key)
-        .get_or_refresh(PUBLIC_CACHE_TTL, || async move {
-            task::block_in_place(f).map(Arc::new).map_err(Error)
-        })
+        .get_swr(PUBLIC_CACHE_TTL, PUBLIC_CACHE_MAX_STALE, move || f().map(Arc::new))
         .await
         .map(|a| (*a).clone())
+        .map_err(Error)
 }
 
 async fn api_leaderboard(
@@ -1111,7 +1261,7 @@ async fn api_leaderboard(
     // ?round=<id> ranks one round; without it, all-time totals (so pilot
     // stats are never empty between rounds).
     let round = q.get("round").and_then(|r| r.parse::<u64>().ok());
-    let data = cached_json(format!("leaderboard:{}:{round:?}", inst.id), || -> Result<String> {
+    let data = cached_json(format!("leaderboard:{}:{round:?}", inst.id), move || -> Result<String> {
         let pilots = match round {
             // Another instance's round is not this instance's to rank.
             Some(id) if db.round_instance_of(db::RoundId(id)) != inst.id => vec![],
@@ -1160,19 +1310,31 @@ async fn api_leaderboard(
 }
 
 /// GET /api/pilots — all pilot UCIDs + names (all-time, for name resolution)
-async fn api_all_pilots(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
-        let pilots = db.all_pilot_names()?;
-        let entries: Vec<_> = pilots.iter().map(|(ucid, name)| {
-            serde_json::json!({ "ucid": ucid.to_string(), "name": name.to_string() })
-        }).collect();
-        Ok(serde_json::to_string(&entries)?)
-    })?;
-    Ok(json_response(data))
+///
+/// A walk of every pilot ever seen, polled by every dashboard: shared, and
+/// refreshed at most once a minute (a new pilot's name shows up within one).
+async fn api_all_pilots(db: StatsDb, q: Q) -> std::result::Result<impl warp::Reply, Error> {
+    const PILOTS_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+    static PILOTS: std::sync::LazyLock<Arc<websec::Cached<Arc<Vec<serde_json::Value>>>>> =
+        std::sync::LazyLock::new(|| Arc::new(websec::Cached::new()));
+    let all = PILOTS
+        .clone()
+        .get_swr(PILOTS_TTL, PILOTS_TTL * 10, move || -> Result<Arc<Vec<serde_json::Value>>> {
+            let pilots = db.all_pilot_names()?;
+            Ok(Arc::new(pilots.iter().map(|(ucid, name)| {
+                serde_json::json!({ "ucid": ucid.to_string(), "name": name.to_string() })
+            }).collect()))
+        })
+        .await
+        .map_err(Error)?;
+    let total = all.len();
+    let num = |k: &str| q.get(k).and_then(|s| s.trim().parse::<usize>().ok());
+    let offset = num("offset").unwrap_or(0).min(total);
+    let limit = num("limit").unwrap_or(PILOT_NAMES_CAP).min(PILOT_NAMES_CAP);
+    let rows = &all[offset..(offset + limit).min(total)];
+    Ok(paged_response((serde_json::to_string(rows).map_err(anyhow::Error::from)?, total)))
 }
 
-/// Call one of bflib's netidx RPC procs and return its reply as an owned
-/// String (bail on Value::Error or an unexpected reply shape).
 /// Move an existing log file aside as `<stem><UTC-timestamp>.<ext>` so each run
 /// starts a fresh file. No-op if the file doesn't exist. Mirrors bflib's
 /// `rotate_log`.
@@ -1904,7 +2066,7 @@ async fn api_kills(
     let limit = limit.unwrap_or(50).clamp(1, 500);
     let key = format!("kills:{}:{round_id:?}:{limit}", inst.id);
     // recent_kills walks the whole kills tree; see ROUTE_CACHE.
-    let data = cached_json(key, || -> Result<String> {
+    let data = cached_json(key, move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match round_id {
             // Another instance's round is not this instance's to show.
@@ -1994,17 +2156,29 @@ async fn api_pilot(
     Ok(json_response(data))
 }
 
+/// Which rounds the instance-agnostic pilot routes may list: every round
+/// but those of a non-public instance or a range -- the same rule the
+/// lifetime totals, XP and leaderboards follow (`counts_toward_totals`).
+/// These routes take no `?instance=`, so they could not be locked like the
+/// per-instance ones.
+fn shown_round(db: &StatsDb) -> Result<impl Fn(db::RoundId) -> bool> {
+    let public = db.public_rounds()?;
+    Ok(move |r| public.as_ref().map_or(true, |s| s.contains(&r)))
+}
+
 /// GET /api/pilot/:ucid/sorties — all sorties for a pilot
 async fn api_pilot_sorties(
     ucid: String,
     db: StatsDb,
+    q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
         // Summary rows, newest first. The per-sortie event lists are left to
         // /api/pilot/:ucid/sortie/:id so a long career stays a small payload.
+        let shown = shown_round(&db)?;
         let sorties = db.pilot_sortie_stats(&ucid)?;
-        let entries: Vec<_> = sorties.iter().rev().map(|s| {
+        let entries: Vec<_> = sorties.iter().rev().filter(|s| shown(s.round_id)).map(|s| {
             serde_json::json!({
                 "round_id": s.round_id.0,
                 "sortie_id": s.sortie_id.0,
@@ -2024,9 +2198,9 @@ async fn api_pilot_sorties(
                 "killed_by": s.death.as_ref().and_then(|d| d.killer_name.clone().or_else(|| d.killer_type.clone())),
             })
         }).collect();
-        Ok(serde_json::to_string(&entries)?)
+        page_json(entries, &q, PILOT_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 /// GET /api/pilot/:ucid/sortie/:sortie_id — one sortie with its kills,
@@ -2038,10 +2212,11 @@ async fn api_pilot_sortie(
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+        let shown = shown_round(&db)?;
         let sortie = db
             .pilot_sortie_stats(&ucid)?
             .into_iter()
-            .find(|s| s.sortie_id.0 == sortie_id)
+            .find(|s| s.sortie_id.0 == sortie_id && shown(s.round_id))
             .ok_or_else(|| websec::not_found("no such sortie"))?;
         Ok(serde_json::to_string(&sortie)?)
     })?;
@@ -2055,8 +2230,9 @@ async fn api_pilot_breakdown(
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+        let shown = shown_round(&db)?;
         let rounds = db.pilot_round_breakdown(&ucid)?;
-        let entries: Vec<_> = rounds.iter().map(|(scenario, rid, agg)| serde_json::json!({
+        let entries: Vec<_> = rounds.iter().filter(|(_, rid, _)| shown(*rid)).map(|(scenario, rid, agg)| serde_json::json!({
             "round_id": rid.0,
             "scenario": scenario,
             "air_kills": agg.air_kills,
@@ -2169,12 +2345,12 @@ fn squadron_json(db: &StatsDb, s: &squadrons::Squadron, members: bool) -> serde_
 }
 
 /// GET /api/squadrons -- every squadron, by XP served.
-async fn api_squadrons(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+async fn api_squadrons(db: StatsDb, q: Q) -> std::result::Result<impl warp::Reply, Error> {
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let v: Vec<_> = db.squadrons().all()?.iter().map(|s| squadron_json(&db, s, false)).collect();
-        Ok(serde_json::to_string(&v)?)
+        page_json(v, &q, SQUADRON_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 /// GET /api/squadrons/{tag} -- one squadron with its members.
@@ -2270,7 +2446,7 @@ async fn api_pilot_card(ucid: String, db: StatsDb) -> std::result::Result<Respon
 
 /// GET /api/progression/top -- the 50 pilots with the most XP.
 async fn api_xp_leaderboard(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
-    let data = cached_json("xp_leaderboard".into(), || -> Result<String> {
+    let data = cached_json("xp_leaderboard".into(), move || -> Result<String> {
         let rows: Vec<_> = db
             .xp_leaderboard(50)?
             .into_iter()
@@ -2288,11 +2464,13 @@ async fn api_xp_leaderboard(db: StatsDb) -> std::result::Result<impl warp::Reply
 async fn api_pilot_kills(
     ucid: String,
     db: StatsDb,
+    q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+        let shown = shown_round(&db)?;
         let kills = db.pilot_kills_for(&ucid)?;
-        let entries: Vec<_> = kills.iter().map(|(round_id, dead)| {
+        let entries: Vec<_> = kills.iter().filter(|(rid, _)| shown(*rid)).map(|(round_id, dead)| {
             // `dead.shots` holds every shot that ever landed on this victim,
             // possibly from several shooters across a long engagement. This is
             // *this* pilot's kill list, so pick this pilot's own shot for the
@@ -2318,20 +2496,22 @@ async fn api_pilot_kills(
                 "killer_airframe": airframe,
             })
         }).collect();
-        Ok(serde_json::to_string(&entries)?)
+        page_json(entries, &q, PILOT_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 /// GET /api/pilot/:ucid/deploys — all deployable-crate deploys done by a pilot
 async fn api_pilot_deploys(
     ucid: String,
     db: StatsDb,
+    q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let ucid: dcso3::net::Ucid = ucid.parse().map_err(|_| websec::bad_request("not a valid ucid"))?;
+        let shown = shown_round(&db)?;
         let deploys = db.pilot_deploys_for(&ucid)?;
-        let entries: Vec<_> = deploys.iter().map(|(round_id, rec)| {
+        let entries: Vec<_> = deploys.iter().filter(|(rid, _)| shown(*rid)).map(|(round_id, rec)| {
             serde_json::json!({
                 "round_id": round_id.0,
                 "time": rec.time.to_rfc3339(),
@@ -2340,9 +2520,9 @@ async fn api_pilot_deploys(
                 "method": rec.method,
             })
         }).collect();
-        Ok(serde_json::to_string(&entries)?)
+        page_json(entries, &q, PILOT_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 /// Real health, as opposed to the string "ok".
@@ -2358,7 +2538,7 @@ async fn api_pilot_deploys(
 /// A dashboard can drive a three-state badge off this -- LIVE / ENGINE
 /// UNREACHABLE / OFFLINE -- instead of inferring liveness from the mere
 /// existence of a round row.
-async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+async fn health(db: StatsDb, inst: Inst, detail: bool) -> std::result::Result<warp::reply::Json, Error> {
     // Served from a short cache. Without one, every open dashboard tab fires
     // its own engine RPC every 30s, and this endpoint would itself become a
     // source of the poll contention it is meant to measure.
@@ -2443,29 +2623,60 @@ async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::R
             })))
     })?;
 
-    let body = serde_json::json!({
+    // Public: only what the site, the dashboard and the bot read. The
+    // engine's own error text (netidx paths), database size, free disk and
+    // the build are for `/api/admin/health`.
+    let mut body = serde_json::json!({
         "ok": engine_ok,
         "bfdb": "ok",
         "instance": inst.id.to_string(),
         "engine": {
             "reachable": engine_ok,
             "latency_ms": if engine_ok && elapsed_ms > 0 { Some(elapsed_ms) } else { None },
-            "error": engine_err,
+            "error": engine_err.as_deref().map(public_engine_error),
         },
         "active_round": round,
+    });
+    if detail {
+        body["engine"]["error"] = serde_json::json!(engine_err);
         // The engine answering says nothing about whether its stats are
         // reaching us: a stalled stats.jsonl reader looked perfectly healthy.
-        "ingest": {
+        body["ingest"] = serde_json::json!({
             "last_stat_at": inst.last_stat.lock().ok().and_then(|g| g.map(|(t, _)| t.to_rfc3339())),
             "lag_s": ingest_lag_secs(&inst),
-        },
-        "db": {
+        });
+        body["db"] = serde_json::json!({
             "size_bytes": db.sled().size_on_disk().ok(),
             "disk_free_bytes": DB_PATH.get().and_then(|p| maint::disk_free(p)),
-        },
-        "build": build_info_json(),
-    });
+        });
+        body["build"] = build_info_json();
+    }
     Ok(warp::reply::json(&body))
+}
+
+/// The engine probe's failure as the public health check tells it: what
+/// kind of failure, without the netidx paths and RPC detail in the error.
+fn public_engine_error(e: &str) -> &'static str {
+    if e.contains("timed out") || e.contains("did not answer") {
+        "the engine did not answer in time"
+    } else {
+        "the engine is not reachable"
+    }
+}
+
+/// GET /api/admin/health -- `/api/health` with everything: the engine's own
+/// error, ingest lag, database size, free disk and the build (ops role).
+async fn api_admin_health(
+    session_id: Option<Uuid>,
+    db: StatsDb,
+    inst: Inst,
+) -> std::result::Result<warp::reply::Response, Error> {
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
+    Ok(health(db, inst, true).await?.into_response())
+}
+
+async fn api_health(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
+    health(db, inst, false).await
 }
 
 /// Warehouse + supply topology for one objective.
@@ -2768,7 +2979,7 @@ async fn stats_apply_bot_info(
 
 async fn api_points(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
     // pilot_points walks every pilot's every round; see ROUTE_CACHE.
-    let data = cached_json(format!("points:{}", inst.id), || -> Result<String> {
+    let data = cached_json(format!("points:{}", inst.id), move || -> Result<String> {
         let rounds = db.latest_rounds_for(&inst.id)?;
         let rid = match rounds.iter().find(|(_, _, r)| r.end.is_none()) {
             Some((_, rid, _)) => *rid,
@@ -2807,6 +3018,7 @@ async fn api_capture_events(
     db: StatsDb,
     round_id: Option<u64>,
     limit: Option<usize>,
+    offset: usize,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let data = task::block_in_place(|| -> Result<String> {
@@ -2823,7 +3035,11 @@ async fn api_capture_events(
                 },
             },
         };
-        let entries = db.recent_captures(rid, limit.unwrap_or(50))?;
+        // Same cap as /api/kills: `?limit=` is the caller's to choose, and
+        // `?offset=` pages further back.
+        let limit = limit.unwrap_or(50).clamp(1, 500);
+        let offset = offset.min(10_000);
+        let entries: Vec<_> = db.recent_captures(rid, limit + offset)?.into_iter().skip(offset).collect();
         let json: Vec<_> = entries
             .iter()
             .map(|c| {
@@ -2995,7 +3211,6 @@ struct GuildMember { roles: Vec<String> }
 #[derive(Deserialize)]
 struct TokenResponse { access_token: String }
 
-/// GET /api/auth/callback?code=&state=  — exchange code, create session
 /// Session cookie attributes. SameSite=None (needed for cross-origin fetch/XHR
 /// with credentials) requires Secure, which requires bfdb to be served over
 /// TLS — so we only opt into it when --cors-origin was actually configured.
@@ -3003,6 +3218,7 @@ fn session_cookie_attrs(cross_origin: bool) -> &'static str {
     if cross_origin { "SameSite=None; Secure" } else { "SameSite=Lax" }
 }
 
+/// GET /api/auth/callback?code=&state=  — exchange code, create session
 async fn api_auth_callback(
     q: CallbackQuery,
     cfg: AuthConfig,
@@ -3048,30 +3264,32 @@ async fn api_auth_callback(
         .await
         .map_err(|e| anyhow::anyhow!("user parse failed: {e}"))?;
 
-    // Check guild role for admin
-    let is_admin = match http
+    // Guild roles: the admin role makes a full admin, the optional
+    // --discord-*-role-id ones a single admin role each.
+    let member_roles: Vec<String> = match http
         .get(format!("https://discord.com/api/users/@me/guilds/{}/member", cfg.guild_id))
         .bearer_auth(&token_res.access_token)
         .send()
         .await
     {
-        Ok(r) => r.json::<GuildMember>().await.ok()
-            .map(|m| m.roles.contains(&cfg.admin_role_id))
-            .unwrap_or(false),
-        Err(_) => false,
+        Ok(r) => r.json::<GuildMember>().await.ok().map(|m| m.roles).unwrap_or_default(),
+        Err(_) => Vec::new(),
     };
+    let is_admin = member_roles.contains(&cfg.admin_role_id);
+    let roles = cfg.roles.roles_for(&cfg.admin_role_id, &member_roles);
 
     let session_id = Uuid::new_v4();
     // Admin rights are read from the Discord role once, here -- so an admin
     // session is kept short (see ADMIN_SESSION_SECS) to bound how long a
     // removed role keeps working.
-    let lifetime = if is_admin { ADMIN_SESSION_SECS } else { PLAYER_SESSION_SECS };
+    let lifetime = if roles != 0 { ADMIN_SESSION_SECS } else { PLAYER_SESSION_SECS };
     let session = SessionData {
         discord_id: user.id.clone(),
         username:   user.username.clone(),
         avatar:     user.avatar.clone(),
         is_admin,
         expires:    chrono::Utc::now() + chrono::Duration::seconds(lifetime),
+        roles,
     };
     task::block_in_place(|| db.create_session(session_id, session))?;
 
@@ -3115,13 +3333,16 @@ async fn api_auth_me(
             "username":   s.username,
             "avatar":     s.avatar,
             "is_admin":   s.is_admin,
+            // The admin roles this session holds (see admin.rs); every one
+            // for a full admin.
+            "roles":      admin::role_names(if s.is_admin { admin::Role::ALL } else { s.roles }),
             "ucid":       ucid.map(|u| u.to_string()),
             "side":       side,
         }
     })).map_err(anyhow::Error::from)?))
 }
 
-/// GET /api/auth/logout  — clear session cookie
+/// POST /api/auth/logout  — end the session and clear its cookie
 async fn api_auth_logout(
     session_id: Option<Uuid>,
     db: StatsDb,
@@ -3141,7 +3362,6 @@ async fn api_auth_logout(
 #[derive(Deserialize)]
 struct LocalLoginBody { username: String, password: String }
 
-/// POST /api/auth/local-login  — username/password admin login (no Discord required)
 /// Failed local-login attempts per client IP: 5 in 15 minutes locks that
 /// address out for 15 minutes.
 static LOCAL_LOGIN_FAILS: std::sync::LazyLock<websec::RateLimiter<std::net::IpAddr>> =
@@ -3160,6 +3380,7 @@ static LOCAL_LOGIN_FAILS: std::sync::LazyLock<websec::RateLimiter<std::net::IpAd
 const ADMIN_SESSION_SECS: i64 = 12 * 3600;
 const PLAYER_SESSION_SECS: i64 = 7 * 24 * 3600;
 
+/// POST /api/auth/local-login  — username/password admin login (no Discord required)
 async fn api_auth_local_login(
     body: LocalLoginBody,
     local_cfg: Option<LocalAdminConfig>,
@@ -3205,6 +3426,7 @@ async fn api_auth_local_login(
         avatar:     None,
         is_admin:   true,
         expires:    chrono::Utc::now() + chrono::Duration::seconds(ADMIN_SESSION_SECS),
+        roles:      admin::Role::ALL,
     };
     task::block_in_place(|| db.create_session(session_id, session))?;
     let cookie = format!(
@@ -3221,16 +3443,77 @@ async fn api_auth_local_login(
 
 // ── Admin handlers ───────────────────────────────────────────────────
 
+/// A full admin: the Discord admin role, or the local password login. Kept
+/// for what no narrower role covers (campaign resets, sessions, the audit
+/// log, shutdown).
 async fn require_admin(session_id: Option<Uuid>, db: StatsDb) -> std::result::Result<SessionData, Error> {
-    let Some(id) = session_id else {
-        return Err(websec::unauthorized("not logged in").into());
-    };
-    let session = task::block_in_place(|| db.get_session(id))?
-        .ok_or_else(|| websec::unauthorized("session expired"))?;
+    let session = require_session(session_id, &db)?;
     if !session.is_admin {
         return Err(websec::forbidden("forbidden").into());
     }
     Ok(session)
+}
+
+/// A full admin, or a session holding `role` (see `admin::Role` and the
+/// `--discord-*-role-id` flags). Every existing admin has every role, so for
+/// them nothing changed.
+async fn require_role(session_id: Option<Uuid>, db: StatsDb, role: u8) -> std::result::Result<SessionData, Error> {
+    let session = require_session(session_id, &db)?;
+    if !admin::has_role(&session, role) {
+        return Err(websec::forbidden("forbidden").into());
+    }
+    Ok(session)
+}
+
+fn require_session(session_id: Option<Uuid>, db: &StatsDb) -> std::result::Result<SessionData, Error> {
+    let Some(id) = session_id else {
+        return Err(websec::unauthorized("not logged in").into());
+    };
+    Ok(task::block_in_place(|| db.get_session(id))?.ok_or_else(|| websec::unauthorized("session expired"))?)
+}
+
+/// Record an admin action: the `ADMIN:` log line it always had, plus a row
+/// in the persistent audit log (`GET /api/admin/audit`).
+fn audit(db: &StatsDb, who: &SessionData, action: &str, target: Option<&str>, inst: Option<&str>) {
+    log::info!(
+        "ADMIN: {} ({}) {action}{}{}",
+        who.username,
+        who.discord_id,
+        target.map(|t| format!(" {t}")).unwrap_or_default(),
+        inst.map(|i| format!(" [{i}]")).unwrap_or_default(),
+    );
+    let entry = db::AuditEntry {
+        at: chrono::Utc::now(),
+        who: who.discord_id.clone(),
+        username: who.username.clone(),
+        action: action.to_string(),
+        target: target.map(str::to_string),
+        instance: inst.map(str::to_string),
+    };
+    if let Err(e) = task::block_in_place(|| db.audit_put(&entry)) {
+        log::warn!("audit log write failed: {e:#}");
+    }
+}
+
+/// GET /api/admin/audit?limit=&before= -- the admin audit log, newest first.
+/// `before` is an RFC 3339 time (the `at` of the last row of the previous page).
+async fn api_admin_audit(
+    session_id: Option<Uuid>,
+    q: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+) -> std::result::Result<impl warp::Reply, Error> {
+    require_admin(session_id, db.clone()).await?;
+    let limit = q.get("limit").and_then(|s| s.parse::<usize>().ok()).unwrap_or(200).clamp(1, 1000);
+    let before = match q.get("before") {
+        Some(b) => Some(
+            chrono::DateTime::parse_from_rfc3339(b)
+                .map_err(|_| websec::bad_request("before: not an RFC 3339 time"))?
+                .with_timezone(&chrono::Utc),
+        ),
+        None => None,
+    };
+    let rows = task::block_in_place(|| db.audit_list(limit, before))?;
+    Ok(warp::reply::json(&rows))
 }
 
 // ── Cockpit UI handlers ──────────────────────────────────────────────
@@ -3325,6 +3608,49 @@ async fn resolve_by_player_id(
     Ok(ucid)
 }
 
+/// The cockpit routes' query map, with the overlay key taken from the
+/// `X-Cockpit-Key` header when it is sent there -- a header stays out of
+/// proxy and browser history logs, where `?ckey=` lands. `?ckey=` still
+/// works: every overlay released so far sends it.
+fn cockpit_query(
+) -> impl Filter<Extract = (std::collections::HashMap<std::string::String, std::string::String>,), Error = warp::Rejection> + Clone {
+    warp::query::<std::collections::HashMap<std::string::String, std::string::String>>()
+        .and(warp::header::optional::<std::string::String>("x-cockpit-key"))
+        .map(
+            |mut q: std::collections::HashMap<std::string::String, std::string::String>, key: Option<std::string::String>| {
+                if let Some(k) = key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty()) {
+                    q.insert("ckey".into(), k);
+                }
+                q
+            },
+        )
+}
+
+/// Overlay versions seen on cockpit requests (`?plugin=`): requests and the
+/// last time, per version. Shown in `/api/metrics`; a version's first
+/// appearance is logged.
+static COCKPIT_PLUGINS: std::sync::LazyLock<
+    Mutex<std::collections::HashMap<std::string::String, (u64, chrono::DateTime<chrono::Utc>)>>,
+> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+fn note_cockpit_plugin(query: &std::collections::HashMap<std::string::String, std::string::String>) {
+    let v = match query.get("plugin").map(|s| s.trim()) {
+        Some(v) if !v.is_empty() && v.len() <= 32 && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')) => v,
+        Some(_) => "invalid",
+        None => "none",
+    };
+    let mut g = COCKPIT_PLUGINS.lock().unwrap_or_else(|e| e.into_inner());
+    if g.len() >= 64 && !g.contains_key(v) {
+        return;
+    }
+    let e = g.entry(v.to_string()).or_insert_with(|| {
+        log::info!("cockpit: first request from overlay version {v}");
+        (0, chrono::Utc::now())
+    });
+    e.0 += 1;
+    e.1 = chrono::Utc::now();
+}
+
 async fn require_linked_player(
     query: &std::collections::HashMap<std::string::String, std::string::String>,
     session_id: Option<Uuid>,
@@ -3333,6 +3659,7 @@ async fn require_linked_player(
     inst: &InstanceState,
     ip: std::net::IpAddr,
 ) -> std::result::Result<dcso3::net::Ucid, Error> {
+    note_cockpit_plugin(query);
     let player_id = query.get("playerid").and_then(|s| s.parse::<i64>().ok());
     let key = query.get("ckey").map(|s| s.trim()).filter(|s| !s.is_empty());
     if let (Some(id), Some(key)) = (player_id, key) {
@@ -3546,13 +3873,70 @@ fn cockpit_plugin_version() -> &'static str {
         .unwrap_or("unknown")
 }
 
-/// GET /api/cockpit/plugin/version — what the current overlay version is.
+/// `--cockpit-plugin-version`: advertise this overlay version as is, with no
+/// release check. Set once in `main`.
+static COCKPIT_VERSION_OVERRIDE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
+
+/// Whether the installer for the bundled overlay version is published, as
+/// last checked, and when.
+static COCKPIT_RELEASE: std::sync::LazyLock<Mutex<(Option<(std::time::Instant, bool)>, bool)>> =
+    std::sync::LazyLock::new(|| Mutex::new((None, false)));
+
+/// Re-check a confirmed release this often, a missing one sooner.
+const COCKPIT_RELEASE_RECHECK_OK: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+const COCKPIT_RELEASE_RECHECK_MISSING: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The overlay version to advertise. The one bfdb was built with is only
+/// offered once its `cockpit-v<version>` release asset is confirmed on
+/// GitHub: an overlay told about a version whose installer is not out yet
+/// tried to update itself and got a 404. Until then the answer is
+/// "unknown", which no overlay or dashboard takes for an update. The check
+/// runs in the background; a request never waits on GitHub.
+fn advertised_cockpit_version() -> std::string::String {
+    if let Some(v) = COCKPIT_VERSION_OVERRIDE.get() {
+        return v.clone();
+    }
+    let built = cockpit_plugin_version();
+    let (known, start) = {
+        let mut g = COCKPIT_RELEASE.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = g.0.map_or(false, |(at, ok)| {
+            at.elapsed() < if ok { COCKPIT_RELEASE_RECHECK_OK } else { COCKPIT_RELEASE_RECHECK_MISSING }
+        });
+        let start = !fresh && !g.1;
+        if start {
+            g.1 = true;
+        }
+        (g.0.map(|(_, ok)| ok), start)
+    };
+    if start && built != "unknown" {
+        let url = format!("{COCKPIT_RELEASES}/cockpit-v{built}/{COCKPIT_INSTALLER_ASSET}");
+        tokio::spawn(async move {
+            let ok = http_client().head(&url).send().await.map_or(false, |r| r.status().is_success());
+            let mut g = COCKPIT_RELEASE.lock().unwrap_or_else(|e| e.into_inner());
+            if !ok && g.0.map_or(true, |(_, was)| was) {
+                log::warn!("cockpit: no published installer at {url} yet -- advertising overlay version \"unknown\" until there is");
+            }
+            *g = (Some((std::time::Instant::now(), ok)), false);
+        });
+    }
+    match known {
+        Some(true) => built.to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+/// GET /api/cockpit/plugin/version — what the current overlay version is
+/// (see `advertised_cockpit_version`); `built` is the copy this bfdb ships.
 ///
 /// Open on purpose: a player needs this before they are identified, and it
 /// reveals nothing.
-async fn api_cockpit_plugin_version() -> std::result::Result<impl warp::Reply, Error> {
+async fn api_cockpit_plugin_version(
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+) -> std::result::Result<impl warp::Reply, Error> {
+    note_cockpit_plugin(&query);
     Ok(warp::reply::json(&serde_json::json!({
-        "version": cockpit_plugin_version(),
+        "version": advertised_cockpit_version(),
+        "built": cockpit_plugin_version(),
     })))
 }
 
@@ -3565,10 +3949,10 @@ const COCKPIT_INSTALLER_ASSET: &str = "VectorStrike-Cockpit-Install.exe";
 /// GET /api/cockpit/plugin/installer — the installer for the version this bfdb
 /// ships, so the wiki and dashboard have one link that is never out of date.
 async fn api_cockpit_plugin_installer() -> std::result::Result<impl warp::Reply, Error> {
-    let url = format!(
-        "{COCKPIT_RELEASES}/cockpit-v{}/{COCKPIT_INSTALLER_ASSET}",
-        cockpit_plugin_version()
-    );
+    // The newest published one; the bundled version's until that is known.
+    let advertised = advertised_cockpit_version();
+    let version = if advertised == "unknown" { cockpit_plugin_version().to_string() } else { advertised };
+    let url = format!("{COCKPIT_RELEASES}/cockpit-v{version}/{COCKPIT_INSTALLER_ASSET}");
     Ok(warp::redirect::temporary(url.parse::<warp::http::Uri>().unwrap()))
 }
 
@@ -3710,11 +4094,12 @@ async fn api_cockpit_menu_invoke(
 async fn api_admin_sessions(
     session_id: Option<Uuid>,
     db: StatsDb,
+    q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
     require_admin(session_id, db.clone()).await?;
-    let data = task::block_in_place(|| -> Result<String> {
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let sessions = db.list_sessions()?;
-        let entries: Vec<_> = sessions.iter().map(|(_, s)| {
+        let entries: Vec<_> = sessions.iter().map(|s| {
             serde_json::json!({
                 "discord_id": s.discord_id,
                 "username":   s.username,
@@ -3723,9 +4108,9 @@ async fn api_admin_sessions(
                 "expires":    s.expires.to_rfc3339(),
             })
         }).collect();
-        Ok(serde_json::to_string(&entries)?)
+        page_json(entries, &q, ADMIN_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 
@@ -3748,11 +4133,7 @@ async fn api_admin_revoke_sessions(
     let who = require_admin(session_id, db.clone()).await?;
     let target = body.discord_id.as_deref().filter(|s| !s.is_empty());
     let n = task::block_in_place(|| db.revoke_sessions(target))?;
-    log::warn!(
-        "ADMIN: {} revoked {n} session(s) ({})",
-        who.discord_id,
-        target.unwrap_or("all users")
-    );
+    audit(&db, &who, &format!("revoke {n} session(s)"), Some(target.unwrap_or("all users")), None);
     Ok(warp::reply::json(&serde_json::json!({ "ok": true, "revoked": n })))
 }
 
@@ -3800,8 +4181,9 @@ async fn api_admin_shutdown(
 async fn api_metrics(
     q: std::collections::HashMap<std::string::String, std::string::String>,
     auth_header: Option<std::string::String>,
-    expected: Arc<Option<std::string::String>>,
+    tokens: Arc<(Option<std::string::String>, Option<std::string::String>)>,
     db: StatsDb,
+    ip: std::net::IpAddr,
 ) -> Response {
     use std::fmt::Write as _;
     let text = |status: warp::http::StatusCode, body: std::string::String| {
@@ -3813,11 +4195,13 @@ async fn api_metrics(
             .unwrap()
             .into_response()
     };
-    let Some(expected) = expected.as_deref() else {
-        return text(warp::http::StatusCode::NOT_FOUND, "metrics disabled (no --log-read-token)\n".into());
-    };
-    if !bearer_or_query_token(&q, auth_header.as_deref(), expected) {
-        return text(warp::http::StatusCode::UNAUTHORIZED, "bad or missing token\n".into());
+    // --metrics-token, or the log-read token as before.
+    let accepted: Vec<&str> = [tokens.0.as_deref(), tokens.1.as_deref()].into_iter().flatten().collect();
+    if accepted.is_empty() {
+        return text(warp::http::StatusCode::NOT_FOUND, "metrics disabled (no --metrics-token or --log-read-token)\n".into());
+    }
+    if let Err((status, why)) = check_static_token(&q, auth_header.as_deref(), &accepted, ip) {
+        return text(status, why.into());
     }
     let mut out = std::string::String::new();
     let size = db.sled().size_on_disk().unwrap_or(0);
@@ -3838,6 +4222,16 @@ async fn api_metrics(
             let _ = writeln!(out, "bfdb_engine_reachable{{instance=\"{id}\"}} {}", ok as u8);
         }
     }
+    {
+        let g = COCKPIT_PLUGINS.lock().unwrap_or_else(|e| e.into_inner());
+        if !g.is_empty() {
+            let _ = writeln!(out, "# TYPE bfdb_cockpit_plugin_requests_total counter");
+            for (v, (n, _)) in g.iter() {
+                let _ = writeln!(out, "bfdb_cockpit_plugin_requests_total{{version=\"{v}\"}} {n}");
+            }
+        }
+    }
+    websec::write_request_metrics(&mut out);
     let _ = writeln!(out, "# TYPE bfdb_build_info gauge\nbfdb_build_info{{version=\"{BUILD_VERSION}\",git=\"{BUILD_GIT}\"}} 1");
     text(warp::http::StatusCode::OK, out)
 }
@@ -3854,19 +4248,47 @@ fn ingest_lag_secs(st: &InstanceState) -> Option<i64> {
 static DB_PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// A static token from `?token=` or `Authorization: Bearer`, compared in
-/// constant time. The query form stays: WebFetch-style tooling cannot set
-/// headers.
+/// constant time against each accepted one. The query form stays:
+/// WebFetch-style tooling cannot set headers.
 fn bearer_or_query_token(
     q: &std::collections::HashMap<std::string::String, std::string::String>,
     auth_header: Option<&str>,
-    expected: &str,
+    accepted: &[&str],
 ) -> bool {
     let provided = q.get("token").cloned().or_else(|| {
         auth_header
             .and_then(|h| h.strip_prefix("Bearer ").or_else(|| h.strip_prefix("bearer ")))
             .map(|s| s.trim().to_string())
     });
-    provided.as_deref().map_or(false, |p| websec::ct_eq(p, expected))
+    provided.as_deref().map_or(false, |p| {
+        // every candidate is compared, so which one matched takes no less time
+        accepted.iter().fold(false, |ok, want| websec::ct_eq(p, want) | ok)
+    })
+}
+
+/// Wrong log/metrics tokens per client IP: 20 in ten minutes locks that
+/// address out of both for ten minutes.
+static TOKEN_FAILS: std::sync::LazyLock<websec::RateLimiter<std::net::IpAddr>> =
+    std::sync::LazyLock::new(|| {
+        websec::RateLimiter::new(20, std::time::Duration::from_secs(600), std::time::Duration::from_secs(600))
+    });
+
+/// `bearer_or_query_token`, rate limited per client IP.
+fn check_static_token(
+    q: &std::collections::HashMap<std::string::String, std::string::String>,
+    auth_header: Option<&str>,
+    accepted: &[&str],
+    ip: std::net::IpAddr,
+) -> std::result::Result<(), (warp::http::StatusCode, &'static str)> {
+    if TOKEN_FAILS.blocked(&ip).is_some() {
+        return Err((warp::http::StatusCode::TOO_MANY_REQUESTS, "too many bad tokens -- try again later\n"));
+    }
+    if bearer_or_query_token(q, auth_header, accepted) {
+        return Ok(());
+    }
+    TOKEN_FAILS.hit(&ip);
+    log::warn!("bad or missing log/metrics token from {ip}");
+    Err((warp::http::StatusCode::UNAUTHORIZED, "bad or missing token\n"))
 }
 
 /// Largest JSON body any route accepts, unless it sets its own limit. Every
@@ -3879,7 +4301,7 @@ async fn api_admin_reset(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_admin(session_id, db.clone()).await?;
     // On a range-only box the range is the default, and with one instance a
     // reset takes the whole-database path: every pilot and round gone.
     if inst.cfg.is_range() {
@@ -3889,7 +4311,7 @@ async fn api_admin_reset(
         ))));
     }
     task::block_in_place(|| db.reset_campaign_data_for(&inst))?;
-    log::info!("ADMIN: campaign data reset by admin");
+    audit(&db, &who, "reset campaign", None, Some(&inst.id));
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -3900,9 +4322,9 @@ async fn api_admin_reset_lives_all(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let reply = call_engine_rpc_str(&db, &inst, "reset-lives-all", vec![]).await?;
-    log::info!("ADMIN: reset all player lives: {reply}");
+    audit(&db, &who, "reset all lives", Some(&reply), Some(&inst.id));
     Ok(warp::reply::json(
         &serde_json::json!({"ok": true, "message": reply}),
     ))
@@ -3926,7 +4348,7 @@ async fn api_admin_side_switch(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     use netidx::publisher::Value;
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     // The engine parses sides as DCS spells them: lowercase.
     let side = match body.side.to_ascii_lowercase().as_str() {
         "blue" => "blue",
@@ -3948,7 +4370,7 @@ async fn api_admin_side_switch(
         vec![("player", Value::from(player.to_string())), ("side", Value::from(side.to_string()))],
     )
     .await?;
-    log::info!("ADMIN: [{}] side switch {player} -> {side}: {reply}", inst.id);
+    audit(&db, &who, "side switch", Some(&format!("{player} -> {side}: {reply}")), Some(&inst.id));
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "message": reply})))
 }
 
@@ -3961,13 +4383,13 @@ async fn api_admin_merge_rounds(
     session_id: Option<Uuid>,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_admin(session_id, db.clone()).await?;
     let dry_run = query
         .get("dry_run")
         .map(|v| v != "false" && v != "0")
         .unwrap_or(true);
     let msg = task::block_in_place(|| db.merge_all_rounds(dry_run))?;
-    log::warn!("ADMIN: merge-rounds (dry_run={dry_run}): {msg}");
+    audit(&db, &who, if dry_run { "merge rounds (dry run)" } else { "merge rounds" }, Some(&msg), None);
     Ok(warp::reply::json(&serde_json::json!({ "ok": true, "dry_run": dry_run, "message": msg })))
 }
 
@@ -3980,9 +4402,9 @@ async fn api_admin_rebuild_stats(
     session_id: Option<Uuid>,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_admin(session_id, db.clone()).await?;
     task::block_in_place(|| db.request_jsonl_rebuild())?;
-    log::warn!("ADMIN: in-process stats rebuild queued");
+    audit(&db, &who, "rebuild stats", None, None);
     Ok(warp::reply::json(&serde_json::json!({
         "ok": true,
         "message": "rebuild queued -- bfdb will wipe derived stats and re-ingest the log over the next few minutes"
@@ -3998,7 +4420,7 @@ async fn api_admin_bot_status(
     bot_cfg: Arc<Option<BotLinkConfig>>,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let info = fetch_bot_server_info(&bot_cfg, &inst).await;
     Ok(warp::reply::json(&serde_json::json!({
         "configured": bot_cfg.is_some(),
@@ -4016,12 +4438,12 @@ async fn api_admin_bot_action(
     inst: Inst,
     path: &'static str,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
     // Admin-only, and the admin needs to know why the bot said no.
     let body = bot_instance_action(&bot_cfg, &inst, path)
         .await
         .map_err(|e| Error(websec::unavailable(format!("{e:#}"))))?;
-    log::info!("ADMIN: DCSServerBot {path} triggered on instance {:?}", inst.id);
+    audit(&db, &who, "DCSServerBot", Some(path), Some(&inst.id));
     Ok(warp::reply::json(&body))
 }
 
@@ -4104,7 +4526,7 @@ async fn api_admin_ops_proxy(
     bot_cfg: Arc<Option<BotLinkConfig>>,
 ) -> std::result::Result<warp::reply::Response, Error> {
     use warp::http::StatusCode;
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let path = tail.as_str();
     let json_err = |status: StatusCode, msg: String| {
         warp::reply::with_status(warp::reply::json(&serde_json::json!({ "error": msg })), status)
@@ -4129,11 +4551,17 @@ async fn api_admin_ops_proxy(
         url.push('?');
         url.push_str(&query);
     }
-    let http = reqwest::Client::builder()
-        // an update check downloads the release; give it room
-        .timeout(std::time::Duration::from_secs(300))
-        .build()
-        .map_err(|e| anyhow::anyhow!("http client: {e}"))?;
+    // One client for every OPS call: its connection pool to the bot is
+    // reused instead of rebuilt (TLS and all) per request.
+    static OPS_HTTP: std::sync::LazyLock<std::result::Result<reqwest::Client, std::string::String>> =
+        std::sync::LazyLock::new(|| {
+            reqwest::Client::builder()
+                // an update check downloads the release; give it room
+                .timeout(std::time::Duration::from_secs(300))
+                .build()
+                .map_err(|e| e.to_string())
+        });
+    let http = OPS_HTTP.as_ref().map_err(|e| anyhow::anyhow!("http client: {e}"))?;
     let req = if method == warp::http::Method::POST {
         http.post(&url)
             .header("content-type", "application/json")
@@ -4170,7 +4598,7 @@ async fn api_admin_ops_proxy(
         ));
     }
     if method == warp::http::Method::POST {
-        log::info!("ADMIN: OPS {path} -> {status}");
+        audit(&db, &who, "OPS", Some(&format!("{path} -> {status}")), None);
     }
     let mut out = warp::reply::Response::new(data.to_vec().into());
     *out.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -4184,6 +4612,38 @@ async fn api_admin_ops_proxy(
     Ok(out)
 }
 
+/// How many `<cfg>.bak.<time>` copies a config save leaves beside the file.
+const CFG_BACKUPS_KEPT: usize = 20;
+
+/// Delete all but the newest `keep` `<cfg>.bak.<YYYYmmddHHMMSS>` copies of
+/// `cfg`. Every save made one and nothing removed them.
+fn prune_cfg_backups(cfg: &std::path::Path, keep: usize) {
+    let (Some(dir), Some(name)) = (cfg.parent(), cfg.file_name().and_then(|n| n.to_str())) else { return };
+    let prefix = format!("{name}.bak.");
+    let Ok(rd) = std::fs::read_dir(if dir.as_os_str().is_empty() { std::path::Path::new(".") } else { dir }) else {
+        return;
+    };
+    let mut baks: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(|n| n.strip_prefix(&prefix))
+                .map_or(false, |ts| ts.len() == 14 && ts.bytes().all(|b| b.is_ascii_digit()))
+        })
+        .collect();
+    // the timestamp sorts as text
+    baks.sort();
+    if baks.len() > keep {
+        for old in &baks[..baks.len() - keep] {
+            if let Err(e) = std::fs::remove_file(old) {
+                log::warn!("could not remove old config backup {}: {e}", old.display());
+            }
+        }
+    }
+}
+
 /// GET /api/admin/cfg  — read the current campaign engine config JSON (admin only)
 async fn api_admin_cfg_get(
     session_id: Option<Uuid>,
@@ -4191,7 +4651,7 @@ async fn api_admin_cfg_get(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let path: Arc<Option<PathBuf>> = Arc::new(inst.cfg.engine_config.clone());
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let path = path
         .as_ref()
         .clone()
@@ -4210,7 +4670,7 @@ async fn api_admin_cfg_schema(
     session_id: Option<Uuid>,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let schema = schemars::schema_for!(bfprotocols::cfg::Cfg);
     Ok(warp::reply::json(&schema))
 }
@@ -4233,7 +4693,7 @@ async fn api_admin_cfg_post(
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
     let path: Arc<Option<PathBuf>> = Arc::new(inst.cfg.engine_config.clone());
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let path = path
         .as_ref()
         .clone()
@@ -4251,12 +4711,13 @@ async fn api_admin_cfg_post(
             ));
             std::fs::copy(&path, &backup)
                 .map_err(|e| anyhow::anyhow!("backing up {:?} to {:?}: {e}", path, backup))?;
+            prune_cfg_backups(&path, CFG_BACKUPS_KEPT);
         }
         std::fs::write(&path, pretty)
             .map_err(|e| anyhow::anyhow!("writing {:?}: {e}", path))?;
         Ok(())
     })?;
-    log::info!("ADMIN: engine config saved");
+    audit(&db, &who, "save engine config", path.to_str(), Some(&inst.id));
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -4265,7 +4726,7 @@ async fn api_admin_cfg_post(
 /// GET /api/wiki/pages  — list all pages (slug/title/section/order only, no
 /// content) for building the sidebar. Public -- reading the wiki needs no
 /// login, only editing does.
-async fn api_wiki_list(db: StatsDb) -> std::result::Result<impl warp::Reply, Error> {
+async fn api_wiki_list(db: StatsDb, q: Q) -> std::result::Result<impl warp::Reply, Error> {
     let pages = task::block_in_place(|| db.wiki_list_pages())?;
     let entries: Vec<_> = pages.iter().map(|(slug, p)| {
         serde_json::json!({
@@ -4275,7 +4736,7 @@ async fn api_wiki_list(db: StatsDb) -> std::result::Result<impl warp::Reply, Err
             "order": p.order,
         })
     }).collect();
-    Ok(warp::reply::json(&entries))
+    Ok(paged_response(page_json(entries, &q, WIKI_LIST_CAP)?))
 }
 
 /// A wiki slug: `/`-separated segments of letters, digits, `-`, `_` and `.`,
@@ -4503,7 +4964,7 @@ async fn api_admin_news_regenerate_image(
     images: Option<Arc<news_image::ImageCfg>>,
 ) -> std::result::Result<warp::reply::Response, Error> {
     use warp::Reply;
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::CONTENT).await?;
     let Some(cfg) = images else {
         return Err(websec::unavailable(
             "dispatch pictures are not configured (--news-image-url / --news-image-key)",
@@ -4528,6 +4989,7 @@ async fn api_admin_news_regenerate_image(
         )
         .into());
     }
+    audit(&db, &who, "regenerate news image", Some(&day), Some(&inst.id));
     let inst_cfg = inst.cfg.clone();
     let inst_id = inst.id.clone();
     let day2 = day.clone();
@@ -4642,7 +5104,7 @@ async fn api_wiki_save(
     body: SaveWikiPageBody,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let session = require_admin(session_id, db.clone()).await?;
+    let session = require_role(session_id, db.clone(), admin::Role::CONTENT).await?;
     let slug = slug.as_str().to_string();
     if !valid_wiki_slug(&slug) {
         return Err(websec::bad_request(
@@ -4656,10 +5118,10 @@ async fn api_wiki_save(
         order:      body.order,
         content:    body.content,
         updated_at: chrono::Utc::now(),
-        updated_by: session.discord_id,
+        updated_by: session.discord_id.clone(),
     };
     task::block_in_place(|| db.wiki_save_page(&slug, page))?;
-    log::info!("ADMIN: wiki page '{}' saved", slug);
+    audit(&db, &session, "save wiki page", Some(&slug), None);
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -4676,9 +5138,9 @@ async fn api_wiki_delete(
     body: DeleteWikiPageBody,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
-    task::block_in_place(|| db.wiki_delete_page(&body.slug))?;
-    log::info!("ADMIN: wiki page '{}' deleted", body.slug);
+    let who = require_role(session_id, db.clone(), admin::Role::CONTENT).await?;
+    task::block_in_place(|| db.wiki_delete_page(&body.slug, &who.discord_id))?;
+    audit(&db, &who, "delete wiki page", Some(&body.slug), None);
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -4694,7 +5156,7 @@ async fn api_wiki_upload_image(
     body: bytes::Bytes,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let session = require_admin(session_id, db.clone()).await?;
+    let session = require_role(session_id, db.clone(), admin::Role::CONTENT).await?;
     // Judged by the bytes, not the claimed type: an SVG (script and all) or
     // HTML labelled image/png is refused.
     let Some(sniffed) = websec::sniff_image(&body) else {
@@ -4708,10 +5170,10 @@ async fn api_wiki_upload_image(
         content_type: sniffed.to_string(),
         data: body.to_vec(),
         uploaded_at: chrono::Utc::now(),
-        uploaded_by: session.discord_id,
+        uploaded_by: session.discord_id.clone(),
     };
     task::block_in_place(|| db.wiki_save_image(id, image))?;
-    log::info!("ADMIN: wiki image {id} uploaded");
+    audit(&db, &session, "upload wiki image", Some(&id.to_string()), None);
     Ok(warp::reply::json(&serde_json::json!({
         "id": id.to_string(),
         "url": format!("/api/wiki/images/{id}"),
@@ -4768,7 +5230,6 @@ fn parse_side(s: &str) -> Option<dcso3::coalition::Side> {
 /// per-side briefing).
 struct Caller {
     session: SessionData,
-    #[allow(dead_code)]
     ucid: Option<dcso3::net::Ucid>,
     /// The coalition whose data the caller gets. For a registered player this
     /// is *their* side, full stop. For a dashboard admin with no in-game
@@ -5119,7 +5580,7 @@ async fn api_intel_purge(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     task::block_in_place(|| -> Result<()> {
         if db.instances().is_single() {
             db.intel_purge_all()
@@ -5129,7 +5590,7 @@ async fn api_intel_purge(
             db.intel_purge_all_for(&rounds)
         }
     })?;
-    log::info!("[{}] ADMIN: recon intel purged", inst.id);
+    audit(&db, &who, "purge recon intel", None, Some(&inst.id));
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
@@ -5362,7 +5823,7 @@ async fn api_admin_perf(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
 
     // Prefer a live snapshot from the running engine (query-perf, added
     // alongside query-objectives) over the last *completed* session's
@@ -5659,7 +6120,7 @@ async fn api_admin_commanders(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     let cfg = command::command_cfg(&inst);
     let roster = task::block_in_place(|| command::roster(&db, &inst))?;
     Ok(json_response(
@@ -5690,7 +6151,7 @@ async fn api_admin_commander_grant(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let session = require_admin(session_id, db.clone()).await?;
+    let session = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     let ucid: dcso3::net::Ucid = match body.ucid.trim().parse() {
         Ok(u) => u,
         Err(_) => return Err(websec::bad_request("not a ucid").into()),
@@ -5702,7 +6163,7 @@ async fn api_admin_commander_grant(
     });
     task::block_in_place(|| db.set_commander_grant(&ucid, rec.as_ref()))?;
     command::invalidate();
-    log::info!("ADMIN: {} set commander access for {ucid} to {:?}", session.username, body.grant);
+    audit(&db, &session, "commander access", Some(&format!("{ucid} -> {:?}", body.grant)), Some(&inst.id));
     let ids: Vec<InstanceId> = db.instances().all().iter().map(|c| Arc::from(c.id.as_str())).collect();
     for id in ids {
         let st = db.state(&id);
@@ -5728,7 +6189,7 @@ async fn api_admin_pilot_sides(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     let data = task::block_in_place(|| -> Result<String> {
         let mut pilots: Vec<serde_json::Value> = db
             .all_pilot_sides(&inst.id)?
@@ -5756,9 +6217,10 @@ async fn api_admin_pilot_sides(
 async fn api_admin_banned(
     session_id: Option<Uuid>,
     db: StatsDb,
+    q: Q,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
-    let data = task::block_in_place(|| -> Result<String> {
+    require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
+    let data = task::block_in_place(|| -> Result<(String, usize)> {
         let web_bans = db.list_admin_bans()?;
         let cfg_bans = db.session_bans_from_cfg()?;
         let entries: Vec<_> = web_bans.iter().map(|(ucid, rec)| serde_json::json!({
@@ -5780,9 +6242,9 @@ async fn api_admin_banned(
                 "source":    "engine",
             }))
         })).collect();
-        Ok(serde_json::to_string(&entries)?)
+        page_json(entries, &q, ADMIN_LIST_CAP)
     })?;
-    Ok(json_response(data))
+    Ok(paged_response(data))
 }
 
 /// GET /api/admin/engine-errors  — recent ERROR/WARN lines from the live
@@ -5795,7 +6257,7 @@ async fn api_admin_engine_errors(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let lines = db.engine_error_snapshot(&inst);
     Ok(json_response(serde_json::to_string(&lines).map_err(|e| Error(e.into()))?))
 }
@@ -5821,6 +6283,7 @@ async fn api_logs(
     bfdb_log: LogHistory,
     inst: Inst,
     bot_cfg: Arc<Option<BotLinkConfig>>,
+    ip: std::net::IpAddr,
 ) -> Response {
     fn text(status: warp::http::StatusCode, body: impl Into<String>) -> Response {
         warp::http::Response::builder()
@@ -5836,8 +6299,8 @@ async fn api_logs(
     };
     // `?token=` is kept on purpose (tooling that cannot set headers relies on
     // it); bfdb writes no access log, so it never lands in one of ours.
-    if !bearer_or_query_token(&q, auth_header.as_deref(), expected) {
-        return text(warp::http::StatusCode::UNAUTHORIZED, "bad or missing token\n");
+    if let Err((status, why)) = check_static_token(&q, auth_header.as_deref(), &[expected.as_str()], ip) {
+        return text(status, why);
     }
 
     // Sources the DCSServerBot plugin owns (loganalyzer.py / opsapi.py):
@@ -5976,7 +6439,7 @@ async fn api_admin_ban(
     body: BanBody,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     let ucid = body.ucid.parse::<dcso3::net::Ucid>()
         .map_err(|e| Error(websec::bad_request(format!("invalid ucid: {e}"))))?;
     let until = body.until.as_deref()
@@ -5991,26 +6454,26 @@ async fn api_admin_ban(
         reason: body.reason.clone(),
     };
     task::block_in_place(|| db.ban_player(ucid, record))?;
-    log::info!("ADMIN: banned {} ({})", body.name, body.ucid);
+    audit(&db, &who, "ban", Some(&format!("{} ({})", body.name, body.ucid)), None);
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
 #[derive(serde::Deserialize)]
-struct UnbanBody2 {
+struct UnbanBody {
     ucid: std::string::String,
 }
 
 /// POST /api/admin/unban  — remove a ban record
-async fn api_admin_unban2(
+async fn api_admin_unban(
     session_id: Option<Uuid>,
-    body: UnbanBody2,
+    body: UnbanBody,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_role(session_id, db.clone(), admin::Role::MODERATION).await?;
     let ucid = body.ucid.parse::<dcso3::net::Ucid>()
         .map_err(|e| Error(websec::bad_request(format!("invalid ucid: {e}"))))?;
     let removed = task::block_in_place(|| db.unban_player(&ucid))?;
-    log::info!("ADMIN: unbanned {}", body.ucid);
+    audit(&db, &who, "unban", Some(&body.ucid), None);
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "was_banned": removed})))
 }
 
@@ -6030,8 +6493,8 @@ async fn api_commander_spawn(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
-    log::info!("COMMANDER: spawning {} at {}", body.item_type, body.airbase);
+    let who = require_admin(session_id, db.clone()).await?;
+    audit(&db, &who, "spawn", Some(&format!("{} at {}", body.item_type, body.airbase)), Some(&inst.id));
 
     use netidx::publisher::Value;
 
@@ -6069,13 +6532,13 @@ async fn api_admin_priority(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    let who = require_admin(session_id, db.clone()).await?;
     use netidx::publisher::Value;
     call_engine_rpc_str(&db, &inst, "set-objective-priority", vec![
         ("objective", Value::from(body.objective.clone())),
         ("priority", Value::from(body.priority)),
     ]).await?;
-    log::info!("ADMIN: set priority={} on objective {}", body.priority, body.objective);
+    audit(&db, &who, "objective priority", Some(&format!("{} = {}", body.objective, body.priority)), Some(&inst.id));
     Ok(warp::reply::json(&serde_json::json!({"ok": true, "priority": body.priority})))
 }
 
@@ -6084,7 +6547,7 @@ async fn api_admin_perf_history(
     session_id: Option<Uuid>,
     db: StatsDb,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    require_admin(session_id, db.clone()).await?;
+    require_role(session_id, db.clone(), admin::Role::OPS).await?;
     let data = task::block_in_place(|| -> Result<String> {
         let history = db.session_perf_history(50)?;
         fn row(s: &dcso3::perf::HistStat) -> serde_json::Value {
@@ -6258,7 +6721,6 @@ struct WsUnitsMsg<'a> {
 
 type LiveState = Arc<tokio::sync::RwLock<(f64, Vec<LiveUnit>, Vec<Bullseye>)>>;
 
-/// WebSocket handler for `/ws/logs` — streams real-time bfdb log lines (admin only).
 /// Whether this session cookie belongs to a dashboard admin.
 fn session_is_admin(db: &StatsDb, session_id: Option<Uuid>) -> bool {
     match session_id {
@@ -6279,7 +6741,10 @@ fn admin_ws_gate(
     session_id: Option<Uuid>,
     ip: std::net::IpAddr,
 ) -> std::result::Result<websec::WsSlot, Response> {
-    if !session_is_admin(db, session_id) {
+    let ops = session_id
+        .and_then(|id| task::block_in_place(|| db.get_session(id)).ok().flatten())
+        .map_or(false, |s| admin::has_role(&s, admin::Role::OPS));
+    if !ops {
         return Err(websec::ws_refused(warp::http::StatusCode::FORBIDDEN, "admin only"));
     }
     websec::ws_slot(ip).ok_or_else(|| {
@@ -6287,6 +6752,7 @@ fn admin_ws_gate(
     })
 }
 
+/// WebSocket handler for `/ws/logs` — streams real-time bfdb log lines (ops role).
 async fn ws_logs_handler(
     ws: warp::ws::Ws,
     ip: std::net::IpAddr,
@@ -6981,13 +7447,6 @@ async fn api_unitdb(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::R
     ))
 }
 
-async fn api_unitdb_versions(
-    db: StatsDb,
-    inst: Inst,
-) -> std::result::Result<impl warp::Reply, Error> {
-    let versions = task::block_in_place(|| db.unit_db_versions(&inst.id.to_string()))?;
-    Ok(warp::reply::json(&versions))
-}
 
 async fn api_unitdb_stale(
     db: StatsDb,
@@ -6997,29 +7456,6 @@ async fn api_unitdb_stale(
     Ok(warp::reply::json(&stale))
 }
 
-#[derive(serde::Deserialize)]
-struct UnitDbDiffQuery {
-    from: std::string::String,
-    to: std::string::String,
-}
-
-async fn api_unitdb_diff(
-    q: UnitDbDiffQuery,
-    db: StatsDb,
-    inst: Inst,
-) -> std::result::Result<impl warp::Reply, Error> {
-    let inst_id = inst.id.to_string();
-    let changes = task::block_in_place(|| -> Result<Vec<db::UnitDbChange>> {
-        let load = |v: &str| -> Result<db::UnitDbSnapshot> {
-            match db.unit_db_json(&inst_id, v)? {
-                Some(j) => Ok(serde_json::from_str(&j)?),
-                None => anyhow::bail!("no unit db snapshot for DCS {v}"),
-            }
-        };
-        Ok(db::diff_unit_db(&load(&q.from)?, &load(&q.to)?))
-    })?;
-    Ok(warp::reply::json(&changes))
-}
 
 /// A weapon name worth showing, or None.
 ///
@@ -7500,9 +7936,10 @@ fn with_bot_link_cfg(
 /// here already hits on an earlier query filter, before its body is read.)
 fn with_instance(db: StatsDb) -> impl Filter<Extract = (Inst,), Error = warp::Rejection> + Clone {
     warp::query::<std::collections::HashMap<std::string::String, std::string::String>>()
+        .and(extract_session_cookie())
         .and(warp::any().map(move || db.clone()))
         .map(
-            |q: std::collections::HashMap<std::string::String, std::string::String>, db: StatsDb| {
+            |q: std::collections::HashMap<std::string::String, std::string::String>, sid: Option<Uuid>, db: StatsDb| {
                 // `?server=` lets a caller that only knows the DCSServerBot
                 // server name (the Discord plugin) address an instance without
                 // having to learn its bfdb id first.
@@ -7513,11 +7950,49 @@ fn with_instance(db: StatsDb) -> impl Filter<Extract = (Inst,), Error = warp::Re
                 });
                 let requested = by_server
                     .as_deref()
-                    .or_else(|| q.get("instance").map(|s| s.as_str()));
-                db.resolve_state(requested)
-                    .unwrap_or_else(|_| db.state(db.instances().default_id()))
+                    .or_else(|| q.get("instance").map(|s| s.as_str()))
+                    .filter(|s| !s.trim().is_empty());
+                match requested {
+                    Some(_) => db
+                        .resolve_state(requested)
+                        .unwrap_or_else(|_| db.state(db.instances().default_id())),
+                    None => db.state(&implicit_instance(&db, sid)),
+                }
             },
         )
+}
+
+/// The instance a request that names none gets: the configured default --
+/// unless that is a non-public campaign and the caller is not an admin. It
+/// used to be served regardless, so anyone who left `?instance=` off read
+/// the war the lock on `?instance=<id>` hides. Such a caller gets the first
+/// public campaign instance instead -- the one `GET /api/instances` already
+/// tells them is the default -- or, when there is none, the private default,
+/// which `bad_instance_guard` then refuses on the per-instance routes.
+fn implicit_instance(db: &StatsDb, sid: Option<Uuid>) -> InstanceId {
+    let default = db.instances().default_id().clone();
+    let Some(cfg) = db.instances().get(&default) else { return default };
+    if cfg.public || cfg.is_range() || session_is_admin(db, sid) {
+        return default;
+    }
+    db.instances()
+        .all()
+        .iter()
+        .find(|c| c.public && !c.is_range())
+        .map(|c| InstanceId::from(c.id.as_str()))
+        .unwrap_or(default)
+}
+
+/// The routes that take no `?instance=` (or gate themselves), which the
+/// private-default lock in `bad_instance_guard` leaves alone.
+fn instance_agnostic(path: &str) -> bool {
+    const PREFIXES: &[&str] = &[
+        "/api/auth/", "/api/instances", "/api/version", "/api/config", "/api/health",
+        "/api/wiki/pages", "/api/wiki/images", "/api/pilots", "/api/pilot/", "/api/squadrons",
+        "/api/progression/", "/api/cockpit/", "/api/range/", "/api/replay/", "/api/admin/",
+        "/api/metrics", "/api/logs/", "/ws/logs",
+    ];
+    PREFIXES.iter().any(|p| path.starts_with(p))
 }
 
 /// A front-of-chain guard that turns an unroutable `?instance=` / `?server=`
@@ -7537,11 +8012,13 @@ fn bad_instance_guard(
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(extract_session_cookie())
         .and(warp::any().map(move || db.clone()))
+        .and(websec::with_client_ip())
         .and_then(
             |full: warp::path::FullPath,
              q: std::collections::HashMap<std::string::String, std::string::String>,
              session_id: Option<Uuid>,
-             db: StatsDb| async move {
+             db: StatsDb,
+             ip: std::net::IpAddr| async move {
                 let path = full.as_str();
                 if !(path.starts_with("/api/") || path.starts_with("/ws/")) {
                     return Err(warp::reject::reject());
@@ -7549,6 +8026,20 @@ fn bad_instance_guard(
                 let by_instance = q.get("instance");
                 let named = q.get("server").or(by_instance);
                 let Some(name) = named.map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+                    // Nothing named: `with_instance` picks the instance. When
+                    // that can only be a non-public campaign (no public one
+                    // exists), it is locked exactly as if it had been named.
+                    // This machine's own callers (the Discord bot) are not.
+                    let implicit = implicit_instance(&db, session_id);
+                    let locked = db.instances().get(&implicit).map_or(false, |c| !c.public && !c.is_range())
+                        && !instance_agnostic(path)
+                        && !ip.is_loopback()
+                        && !session_is_admin(&db, session_id);
+                    if locked {
+                        return Ok(websec::error_response(&websec::not_found(
+                            "this server's campaign is not public -- log in as an admin",
+                        )));
+                    }
                     return Err(warp::reject::reject());
                 };
                 // `?instance=all` is meaningful on the aggregate routes; let
@@ -7774,6 +8265,34 @@ fn last_round(db: &StatsDb, cfg: &InstanceCfg) -> Option<serde_json::Value> {
     }))
 }
 
+/// `<db><suffix>`, the convention for the folders kept beside the database.
+fn beside_db(db: &std::path::Path, suffix: &str) -> PathBuf {
+    let mut p = db.as_os_str().to_os_string();
+    p.push(suffix);
+    PathBuf::from(p)
+}
+
+/// What `--backup-files` copies, named as it appears under a backup's `files/`.
+fn backup_file_list(args: &Args, db: &StatsDb, intel_dir: &std::path::Path) -> Vec<(String, PathBuf)> {
+    let mut v = vec![
+        ("intel".to_string(), intel_dir.to_path_buf()),
+        ("replays".to_string(), args.replay_dir.clone().unwrap_or_else(|| beside_db(&args.db, ".replays"))),
+        ("range-clips".to_string(), beside_db(&args.db, ".range-clips")),
+    ];
+    for cfg in db.instances().all() {
+        if let Some(p) = &cfg.engine_config {
+            v.push((format!("engine-cfg/{}", cfg.id), p.clone()));
+        }
+    }
+    if let Some(p) = &args.instances {
+        v.push(("instances.json".into(), p.clone()));
+    }
+    if let Some(p) = &args.config {
+        v.push(("campaign-config.json".into(), p.clone()));
+    }
+    v
+}
+
 /// Build the instance registry from the CLI: either `--instances <file>`, or
 /// the legacy single-server flags synthesized into one instance called
 /// `DEFAULT_INSTANCE` (which is also the id every pre-existing round in the DB
@@ -7872,7 +8391,7 @@ fn open_db_offline(args: &Args, db_path: PathBuf) -> Result<StatsDb> {
             replay_delay_secs: 0,
         });
     }
-    StatsDb::new(&std::collections::HashMap::new(), db_path, reg, None, None)
+    StatsDb::new(&std::collections::HashMap::new(), db_path, reg)
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -7894,7 +8413,50 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Secrets may come from a file or the environment instead of argv.
+    if args.trust_cf_connecting_ip && args.trusted_proxies.is_empty() {
+        eprintln!("--trust-cf-connecting-ip needs --trusted-proxy (Cloudflare's address ranges); ignoring it");
+    }
+    websec::set_trusted_proxies(websec::TrustedProxies::new(
+        args.trusted_proxies.clone(),
+        args.trust_cf_connecting_ip,
+    ));
+
+    websec::set_spa_csp(args.csp_enforce, &args.csp_extra_src);
+    if let Some(v) = args.cockpit_plugin_version.clone().filter(|v| !v.trim().is_empty()) {
+        let _ = COCKPIT_VERSION_OVERRIDE.set(v.trim().to_string());
+    }
+
+    // Secrets may come from a file or the environment instead of argv. On
+    // the command line they still work, with a warning: on Windows any local
+    // process can read another's arguments.
+    let secrets_on_argv: Vec<&'static str> = [
+        ("--admin-password", args.admin_password.is_some()),
+        ("--dcsserverbot-api-key", args.dcsserverbot_api_key.is_some()),
+        ("--discord-client-secret", args.discord_client_secret.is_some()),
+        ("--log-read-token", args.log_read_token.is_some()),
+        ("--metrics-token", args.metrics_token.is_some()),
+        ("--shutdown-token", args.shutdown_token.is_some()),
+        ("--ops-api-key", args.ops_api_key.is_some()),
+        ("--export-secret", args.export_secret.is_some()),
+        ("--news-image-key", args.news_image_key.is_some()),
+        ("--news-llm-key", args.news_llm_key.is_some()),
+        ("--hq-llm-key", args.hq_llm_key.is_some()),
+    ]
+    .into_iter()
+    .filter(|(_, on)| *on)
+    .map(|(n, _)| n)
+    .collect();
+    args.news_llm_key = secret_from(
+        args.news_llm_key.take(),
+        args.news_llm_key_file.as_deref(),
+        "BFDB_NEWS_LLM_KEY",
+    )?;
+    args.hq_llm_key = secret_from(args.hq_llm_key.take(), args.hq_llm_key_file.as_deref(), "BFDB_HQ_LLM_KEY")?;
+    args.metrics_token = secret_from(
+        args.metrics_token.take(),
+        args.metrics_token_file.as_deref(),
+        "BFDB_METRICS_TOKEN",
+    )?;
     args.admin_password = secret_from(
         args.admin_password.take(),
         args.admin_password_file.as_deref(),
@@ -8001,6 +8563,15 @@ async fn main() -> Result<()> {
         BUILD_GIT,
         build_info_json()["built"].as_str().unwrap_or("unknown")
     );
+    if args.include.is_some() || args.exclude.is_some() {
+        log::warn!("--include/--exclude do nothing and will be removed; drop them from the command line");
+    }
+    for flag in &secrets_on_argv {
+        log::warn!(
+            "{flag} was given on the command line, where other local processes can read it -- \
+             use {flag}-file or its BFDB_* environment variable instead"
+        );
+    }
     let registry = registry_from_args(&args)?;
     // True when *any* instance has a live engine to talk to.
     let has_engine = registry.all().iter().any(|i| i.base.is_some());
@@ -8033,7 +8604,7 @@ async fn main() -> Result<()> {
         // an error: the process died with code 101 and none of the advice
         // below was ever printed (Oct 8). Catch it so it is.
         let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            StatsDb::new(&subscribers, args.db.clone(), registry, args.include.clone(), args.exclude.clone())
+            StatsDb::new(&subscribers, args.db.clone(), registry)
         }));
         let opened = match opened {
             Ok(r) => r,
@@ -8079,6 +8650,7 @@ async fn main() -> Result<()> {
                 dir: backup_dir.clone(),
                 every: std::time::Duration::from_secs(args.backup_interval_hours.saturating_mul(3600)),
                 keep: args.backup_keep,
+                files: if args.backup_files { backup_file_list(&args, &db, &intel_dir) } else { Vec::new() },
             },
         );
     } else {
@@ -8139,6 +8711,11 @@ async fn main() -> Result<()> {
                 redirect_uri:  uri,
                 guild_id:      guild,
                 admin_role_id: role,
+                roles:         admin::DiscordRoles {
+                    ops: args.discord_ops_role_id.clone(),
+                    content: args.discord_content_role_id.clone(),
+                    moderation: args.discord_moderation_role_id.clone(),
+                },
             })
         }
         _ => {
@@ -8261,315 +8838,6 @@ async fn main() -> Result<()> {
             ),
         }
     }
-
-    let cross_origin = !args.cors_origins.is_empty();
-    let allowed_login_origins: Arc<Vec<std::string::String>> = Arc::new(args.cors_origins.clone());
-    let cors = warp::cors()
-        .allow_methods(&[Method::GET, Method::POST, Method::OPTIONS])
-        // x-intel-filename: sent by the recon-intel photo upload, which is a
-        // cross-origin POST and so triggers a CORS preflight.
-        .allow_headers(vec!["content-type", "x-intel-filename"])
-        .allow_credentials(true);
-    let cors = if cross_origin {
-        // Our own public origin too. A page bfdb serves itself
-        // (api.vectorstrike.org/map) sends no Origin on a same-origin GET, so
-        // its fetches got through -- but a browser always sends one on a
-        // WebSocket handshake and on a POST, and every one of those was 403'd
-        // ("origin not allowed"): TACMAP, logs, login, admin actions all dead
-        // on that copy of the dashboard. The CSRF policy already trusts it.
-        let own = websec::origin_of(&args.public_api_url);
-        cors.allow_origins(
-            args.cors_origins
-                .iter()
-                .map(|s| s.as_str())
-                .chain(own.as_deref())
-                .collect::<Vec<_>>(),
-        )
-    } else {
-        // No --cors-origin: only pages bfdb serves itself, at its public
-        // address or opened locally on the listen port. allow_any_origin with
-        // credentials let any site a signed-in user visited read the API as
-        // them.
-        let port = args.listen_address.port();
-        let local = [format!("http://localhost:{port}"), format!("http://127.0.0.1:{port}")];
-        let own = websec::origin_of(&args.public_api_url);
-        cors.allow_origins(local.iter().map(|s| s.as_str()).chain(own.as_deref()).collect::<Vec<_>>())
-    };
-    if cross_origin {
-        log::info!("Cross-origin mode enabled for: {:?} (cookies use SameSite=None; Secure — bfdb must be served over TLS)", args.cors_origins);
-    }
-
-    // The DCS server instances this bfdb fronts -- backs the dashboard's
-    // instance selector. Must come before the routes that take ?instance=.
-    let instances_route = warp::path!("api" / "instances")
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
-        .then(api_instances);
-
-    let rounds = warp::path!("api" / "rounds")
-        .and(with_db(db.clone()))
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
-        .and(with_instance(db.clone()))
-        .then(api_rounds);
-
-    let round_summary = warp::path!("api" / "rounds" / u64 / "summary")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_round_summary);
-
-    let round_report = warp::path!("api" / "rounds" / u64 / "report")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_round_report);
-
-    let leaderboard = warp::path!("api" / "leaderboard")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
-        .then(api_leaderboard);
-
-    let all_pilots = warp::path!("api" / "pilots")
-        .and(with_db(db.clone()))
-        .then(api_all_pilots);
-
-    let objectives = warp::path!("api" / "objectives")
-        .and(with_db(db.clone()))
-        .and(warp::query::<std::collections::HashMap<String, String>>())
-        .and(with_instance(db.clone()))
-        .then(|db, q: std::collections::HashMap<String, String>, inst| {
-            let round_id = q.get("round").and_then(|s| s.parse().ok());
-            api_objectives(db, round_id, inst)
-        });
-
-    let frontline = warp::path!("api" / "frontline")
-        .and(with_db(db.clone()))
-        .and(warp::query::<std::collections::HashMap<String, String>>())
-        .and(with_instance(db.clone()))
-        .then(|db, q: std::collections::HashMap<String, String>, inst| {
-            let round_id = q.get("round").and_then(|s| s.parse().ok());
-            api_frontline(db, round_id, inst)
-        });
-
-    let briefing = warp::path!("api" / "briefing")
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(warp::query::<std::collections::HashMap<String, String>>())
-        .and(with_instance(db.clone()))
-        .then(api_briefing);
-
-    let warehouse = warp::path!("api" / "warehouse")
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(warp::query::<std::collections::HashMap<String, String>>())
-        .and(with_instance(db.clone()))
-        .then(api_warehouse);
-
-    let situation = warp::path!("api" / "situation")
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(warp::query::<std::collections::HashMap<String, String>>())
-        .and(with_instance(db.clone()))
-        .then(api_situation);
-
-    let groundwar = warp::path!("api" / "groundwar")
-        .and(warp::get())
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(warp::query::<std::collections::HashMap<String, String>>())
-        .and(with_instance(db.clone()))
-        .then(api_groundwar);
-
-    let hq = warp::path!("api" / "hq")
-        .and(warp::get())
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(warp::query::<std::collections::HashMap<String, String>>())
-        .and(with_instance(db.clone()))
-        .then(api_hq);
-
-    let kills = warp::path!("api" / "kills")
-        .and(with_db(db.clone()))
-        .and(warp::query::<std::collections::HashMap<String, String>>())
-        .and(with_instance(db.clone()))
-        .then(|db, q: std::collections::HashMap<String, String>, inst| {
-            let round_id = q.get("round").and_then(|s| s.parse().ok());
-            let limit = q.get("limit").and_then(|s| s.parse().ok());
-            api_kills(db, round_id, limit, inst)
-        });
-
-    let capture_events = warp::path!("api" / "capture-events")
-        .and(with_db(db.clone()))
-        .and(warp::query::<std::collections::HashMap<String, String>>())
-        .and(with_instance(db.clone()))
-        .then(|db, q: std::collections::HashMap<String, String>, inst| {
-            let round_id = q.get("round").and_then(|s| s.parse().ok());
-            let limit = q.get("limit").and_then(|s| s.parse().ok());
-            api_capture_events(db, round_id, limit, inst)
-        });
-
-    let pilot = warp::path!("api" / "pilot" / String)
-        .and(with_db(db.clone()))
-        .then(api_pilot);
-
-    let pilot_sorties = warp::path!("api" / "pilot" / String / "sorties")
-        .and(with_db(db.clone()))
-        .then(api_pilot_sorties);
-
-    let pilot_sortie = warp::path!("api" / "pilot" / String / "sortie" / u64)
-        .and(with_db(db.clone()))
-        .then(api_pilot_sortie);
-
-    let pilot_breakdown = warp::path!("api" / "pilot" / String / "breakdown")
-        .and(with_db(db.clone()))
-        .then(api_pilot_breakdown);
-
-    let squadron_list = warp::path!("api" / "squadrons")
-        .and(warp::get())
-        .and(with_db(db.clone()))
-        .then(api_squadrons);
-    let squadron_one = warp::path!("api" / "squadrons" / String)
-        .and(warp::get())
-        .and(with_db(db.clone()))
-        .then(api_squadron);
-    let squadron_create = warp::path!("api" / "squadrons")
-        .and(warp::post())
-        .and(extract_session_cookie())
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json::<SquadronCreateBody>())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .then(api_squadron_create);
-    let squadron_join = warp::path!("api" / "squadrons" / String / "join")
-        .and(warp::post())
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .then(api_squadron_join);
-    let squadron_leave = warp::path!("api" / "squadrons" / "leave")
-        .and(warp::post())
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .then(api_squadron_leave);
-    let squadron_kick = warp::path!("api" / "squadrons" / "kick")
-        .and(warp::post())
-        .and(extract_session_cookie())
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json::<SquadronKickBody>())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .then(api_squadron_kick);
-    let pilot_card = warp::path!("api" / "pilot" / String / "card.png")
-        .and(with_db(db.clone()))
-        .then(api_pilot_card);
-    let gci_transmit = warp::path!("api" / "gci" / "transmit")
-        .and(warp::post())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
-        .and(extract_session_cookie())
-        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json::<GciTransmitBody>())
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_gci_transmit);
-    let squadron_routes = gci_transmit
-        .or(squadron_leave)
-        .or(squadron_kick)
-        .or(squadron_list)
-        .or(squadron_create)
-        .or(squadron_join)
-        .or(squadron_one)
-        .or(pilot_card)
-        .boxed();
-
-    let pilot_progression = warp::path!("api" / "pilot" / String / "progression")
-        .and(with_db(db.clone()))
-        .then(api_pilot_progression);
-
-    let xp_leaderboard = warp::path!("api" / "progression" / "top")
-        .and(with_db(db.clone()))
-        .then(api_xp_leaderboard);
-
-    let pilot_kills_route = warp::path!("api" / "pilot" / String / "kills")
-        .and(with_db(db.clone()))
-        .then(api_pilot_kills);
-
-    let pilot_deploys_route = warp::path!("api" / "pilot" / String / "deploys")
-        .and(with_db(db.clone()))
-        .then(api_pilot_deploys);
-
-    // Cheap liveness probe -- no DB access, no archive-replay contention.
-    // Process supervisors should poll this, not /api/stats (which runs
-    // several Sled queries and can be slow while the stats archive is
-    // still replaying at startup).
-    let health = warp::path!("api" / "health")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_health);
-
-    // This bfdb binary's own build identity (git rev + build time), compiled
-    // in by build.rs. Public -- it's just build metadata.
-    let version = warp::path!("api" / "version")
-        .map(|| warp::reply::json(&build_info_json()));
-
-    let unitdb = warp::path!("api" / "unitdb")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_unitdb);
-
-    let unitdb_versions = warp::path!("api" / "unitdb" / "versions")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_unitdb_versions);
-
-    let unitdb_stale = warp::path!("api" / "unitdb" / "stale-overrides")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_unitdb_stale);
-
-    let unitdb_diff = warp::path!("api" / "unitdb" / "diff")
-        .and(warp::query::<UnitDbDiffQuery>())
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_unitdb_diff);
-
-    let stats = warp::path!("api" / "stats")
-        .and(with_db(db.clone()))
-        .and(with_bot_link_cfg(bot_link_cfg.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_stats);
-
-    let units = warp::path!("api" / "units")
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_units);
-
-    let online = warp::path!("api" / "online")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_online);
-
-    let points = warp::path!("api" / "points")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_points);
-
-    let captures = warp::path!("api" / "captures")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_captures);
-
-    let aircraft_usage = warp::path!("api" / "aircraft-usage")
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .then(api_aircraft_usage);
 
     // ── Live telemetry, per DCS server instance ────────────────────────
     // Each instance gets its own Export.lua UDP listener (on its own port),
@@ -8707,17 +8975,6 @@ async fn main() -> Result<()> {
         Arc::new(m)
     };
 
-    let ws_units_route = warp::path!("ws" / "units")
-        .and(websec::ws_limited())
-        .and(extract_session_cookie())
-        .and(with_db(db.clone()))
-        .and(with_instance(db.clone()))
-        .and(with_live(live_map.clone()))
-        .then(|ws, ip, sid, db, inst: Inst, map: LiveMap| async move {
-            let l = live_for(&map, &inst);
-            ws_units_handler(ws, ip, sid, db, l.live, l.live_tx).await
-        });
-
     // ── Live GCI: proactive AWACS-style SRS callouts, per instance ────────
     // A broadcast stream of every GCI call, for the dashboard transcript panel
     // (/ws/gci) and the last-N snapshot (/api/gci/transcript). Each instance
@@ -8785,6 +9042,460 @@ async fn main() -> Result<()> {
         gci_map.insert(id, (tx, hist));
     }
     let gci_map = Arc::new(gci_map);
+
+    let routes = build_routes(RouteCtx {
+        db: db.clone(),
+        bot_link_cfg: bot_link_cfg.clone(),
+        auth_cfg,
+        local_admin_cfg,
+        live_map,
+        gci_map,
+        log_tx,
+        log_history,
+        range_routes,
+        replay_routes,
+        campaign_json,
+        effective_srs_url,
+        news_images,
+        shutdown: shutdown.clone(),
+        cors_origins: args.cors_origins.clone(),
+        public_api_url: args.public_api_url.clone(),
+        listen_port: args.listen_address.port(),
+        local_login_from: args.local_login_from.clone(),
+        log_read_token: args.log_read_token.clone(),
+        metrics_token: args.metrics_token.clone(),
+        shutdown_token: args.shutdown_token.clone(),
+        get_limits: websec::GetLimits { per_min: args.public_get_rate, heavy_per_min: args.heavy_get_rate },
+    });
+
+    log::info!("API server listening on http://{}", args.listen_address);
+
+    // Optional separate site server
+    if let Some(site_addr) = args.site_address {
+        let site_cors = warp::cors()
+            .allow_any_origin()
+            .allow_methods(&[Method::GET])
+            .build();
+        let site_only = warp::get()
+            .and(warp::path::tail())
+            .map(|tail: warp::path::Tail| serve_site_asset(tail.as_str()))
+            .with(site_cors);
+        log::info!("Site server listening on http://{}", site_addr);
+        tokio::spawn(warp::serve(site_only).run(site_addr));
+    }
+
+    // Serve until a shutdown is requested, then flush and exit. Not warp's
+    // own graceful shutdown: it waits for every open connection to finish,
+    // and dashboard WebSockets never do, so it would wait until the
+    // supervisor gave up and hard-killed us -- the very thing this avoids.
+    let server = async {
+        match (&args.cert, &args.key) {
+            (_, None) | (None, _) => warp::serve(routes).run(args.listen_address).await,
+            (Some(cert), Some(key)) => {
+                warp::serve(routes)
+                    .tls()
+                    .cert_path(cert)
+                    .key_path(key)
+                    .run(args.listen_address)
+                    .await
+            }
+        }
+    };
+    tokio::select! {
+        _ = server => log::warn!("web server stopped"),
+        _ = shutdown.wait() => (),
+    }
+    let flush_db = db.clone();
+    let _ = task::spawn_blocking(move || maint::flush_db(&flush_db)).await;
+    log::info!("bfdb exiting");
+    log::logger().flush();
+    std::process::exit(0)
+}
+
+/// Everything the HTTP layer needs, gathered by `main` (which also starts the
+/// background tasks that feed the live maps). Split out so the whole route
+/// chain can be built -- and exercised with `warp::test` -- without a DCS
+/// server, a netidx resolver or a socket.
+struct RouteCtx {
+    db: StatsDb,
+    bot_link_cfg: Arc<Option<BotLinkConfig>>,
+    auth_cfg: Option<AuthConfig>,
+    local_admin_cfg: Option<LocalAdminConfig>,
+    live_map: LiveMap,
+    gci_map: GciMap,
+    log_tx: broadcast::Sender<String>,
+    log_history: LogHistory,
+    range_routes: warp::filters::BoxedFilter<(Response,)>,
+    replay_routes: warp::filters::BoxedFilter<(Response,)>,
+    campaign_json: Arc<String>,
+    effective_srs_url: Option<String>,
+    news_images: Option<Arc<news_image::ImageCfg>>,
+    shutdown: maint::Shutdown,
+    cors_origins: Vec<String>,
+    public_api_url: String,
+    listen_port: u16,
+    local_login_from: Vec<websec::IpNet>,
+    log_read_token: Option<String>,
+    metrics_token: Option<String>,
+    shutdown_token: Option<String>,
+    get_limits: websec::GetLimits,
+}
+
+/// Per-instance GCI transcript channel and backlog.
+type GciMap = Arc<std::collections::HashMap<InstanceId, (broadcast::Sender<String>, LogHistory)>>;
+
+/// The whole route chain, in the order it is matched.
+fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
+    let RouteCtx {
+        db,
+        bot_link_cfg,
+        auth_cfg,
+        local_admin_cfg,
+        live_map,
+        gci_map,
+        log_tx,
+        log_history,
+        range_routes,
+        replay_routes,
+        campaign_json,
+        effective_srs_url,
+        news_images,
+        shutdown,
+        cors_origins,
+        public_api_url,
+        listen_port,
+        local_login_from,
+        log_read_token,
+        metrics_token,
+        shutdown_token,
+        get_limits,
+    } = rc;
+
+    let cross_origin = !cors_origins.is_empty();
+    let allowed_login_origins: Arc<Vec<std::string::String>> = Arc::new(cors_origins.clone());
+    let cors = warp::cors()
+        .allow_methods(&[Method::GET, Method::POST, Method::OPTIONS])
+        // x-intel-filename: sent by the recon-intel photo upload, which is a
+        // cross-origin POST and so triggers a CORS preflight.
+        // x-cockpit-key: the cockpit overlay key, sent as a header by
+        // overlays that no longer put it in the URL.
+        .allow_headers(vec!["content-type", "x-intel-filename", "x-cockpit-key"])
+        .expose_headers(vec!["x-total-count"])
+        .allow_credentials(true);
+    let cors = if cross_origin {
+        // Our own public origin too. A page bfdb serves itself
+        // (api.vectorstrike.org/map) sends no Origin on a same-origin GET, so
+        // its fetches got through -- but a browser always sends one on a
+        // WebSocket handshake and on a POST, and every one of those was 403'd
+        // ("origin not allowed"): TACMAP, logs, login, admin actions all dead
+        // on that copy of the dashboard. The CSRF policy already trusts it.
+        let own = websec::origin_of(&public_api_url);
+        cors.allow_origins(
+            cors_origins
+                .iter()
+                .map(|s| s.as_str())
+                .chain(own.as_deref())
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        // No --cors-origin: only pages bfdb serves itself, at its public
+        // address or opened locally on the listen port. allow_any_origin with
+        // credentials let any site a signed-in user visited read the API as
+        // them.
+        let port = listen_port;
+        let local = [format!("http://localhost:{port}"), format!("http://127.0.0.1:{port}")];
+        let own = websec::origin_of(&public_api_url);
+        cors.allow_origins(local.iter().map(|s| s.as_str()).chain(own.as_deref()).collect::<Vec<_>>())
+    };
+    if cross_origin {
+        log::info!("Cross-origin mode enabled for: {:?} (cookies use SameSite=None; Secure — bfdb must be served over TLS)", cors_origins);
+    }
+
+    // The DCS server instances this bfdb fronts -- backs the dashboard's
+    // instance selector. Must come before the routes that take ?instance=.
+    let instances_route = warp::path!("api" / "instances")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .then(api_instances);
+
+    let rounds = warp::path!("api" / "rounds")
+        .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_instance(db.clone()))
+        .then(api_rounds);
+
+    let round_summary = warp::path!("api" / "rounds" / u64 / "summary")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_round_summary);
+
+    let round_report = warp::path!("api" / "rounds" / u64 / "report")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_round_report);
+
+    let leaderboard = warp::path!("api" / "leaderboard")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .then(api_leaderboard);
+
+    let all_pilots = warp::path!("api" / "pilots")
+        .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
+        .then(api_all_pilots);
+
+    let objectives = warp::path!("api" / "objectives")
+        .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(|db, q: std::collections::HashMap<String, String>, inst| {
+            let round_id = q.get("round").and_then(|s| s.parse().ok());
+            api_objectives(db, round_id, inst)
+        });
+
+    let frontline = warp::path!("api" / "frontline")
+        .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(|db, q: std::collections::HashMap<String, String>, inst| {
+            let round_id = q.get("round").and_then(|s| s.parse().ok());
+            api_frontline(db, round_id, inst)
+        });
+
+    let briefing = warp::path!("api" / "briefing")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(api_briefing);
+
+    let warehouse = warp::path!("api" / "warehouse")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(api_warehouse);
+
+    let situation = warp::path!("api" / "situation")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(api_situation);
+
+    let groundwar = warp::path!("api" / "groundwar")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(api_groundwar);
+
+    let hq = warp::path!("api" / "hq")
+        .and(warp::get())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(api_hq);
+
+    let kills = warp::path!("api" / "kills")
+        .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(|db, q: std::collections::HashMap<String, String>, inst| {
+            let round_id = q.get("round").and_then(|s| s.parse().ok());
+            let limit = q.get("limit").and_then(|s| s.parse().ok());
+            api_kills(db, round_id, limit, inst)
+        });
+
+    let capture_events = warp::path!("api" / "capture-events")
+        .and(with_db(db.clone()))
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(with_instance(db.clone()))
+        .then(|db, q: std::collections::HashMap<String, String>, inst| {
+            let round_id = q.get("round").and_then(|s| s.parse().ok());
+            let limit = q.get("limit").and_then(|s| s.parse().ok());
+            let offset = q.get("offset").and_then(|s| s.parse().ok()).unwrap_or(0);
+            api_capture_events(db, round_id, limit, offset, inst)
+        });
+
+    let pilot = warp::path!("api" / "pilot" / String)
+        .and(with_db(db.clone()))
+        .then(api_pilot);
+
+    let pilot_sorties = warp::path!("api" / "pilot" / String / "sorties")
+        .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
+        .then(api_pilot_sorties);
+
+    let pilot_sortie = warp::path!("api" / "pilot" / String / "sortie" / u64)
+        .and(with_db(db.clone()))
+        .then(api_pilot_sortie);
+
+    let pilot_breakdown = warp::path!("api" / "pilot" / String / "breakdown")
+        .and(with_db(db.clone()))
+        .then(api_pilot_breakdown);
+
+    let squadron_list = warp::path!("api" / "squadrons")
+        .and(warp::get())
+        .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
+        .then(api_squadrons);
+    let squadron_one = warp::path!("api" / "squadrons" / String)
+        .and(warp::get())
+        .and(with_db(db.clone()))
+        .then(api_squadron);
+    let squadron_create = warp::path!("api" / "squadrons")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<SquadronCreateBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_squadron_create);
+    let squadron_join = warp::path!("api" / "squadrons" / String / "join")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_squadron_join);
+    let squadron_leave = warp::path!("api" / "squadrons" / "leave")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_squadron_leave);
+    let squadron_kick = warp::path!("api" / "squadrons" / "kick")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<SquadronKickBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .then(api_squadron_kick);
+    let pilot_card = warp::path!("api" / "pilot" / String / "card.png")
+        .and(with_db(db.clone()))
+        .then(api_pilot_card);
+    let gci_transmit = warp::path!("api" / "gci" / "transmit")
+        .and(warp::post())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(extract_session_cookie())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<GciTransmitBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_gci_transmit);
+    let squadron_routes = gci_transmit
+        .or(squadron_leave)
+        .or(squadron_kick)
+        .or(squadron_list)
+        .or(squadron_create)
+        .or(squadron_join)
+        .or(squadron_one)
+        .or(pilot_card)
+        .boxed();
+
+    let pilot_progression = warp::path!("api" / "pilot" / String / "progression")
+        .and(with_db(db.clone()))
+        .then(api_pilot_progression);
+
+    let xp_leaderboard = warp::path!("api" / "progression" / "top")
+        .and(with_db(db.clone()))
+        .then(api_xp_leaderboard);
+
+    let pilot_kills_route = warp::path!("api" / "pilot" / String / "kills")
+        .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
+        .then(api_pilot_kills);
+
+    let pilot_deploys_route = warp::path!("api" / "pilot" / String / "deploys")
+        .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
+        .then(api_pilot_deploys);
+
+    // Liveness: an engine probe (cached 15s) and one read of the round
+    // tree. Process supervisors should poll this, not /api/stats (which runs
+    // several Sled queries and can be slow while the stats archive is
+    // still replaying at startup).
+    let health = warp::path!("api" / "health")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_health);
+
+    let admin_health = warp::path!("api" / "admin" / "health")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_admin_health);
+
+    // This bfdb binary's own build identity (git rev + build time), compiled
+    // in by build.rs. Public -- it's just build metadata.
+    let version = warp::path!("api" / "version")
+        .map(|| warp::reply::json(&build_info_json()));
+
+    let unitdb = warp::path!("api" / "unitdb")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_unitdb);
+
+
+    let unitdb_stale = warp::path!("api" / "unitdb" / "stale-overrides")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_unitdb_stale);
+
+
+    let stats = warp::path!("api" / "stats")
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_stats);
+
+    let units = warp::path!("api" / "units")
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_units);
+
+    let online = warp::path!("api" / "online")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_online);
+
+    let points = warp::path!("api" / "points")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_points);
+
+    let captures = warp::path!("api" / "captures")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_captures);
+
+    let aircraft_usage = warp::path!("api" / "aircraft-usage")
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_aircraft_usage);
+
+    let ws_units_route = warp::path!("ws" / "units")
+        .and(websec::ws_limited())
+        .and(extract_session_cookie())
+        .and(with_db(db.clone()))
+        .and(with_instance(db.clone()))
+        .and(with_live(live_map.clone()))
+        .then(|ws, ip, sid, db, inst: Inst, map: LiveMap| async move {
+            let l = live_for(&map, &inst);
+            ws_units_handler(ws, ip, sid, db, l.live, l.live_tx).await
+        });
 
     let ws_groundwar_route = warp::path!("ws" / "groundwar")
         .and(websec::ws_limited())
@@ -8908,7 +9619,7 @@ async fn main() -> Result<()> {
         .and(warp::any().map(move || cross_origin))
         .then(api_auth_logout);
 
-    let local_login_from = Arc::new(args.local_login_from.clone());
+    let local_login_from = Arc::new(local_login_from.clone());
     if local_admin_cfg.is_some() {
         if local_login_from.is_empty() {
             log::info!("local admin login accepted from loopback only (see --local-login-from)");
@@ -8927,15 +9638,17 @@ async fn main() -> Result<()> {
         .and(warp::any().map(move || local_login_from.clone()))
         .then(api_auth_local_login);
 
-    // Tells the frontend whether local admin login is available
-    let local_admin_enabled = local_admin_cfg.is_some();
-    let auth_local_enabled = warp::path!("api" / "auth" / "local-enabled")
-        .map(move || json_response(format!(r#"{{"enabled":{}}}"#, local_admin_enabled)))
-        .boxed();
+
+    let admin_audit = warp::path!("api" / "admin" / "audit")
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .then(api_admin_audit);
 
     let admin_sessions = warp::path!("api" / "admin" / "sessions")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
         .then(api_admin_sessions);
 
     let admin_reset = warp::path!("api" / "admin" / "reset")
@@ -9083,6 +9796,7 @@ async fn main() -> Result<()> {
     let admin_banned = warp::path!("api" / "admin" / "banned")
         .and(extract_session_cookie())
         .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
         .then(api_admin_banned);
 
     let admin_engine_errors = warp::path!("api" / "admin" / "engine-errors")
@@ -9092,17 +9806,18 @@ async fn main() -> Result<()> {
         .then(api_admin_engine_errors);
 
     // ── Plain-text log tail (/api/logs/:source) — static-token auth ──────────
-    let log_read_token = Arc::new(args.log_read_token.clone());
+    let logs_token = Arc::new(log_read_token.clone());
     let logs_hist_api = log_history.clone();
     let logs_route = warp::path!("api" / "logs" / String)
         .and(warp::get())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(warp::header::optional::<std::string::String>("authorization"))
-        .and(warp::any().map(move || log_read_token.clone()))
+        .and(warp::any().map(move || logs_token.clone()))
         .and(with_db(db.clone()))
         .and(warp::any().map(move || logs_hist_api.clone()))
         .and(with_instance(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(websec::with_client_ip())
         .then(api_logs);
 
     let admin_ban_route = warp::path!("api" / "admin" / "ban")
@@ -9117,9 +9832,9 @@ async fn main() -> Result<()> {
         .and(warp::post())
         .and(extract_session_cookie())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
-        .and(warp::body::json::<UnbanBody2>())
+        .and(warp::body::json::<UnbanBody>())
         .and(with_db(db.clone()))
-        .then(api_admin_unban2);
+        .then(api_admin_unban);
 
     let commander_spawn_route = warp::path!("api" / "commander" / "spawn")
         .and(warp::post())
@@ -9141,7 +9856,7 @@ async fn main() -> Result<()> {
 
     let cockpit_ewr_report_route = warp::path!("api" / "cockpit" / "ewr" / "report")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9150,7 +9865,7 @@ async fn main() -> Result<()> {
 
     let cockpit_ewr_intel_route = warp::path!("api" / "cockpit" / "ewr" / "intel")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9160,7 +9875,7 @@ async fn main() -> Result<()> {
     let cockpit_ewr_toggle_route = warp::path!("api" / "cockpit" / "ewr" / "toggle")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9170,7 +9885,7 @@ async fn main() -> Result<()> {
     let cockpit_ewr_units_route = warp::path!("api" / "cockpit" / "ewr" / "units")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<EwrUnitsBody>())
         .and(with_db(db.clone()))
@@ -9181,7 +9896,7 @@ async fn main() -> Result<()> {
 
     let cockpit_carp_solve_route = warp::path!("api" / "cockpit" / "carp" / "solve")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9190,7 +9905,7 @@ async fn main() -> Result<()> {
 
     let cockpit_carp_solve_latlon_route = warp::path!("api" / "cockpit" / "carp" / "solve-latlon")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9200,7 +9915,7 @@ async fn main() -> Result<()> {
     let cockpit_cargo_spawn_route = warp::path!("api" / "cockpit" / "cargo" / "spawn")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<CargoSpawnBody>())
         .and(with_db(db.clone()))
@@ -9211,6 +9926,7 @@ async fn main() -> Result<()> {
 
     let cockpit_plugin_version_route = warp::path!("api" / "cockpit" / "plugin" / "version")
         .and(warp::get())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .then(api_cockpit_plugin_version);
 
     let cockpit_plugin_download_route = warp::path!("api" / "cockpit" / "plugin" / "download")
@@ -9223,7 +9939,7 @@ async fn main() -> Result<()> {
 
     let cockpit_context_route = warp::path!("api" / "cockpit" / "context")
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9233,7 +9949,7 @@ async fn main() -> Result<()> {
     let cockpit_menu_route = warp::path!("api" / "cockpit" / "menu")
         .and(warp::get())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9243,7 +9959,7 @@ async fn main() -> Result<()> {
     let cockpit_messages_route = warp::path!("api" / "cockpit" / "messages")
         .and(warp::get())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9253,7 +9969,7 @@ async fn main() -> Result<()> {
     let cockpit_cargo_route = warp::path!("api" / "cockpit" / "cargo")
         .and(warp::get())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(with_db(db.clone()))
         .and(with_bot_link_cfg(bot_link_cfg.clone()))
         .and(with_instance(db.clone()))
@@ -9263,7 +9979,7 @@ async fn main() -> Result<()> {
     let cockpit_menu_invoke_route = warp::path!("api" / "cockpit" / "menu" / "invoke")
         .and(warp::post())
         .and(extract_session_cookie())
-        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(cockpit_query())
         .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
         .and(warp::body::json::<MenuInvokeBody>())
         .and(with_db(db.clone()))
@@ -9320,6 +10036,7 @@ async fn main() -> Result<()> {
 
     let wiki_list_route = warp::path!("api" / "wiki" / "pages")
         .and(with_db(db.clone()))
+        .and(warp::query::<Q>())
         .then(api_wiki_list);
 
     // Not the `path!` macro here (it implicitly requires end-of-path) --
@@ -9579,9 +10296,9 @@ async fn main() -> Result<()> {
         .or(round_report)
         .or(health)
         .or(version)
-        .or(unitdb_versions)
+
         .or(unitdb_stale)
-        .or(unitdb_diff)
+
         .or(unitdb)
         .or(leaderboard)
         .or(objectives)
@@ -9636,8 +10353,10 @@ async fn main() -> Result<()> {
     let auth_routes = auth_login
         .or(auth_callback)
         .or(auth_me)
-        .or(auth_local_enabled)
+
         .or(admin_sessions)
+        .or(admin_audit)
+        .or(admin_health)
         .or(admin_perf)
         .or(admin_perf_history)
         .or(admin_pilot_sides)
@@ -9657,7 +10376,7 @@ async fn main() -> Result<()> {
         .boxed();
 
     // ── Maintenance routes: shutdown, session revocation, metrics ──────────
-    let shutdown_token = Arc::new(args.shutdown_token.clone());
+    let shutdown_token = Arc::new(shutdown_token.clone());
     let shutdown_route = warp::path!("api" / "admin" / "shutdown")
         .and(warp::post())
         .and(websec::with_direct_loopback())
@@ -9679,20 +10398,21 @@ async fn main() -> Result<()> {
         .and(with_db(db.clone()))
         .then(api_admin_revoke_sessions);
 
-    let metrics_token = Arc::new(args.log_read_token.clone());
+    let metrics_tokens = Arc::new((metrics_token.clone(), log_read_token.clone()));
     let metrics_route = warp::path!("api" / "metrics")
         .and(warp::get())
         .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
         .and(warp::header::optional::<std::string::String>("authorization"))
-        .and(warp::any().map(move || metrics_token.clone()))
+        .and(warp::any().map(move || metrics_tokens.clone()))
         .and(with_db(db.clone()))
+        .and(websec::with_client_ip())
         .then(api_metrics);
 
     let origin_policy = websec::OriginPolicy::new(
-        args.cors_origins
+        cors_origins
             .iter()
             .map(|s| s.as_str())
-            .chain(std::iter::once(args.public_api_url.as_str())),
+            .chain(std::iter::once(public_api_url.as_str())),
     );
 
     // The dashboard's own files (/assets/*.js, *.css, fonts, and the site's
@@ -9723,6 +10443,8 @@ async fn main() -> Result<()> {
     let cors_routes = websec::csrf_guard(origin_policy)
         // First of all: a cookie-authenticated POST or WebSocket from a page
         // we do not trust is refused before any route sees it.
+        // Then a client past its GET budget (`--public-get-rate`).
+        .or(websec::get_rate_guard(get_limits))
         .or(shutdown_route)
         .or(admin_revoke_route)
         .or(metrics_route)
@@ -9794,48 +10516,12 @@ async fn main() -> Result<()> {
             .boxed())
         .map(|r| websec::harden(warp::Reply::into_response(r)))
         .with(cors);
-    let routes = embedded_files.or(cors_routes);
-
-    log::info!("API server listening on http://{}", args.listen_address);
-
-    // Optional separate site server
-    if let Some(site_addr) = args.site_address {
-        let site_cors = warp::cors()
-            .allow_any_origin()
-            .allow_methods(&[Method::GET])
-            .build();
-        let site_only = warp::get()
-            .and(warp::path::tail())
-            .map(|tail: warp::path::Tail| serve_site_asset(tail.as_str()))
-            .with(site_cors);
-        log::info!("Site server listening on http://{}", site_addr);
-        tokio::spawn(warp::serve(site_only).run(site_addr));
-    }
-
-    // Serve until a shutdown is requested, then flush and exit. Not warp's
-    // own graceful shutdown: it waits for every open connection to finish,
-    // and dashboard WebSockets never do, so it would wait until the
-    // supervisor gave up and hard-killed us -- the very thing this avoids.
-    let server = async {
-        match (&args.cert, &args.key) {
-            (_, None) | (None, _) => warp::serve(routes).run(args.listen_address).await,
-            (Some(cert), Some(key)) => {
-                warp::serve(routes)
-                    .tls()
-                    .cert_path(cert)
-                    .key_path(key)
-                    .run(args.listen_address)
-                    .await
-            }
-        }
-    };
-    tokio::select! {
-        _ = server => log::warn!("web server stopped"),
-        _ = shutdown.wait() => (),
-    }
-    let flush_db = db.clone();
-    let _ = task::spawn_blocking(move || maint::flush_db(&flush_db)).await;
-    log::info!("bfdb exiting");
-    log::logger().flush();
-    std::process::exit(0)
+    embedded_files
+        .or(cors_routes)
+        .map(|r| warp::Reply::into_response(r))
+        .with(warp::log::custom(|info| {
+            websec::record_request(info.method(), info.path(), info.status(), info.elapsed())
+        }))
+        .map(|r| warp::Reply::into_response(r))
+        .boxed()
 }

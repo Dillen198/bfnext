@@ -124,6 +124,9 @@ pub(crate) struct BackupCfg {
     pub(crate) dir: PathBuf,
     pub(crate) every: Duration,
     pub(crate) keep: usize,
+    /// Files and folders kept beside the database that a backup copies too
+    /// (`--backup-files`): (name inside the backup's `files/`, path).
+    pub(crate) files: Vec<(String, PathBuf)>,
 }
 
 /// Where backups of `db_path` live unless `--backup-dir` says otherwise.
@@ -141,8 +144,23 @@ pub(crate) fn default_backup_dir(db_path: &Path) -> PathBuf {
 /// server a cold `--rebuild-stats`. `export`/`import` walks every tree through
 /// sled itself and writes a fresh, consistent DB, which can be opened (or
 /// restored) as-is.
-pub(crate) fn backup_now(db: &sled::Db, dir: &Path, keep: usize) -> Result<PathBuf> {
+///
+/// sled has no snapshot, so the trees are exported one after another while
+/// writes go on: each tree is consistent, the set is not one instant. The
+/// ingest cursors go first, so a restored database re-reads the last few
+/// seconds of stats.jsonl rather than skipping them (kills, sorties and
+/// deploys are idempotent on re-read; a capture or supply counter in that
+/// window can count twice).
+///
+/// `files` (see [`BackupCfg::files`]) are copied into `<backup>/files/`. A
+/// file unchanged since the previous backup (same size and modification
+/// time) is hard-linked to that backup's copy instead -- recordings and
+/// photos never change, so keeping seven backups of them costs one copy --
+/// falling back to a copy where links are not possible (another volume, a
+/// network share).
+pub(crate) fn backup_now(db: &sled::Db, dir: &Path, keep: usize, files: &[(String, PathBuf)]) -> Result<PathBuf> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let previous = list_backups(dir).pop();
     db.flush().context("flushing before backup")?;
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     let target = dir.join(&stamp);
@@ -152,10 +170,28 @@ pub(crate) fn backup_now(db: &sled::Db, dir: &Path, keep: usize) -> Result<PathB
         let out = sled::open(&partial).with_context(|| format!("creating {}", partial.display()))?;
         // sled::import panics on IO trouble rather than returning it; keep a
         // failed backup from taking the whole process down with it.
-        let export = db.export();
+        // Live credentials stay out of it (see BACKUP_EXCLUDED_TREES).
+        let mut export: Vec<_> = db
+            .export()
+            .into_iter()
+            .filter(|(_, name, _)| {
+                !crate::db::BACKUP_EXCLUDED_TREES.iter().any(|t| t.as_bytes() == &name[..])
+            })
+            .collect();
+        // cursors first (stable: everything else keeps sled's order)
+        export.sort_by_key(|(_, name, _)| !name.windows(6).any(|w| w == b"cursor"));
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| out.import(export)))
             .map_err(|_| anyhow::anyhow!("sled import panicked while writing the backup"))?;
         out.flush().context("flushing the backup")?;
+    }
+    for (name, src) in files {
+        if !src.exists() {
+            continue;
+        }
+        let dst = partial.join("files").join(name);
+        let prev = previous.as_ref().map(|p| p.join("files").join(name));
+        copy_linked(src, &dst, prev.as_deref())
+            .with_context(|| format!("backing up {} into {}", src.display(), dst.display()))?;
     }
     // On Windows a file in the backup can still be open for a moment after
     // sled lets go of it (its own threads winding down, or a virus scanner
@@ -248,7 +284,7 @@ pub(crate) fn spawn_backups(db: StatsDb, cfg: BackupCfg) {
             let sled = db.sled().clone();
             let c = cfg.clone();
             let started = std::time::Instant::now();
-            match task::spawn_blocking(move || backup_now(&sled, &c.dir, c.keep)).await {
+            match task::spawn_blocking(move || backup_now(&sled, &c.dir, c.keep, &c.files)).await {
                 Ok(Ok(p)) => log::info!(
                     "database backup written to {} in {}s",
                     p.display(),
@@ -278,6 +314,40 @@ pub(crate) fn restore_latest(db_path: &Path, dir: &Path) -> Result<PathBuf> {
     copy_dir(&latest, db_path)?;
     log::warn!("restored {} from backup {}", db_path.display(), latest.display());
     Ok(latest)
+}
+
+/// Copy `src` (a file or a folder) to `dst`, hard-linking each file that is
+/// unchanged against its copy under `prev`.
+fn copy_linked(src: &Path, dst: &Path, prev: Option<&Path>) -> Result<()> {
+    let md = std::fs::metadata(src)?;
+    if md.is_dir() {
+        std::fs::create_dir_all(dst)?;
+        for e in std::fs::read_dir(src)? {
+            let e = e?;
+            let name = e.file_name();
+            copy_linked(&e.path(), &dst.join(&name), prev.map(|p| p.join(&name)).as_deref())?;
+        }
+        return Ok(());
+    }
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let unchanged = prev.and_then(|p| std::fs::metadata(p).ok().map(|m| (p, m))).filter(|(_, pm)| {
+        pm.is_file() && pm.len() == md.len() && pm.modified().ok() == md.modified().ok()
+    });
+    if let Some((p, _)) = unchanged {
+        if std::fs::hard_link(p, dst).is_ok() {
+            return Ok(());
+        }
+    }
+    std::fs::copy(src, dst)?;
+    // keep the source's time, so the next backup can tell it is unchanged
+    if let Ok(t) = md.modified() {
+        if let Ok(f) = std::fs::OpenOptions::new().write(true).open(dst) {
+            let _ = f.set_modified(t);
+        }
+    }
+    Ok(())
 }
 
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {
@@ -363,6 +433,7 @@ pub(crate) fn spawn_sweeps(db: StatsDb) {
                 let (s, o) = d.sweep_auth()?;
                 let cutoff = chrono::Utc::now().timestamp() - TRAIL_KEEP_SECS;
                 let t = d.prune_trail_points(cutoff)?;
+                d.audit_prune()?;
                 Ok((s, o, t))
             })
             .await;
@@ -411,6 +482,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn backup_copies_files_and_links_unchanged_ones() {
+        let base = std::env::temp_dir().join(format!("bfdb-backup-files-{}", uuid::Uuid::new_v4()));
+        let dir = base.join("backups");
+        let photos = base.join("db.intel");
+        std::fs::create_dir_all(photos.join("sub")).unwrap();
+        std::fs::write(photos.join("a.png"), b"aaaa").unwrap();
+        std::fs::write(photos.join("sub").join("b.png"), b"bb").unwrap();
+        let cfg = base.join("ODF_CFG");
+        std::fs::write(&cfg, b"{}").unwrap();
+        let files = vec![("intel".to_string(), photos.clone()), ("engine-cfg/default".to_string(), cfg)];
+        let db = sled::open(base.join("db")).unwrap();
+        let first = backup_now(&db, &dir, 5, &files).unwrap();
+        assert_eq!(std::fs::read(first.join("files/intel/sub/b.png")).unwrap(), b"bb");
+        assert_eq!(std::fs::read(first.join("files/engine-cfg/default")).unwrap(), b"{}");
+        // a second backup in a later second
+        std::thread::sleep(Duration::from_millis(1100));
+        std::fs::write(photos.join("c.png"), b"c").unwrap();
+        let second = backup_now(&db, &dir, 5, &files).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(std::fs::read(second.join("files/intel/a.png")).unwrap(), b"aaaa");
+        assert_eq!(std::fs::read(second.join("files/intel/c.png")).unwrap(), b"c");
+        // a missing source is skipped, not an error
+        std::thread::sleep(Duration::from_millis(1100));
+        backup_now(&db, &dir, 5, &[("gone".into(), base.join("nope"))]).unwrap();
+        drop(db);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn backup_roundtrip_and_rotation() {
         let base = std::env::temp_dir().join(format!("bfdb-backup-test-{}", uuid::Uuid::new_v4()));
         let db_path = base.join("db");
@@ -418,9 +518,12 @@ mod tests {
         {
             let db = sled::open(&db_path).unwrap();
             db.open_tree("t").unwrap().insert(b"k", b"v").unwrap();
-            let b = backup_now(&db, &dir, 2).unwrap();
+            db.open_tree("auth_sessions_h").unwrap().insert(b"k", b"secret").unwrap();
+            let b = backup_now(&db, &dir, 2, &[]).unwrap();
             let restored = sled::open(&b).unwrap();
             assert_eq!(restored.open_tree("t").unwrap().get(b"k").unwrap().as_deref(), Some(&b"v"[..]));
+            // live logins are not copied into backups
+            assert!(!restored.tree_names().iter().any(|n| &n[..] == b"auth_sessions_h"));
         }
         // rotation keeps only the newest `keep`
         for n in 0..3 {

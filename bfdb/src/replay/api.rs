@@ -45,9 +45,10 @@ fn err(code: StatusCode, msg: impl std::fmt::Display) -> Response {
     reply_json(code, &json!({ "error": msg.to_string() }))
 }
 
+/// A 500 that names a log reference, not the anyhow chain (sled paths,
+/// file names, serde positions), which goes to the log.
 fn internal(e: anyhow::Error) -> Response {
-    log::warn!("replay api: {e:#}");
-    err(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))
+    crate::websec::error_response(&e.context("replay api"))
 }
 
 /// May this caller see this instance's recordings?

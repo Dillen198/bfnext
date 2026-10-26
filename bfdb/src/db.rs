@@ -28,9 +28,9 @@ use netidx_archive::{
     config::file::Config as ArchiveFileCfg,
     logfile_collection::{ArchiveCollectionReader, ArchiveIndex},
 };
-use regex::Regex;
+
 use serde::{Deserialize, Serialize};
-use sled::{transaction::TransactionError, Db};
+use sled::Db;
 use smallvec::SmallVec;
 use std::{
     collections::{Bound, HashMap, HashSet, VecDeque},
@@ -313,6 +313,7 @@ pub(crate) struct OAuthState {
     pub(crate) return_to: Option<std::string::String>,
 }
 
+/// A logged-in browser session, as stored in `auth_sessions_h`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionData {
     pub(crate) discord_id: std::string::String,
@@ -320,7 +321,51 @@ pub(crate) struct SessionData {
     pub(crate) avatar:     Option<std::string::String>,
     pub(crate) is_admin:   bool,
     pub(crate) expires:    DateTime<Utc>,
+    /// `crate::admin::Role` bits. A full admin has every one; a player none.
+    /// (Rows of the old `auth_sessions` tree predate this field -- see
+    /// `LegacySessionData`.)
+    pub(crate) roles:      u8,
 }
+
+/// The layout of the pre-hash `auth_sessions` tree, keyed by the raw cookie
+/// id. Read once, at startup, to move each row into `auth_sessions_h`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacySessionData {
+    discord_id: std::string::String,
+    username:   std::string::String,
+    avatar:     Option<std::string::String>,
+    is_admin:   bool,
+    expires:    DateTime<Utc>,
+}
+
+/// Sessions are keyed by this digest of the cookie id, never the id itself:
+/// the database, and every backup of it, then holds nothing a browser could
+/// present as a cookie.
+pub(crate) fn session_key(id: Uuid) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(32);
+    buf.extend_from_slice(b"bfdb-session-v1\0");
+    buf.extend_from_slice(id.as_bytes());
+    crate::websec::sha256(&buf)
+}
+
+/// One admin action in the audit log.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AuditEntry {
+    pub(crate) at: DateTime<Utc>,
+    /// Discord id, or `local:<user>` for the password login.
+    pub(crate) who: std::string::String,
+    pub(crate) username: std::string::String,
+    pub(crate) action: std::string::String,
+    pub(crate) target: Option<std::string::String>,
+    pub(crate) instance: Option<std::string::String>,
+}
+
+/// The audit log keeps at most this many rows; the oldest go first.
+pub(crate) const AUDIT_KEEP: usize = 50_000;
+
+/// Trees a backup leaves out: live credentials. Restoring a backup just
+/// means everyone logs in again.
+pub(crate) const BACKUP_EXCLUDED_TREES: &[&str] = &["auth_sessions", "auth_sessions_h", "auth_states"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TrailPoint {
@@ -780,14 +825,6 @@ struct StatCtxInner {
 struct StatCtx(Option<StatCtxInner>);
 
 impl StatCtx {
-    #[allow(dead_code)]
-    fn get(&self) -> Result<&StatCtxInner> {
-        match &self.0 {
-            Some(t) => Ok(t),
-            None => bail!("expected to see NewSession before stats"),
-        }
-    }
-
     fn get_mut(&mut self) -> Result<&mut StatCtxInner> {
         match &mut self.0 {
             Some(t) => Ok(t),
@@ -1021,10 +1058,7 @@ pub(crate) struct StatsDbInner {
     instances: Registry,
     /// Runtime state per instance, keyed by `InstanceCfg::id`.
     states: Arc<HashMap<InstanceId, Arc<InstanceState>>>,
-    #[allow(dead_code)]
-    include: Option<Regex>,
-    #[allow(dead_code)]
-    exclude: Option<Regex>,
+
     db: Db,
     pilots: Pilots,
     /// XP, levels and challenges (`crate::progression`).
@@ -1083,7 +1117,11 @@ pub(crate) struct StatsDbInner {
     /// The old single-server JSONL cursor, kept only long enough to migrate it.
     legacy_jsonl_cursor: Tree<u8, u64>,
     // Auth
-    auth_sessions:    Tree<Uuid, SessionData>,
+    /// Pre-hash sessions keyed by the raw cookie id; emptied into
+    /// `auth_sessions` at startup (`migrate_session_keys`).
+    legacy_auth_sessions: Tree<Uuid, LegacySessionData>,
+    /// Sessions keyed by `session_key(cookie id)`.
+    auth_sessions:    Tree<[u8; 32], SessionData>,
     auth_states:      Tree<Uuid, OAuthState>,
     // Trail history
     trail_points: Tree<(RoundId, std::string::String, i64), (f64, f64, f64, f64)>,
@@ -1098,6 +1136,8 @@ pub(crate) struct StatsDbInner {
     aircraft_sorties: Tree<(RoundId, std::string::String), (u32, f32)>,
     // Admin-managed ban list (bfdb-native, separate from bflib's cfg.banned)
     admin_bans: Tree<Ucid, BanRecord>,
+    /// Admin actions, keyed (unix micros, random) so they sort by time.
+    admin_audit: Tree<(i64, u32), AuditEntry>,
     // Daily war news, keyed (RoundId, "YYYY-MM-DD"). Generated from the
     // event stream by news.rs; see that module for why it is stored rather
     // than computed per request (the trend comparisons and the
@@ -1121,6 +1161,8 @@ pub(crate) struct StatsDbInner {
     news_image_count: Tree<(std::string::String, std::string::String), u32>,
     // bfwiki content, keyed by page slug (e.g. "gameplay/objectives")
     wiki_pages: Tree<std::string::String, WikiPage>,
+    /// Pages an admin deleted: slug -> (when, by whom). Seeding skips them.
+    wiki_tombstones: Tree<std::string::String, (DateTime<Utc>, std::string::String)>,
     /// Admins' commander overrides, keyed by ucid. The value is a JSON
     /// `command::GrantRecord`, not bincode, so the record can grow without
     /// breaking the tree (see the bincode schema notes).
@@ -1681,13 +1723,7 @@ impl Deref for StatsDb {
 }
 
 
-#[allow(dead_code)]
-fn txn_err(e: TransactionError<anyhow::Error>) -> anyhow::Error {
-    match e {
-        TransactionError::Abort(e) => e,
-        TransactionError::Storage(e) => e.into(),
-    }
-}
+
 
 impl StatsDb {
     /// Open the database and start one ingestion pipeline per configured
@@ -1703,8 +1739,6 @@ impl StatsDb {
         subscribers: &HashMap<Option<PathBuf>, Subscriber>,
         db: P,
         instances: Registry,
-        include: Option<Regex>,
-        exclude: Option<Regex>,
     ) -> Result<Self> {
         let db = sled::open(db.as_ref())?;
         let states: HashMap<InstanceId, Arc<InstanceState>> = instances
@@ -1737,8 +1771,6 @@ impl StatsDb {
         let t = Self(Arc::new(StatsDbInner {
             instances: instances.clone(),
             states: Arc::new(states),
-            include,
-            exclude,
             db: db.clone(),
             pilots: Pilots::new(&db)?,
             progress: crate::progression::Progression::new(&db)?,
@@ -1762,7 +1794,8 @@ impl StatsDb {
             jsonl_cursor: Tree::open(&db, "jsonl_cursor_v2")?,
             jsonl_file_cursor: Tree::open(&db, "jsonl_cursor_v3")?,
             legacy_jsonl_cursor: Tree::open(&db, "jsonl_cursor")?,
-            auth_sessions: Tree::open(&db, "auth_sessions")?,
+            legacy_auth_sessions: Tree::open(&db, "auth_sessions")?,
+            auth_sessions: Tree::open(&db, "auth_sessions_h")?,
             auth_states: Tree::open(&db, "auth_states")?,
             trail_points: Tree::open(&db, "trail_points")?,
             objective_captures: Tree::open(&db, "objective_captures")?,
@@ -1770,6 +1803,7 @@ impl StatsDb {
             deploys: Tree::open(&db, "deploys")?,
             aircraft_sorties: Tree::open(&db, "aircraft_sorties")?,
             admin_bans: Tree::open(&db, "admin_bans")?,
+            admin_audit: Tree::open(&db, "admin_audit")?,
             // Named apart from the original bincode `news` tree: rows written
             // before the switch cannot be read as JSON, and silently dropping
             // them is better than a decode error on every pass. The old tree is
@@ -1779,6 +1813,7 @@ impl StatsDb {
             news_image_data: Tree::open(&db, "news_image_data")?,
             news_image_count: Tree::open(&db, "news_image_count")?,
             wiki_pages: Tree::open(&db, "wiki_pages")?,
+            wiki_tombstones: Tree::open(&db, "wiki_tombstones")?,
             commander_grants: Tree::open(&db, "commander_grants")?,
             combat_log: Tree::open(&db, "combat_log")?,
             wiki_images: Tree::open(&db, "wiki_images")?,
@@ -1795,6 +1830,7 @@ impl StatsDb {
         t.check_schema_version()?;
         t.migrate_legacy_cursors()?;
         t.migrate_legacy_sessions()?;
+        t.migrate_session_keys()?;
         t.seed_wiki_if_empty()?;
         t.seed_wiki_images_if_empty()?;
         t.close_stale_open_rounds()?;
@@ -1885,6 +1921,40 @@ impl StatsDb {
                 "{unreadable} session record(s) written by older builds can't be read by this one; \
                  ignoring them (only their perf history is lost)"
             );
+        }
+        Ok(())
+    }
+
+    /// Rekey every session still stored under its raw cookie id (written by
+    /// a bfdb from before `session_key`) by the digest, so the cookies keep
+    /// working and the plain ids leave the database. Expired rows and rows
+    /// that no longer decode are just dropped.
+    fn migrate_session_keys(&self) -> Result<()> {
+        let keys: Vec<Uuid> = self.legacy_auth_sessions.iter().keys_only().filter_map(|k| k.ok()).collect();
+        let now = Utc::now();
+        let mut moved = 0usize;
+        for id in keys {
+            if let Ok(Some(s)) = self.legacy_auth_sessions.get(&id) {
+                if s.expires > now {
+                    let roles = if s.is_admin { crate::admin::Role::ALL } else { 0 };
+                    self.auth_sessions.insert(
+                        &session_key(id),
+                        &SessionData {
+                            discord_id: s.discord_id,
+                            username: s.username,
+                            avatar: s.avatar,
+                            is_admin: s.is_admin,
+                            expires: s.expires,
+                            roles,
+                        },
+                    )?;
+                    moved += 1;
+                }
+            }
+            self.legacy_auth_sessions.delete(&id)?;
+        }
+        if moved > 0 {
+            info!("rekeyed {moved} login session(s) by digest; the raw session ids are gone from the database");
         }
         Ok(())
     }
@@ -3044,18 +3114,6 @@ impl StatsDb {
         Ok(out)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn pilots(&self) -> impl Iterator<Item = Result<(Ucid, String)>> {
-        self.pilots.pilots.iter().map(|r| {
-            let (ucid, pilot) = r?;
-            let name = pilot
-                .name
-                .last()
-                .map(|s| s.clone())
-                .unwrap_or(String::default());
-            Ok((ucid, name))
-        })
-    }
 
     /// Get all pilots with their aggregate stats, sorted by total kills descending.
     /// If `round` is Some, only stats from that round are included; otherwise all-time.
@@ -3558,17 +3616,6 @@ impl StatsDb {
         Ok(self.unit_db.get(&(inst.to_string(), version.to_string()))?)
     }
 
-    /// Every DCS version we have a snapshot for, oldest insertion first is not
-    /// knowable, so these come back in key order.
-    pub(crate) fn unit_db_versions(&self, inst: &str) -> Result<Vec<std::string::String>> {
-        let mut out = vec![];
-        for r in self.unit_db.scan_prefix(&inst.to_string())? {
-            let ((_, version), _) = r?;
-            out.push(version);
-        }
-        Ok(out)
-    }
-
     pub(crate) fn unit_db_latest(&self, inst: &str) -> Result<Option<(std::string::String, std::string::String)>> {
         let Some(version) = self.unit_db_latest.get(&inst.to_string())? else {
             return Ok(None);
@@ -3718,10 +3765,15 @@ impl StatsDb {
 
     pub(crate) fn wiki_save_page(&self, slug: &str, page: WikiPage) -> Result<()> {
         self.wiki_pages.insert(&slug.to_string(), &page)?;
+        // saving a page again brings a deleted one back for good
+        self.wiki_tombstones.delete(&slug.to_string())?;
         Ok(())
     }
 
-    pub(crate) fn wiki_delete_page(&self, slug: &str) -> Result<bool> {
+    /// Delete a page and remember that it was deleted, so the seed content
+    /// does not put a built-in page back on the next start.
+    pub(crate) fn wiki_delete_page(&self, slug: &str, by: &str) -> Result<bool> {
+        self.wiki_tombstones.insert(&slug.to_string(), &(Utc::now(), by.to_string()))?;
         Ok(self.wiki_pages.remove(&slug.to_string())?.is_some())
     }
 
@@ -4147,6 +4199,10 @@ impl StatsDb {
         ];
         let mut refreshed = 0u32;
         for (slug, title, section, order, content) in seed {
+            // deleted by an admin: stays deleted
+            if self.wiki_tombstones.contains_key(&slug.to_string())? {
+                continue;
+            }
             match self.wiki_pages.get(&slug.to_string())? {
                 // admin-edited (or newer): leave it alone
                 Some(existing) if existing.updated_by != "seed" => continue,
@@ -5555,15 +5611,16 @@ impl StatsDb {
     // ── Auth session methods ─────────────────────────────────────────
 
     pub(crate) fn create_session(&self, id: Uuid, data: SessionData) -> Result<()> {
-        self.auth_sessions.insert(&id, &data)?;
+        self.auth_sessions.insert(&session_key(id), &data)?;
         Ok(())
     }
 
     pub(crate) fn get_session(&self, id: Uuid) -> Result<Option<SessionData>> {
-        match self.auth_sessions.get(&id)? {
+        let k = session_key(id);
+        match self.auth_sessions.get(&k)? {
             None => Ok(None),
             Some(s) if s.expires < Utc::now() => {
-                let _ = self.auth_sessions.remove(&id);
+                let _ = self.auth_sessions.delete(&k);
                 Ok(None)
             }
             Some(s) => Ok(Some(s)),
@@ -5571,7 +5628,7 @@ impl StatsDb {
     }
 
     pub(crate) fn delete_session(&self, id: Uuid) -> Result<()> {
-        self.auth_sessions.remove(&id)?;
+        self.auth_sessions.delete(&session_key(id))?;
         Ok(())
     }
 
@@ -5592,13 +5649,14 @@ impl StatsDb {
         }
     }
 
-    pub(crate) fn list_sessions(&self) -> Result<Vec<(Uuid, SessionData)>> {
+    /// Every unexpired session. The data only: their ids are not stored.
+    pub(crate) fn list_sessions(&self) -> Result<Vec<SessionData>> {
         let now = Utc::now();
         let mut out = Vec::new();
         for item in self.auth_sessions.iter() {
-            let (id, data) = item?;
+            let (_, data) = item?;
             if data.expires > now {
-                out.push((id, data));
+                out.push(data);
             }
         }
         Ok(out)
@@ -5629,7 +5687,7 @@ impl StatsDb {
             }
         }
         for k in &dead_sessions {
-            self.auth_sessions.remove(k)?;
+            self.auth_sessions.delete(k)?;
         }
         for k in &dead_states {
             self.auth_states.remove(k)?;
@@ -5648,7 +5706,7 @@ impl StatsDb {
             }
         }
         for id in &dead {
-            self.auth_sessions.remove(id)?;
+            self.auth_sessions.delete(id)?;
         }
         Ok(dead.len())
     }
@@ -5656,6 +5714,42 @@ impl StatsDb {
     /// How many OAuth login states are outstanding -- the per-IP limit on
     /// `/api/auth/login` keeps one client from filling the tree, this keeps
     /// all of them together from doing so.
+    // ── Admin audit log ──────────────────────────────────────────────
+
+    pub(crate) fn audit_put(&self, e: &AuditEntry) -> Result<()> {
+        self.admin_audit.insert(&(e.at.timestamp_micros(), Uuid::new_v4().as_u128() as u32), e)?;
+        Ok(())
+    }
+
+    /// Up to `limit` entries older than `before` (all of them without it),
+    /// newest first.
+    pub(crate) fn audit_list(&self, limit: usize, before: Option<DateTime<Utc>>) -> Result<Vec<AuditEntry>> {
+        let end = before.map_or(i64::MAX, |b| b.timestamp_micros());
+        let mut out = Vec::new();
+        for r in self.admin_audit.range(..(end, 0u32))?.rev() {
+            let (_, e) = r?;
+            out.push(e);
+            if out.len() >= limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Trim the audit log to `AUDIT_KEEP` rows. Returns how many went.
+    pub(crate) fn audit_prune(&self) -> Result<usize> {
+        let n = self.admin_audit.len();
+        if n <= AUDIT_KEEP {
+            return Ok(0);
+        }
+        let old: Vec<(i64, u32)> =
+            self.admin_audit.iter().keys_only().take(n - AUDIT_KEEP).filter_map(|k| k.ok()).collect();
+        for k in &old {
+            self.admin_audit.delete(k)?;
+        }
+        Ok(old.len())
+    }
+
     pub(crate) fn oauth_state_count(&self) -> usize {
         self.auth_states.len()
     }
@@ -6552,15 +6646,94 @@ impl StatsDb {
     /// A single default instance with no engine, no ingestion source -- what
     /// the unit tests below need. (They referred to this before it existed,
     /// which kept the whole test build from compiling.)
-    fn new_offline<P: AsRef<Path>>(
-        path: P,
-        include: Option<Regex>,
-        exclude: Option<Regex>,
-    ) -> Result<Self> {
+    fn new_offline<P: AsRef<Path>>(path: P) -> Result<Self> {
         let cfg: InstanceCfg = serde_json::from_value(serde_json::json!({
             "id": crate::instance::DEFAULT_INSTANCE,
         }))?;
-        Self::new(&HashMap::new(), path, Registry::single(cfg), include, exclude)
+        Self::new(&HashMap::new(), path, Registry::single(cfg))
+    }
+}
+
+#[cfg(test)]
+impl StatsDb {
+    /// A round of `inst`'s, for route tests.
+    pub(crate) fn insert_test_round(&self, rid: RoundId, inst: &str, start: DateTime<Utc>) {
+        self.round
+            .insert(&(Scenario::from("campaign"), rid), &Round { start, end: Some(start), winner: None })
+            .unwrap();
+        self.round_instance.insert(&rid, &inst.to_string()).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod wiki_tombstone_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn deleted_seed_pages_stay_deleted() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-wiki-test-{}", Uuid::new_v4()));
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
+        let slug = "reference/faq";
+        assert!(db.wiki_get_page(slug).unwrap().is_some(), "seeded");
+        assert!(db.wiki_delete_page(slug, "admin").unwrap());
+        // what every restart does
+        db.seed_wiki_if_empty().unwrap();
+        assert!(db.wiki_get_page(slug).unwrap().is_none(), "a deleted page came back");
+        // an admin re-creating it lifts the tombstone
+        let page = WikiPage {
+            title: "FAQ".into(),
+            section: "Reference".into(),
+            order: 3,
+            content: "mine".into(),
+            updated_at: Utc::now(),
+            updated_by: "admin".into(),
+        };
+        db.wiki_save_page(slug, page).unwrap();
+        db.seed_wiki_if_empty().unwrap();
+        assert_eq!(db.wiki_get_page(slug).unwrap().unwrap().content, "mine");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+}
+
+#[cfg(test)]
+mod session_key_tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn legacy_sessions_are_rekeyed_and_keep_working() {
+        let tmp = std::env::temp_dir().join(format!("bfdb-session-test-{}", Uuid::new_v4()));
+        let live = Uuid::new_v4();
+        let stale = Uuid::new_v4();
+        {
+            // what a bfdb from before session_key left behind
+            let db = sled::open(tmp.join("db")).unwrap();
+            let old: Tree<Uuid, LegacySessionData> = Tree::open(&db, "auth_sessions").unwrap();
+            let row = |hours: i64, admin: bool| LegacySessionData {
+                discord_id: "42".into(),
+                username: "pilot".into(),
+                avatar: None,
+                is_admin: admin,
+                expires: Utc::now() + chrono::Duration::hours(hours),
+            };
+            old.insert(&live, &row(1, true)).unwrap();
+            old.insert(&stale, &row(-1, false)).unwrap();
+            db.flush().unwrap();
+        }
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
+        assert!(db.legacy_auth_sessions.is_empty());
+        let s = db.get_session(live).unwrap().expect("the old cookie still logs in");
+        assert!(s.is_admin);
+        assert_eq!(s.roles, crate::admin::Role::ALL);
+        assert!(db.get_session(stale).unwrap().is_none());
+        // no stored key is the cookie id
+        for k in db.auth_sessions.iter().keys_only() {
+            assert_ne!(&k.unwrap()[..16], live.as_bytes());
+        }
+        db.delete_session(live).unwrap();
+        assert!(db.get_session(live).unwrap().is_none());
+        drop(db);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 
@@ -6571,7 +6744,7 @@ mod round_number_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn rounds_are_numbered_per_server_in_start_order() {
         let tmp = std::env::temp_dir().join(format!("bfdb-number-test-{}", Uuid::new_v4()));
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let t0 = Utc::now();
         // Ids as sled hands them out: nothing like 1, 2, 3, and not in order.
         let rounds = [(RoundId(108_000_656), 120i64), (RoundId(0), 0), (RoundId(54_000_002), 60)];
@@ -6597,7 +6770,7 @@ mod merge_rounds_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn collapses_forked_campaign_rounds() {
         let tmp = std::env::temp_dir().join(format!("bfdb-merge-test-{}", Uuid::new_v4()));
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let scen = Scenario::from("campaign");
         let t0 = Utc::now();
 
@@ -6669,7 +6842,7 @@ mod merge_rounds_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn merge_all_sweeps_orphan_round_ids() {
         let tmp = std::env::temp_dir().join(format!("bfdb-mergeall-test-{}", Uuid::new_v4()));
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let scen = Scenario::from("campaign");
         let t0 = Utc::now();
 
@@ -6722,7 +6895,7 @@ mod intel_storage_tests {
         let tmp = std::env::temp_dir().join(format!("bfdb-intel-test-{}", Uuid::new_v4()));
         let db_path = tmp.join("db");
         let img_dir = tmp.join("photos");
-        let db = StatsDb::new_offline(&db_path, None, None).unwrap();
+        let db = StatsDb::new_offline(&db_path).unwrap();
         db.set_intel_dir(Some(img_dir.clone())).unwrap();
         assert!(img_dir.is_dir(), "--intel-dir should be created");
 
@@ -6751,7 +6924,7 @@ mod intel_storage_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn in_db_photo_when_no_dir() {
         let tmp = std::env::temp_dir().join(format!("bfdb-intel-test-{}", Uuid::new_v4()));
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let id = Uuid::new_v4();
         db.intel_put_image(id, "image/jpeg".into(), vec![1, 2, 3]).unwrap();
         let row = db.intel_images.get(&id).unwrap().unwrap();
@@ -6770,7 +6943,7 @@ mod off_slot_credit_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn combined_arms_kill_counts_in_round() {
         let tmp = std::env::temp_dir().join(format!("bfdb-ca-test-{}", Uuid::new_v4()));
-        let db = StatsDb::new_offline(tmp.join("db"), None, None).unwrap();
+        let db = StatsDb::new_offline(tmp.join("db")).unwrap();
         let ucid: Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
         let rid = RoundId(7);
         db.pilots.saw_pilot(ucid, String::from("blueshack")).unwrap();

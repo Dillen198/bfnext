@@ -57,9 +57,10 @@ fn fail(code: StatusCode, msg: impl std::fmt::Display) -> Response {
     reply_json(code, &json!({ "ok": false, "message": msg.to_string() }))
 }
 
+/// A 500 that names a log reference, not the anyhow chain (sled paths,
+/// file names, serde positions), which goes to the log.
 fn internal(e: anyhow::Error) -> Response {
-    log::warn!("range api: {e:#}");
-    err(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))
+    crate::websec::error_response(&e.context("range api"))
 }
 
 fn bytes_reply(body: Vec<u8>, ctype: &'static str, max_age: u32) -> Response {
@@ -111,7 +112,7 @@ async fn linked_player(ctx: &RangeCtx, sid: Option<Uuid>) -> Result<(bool, Strin
     let s = match block_in_place(|| ctx.db.get_session(sid)) {
         Ok(Some(s)) => s,
         Ok(None) => return Err(fail(StatusCode::UNAUTHORIZED, "session expired -- log in again")),
-        Err(e) => return Err(fail(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))),
+        Err(e) => return Err(internal(e)),
     };
     match ctx.session_ucid(sid, &s.discord_id).await {
         Some(u) => Ok((s.is_admin, u)),
@@ -124,14 +125,6 @@ async fn linked_player(ctx: &RangeCtx, sid: Option<Uuid>) -> Result<(bool, Strin
 
 // ── handlers: listing ──────────────────────────────────────────────────
 
-async fn h_instances(ctx: Arc<RangeCtx>) -> Response {
-    let v: Vec<Value> = ctx
-        .range_instances()
-        .iter()
-        .map(|c| json!({ "id": c.id, "label": c.label(), "dcs_server_name": c.dcs_server_name }))
-        .collect();
-    ok(&v)
-}
 
 async fn h_live(ctx: Arc<RangeCtx>, q: Q) -> Response {
     let sc = scope_or_400!(ctx, q);
@@ -700,7 +693,17 @@ fn pick_acmi(dir: &std::path::Path, ts: SystemTime) -> Option<std::path::PathBuf
     containing.or_else(|| cands.iter().min_by_key(|(_, _, m)| *m).map(|(p, _, _)| p.clone()))
 }
 
+/// Whole-recording downloads streaming at once, across every client: each
+/// holds a file open and a disk read in flight for minutes.
+const TACVIEW_STREAMS: usize = 4;
+
+/// Clip cuts running at once: each scans a Tacview recording end to end on
+/// a blocking thread.
+const CLIP_BUILDS: usize = 2;
+
 async fn h_tacview(ctx: Arc<RangeCtx>, id: String) -> Response {
+    static STREAMS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+        std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(TACVIEW_STREAMS)));
     use tokio::io::AsyncReadExt;
     let id = decode_seg(&id);
     let s = match block_in_place(|| ctx.store.get(&id)) {
@@ -715,19 +718,23 @@ async fn h_tacview(ctx: Arc<RangeCtx>, id: String) -> Response {
     let Some(path) = block_in_place(|| pick_acmi(&dir, ts)) else {
         return err(StatusCode::NOT_FOUND, "no Tacview recording covers this result");
     };
+    let Ok(permit) = STREAMS.clone().try_acquire_owned() else {
+        return err(StatusCode::SERVICE_UNAVAILABLE, "too many recordings are downloading right now -- try again in a minute");
+    };
     let file = match tokio::fs::File::open(&path).await {
         Ok(f) => f,
         Err(e) => return err(StatusCode::NOT_FOUND, format!("cannot open the recording: {e}")),
     };
     let len = file.metadata().await.map(|m| m.len()).ok();
-    let stream = futures::stream::unfold(Some(file), |f| async move {
-        let mut f = f?;
+    // the permit rides along with the file and is released with it
+    let stream = futures::stream::unfold(Some((file, permit)), |f| async move {
+        let (mut f, permit) = f?;
         let mut buf = vec![0u8; 256 * 1024];
         match f.read(&mut buf).await {
             Ok(0) => None,
             Ok(n) => {
                 buf.truncate(n);
-                Some((Ok::<_, std::io::Error>(bytes::Bytes::from(buf)), Some(f)))
+                Some((Ok::<_, std::io::Error>(bytes::Bytes::from(buf)), Some((f, permit))))
             }
             Err(e) => Some((Err(e), None)),
         }
@@ -823,10 +830,24 @@ async fn h_clip(ctx: Arc<RangeCtx>, id: String, as_acmi: bool) -> Response {
                 lead_s: (span + 25.0).clamp(40.0, 900.0),
                 tail_s: 15.0,
             };
+            static BUILDS: std::sync::LazyLock<tokio::sync::Semaphore> =
+                std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(CLIP_BUILDS));
+            // Wait a while for a slot rather than refusing at once: a debrief
+            // page asks once and shows a spinner.
+            let permit = match tokio::time::timeout(Duration::from_secs(30), BUILDS.acquire()).await {
+                Ok(Ok(p)) => p,
+                _ => return err(StatusCode::SERVICE_UNAVAILABLE, "the server is busy cutting other clips -- try again in a minute"),
+            };
             let built = tokio::task::spawn_blocking(move || clip::build(&path, &req)).await;
+            drop(permit);
             let c = match built {
                 Ok(Ok(c)) => c,
-                Ok(Err(e)) => return err(StatusCode::NOT_FOUND, format!("{e:#}")),
+                // the outermost message is the one written for the reader
+                // ("... is not in the recording"); the chain is for the log
+                Ok(Err(e)) => {
+                    log::info!("range: no clip for {id}: {e:#}");
+                    return err(StatusCode::NOT_FOUND, format!("{e}"));
+                }
                 Err(e) => return internal(anyhow::anyhow!("clip task failed: {e}")),
             };
             let gz = match serde_json::to_vec(&c).map_err(anyhow::Error::from).and_then(|j| gzip(&j)) {
@@ -963,15 +984,21 @@ async fn h_atc(ctx: Arc<RangeCtx>, q: Q) -> Response {
 /// The live ATC feed (LiveATC style): every transmission on `?station=`
 /// (a station id, several comma-separated, or `all`) as it is said, over a
 /// WebSocket.
-async fn h_atc_live(ws: warp::ws::Ws, ctx: Arc<RangeCtx>, q: Q) -> Response {
+async fn h_atc_live(ws: warp::ws::Ws, ip: std::net::IpAddr, ctx: Arc<RangeCtx>, q: Q) -> Response {
     let sc = scope_or_400!(ctx, q);
     let inst = sc.primary().id.clone();
     let station = nonempty(&q, "station").unwrap_or("all").to_string();
+    // Counted against the caller's per-IP WebSocket allowance as well as the
+    // feed's own listener cap, so one address cannot take every listener.
+    let Some(ip_slot) = crate::websec::ws_slot(ip) else {
+        return crate::websec::ws_refused(StatusCode::TOO_MANY_REQUESTS, "too many open connections");
+    };
     let Some(slot) = crate::milatc::live::Slot::take() else {
         return crate::websec::ws_refused(StatusCode::SERVICE_UNAVAILABLE, "too many listeners on the ATC feed");
     };
     ws.on_upgrade(move |socket| async move {
         let _slot = slot;
+        let _ip_slot = ip_slot;
         atc_live(socket, inst, station).await
     })
     .into_response()
@@ -1037,7 +1064,6 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
     let sid = crate::extract_session_cookie();
     let body = warp::body::content_length_limit(16 * 1024).and(warp::body::bytes());
 
-    let instances = warp::path!("api" / "range" / "instances").and(c.clone()).then(h_instances);
     let live = warp::path!("api" / "range" / "live").and(c.clone()).and(q.clone()).then(h_live);
     let feed = warp::path!("api" / "range" / "feed").and(c.clone()).and(q.clone()).then(h_feed);
     let results = warp::path!("api" / "range" / "results").and(c.clone()).and(q.clone()).then(h_results);
@@ -1069,7 +1095,7 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
         .and(crate::websec::ws_limited())
         .and(c.clone())
         .and(q.clone())
-        .then(|ws, _ip, ctx: Arc<RangeCtx>, q: Q| h_atc_live(ws, ctx, q));
+        .then(|ws, ip, ctx: Arc<RangeCtx>, q: Q| h_atc_live(ws, ip, ctx, q));
     let atc_audio = warp::path!("api" / "range" / "atc" / "audio" / u64).and(c.clone()).and(q.clone()).then(
         |id: u64, ctx: Arc<RangeCtx>, q: Q| h_atc_audio(ctx, q, id),
     );
@@ -1113,9 +1139,7 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
         .then(h_reset_station);
 
     // Boxed in small groups: each `.or` nests the type one level deeper.
-    let reads_a = instances
-        .or(live)
-        .unify()
+    let reads_a = live
         .or(feed)
         .unify()
         .or(results)
