@@ -50,10 +50,16 @@ jobs:
       # bfdb embeds the dashboard and site builds (bfweb/dist, bfsite/dist,
       # both gitignored) with RustEmbed, which refuses to compile if a folder
       # is missing. This job only checks the Rust side (the frontend job
-      # builds them for real), so empty folders stand in for the npm builds.
+      # builds them for real), so placeholder pages stand in for the npm
+      # builds. Not empty folders: bfdb's route tests load the SPA fallback,
+      # which serves index.html.
       - name: Stub frontend build output
         shell: pwsh
-        run: New-Item -ItemType Directory -Force bfweb/dist, bfsite/dist | Out-Null
+        run: |
+          foreach ($d in 'bfweb/dist', 'bfsite/dist') {
+            New-Item -ItemType Directory -Force $d | Out-Null
+            Set-Content -Path "$d/index.html" -Value '<!doctype html><title>CI placeholder</title>'
+          }
 
       - name: cargo check (workspace)
         run: cargo check --workspace --locked
@@ -88,7 +94,11 @@ jobs:
 
       - name: Stub frontend build output
         shell: pwsh
-        run: New-Item -ItemType Directory -Force bfweb/dist, bfsite/dist | Out-Null
+        run: |
+          foreach ($d in 'bfweb/dist', 'bfsite/dist') {
+            New-Item -ItemType Directory -Force $d | Out-Null
+            Set-Content -Path "$d/index.html" -Value '<!doctype html><title>CI placeholder</title>'
+          }
 
       - name: cargo fmt --check
         continue-on-error: true
