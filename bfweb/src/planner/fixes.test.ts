@@ -13,6 +13,9 @@ import f18dtc from './data/dcsdtc/FA18C.defaults.json'
 import f16dtc from './data/dcsdtc/F16C.defaults.json'
 import kiowa from './data/dcsdtc/OH58D.defaults.json'
 import c130 from './data/dcsdtc/C130.defaults.json'
+import a10 from './data/dcsdtc/A10.defaults.json'
+import tomcat from './data/native/F-14BU.defaults.json'
+import fulcrum from './data/native/MiG-29 Fulcrum.defaults.json'
 
 type Obj = Record<string, unknown>
 const wp = (name: string, lat: number, lon: number, extra: Partial<PlanWaypoint> = {}): PlanWaypoint => ({
@@ -106,5 +109,64 @@ describe('DCS-DTC fixes', () => {
   it('clamps elevation to what the cockpit takes', () => {
     const cfg = JSON.parse(buildDcsDtc(plan('FA-18C_hornet', { waypoints: [wp('LOW', 41.7, 41.8, { elev_ft: -50 })] }), tg('FA18C'), f18dtc as Json, {}, false, () => null).text)
     expect(cfg.Waypoints.Waypoints[0].Elevation).toBe(0)
+  })
+})
+
+describe('second verification pass', () => {
+  const tg = (c: string) => DCSDTC_TARGETS.find(t => t.code === c)!
+  const ground = [wp('FIELD', 41.7, 41.8, { alt_ft: 0, elev_ft: 150 }), wp('B', 41.8, 41.9), wp('C', 41.9, 42.0)]
+
+  it('writes MiG-29 plan radios and keeps altitudes above the ground', () => {
+    const d = data(buildNative(plan('MiG-29 Fulcrum', {
+      include_comms: true, waypoints: ground,
+      comm1: [{ preset: 3, freq_mhz: 251, label: '', modulation: 'AM' }, { preset: 20, freq_mhz: 124, label: '', modulation: 'AM' }],
+      comm2: [{ preset: 4, freq_mhz: 40.5, label: '', modulation: 'FM' }],
+    }), 'MiG-29 Fulcrum', fulcrum as Json, {}, () => null).text)
+    expect(d.Program_1.Radio.Channel_3).toEqual({ freq: 251, modulation: 1 })
+    expect(d.Program_1.Radio.Channel_0).toEqual({ freq: 124, modulation: 1 })
+    expect(d.mirror_Radio).toBe(false)
+    expect(d.Program_1.Points[0].alt).toBeCloseTo(150 * 0.3048, 6)
+    expect(d.Program_1.Route[0].alt).toBeCloseTo(150 * 0.3048, 6)
+  })
+
+  it('keeps F-14 elevations and speeds in the cockpit ranges', () => {
+    const out = buildNative(plan('F-14BU', { speed_kts: 997, include_comms: true, comm1: radios.comm1, waypoints: [wp('LOW', 41.7, 41.8, { elev_ft: -50 }), wp('B', 41.8, 41.9)] }),
+      'F-14BU', tomcat as Json, {}, () => null)
+    const pts = data(out.text).NAV[1].waypoints
+    expect(pts[0].elev).toBe(0)
+    expect(pts[0].spd).toBe(990)
+    expect(out.warnings.join(' ')).toMatch(/no radio section/)
+  })
+
+  it('skips presets a two-radio aircraft cannot tune', () => {
+    const out = buildDcsDtc(plan('C-130J-30', { include_comms: true, comm1: [], comm2: [{ preset: 1, freq_mhz: 40, label: '', modulation: 'FM' }, { preset: 2, freq_mhz: 127.5, label: '', modulation: 'AM' }] }),
+      tg('C130'), c130 as Json, {}, false, () => null)
+    expect(JSON.parse(out.text).Radios.Radio2.Presets.map((p: Obj) => p.Frequency)).toEqual(['127.500'])
+    expect(out.warnings.join(' ')).toMatch(/1 radio preset outside/)
+  })
+
+  it('puts A-10 COMM2 presets on the ARC-210 as 21+', () => {
+    const cfg = JSON.parse(buildDcsDtc(plan('A-10C_2', { include_comms: true, comm1: [{ preset: 1, freq_mhz: 251, label: '', modulation: 'AM' }], comm2: [{ preset: 1, freq_mhz: 127.5, label: 'FLT', modulation: 'AM' }] }),
+      tg('A10'), a10 as Json, {}, false, () => null).text)
+    expect(cfg.Radios.Radio1.Presets.map((p: Obj) => [p.Number, p.Frequency])).toEqual([[1, '251.000'], [21, '127.500']])
+    expect(cfg.Radios.Radio2.Presets).toBeNull()
+  })
+
+  it('keeps Apache VHF to 118-151.975', () => {
+    const cfg = JSON.parse(buildDcsDtc(plan('AH-64D_BLK_II', { include_comms: true, comm1: [], comm2: [{ preset: 1, freq_mhz: 110, label: '', modulation: 'AM' }, { preset: 2, freq_mhz: 120, label: '', modulation: 'AM' }] }),
+      tg('AH64D'), a64dtc as Json, {}, false, () => null).text)
+    expect(cfg.Radios.Radio.Presets.map((p: Obj) => p.Number)).toEqual([2])
+  })
+
+  it('refuses an override past the end of a list', () => {
+    expect(pruneOverrides({ L: [] }, { '/L/0': 1, '/L/3': 2 })).toEqual({ '/L/0': 1 })
+  })
+
+  it('renames C-130 points until the name is free', () => {
+    const names = ['KUTAISI 1', 'KUTAISI 2', 'KUTAI3', 'KUTAISI 3'].map((n, i) => wp(n, 41.7 + i * 0.01, 41.8))
+    const cfg = JSON.parse(buildDcsDtc(plan('C-130J-30', { waypoints: names }), tg('C130'), c130 as Json, {}, false, () => null).text)
+    const got = cfg.Waypoints.Waypoints.map((w: Obj) => w.Name as string)
+    expect(new Set(got).size).toBe(4)
+    expect(got.every((n: string) => /^[A-Z0-9]{1,6}$/.test(n))).toBe(true)
   })
 })

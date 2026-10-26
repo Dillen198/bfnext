@@ -210,7 +210,7 @@ export function pruneOverrides(defaults: Json, ov: Overrides): Overrides {
     if (parent === null || typeof parent !== 'object') continue
     const key = segs[segs.length - 1]
     const fits = Array.isArray(parent)
-      ? /^\d+$/.test(key)
+      ? /^\d+$/.test(key) && Number(key) <= parent.length
       : key in parent || Object.keys(parent).length === 0 || Object.keys(out).some(k => p.startsWith(k + '/'))
     if (!fits) continue
     out[p] = ov[p]

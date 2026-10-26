@@ -277,14 +277,14 @@ function tomcatRoute(r: RouteFill) {
   const used = ((plan2.lines as JsonObject[] | undefined) ?? []).reduce((s, l) => s + ((l.points as Json[] | undefined)?.length ?? 0), 0)
     + ((plan2.additional_points as Json[] | undefined)?.length ?? 0)
   if (w.length + used > 50) throw new ExportError(`An F-14 flight plan holds 50 points; this one would have ${w.length + used}.`)
-  const spd = Math.min(999, Math.round(r.plan.speed_kts / 10) * 10)
+  const spd = Math.min(990, Math.round(r.plan.speed_kts / 10) * 10)
   nav[1] = {
     ...plan2,
     name: ((plan2.name as string) || r.plan.name || 'ROUTE').slice(0, 16),
     waypoints: w.map((p, i) => ({
       name: (p.name || `WP${i + 1}`).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5) || `WP${i + 1}`,
       x: r.xy[i].x, y: r.xy[i].y, lat: p.lat, lon: p.lon,
-      elev: Math.floor(p.elev_ft + 0.5),
+      elev: Math.min(60000, Math.max(0, Math.floor(p.elev_ft + 0.5))),
       spd, tot: '',
     })),
   }
@@ -292,6 +292,9 @@ function tomcatRoute(r: RouteFill) {
   setAt(r.data, ['NAV'], nav)
   delete r.data.terrain
   r.data.cartridge_name = (r.data.cartridge_name as string) || 'DEFAULT'
+  if (r.plan.include_comms && (r.plan.comm1.length || r.plan.comm2.length)) {
+    r.warnings.push('The F-14 cartridge has no radio section; set presets in the jet.')
+  }
 
   // JDAM: an active target the pilot left without a position takes the plan's
   // next target waypoint; every active target gets its release zone and a
@@ -325,9 +328,11 @@ function fulcrumRoute(r: RouteFill) {
   const kmh = r.plan.speed_kts * KTS_TO_KMH
   const p1 = ['Program_1']
   const note = (s: string) => s.toUpperCase().replace(/[^A-Z0-9 ]/g, '').slice(0, 7)
+  // Planned altitude in metres MSL, never below the point's ground.
+  const above = (p: { alt_ft: number; elev_ft: number }) => Math.max(p.alt_ft, p.elev_ft) * FT
   setAt(r.data, [...p1, 'Points'], w.map((p, i) => ({
     id: `PNT${i + 1}`, num: `PNT${i + 1}`, name: `PNT${i + 1}`, note: note(p.name),
-    x: r.xy[i].x, y: r.xy[i].y, alt: p.alt_ft * FT, speed: kmh, terrainAltitude: p.elev_ft * FT,
+    x: r.xy[i].x, y: r.xy[i].y, alt: above(p), speed: kmh, terrainAltitude: p.elev_ft * FT,
   })))
   // Steer points: en-route points, skipping the departure and arrival fields.
   const enRoute = w.length > 2 ? w.map((_, i) => i).slice(1, -1) : w.map((_, i) => i)
@@ -335,14 +340,14 @@ function fulcrumRoute(r: RouteFill) {
   if (enRoute.length > 3) r.warnings.push('The MiG-29 holds three steer points; the first three en-route points were used.')
   setAt(r.data, [...p1, 'Waypoints'], steer.map((i, k) => ({
     num: `WPT${k + 1}`, id: `PNT${i + 1}`, geo: true, name: `PNT${i + 1}`, note: '',
-    x: r.xy[i].x, y: r.xy[i].y, alt: w[i].alt_ft * FT, speed: kmh,
+    x: r.xy[i].x, y: r.xy[i].y, alt: above(w[i]), speed: kmh,
   })))
   setAt(r.data, [...p1, 'Route'], w.map((p, i) => {
     const k = steer.indexOf(i)
     const t = r.tos(i)
     return {
       num: k >= 0 ? `WPT${k + 1}` : `PNT${i + 1}`, id: `PNT${i + 1}`, name: `PNT${i + 1}`, note: '',
-      x: r.xy[i].x, y: r.xy[i].y, alt: p.alt_ft * FT, alt_type: 1, speed: kmh, speed_type: 1,
+      x: r.xy[i].x, y: r.xy[i].y, alt: above(p), alt_type: 1, speed: kmh, speed_type: 1,
       ETA: t ?? 0, FIX_Time: t != null && p.target,
     }
   }))
@@ -352,6 +357,20 @@ function fulcrumRoute(r: RouteFill) {
   if (Array.isArray(ws) || ws == null) setAt(r.data, [...p1, 'WeaponSettings'], { trainingMode: false })
   r.data.SelectedProgram = (r.data.SelectedProgram as string) || 'Program_1'
   r.filled.push('/Program_1/Points')
+
+  // Plan radios: the R-862 has channels 0-19 (VHF 100-149.975 and UHF
+  // 220-399.975 MHz). Preset n is channel n, preset 20 channel 0, so the
+  // cockpit numbers match the plan's. Modulation 1 = AM, 2 = FM.
+  if (r.plan.include_comms) {
+    let skipped = 0
+    for (const c of [...r.plan.comm1, ...r.plan.comm2]) {
+      const inBand = (c.freq_mhz >= 100 && c.freq_mhz < 150) || (c.freq_mhz >= 220 && c.freq_mhz < 400)
+      if (!inBand || c.preset > 20) { skipped++; continue }
+      setAt(r.data, [...p1, 'Radio', `Channel_${c.preset % 20}`], { freq: c.freq_mhz, modulation: c.modulation === 'FM' ? 2 : 1 })
+      r.filled.push('/Program_1/Radio')
+    }
+    if (skipped) r.warnings.push(`${skipped} radio preset${skipped > 1 ? 's' : ''} outside the R-862's bands (100-149.975, 220-399.975 MHz) were left out.`)
+  }
 }
 
 /** Route fillers, per aircraft. */

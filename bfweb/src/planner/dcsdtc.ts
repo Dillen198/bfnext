@@ -102,10 +102,20 @@ function wpt(w: PlanWaypoint, seq: number, t: DcsDtcTarget, extra: JsonObject = 
   }
 }
 
+/** What each two-radio aircraft's radios tune in DCS-DTC, MHz, and how many presets they hold. */
+const RADIO_BANDS: Record<string, [{ ranges: [number, number][]; maxPreset: number }, { ranges: [number, number][]; maxPreset: number } | null]> = {
+  F16C: [{ ranges: [[225, 399.975]], maxPreset: 20 }, { ranges: [[30, 87.975], [108, 151.975]], maxPreset: 20 }],
+  F15E: [{ ranges: [[225, 399.975]], maxPreset: 20 }, { ranges: [[30, 399.975]], maxPreset: 40 }],
+  C130: [{ ranges: [[225, 399.975]], maxPreset: 20 }, { ranges: [[108, 173.975]], maxPreset: 20 }],
+  CH47F: [{ ranges: [[225, 399.975]], maxPreset: 20 }, { ranges: [[108, 173.975]], maxPreset: 20 }],
+  FA18C: [{ ranges: [[30, 399.975]], maxPreset: 20 }, { ranges: [[30, 399.975]], maxPreset: 20 }],
+  A10: [{ ranges: [[30, 399.975]], maxPreset: 30 }, null],
+}
+
 /** Which of the Apache/Kiowa radios a frequency belongs on: UHF, VHF, FM1. */
 function radioIndex(mhz: number): number | null {
   if (mhz >= 225 && mhz < 400) return 0
-  if (mhz >= 108 && mhz < 152) return 1
+  if (mhz >= 118 && mhz < 152) return 1
   if (mhz >= 30 && mhz < 88) return 2
   return null
 }
@@ -120,13 +130,28 @@ function fillRadios(cfg: JsonObject, plan: Plan, t: DcsDtcTarget, ov: Overrides,
   if (Object.keys(ov).some(p => p.startsWith('/Radios'))) return false
   const radios = (cfg.Radios ?? {}) as JsonObject
   if (t.radios === 'two') {
-    const list = (chs: Plan['comm1']) => chs.map(c => ({
-      Number: c.preset,
-      Name: c.label ? c.label.slice(0, t.code === 'C130' ? 5 : 8) : null,
-      Frequency: freqStr(c.freq_mhz),
-    }))
-    radios.Radio1 = { ...((radios.Radio1 as JsonObject) ?? {}), Presets: list(plan.comm1) }
-    radios.Radio2 = { ...((radios.Radio2 as JsonObject) ?? {}), Presets: list(plan.comm2) }
+    const bands = RADIO_BANDS[t.code]
+    let skipped = 0
+    const list = (chs: Plan['comm1'], radio: 0 | 1, offset = 0) => chs.flatMap(c => {
+      const n = c.preset + offset
+      const b = bands?.[radio]
+      if (!b || n > b.maxPreset || !b.ranges.some(([lo, hi]) => c.freq_mhz >= lo && c.freq_mhz <= hi)) { skipped++; return [] }
+      return [{ Number: n, Name: c.label ? c.label.slice(0, t.code === 'C130' ? 5 : 8) : null, Frequency: freqStr(c.freq_mhz) }]
+    })
+    if (t.code === 'A10') {
+      // DCS-DTC uploads only the A-10's ARC-210 (Radio1), which covers every
+      // band with 30 presets: COMM2 presets go there as 20 + n.
+      const r1 = [...list(plan.comm1, 0), ...list(plan.comm2, 0, 20)]
+      const seen = new Set<number>()
+      const uniq = r1.filter(p => !seen.has(p.Number) && seen.add(p.Number))
+      if (uniq.length < r1.length) warnings.push('Two presets landed on the same ARC-210 channel; the first was kept.')
+      radios.Radio1 = { ...((radios.Radio1 as JsonObject) ?? {}), Presets: uniq }
+      if (plan.comm2.length) warnings.push('The A-10 has one programmable radio in DCS-DTC: COMM2 presets are ARC-210 presets 21+.')
+    } else {
+      radios.Radio1 = { ...((radios.Radio1 as JsonObject) ?? {}), Presets: list(plan.comm1, 0) }
+      radios.Radio2 = { ...((radios.Radio2 as JsonObject) ?? {}), Presets: list(plan.comm2, 1) }
+    }
+    if (skipped) warnings.push(`${skipped} radio preset${skipped > 1 ? 's' : ''} outside the ${t.label}'s radio bands or preset range were left out.`)
   } else {
     const width = t.radios === 'six' ? 6 : 4
     const byNum = new Map<number, JsonObject>()
@@ -196,7 +221,10 @@ function fillRoute(cfg: JsonObject, plan: Plan, t: DcsDtcTarget, tos: Tos): stri
       const out = wpt(p, seq, t, { TimeOverSteerpoint: t.code === 'FA18C' ? tos(i) : null })
       if (t.code === 'C130') {
         let n = out.Name as string
-        if (seen.has(n)) n = n.slice(0, 6 - String(seq).length) + seq
+        for (let k = 0; seen.has(n); k++) {
+          const tag = k === 0 ? String(seq) : `${seq}${k}`
+          n = n.slice(0, Math.max(1, 6 - tag.length)) + tag
+        }
         seen.add(n)
         out.Name = n
       }
