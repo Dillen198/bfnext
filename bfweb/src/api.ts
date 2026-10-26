@@ -2,6 +2,7 @@ import {
   createInstanceStore, deadline, errorMessage, LONG_TIMEOUT_MS, REQUEST_TIMEOUT_MS,
   wsUrl as sharedWsUrl, type AuthUser,
 } from '@shared/web/api'
+import type { Plan, StoredPlan } from './planner/types'
 
 // ── API/WS base URLs ────────────────────────────────────────────────
 // Default: relative '/api' and same-origin WS, for when bfweb is embedded
@@ -2247,6 +2248,16 @@ export const api = {
   // side the session resolves to, so the enemy's intel never reaches a browser.
   situation: (side?: 'Blue' | 'Red') =>
     get<SituationReport>(side ? `/situation?side=${side}` : '/situation'),
+  // The Planner's flight plans, shared with the caller's coalition. Same
+  // lock: `side` only counts for an admin with no in-game side of their own.
+  plans: {
+    list: (side?: 'Blue' | 'Red') => get<StoredPlan[]>(side ? `/plans?side=${side}` : '/plans'),
+    /** Create (no `id`) or overwrite a plan the caller owns. */
+    save: (body: { id?: string; plan: Plan }, side?: 'Blue' | 'Red') =>
+      post<StoredPlan>(side ? `/plans?side=${side}` : '/plans', body),
+    del: (id: string, side?: 'Blue' | 'Red') =>
+      post<{ ok: boolean }>(side ? `/plans/delete?side=${side}` : '/plans/delete', { id }),
+  },
   // Coalition-locked like `situation`; orders are checked again by the engine
   // against the side the caller's own pilot is on.
   /** Commander access: earned by rank, or granted by an admin. */

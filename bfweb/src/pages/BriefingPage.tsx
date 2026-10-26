@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext'
 import KneeboardTab, { buildPdf } from './KneeboardTab'
 import { mockBriefing, mockSituation } from './briefingMocks'
 import SituationTab from './SituationTab'
+import PlannerTab from '../planner/PlannerTab'
 import {
   Briefing as BriefingIcon,
   Download,
@@ -14,7 +15,7 @@ import {
 } from '@icons'
 
 type Side = 'Blue' | 'Red'
-type Tab = 'situation' | 'kneeboard'
+type Tab = 'situation' | 'kneeboard' | 'planner'
 
 const MOCK = import.meta.env.DEV && new URLSearchParams(location.search).has('mock')
 
@@ -98,15 +99,18 @@ export default function BriefingPage() {
             ? situation
               ? `${situation.tasking.length} tasks · ${situation.hotspots.length} hotspots · ${situation.threats.length} known threats`
               : 'live situation'
-            : briefing
-              ? `${briefing.navaids.length} navaids · ${briefing.radios.length} stations · ${briefing.threats.length} threat types`
-              : 'kneeboard data'
+            : tab === 'planner'
+              ? 'plan a route, share it with your side, load it with DCS-DTC or a DCS cartridge'
+              : briefing
+                ? `${briefing.navaids.length} navaids · ${briefing.radios.length} stations · ${briefing.threats.length} threat types`
+                : 'kneeboard data'
         }
         right={
           <div className="briefing-header-controls" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <div className="briefing-tabgroup" style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
               {tabBtn('situation', 'Situation', critical > 0 ? `${critical}!` : undefined)}
               {tabBtn('kneeboard', 'Kneeboard')}
+              {tabBtn('planner', 'Planner')}
             </div>
             {canSwitch ? (
               <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
@@ -179,6 +183,8 @@ export default function BriefingPage() {
             {briefing && <KneeboardTab briefing={briefing} />}
           </>
         )}
+
+        {tab === 'planner' && <PlannerTab side={side} adminSide={canSwitch} report={situation} />}
       </div>
     </div>
   )

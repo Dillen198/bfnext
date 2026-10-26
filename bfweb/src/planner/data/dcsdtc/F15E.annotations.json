@@ -1,0 +1,2708 @@
+{
+  "code": "F15E",
+  "label": "F-15E Strike Eagle",
+  "sections": [
+    {
+      "path": "Upload",
+      "label": "Upload Settings",
+      "nullCrashesEditor": true,
+      "help": "Which systems DCS-DTC types into the jet when you press Upload. Routes, smart weapons, radios, misc and displays are uploaded on the UFC/MPDs of the seat you occupy."
+    },
+    {
+      "path": "WaypointsCapture",
+      "label": "Capture Settings",
+      "nullCrashesEditor": true,
+      "help": "Where points captured from the DCS F10 map (Ctrl+Shift+D) are placed in the route. App-side only, never uploaded."
+    },
+    {
+      "path": "RouteA",
+      "label": "Route A",
+      "nullCrashesEditor": true,
+      "managed": "route",
+      "help": "Steerpoints of route A (UFC points n.A). One route set is shared by both seats."
+    },
+    {
+      "path": "RouteB",
+      "label": "Route B",
+      "nullCrashesEditor": true,
+      "managed": "route",
+      "help": "Steerpoints of route B (UFC points n.B)."
+    },
+    {
+      "path": "RouteC",
+      "label": "Route C",
+      "nullCrashesEditor": true,
+      "managed": "route",
+      "help": "Steerpoints of route C (UFC points n.C)."
+    },
+    {
+      "path": "Radios",
+      "label": "Radios",
+      "nullCrashesEditor": true,
+      "help": "Radio 1 = MAIN (UHF only, 20 presets), Radio 2 = AUX (FM/VHF/UHF, 40 presets). Typed on the occupied seat's UFC."
+    },
+    {
+      "path": "Displays",
+      "label": "Displays",
+      "nullCrashesEditor": true,
+      "help": "MPD/MPCD PROG lists: up to three formats per display, each optionally tied to a master mode. Only programmed if the display has no PROG entries yet. AfterLoadFromJson re-creates a missing Displays.WSO but not Displays.Pilot."
+    },
+    {
+      "path": "SmartWeapons",
+      "label": "Smart Weapons",
+      "nullCrashesEditor": true,
+      "help": "JDAM/GBU mission coordinates per station (SMART > EDIT MSN). One target per station; only Settings[0] is used."
+    },
+    {
+      "path": "Misc",
+      "label": "Misc",
+      "nullCrashesEditor": true,
+      "help": "Bingo, bullseye, CARA low-altitude warning, TACAN, ILS and TGP laser code. Each item is only uploaded when its *ToBeUpdated flag is set."
+    }
+  ],
+  "fields": [
+    {
+      "path": "Aircraft",
+      "label": "Aircraft code",
+      "kind": "string",
+      "readonly": true,
+      "help": "Always \"F15E\". The loader picks the C# type from this value."
+    },
+    {
+      "path": "Version",
+      "label": "Format version",
+      "kind": "int",
+      "readonly": true,
+      "help": "Always 2. Missing/1 together with a missing Upload triggers the V1 converter."
+    },
+    {
+      "path": "KneeboardNotes",
+      "label": "Kneeboard notes",
+      "kind": "string",
+      "nullable": true,
+      "multiline": true,
+      "help": "Free text shown in the in-game kneeboard dialog (sent when Upload.Kneeboard is set). Not a system: not copied by Load from file."
+    },
+    {
+      "path": "Upload.DisplayUploadMode",
+      "label": "Displays upload seats",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 1,
+          "label": "Auto select (seat you are in)"
+        },
+        {
+          "value": 2,
+          "label": "Pilot and WSO (switches seats)"
+        }
+      ],
+      "help": "AutoSelect programs only the occupied seat's displays; PilotAndWSO jumps seats to program both cockpits."
+    },
+    {
+      "path": "Upload.RouteA",
+      "label": "Route A",
+      "kind": "bool"
+    },
+    {
+      "path": "Upload.RouteB",
+      "label": "Route B",
+      "kind": "bool"
+    },
+    {
+      "path": "Upload.RouteC",
+      "label": "Route C",
+      "kind": "bool"
+    },
+    {
+      "path": "Upload.Radios",
+      "label": "Radios",
+      "kind": "bool"
+    },
+    {
+      "path": "Upload.Displays",
+      "label": "Displays",
+      "kind": "bool"
+    },
+    {
+      "path": "Upload.SmartWeapons",
+      "label": "Smart weapons",
+      "kind": "bool"
+    },
+    {
+      "path": "Upload.Misc",
+      "label": "Misc",
+      "kind": "bool"
+    },
+    {
+      "path": "Upload.Kneeboard",
+      "label": "Kneeboard",
+      "kind": "bool",
+      "help": "Send preset name/summary and KneeboardNotes to the in-game kneeboard dialog after upload."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsMode",
+      "label": "Nav points placement",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to end of list"
+        },
+        {
+          "value": 1,
+          "label": "Add to end of first gap"
+        },
+        {
+          "value": 2,
+          "label": "Add to range"
+        }
+      ],
+      "managed": "route",
+      "help": "Placement of captured non-target points in the chosen route. Route-related app setting; keep default when the route is exported from the dashboard."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsMode",
+      "label": "Target points placement",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "Add to end of list"
+        },
+        {
+          "value": 2,
+          "label": "Add to range"
+        }
+      ],
+      "allowDefaultOutOfRange": false,
+      "managed": "route",
+      "help": "Placement of captured target points. The UI only offers Add to end of list and Add to range."
+    },
+    {
+      "path": "WaypointsCapture.NavPointsRangeFrom",
+      "label": "Nav range start",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "First sequence used when NavPointsMode = Add to range."
+    },
+    {
+      "path": "WaypointsCapture.TgtPointsRangeFrom",
+      "label": "Target range start",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "First sequence used when TgtPointsMode = Add to range."
+    },
+    {
+      "path": "RouteA.Waypoints",
+      "label": "Route A steerpoints",
+      "kind": "list",
+      "managed": "route",
+      "maxItems": 99,
+      "item": {
+        "Sequence": 1,
+        "Name": "STPT 1",
+        "Latitude": null,
+        "Longitude": null,
+        "Elevation": 0,
+        "TimeOverSteerpoint": null,
+        "Target": false,
+        "MEA": 0
+      },
+      "help": "Filled from the planned route. Each route waypoint becomes UFC point \"<Sequence>A\" (Sequence 1..99, unique, list kept sorted by Sequence; number consecutively from 1). Use route A for the main flight plan, B/C for alternates or a split (e.g. ingress/egress). Target = true also creates the target point \"<Sequence>.A\" (\".\" = DOT) and the coordinates are entered there. Uploaded: Sequence, Target, Latitude, Longitude, Elevation, MEA. Not uploaded: Name (kneeboard/list only, no length limit enforced) and TimeOverSteerpoint. The first point of the first uploaded route becomes the active steerpoint."
+    },
+    {
+      "path": "RouteA.Waypoints[].Sequence",
+      "label": "Sequence",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "Steerpoint number within route A. Unique per route."
+    },
+    {
+      "path": "RouteA.Waypoints[].Name",
+      "label": "Name",
+      "kind": "string",
+      "managed": "route",
+      "help": "Required (non-empty) by the editor; app default \"STPT <seq>\". Not uploaded, shown on kneeboard."
+    },
+    {
+      "path": "RouteA.Waypoints[].Latitude",
+      "label": "Latitude",
+      "kind": "coord-lat",
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, e.g. \"N 42°10.630’\" (U+00B0, U+2019)."
+    },
+    {
+      "path": "RouteA.Waypoints[].Longitude",
+      "label": "Longitude",
+      "kind": "coord-lon",
+      "pattern": "^[EW] \\d{3}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, 3-digit degrees, e.g. \"E 042°28.840’\"."
+    },
+    {
+      "path": "RouteA.Waypoints[].Elevation",
+      "label": "Elevation",
+      "kind": "int",
+      "min": 0,
+      "max": 59999,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Feet MSL (ground elevation of the point)."
+    },
+    {
+      "path": "RouteA.Waypoints[].TimeOverSteerpoint",
+      "label": "TOS",
+      "kind": "time",
+      "nullable": true,
+      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$",
+      "managed": "route",
+      "help": "HH:MM:SS or null. Stored/kneeboard only, not uploaded to the jet."
+    },
+    {
+      "path": "RouteA.Waypoints[].Target",
+      "label": "Target point",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Set for route target waypoints: uploads to target point n. instead of plain steerpoint n."
+    },
+    {
+      "path": "RouteA.Waypoints[].MEA",
+      "label": "MEA",
+      "kind": "int",
+      "min": 0,
+      "max": 60000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Minimum enroute altitude for the leg, uploaded (PB08). Dashboard may derive it from planned altitude/terrain; 0 if unknown."
+    },
+    {
+      "path": "RouteB.Waypoints",
+      "label": "Route B steerpoints",
+      "kind": "list",
+      "managed": "route",
+      "maxItems": 99,
+      "item": {
+        "Sequence": 1,
+        "Name": "STPT 1",
+        "Latitude": null,
+        "Longitude": null,
+        "Elevation": 0,
+        "TimeOverSteerpoint": null,
+        "Target": false,
+        "MEA": 0
+      },
+      "help": "Filled from the planned route. Each route waypoint becomes UFC point \"<Sequence>B\" (Sequence 1..99, unique, list kept sorted by Sequence; number consecutively from 1). Use route A for the main flight plan, B/C for alternates or a split (e.g. ingress/egress). Target = true also creates the target point \"<Sequence>.B\" (\".\" = DOT) and the coordinates are entered there. Uploaded: Sequence, Target, Latitude, Longitude, Elevation, MEA. Not uploaded: Name (kneeboard/list only, no length limit enforced) and TimeOverSteerpoint. The first point of the first uploaded route becomes the active steerpoint."
+    },
+    {
+      "path": "RouteB.Waypoints[].Sequence",
+      "label": "Sequence",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "Steerpoint number within route B. Unique per route."
+    },
+    {
+      "path": "RouteB.Waypoints[].Name",
+      "label": "Name",
+      "kind": "string",
+      "managed": "route",
+      "help": "Required (non-empty) by the editor; app default \"STPT <seq>\". Not uploaded, shown on kneeboard."
+    },
+    {
+      "path": "RouteB.Waypoints[].Latitude",
+      "label": "Latitude",
+      "kind": "coord-lat",
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, e.g. \"N 42°10.630’\" (U+00B0, U+2019)."
+    },
+    {
+      "path": "RouteB.Waypoints[].Longitude",
+      "label": "Longitude",
+      "kind": "coord-lon",
+      "pattern": "^[EW] \\d{3}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, 3-digit degrees, e.g. \"E 042°28.840’\"."
+    },
+    {
+      "path": "RouteB.Waypoints[].Elevation",
+      "label": "Elevation",
+      "kind": "int",
+      "min": 0,
+      "max": 59999,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Feet MSL (ground elevation of the point)."
+    },
+    {
+      "path": "RouteB.Waypoints[].TimeOverSteerpoint",
+      "label": "TOS",
+      "kind": "time",
+      "nullable": true,
+      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$",
+      "managed": "route",
+      "help": "HH:MM:SS or null. Stored/kneeboard only, not uploaded to the jet."
+    },
+    {
+      "path": "RouteB.Waypoints[].Target",
+      "label": "Target point",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Set for route target waypoints: uploads to target point n. instead of plain steerpoint n."
+    },
+    {
+      "path": "RouteB.Waypoints[].MEA",
+      "label": "MEA",
+      "kind": "int",
+      "min": 0,
+      "max": 60000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Minimum enroute altitude for the leg, uploaded (PB08). Dashboard may derive it from planned altitude/terrain; 0 if unknown."
+    },
+    {
+      "path": "RouteC.Waypoints",
+      "label": "Route C steerpoints",
+      "kind": "list",
+      "managed": "route",
+      "maxItems": 99,
+      "item": {
+        "Sequence": 1,
+        "Name": "STPT 1",
+        "Latitude": null,
+        "Longitude": null,
+        "Elevation": 0,
+        "TimeOverSteerpoint": null,
+        "Target": false,
+        "MEA": 0
+      },
+      "help": "Filled from the planned route. Each route waypoint becomes UFC point \"<Sequence>C\" (Sequence 1..99, unique, list kept sorted by Sequence; number consecutively from 1). Use route A for the main flight plan, B/C for alternates or a split (e.g. ingress/egress). Target = true also creates the target point \"<Sequence>.C\" (\".\" = DOT) and the coordinates are entered there. Uploaded: Sequence, Target, Latitude, Longitude, Elevation, MEA. Not uploaded: Name (kneeboard/list only, no length limit enforced) and TimeOverSteerpoint. The first point of the first uploaded route becomes the active steerpoint."
+    },
+    {
+      "path": "RouteC.Waypoints[].Sequence",
+      "label": "Sequence",
+      "kind": "int",
+      "min": 1,
+      "max": 99,
+      "managed": "route",
+      "help": "Steerpoint number within route C. Unique per route."
+    },
+    {
+      "path": "RouteC.Waypoints[].Name",
+      "label": "Name",
+      "kind": "string",
+      "managed": "route",
+      "help": "Required (non-empty) by the editor; app default \"STPT <seq>\". Not uploaded, shown on kneeboard."
+    },
+    {
+      "path": "RouteC.Waypoints[].Latitude",
+      "label": "Latitude",
+      "kind": "coord-lat",
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, e.g. \"N 42°10.630’\" (U+00B0, U+2019)."
+    },
+    {
+      "path": "RouteC.Waypoints[].Longitude",
+      "label": "Longitude",
+      "kind": "coord-lon",
+      "pattern": "^[EW] \\d{3}°\\d{2}\\.\\d{3}’$",
+      "managed": "route",
+      "help": "DDM thousandths, 3-digit degrees, e.g. \"E 042°28.840’\"."
+    },
+    {
+      "path": "RouteC.Waypoints[].Elevation",
+      "label": "Elevation",
+      "kind": "int",
+      "min": 0,
+      "max": 59999,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Feet MSL (ground elevation of the point)."
+    },
+    {
+      "path": "RouteC.Waypoints[].TimeOverSteerpoint",
+      "label": "TOS",
+      "kind": "time",
+      "nullable": true,
+      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d$",
+      "managed": "route",
+      "help": "HH:MM:SS or null. Stored/kneeboard only, not uploaded to the jet."
+    },
+    {
+      "path": "RouteC.Waypoints[].Target",
+      "label": "Target point",
+      "kind": "bool",
+      "managed": "route",
+      "help": "Set for route target waypoints: uploads to target point n. instead of plain steerpoint n."
+    },
+    {
+      "path": "RouteC.Waypoints[].MEA",
+      "label": "MEA",
+      "kind": "int",
+      "min": 0,
+      "max": 60000,
+      "unit": "ft",
+      "managed": "route",
+      "help": "Minimum enroute altitude for the leg, uploaded (PB08). Dashboard may derive it from planned altitude/terrain; 0 if unknown."
+    },
+    {
+      "path": "Radios.Radio1.Presets",
+      "label": "MAIN presets",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 20,
+      "item": {
+        "Number": 1,
+        "Name": null,
+        "Frequency": null
+      },
+      "help": "Preset channels 1..20, ordered by Number; null or [] when none."
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Number",
+      "label": "Preset #",
+      "kind": "int",
+      "min": 1,
+      "max": 20,
+      "help": "Preset channel number (unique). Files with a preset Number 0 get every number +1 on load."
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Name",
+      "label": "Name",
+      "kind": "string",
+      "nullable": true,
+      "help": "Label only (not uploaded)."
+    },
+    {
+      "path": "Radios.Radio1.Presets[].Frequency",
+      "label": "Frequency",
+      "kind": "freq",
+      "pattern": "^\\d{2,3}\\.\\d{3}$",
+      "unit": "MHz",
+      "help": "UHF 225.000-399.975 MHz; exactly 3 decimals, 5 kHz steps. No 2-decimal fix-up on the F-15E."
+    },
+    {
+      "path": "Radios.Radio1.SelectedFrequency",
+      "label": "Manual frequency",
+      "kind": "freq",
+      "nullable": true,
+      "pattern": "^\\d{2,3}\\.\\d{3}$",
+      "unit": "MHz",
+      "help": "UHF 225.000-399.975 MHz. Typed whenever non-empty."
+    },
+    {
+      "path": "Radios.Radio1.SelectedPreset",
+      "label": "Selected preset",
+      "kind": "string",
+      "nullable": true,
+      "pattern": "^([1-9]|1\\d|20|G)$",
+      "help": "Preset number as a string \"1\"..\"20\", or \"G\" (UHF guard)."
+    },
+    {
+      "path": "Radios.Radio1.EnableGuard",
+      "label": "Guard receiver",
+      "kind": "bool"
+    },
+    {
+      "path": "Radios.Radio1.Mode",
+      "label": "Radio left on",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(unset)"
+        },
+        {
+          "value": 1,
+          "label": "Frequency"
+        },
+        {
+          "value": 2,
+          "label": "Preset"
+        }
+      ],
+      "help": "Which of manual frequency or preset the radio is left on. 0 = unset (a fresh preset)."
+    },
+    {
+      "path": "Radios.Radio2.Presets",
+      "label": "AUX presets",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 40,
+      "item": {
+        "Number": 1,
+        "Name": null,
+        "Frequency": null
+      },
+      "help": "Preset channels 1..40, ordered by Number; null or [] when none."
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Number",
+      "label": "Preset #",
+      "kind": "int",
+      "min": 1,
+      "max": 40,
+      "help": "Preset channel number (unique). Files with a preset Number 0 get every number +1 on load."
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Name",
+      "label": "Name",
+      "kind": "string",
+      "nullable": true,
+      "help": "Label only (not uploaded)."
+    },
+    {
+      "path": "Radios.Radio2.Presets[].Frequency",
+      "label": "Frequency",
+      "kind": "freq",
+      "pattern": "^\\d{2,3}\\.\\d{3}$",
+      "unit": "MHz",
+      "help": "FM 30.000-87.975, VHF 108.000-173.975, UHF 225.000-399.975 MHz; exactly 3 decimals, 5 kHz steps. No 2-decimal fix-up on the F-15E."
+    },
+    {
+      "path": "Radios.Radio2.SelectedFrequency",
+      "label": "Manual frequency",
+      "kind": "freq",
+      "nullable": true,
+      "pattern": "^\\d{2,3}\\.\\d{3}$",
+      "unit": "MHz",
+      "help": "FM 30.000-87.975, VHF 108.000-173.975, UHF 225.000-399.975 MHz. Typed whenever non-empty."
+    },
+    {
+      "path": "Radios.Radio2.SelectedPreset",
+      "label": "Selected preset",
+      "kind": "string",
+      "nullable": true,
+      "pattern": "^([1-9]|[1-3]\\d|40|G|GV)$",
+      "help": "Preset number as a string \"1\"..\"40\", \"G\" (UHF guard) or \"GV\" (VHF guard)."
+    },
+    {
+      "path": "Radios.Radio2.EnableGuard",
+      "label": "Guard receiver",
+      "kind": "bool"
+    },
+    {
+      "path": "Radios.Radio2.Mode",
+      "label": "Radio left on",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(unset)"
+        },
+        {
+          "value": 1,
+          "label": "Frequency"
+        },
+        {
+          "value": 2,
+          "label": "Preset"
+        }
+      ],
+      "help": "Which of manual frequency or preset the radio is left on. 0 = unset (a fresh preset)."
+    },
+    {
+      "path": "Displays.Pilot.LeftMPD.FirstDisplay",
+      "label": "Pilot L MPD format 1",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 1; (none) skips this display."
+    },
+    {
+      "path": "Displays.Pilot.LeftMPD.FirstDisplayMode",
+      "label": "Pilot L MPD format 1 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.Pilot.LeftMPD.SecondDisplay",
+      "label": "Pilot L MPD format 2",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 2; only used when slot 1 is set; must differ from earlier slots."
+    },
+    {
+      "path": "Displays.Pilot.LeftMPD.SecondDisplayMode",
+      "label": "Pilot L MPD format 2 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.Pilot.LeftMPD.ThirdDisplay",
+      "label": "Pilot L MPD format 3",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 3; only used when slot 2 is set; must differ from earlier slots."
+    },
+    {
+      "path": "Displays.Pilot.LeftMPD.ThirdDisplayMode",
+      "label": "Pilot L MPD format 3 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.Pilot.RightMPD.FirstDisplay",
+      "label": "Pilot R MPD format 1",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 1; (none) skips this display."
+    },
+    {
+      "path": "Displays.Pilot.RightMPD.FirstDisplayMode",
+      "label": "Pilot R MPD format 1 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.Pilot.RightMPD.SecondDisplay",
+      "label": "Pilot R MPD format 2",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 2; only used when slot 1 is set; must differ from earlier slots."
+    },
+    {
+      "path": "Displays.Pilot.RightMPD.SecondDisplayMode",
+      "label": "Pilot R MPD format 2 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.Pilot.RightMPD.ThirdDisplay",
+      "label": "Pilot R MPD format 3",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 3; only used when slot 2 is set; must differ from earlier slots."
+    },
+    {
+      "path": "Displays.Pilot.RightMPD.ThirdDisplayMode",
+      "label": "Pilot R MPD format 3 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.Pilot.MPCD.FirstDisplay",
+      "label": "Pilot MPCD format 1",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 1; (none) skips this display. MPCDs cannot show AGRDR."
+    },
+    {
+      "path": "Displays.Pilot.MPCD.FirstDisplayMode",
+      "label": "Pilot MPCD format 1 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.Pilot.MPCD.SecondDisplay",
+      "label": "Pilot MPCD format 2",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 2; only used when slot 1 is set; must differ from earlier slots. MPCDs cannot show AGRDR."
+    },
+    {
+      "path": "Displays.Pilot.MPCD.SecondDisplayMode",
+      "label": "Pilot MPCD format 2 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.Pilot.MPCD.ThirdDisplay",
+      "label": "Pilot MPCD format 3",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 3; only used when slot 2 is set; must differ from earlier slots. MPCDs cannot show AGRDR."
+    },
+    {
+      "path": "Displays.Pilot.MPCD.ThirdDisplayMode",
+      "label": "Pilot MPCD format 3 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.LeftMPCD.FirstDisplay",
+      "label": "WSO L MPCD format 1",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 1; (none) skips this display. MPCDs cannot show AGRDR."
+    },
+    {
+      "path": "Displays.WSO.LeftMPCD.FirstDisplayMode",
+      "label": "WSO L MPCD format 1 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.LeftMPCD.SecondDisplay",
+      "label": "WSO L MPCD format 2",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 2; only used when slot 1 is set; must differ from earlier slots. MPCDs cannot show AGRDR."
+    },
+    {
+      "path": "Displays.WSO.LeftMPCD.SecondDisplayMode",
+      "label": "WSO L MPCD format 2 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.LeftMPCD.ThirdDisplay",
+      "label": "WSO L MPCD format 3",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 3; only used when slot 2 is set; must differ from earlier slots. MPCDs cannot show AGRDR."
+    },
+    {
+      "path": "Displays.WSO.LeftMPCD.ThirdDisplayMode",
+      "label": "WSO L MPCD format 3 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.LeftMPD.FirstDisplay",
+      "label": "WSO L MPD format 1",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 1; (none) skips this display."
+    },
+    {
+      "path": "Displays.WSO.LeftMPD.FirstDisplayMode",
+      "label": "WSO L MPD format 1 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.LeftMPD.SecondDisplay",
+      "label": "WSO L MPD format 2",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 2; only used when slot 1 is set; must differ from earlier slots."
+    },
+    {
+      "path": "Displays.WSO.LeftMPD.SecondDisplayMode",
+      "label": "WSO L MPD format 2 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.LeftMPD.ThirdDisplay",
+      "label": "WSO L MPD format 3",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 3; only used when slot 2 is set; must differ from earlier slots."
+    },
+    {
+      "path": "Displays.WSO.LeftMPD.ThirdDisplayMode",
+      "label": "WSO L MPD format 3 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.RightMPD.FirstDisplay",
+      "label": "WSO R MPD format 1",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 1; (none) skips this display."
+    },
+    {
+      "path": "Displays.WSO.RightMPD.FirstDisplayMode",
+      "label": "WSO R MPD format 1 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.RightMPD.SecondDisplay",
+      "label": "WSO R MPD format 2",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 2; only used when slot 1 is set; must differ from earlier slots."
+    },
+    {
+      "path": "Displays.WSO.RightMPD.SecondDisplayMode",
+      "label": "WSO R MPD format 2 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.RightMPD.ThirdDisplay",
+      "label": "WSO R MPD format 3",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 8,
+          "label": "AGRDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 3; only used when slot 2 is set; must differ from earlier slots."
+    },
+    {
+      "path": "Displays.WSO.RightMPD.ThirdDisplayMode",
+      "label": "WSO R MPD format 3 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.RightMPCD.FirstDisplay",
+      "label": "WSO R MPCD format 1",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 1; (none) skips this display. MPCDs cannot show AGRDR."
+    },
+    {
+      "path": "Displays.WSO.RightMPCD.FirstDisplayMode",
+      "label": "WSO R MPCD format 1 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.RightMPCD.SecondDisplay",
+      "label": "WSO R MPCD format 2",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 2; only used when slot 1 is set; must differ from earlier slots. MPCDs cannot show AGRDR."
+    },
+    {
+      "path": "Displays.WSO.RightMPCD.SecondDisplayMode",
+      "label": "WSO R MPCD format 2 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "Displays.WSO.RightMPCD.ThirdDisplay",
+      "label": "WSO R MPCD format 3",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "ADI"
+        },
+        {
+          "value": 2,
+          "label": "ARMT"
+        },
+        {
+          "value": 3,
+          "label": "HSI"
+        },
+        {
+          "value": 4,
+          "label": "TSD"
+        },
+        {
+          "value": 5,
+          "label": "ENG"
+        },
+        {
+          "value": 6,
+          "label": "HUD"
+        },
+        {
+          "value": 7,
+          "label": "AARDR"
+        },
+        {
+          "value": 9,
+          "label": "TEWS"
+        },
+        {
+          "value": 10,
+          "label": "TPOD"
+        },
+        {
+          "value": 11,
+          "label": "AGDLVRY"
+        },
+        {
+          "value": 12,
+          "label": "TF"
+        },
+        {
+          "value": 13,
+          "label": "SMART"
+        },
+        {
+          "value": 14,
+          "label": "SIT"
+        }
+      ],
+      "help": "PROG slot 3; only used when slot 2 is set; must differ from earlier slots. MPCDs cannot show AGRDR."
+    },
+    {
+      "path": "Displays.WSO.RightMPCD.ThirdDisplayMode",
+      "label": "WSO R MPCD format 3 master mode",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "(none)"
+        },
+        {
+          "value": 1,
+          "label": "A/A"
+        },
+        {
+          "value": 2,
+          "label": "A/G"
+        },
+        {
+          "value": 3,
+          "label": "NAV"
+        }
+      ],
+      "help": "Optional master mode (A/A, A/G, NAV) this format is shown in; must differ from earlier slots' modes."
+    },
+    {
+      "path": "SmartWeapons.Stations",
+      "label": "Stations",
+      "kind": "dict",
+      "keys": [
+        {
+          "value": "LWING",
+          "label": "2-1 left wing"
+        },
+        {
+          "value": "LCFTREAR",
+          "label": "L1-1 left CFT rear"
+        },
+        {
+          "value": "LCFTMID",
+          "label": "L1-2 left CFT mid"
+        },
+        {
+          "value": "LCFTFRONT",
+          "label": "L1-3 left CFT front"
+        },
+        {
+          "value": "CENTERLINE",
+          "label": "5-1 centerline"
+        },
+        {
+          "value": "RCFTREAR",
+          "label": "R1-1 right CFT rear"
+        },
+        {
+          "value": "RCFTMID",
+          "label": "R1-2 right CFT mid"
+        },
+        {
+          "value": "RCFTFRONT",
+          "label": "R1-3 right CFT front"
+        },
+        {
+          "value": "RWING",
+          "label": "8-1 right wing"
+        }
+      ],
+      "maxItems": 9,
+      "item": {
+        "Name": "LWING",
+        "Settings": null
+      },
+      "help": "Dictionary keyed by station name (exact keys listed; other keys ignored). Not route-managed by default: a station target needs a station choice. The dashboard may offer \"assign target waypoint to station\", copying that route target point's Latitude/Longitude/Elevation into Settings[0]."
+    },
+    {
+      "path": "SmartWeapons.Stations{}.Name",
+      "label": "Station",
+      "kind": "string",
+      "readonly": true,
+      "help": "Same as the dictionary key."
+    },
+    {
+      "path": "SmartWeapons.Stations{}.Settings",
+      "label": "Targets",
+      "kind": "list",
+      "nullable": true,
+      "maxItems": 1,
+      "item": {
+        "Latitude": null,
+        "Longitude": null,
+        "Elevation": 0,
+        "Notes": null
+      },
+      "help": "null or [] = station not programmed. Only the first entry is used."
+    },
+    {
+      "path": "SmartWeapons.Stations{}.Settings[].Latitude",
+      "label": "Latitude",
+      "kind": "coord-lat",
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’$"
+    },
+    {
+      "path": "SmartWeapons.Stations{}.Settings[].Longitude",
+      "label": "Longitude",
+      "kind": "coord-lon",
+      "pattern": "^[EW] \\d{3}°\\d{2}\\.\\d{3}’$"
+    },
+    {
+      "path": "SmartWeapons.Stations{}.Settings[].Elevation",
+      "label": "Elevation",
+      "kind": "int",
+      "min": 0,
+      "max": 80000,
+      "unit": "ft",
+      "help": "Target elevation, feet MSL."
+    },
+    {
+      "path": "SmartWeapons.Stations{}.Settings[].Notes",
+      "label": "Notes",
+      "kind": "string",
+      "nullable": true,
+      "help": "Tooltip/kneeboard only, not uploaded."
+    },
+    {
+      "path": "Misc.Bingo",
+      "label": "Bingo",
+      "kind": "int",
+      "min": 0,
+      "max": 14000,
+      "step": 100,
+      "unit": "lb",
+      "help": "Rounded down to 100 lb."
+    },
+    {
+      "path": "Misc.BingoToBeUpdated",
+      "label": "Update bingo",
+      "kind": "bool"
+    },
+    {
+      "path": "Misc.BullseyeToBeUpdated",
+      "label": "Update bullseye",
+      "kind": "bool"
+    },
+    {
+      "path": "Misc.BullseyeCoord",
+      "label": "Bullseye",
+      "kind": "string",
+      "nullable": true,
+      "pattern": "^[NS] \\d{2}°\\d{2}\\.\\d{3}’ [EW] \\d{3}°\\d{2}\\.\\d{3}’$",
+      "help": "ONE string holding lat and lon separated by a space: \"N 42°10.630’ E 042°28.840’\" (DDM thousandths)."
+    },
+    {
+      "path": "Misc.CARAALOW",
+      "label": "CARA low alt warning",
+      "kind": "int",
+      "min": 0,
+      "max": 15000,
+      "step": 10,
+      "unit": "ft",
+      "help": "Rounded to the nearest 10 ft by the UI."
+    },
+    {
+      "path": "Misc.CARAALOWToBeUpdated",
+      "label": "Update CARA ALOW",
+      "kind": "bool"
+    },
+    {
+      "path": "Misc.TACANChannel",
+      "label": "TACAN channel",
+      "kind": "int",
+      "min": 1,
+      "max": 126
+    },
+    {
+      "path": "Misc.TACANBand",
+      "label": "TACAN band",
+      "kind": "enum",
+      "options": [
+        {
+          "value": 0,
+          "label": "X"
+        },
+        {
+          "value": 1,
+          "label": "Y"
+        }
+      ]
+    },
+    {
+      "path": "Misc.TACANToBeUpdated",
+      "label": "Update TACAN",
+      "kind": "bool",
+      "help": "Also turns the TACAN on if it is off."
+    },
+    {
+      "path": "Misc.ILSFrequency",
+      "label": "ILS frequency",
+      "kind": "number",
+      "min": 108.1,
+      "max": 111.95,
+      "unit": "MHz",
+      "help": "JSON number (C# decimal), 2 decimals. UI regex ^1[0-1][8|9|0|1]\\.[1|3|5|7|9]?[0|5]?$ (odd tenths, .x0/.x5), range 108.10-111.95."
+    },
+    {
+      "path": "Misc.ILSToBeUpdated",
+      "label": "Update ILS",
+      "kind": "bool"
+    },
+    {
+      "path": "Misc.LaserSettingsToBeUpdated",
+      "label": "Update TGP laser code",
+      "kind": "bool"
+    },
+    {
+      "path": "Misc.TGPCode",
+      "label": "TGP laser code",
+      "kind": "int",
+      "min": 1111,
+      "max": 2888,
+      "pattern": "^[12][1-8][1-8][1-8]$",
+      "help": "4 digits: first 1-2, others 1-8. The F-15E has no LST code."
+    }
+  ]
+}

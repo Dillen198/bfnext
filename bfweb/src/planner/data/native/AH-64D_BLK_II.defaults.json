@@ -1,0 +1,4877 @@
+{
+  "IDM": [],
+  "Laser": {
+    "ChannelsCodes": {
+      "A": {
+        "Four": 1,
+        "One": 8,
+        "Three": 6,
+        "Two": 8
+      },
+      "B": {
+        "Four": 2,
+        "One": 1,
+        "Three": 1,
+        "Two": 1
+      },
+      "C": {
+        "Four": 4,
+        "One": 1,
+        "Three": 1,
+        "Two": 2
+      },
+      "D": {
+        "Four": 4,
+        "One": 1,
+        "Three": 3,
+        "Two": 1
+      },
+      "E": {
+        "Four": 4,
+        "One": 1,
+        "Three": 5,
+        "Two": 1
+      },
+      "F": {
+        "Four": 4,
+        "One": 1,
+        "Three": 7,
+        "Two": 1
+      },
+      "G": {
+        "Four": 5,
+        "One": 1,
+        "Three": 1,
+        "Two": 1
+      },
+      "H": {
+        "Four": 5,
+        "One": 1,
+        "Three": 3,
+        "Two": 1
+      },
+      "J": {
+        "Four": 5,
+        "One": 1,
+        "Three": 5,
+        "Two": 1
+      },
+      "K": {
+        "Four": 5,
+        "One": 1,
+        "Three": 7,
+        "Two": 1
+      },
+      "L": {
+        "Four": 1,
+        "One": 1,
+        "Three": 6,
+        "Two": 2
+      },
+      "M": {
+        "Four": 1,
+        "One": 1,
+        "Three": 1,
+        "Two": 1
+      },
+      "N": {
+        "Four": 1,
+        "One": 2,
+        "Three": 7,
+        "Two": 3
+      },
+      "P": {
+        "Four": 1,
+        "One": 7,
+        "Three": 7,
+        "Two": 7
+      },
+      "Q": {
+        "Four": 1,
+        "One": 2,
+        "Three": 7,
+        "Two": 8
+      },
+      "R": {
+        "Four": 1,
+        "One": 8,
+        "Three": 7,
+        "Two": 8
+      }
+    },
+    "DevicesSettings": {
+      "LRFD_Code": 1,
+      "LRFD_Mode": 1,
+      "LST_Code": 1
+    }
+  },
+  "MISC": {
+    "ASE": {
+      "ASE_Settings": {
+        "CPG_Autopage": 2,
+        "ChaffMode": 1,
+        "PLT_Autopage": 2,
+        "RLWRMode": 1
+      },
+      "CMDS_ProgramSettings": {
+        "Chaff": {
+          "BurstCount": 2,
+          "BurstInterval": 1,
+          "SalvoCount": 1,
+          "SalvoInterval": 1
+        },
+        "Flares": {
+          "BurstCount": 2,
+          "BurstInterval": 1,
+          "ProgramDelay": 4,
+          "SalvoCount": 1,
+          "SalvoInterval": 1
+        }
+      },
+      "isEnabled": false
+    },
+    "PERF": {
+      "AICE_AUTO": false,
+      "MAX_FAT": 20,
+      "MAX_GWT": 16500,
+      "MAX_PA": 0,
+      "PLAN_FAT": 20,
+      "PLAN_GWT": 16500,
+      "PLAN_PA": 0
+    },
+    "RFI": [
+      {
+        "PRI": 1,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-22 'Greyhound'",
+        "hint": "SAM SA-22 Pantsir-S1 Greyhound [CH]",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "22",
+            "unit_type": "CHAP_PantsirS1",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 2,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-19 'Grison'",
+        "hint": "SAM SA-19 Tunguska Grison",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "S6",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              103,
+              29
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 3,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-15 'Gauntlet'",
+        "hint": "SAM SA-15 Tor Gauntlet\nSAM SA-15 Tor M2 Gauntlet [CH]",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "15",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              102,
+              28
+            ]
+          },
+          {
+            "displayName": "15",
+            "unit_type": "CHAP_TorM2",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 4,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM HQ-7",
+        "hint": "HQ-7 Self-Propelled LN",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "7",
+            "unit_type": "HQ-7_LN_SP",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 5,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM Rapier - Blindfire",
+        "hint": "SAM Rapier Blindfire TR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "RA",
+            "unit_type": "rapier_fsa_blindfire_radar",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 6,
+        "display": true,
+        "friendly": false,
+        "group_name": "SPAAA ZSU-23-4 - Gun Dish",
+        "hint": "SPAAA ZSU-23-4 Shilka Gun Dish",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "ZU",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              105,
+              30
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 7,
+        "display": true,
+        "friendly": false,
+        "group_name": "SPAAA PGZ-09",
+        "hint": "SPAAG PGZ-09 [CH]",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "",
+            "unit_type": "CHAP_PGZ09",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 8,
+        "display": true,
+        "friendly": false,
+        "group_name": "SPAAA Gepard",
+        "hint": "SPAAA Gepard",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "GS",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              105,
+              38
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 9,
+        "display": true,
+        "friendly": false,
+        "group_name": "LPWS C-RAM",
+        "hint": "LPWS C-RAM",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "GS",
+            "unit_type": "HEMTT_C-RAM_Phalanx",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 10,
+        "display": true,
+        "friendly": false,
+        "group_name": "SPAAA Vulcan",
+        "hint": "SPAAA Vulcan M163",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "GS",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              105,
+              46
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 11,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-13 'Gopher'",
+        "hint": "SAM SA-13 Strela 10M3 Gopher TEL",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "13",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              104,
+              26
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 12,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-8 'Gecko'",
+        "hint": "SAM SA-8 Osa Gecko TEL",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "8",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              102,
+              23
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 13,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM Roland",
+        "hint": "SAM Roland ADS",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "RO",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              102,
+              31
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 14,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-11 'Gadfly' - Fire Dome",
+        "hint": "SAM SA-11 Buk Gadfly Fire Dome TEL",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "11",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              102,
+              19
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 15,
+        "display": true,
+        "friendly": false,
+        "group_name": "AAA SON-9 - Fire Can",
+        "hint": "AAA Fire Can SON-9",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "AA",
+            "unit_type": "SON_9",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 16,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-10 'Grumble' - Flap Lid",
+        "hint": "SAM SA-10 S-300 Grumble Flap Lid-A TR\nSAM SA-10 S-300 Grumble Flap Lid-A TR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "10",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              4
+            ]
+          },
+          {
+            "displayName": "10",
+            "unit_type": "S-300PS 5H63C 30H6_tr",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 17,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM Hawk - MPQ-46",
+        "hint": "SAM Hawk TR (AN/MPQ-46)",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "HK",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              40
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 18,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-6 'Gainful'",
+        "hint": "SAM SA-6 Kub Straight Flush STR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "6",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              21
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 19,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM Patriot - MPQ-53",
+        "hint": "SAM Patriot STR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "PT",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              34
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 20,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-3 'Goa' - Low Blow",
+        "hint": "SAM SA-3 S-125 Low Blow TR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "3",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              73
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 21,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM Rapier",
+        "hint": "SAM Rapier LN",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "RA",
+            "unit_type": "rapier_fsa_launcher",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 22,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM NASAMS - MPQ-64",
+        "hint": "SAM NASAMS SR MPQ64F1",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "SA",
+            "unit_type": "NASAMS_Radar_MPQ64F1",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 23,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM IRIS-T - TRML-4D",
+        "hint": "SAM IRIS-T - TRML-4D SLM STR [CH]",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "IT",
+            "unit_type": "CHAP_IRISTSLM_STR",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 24,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-5 'Gammon' - Square Pair",
+        "hint": "SAM SA-5 S-200 Square Pair TR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "5",
+            "unit_type": "RPC_5N62V",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 25,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-2 'Guideline' - Fan Song",
+        "hint": "SAM SA-2 S-75 Fan Song TR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "SNR_75V",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 26,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM HQ-7 - ACU",
+        "hint": "HQ-7 Self-Propelled STR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "7",
+            "unit_type": "HQ-7_STR_SP",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 27,
+        "display": true,
+        "friendly": false,
+        "group_name": "MCC Sborka - Dog Ear",
+        "hint": "MCC-SR Sborka Dog Ear SR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              27
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 28,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM Roland - EWR",
+        "hint": "SAM Roland EWR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "RO",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              32
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 29,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-11 'Gadfly' - Snow Drift",
+        "hint": "SAM SA-11 Buk Gadfly Snow Drift SR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "11",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              18
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 30,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM Hawk - MPQ-55",
+        "hint": "SAM Hawk CWAR AN/MPQ-55",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "HK",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              42
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 31,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM Hawk – MPQ-50",
+        "hint": "SAM Hawk SR (AN/MPQ-50)",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "HK",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              39
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 32,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-10 'Grumble' - Clam Shell",
+        "hint": "SAM SA-10 S-300 Grumble Clam Shell SR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "CS",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              5
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 33,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-5/10 - Tin Shield",
+        "hint": "SAM SA-5 S-200 ST-68U Tin Shield SR\nSAM SA-10 S-300 Grumble Tin Shield SR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "RLS_19J6",
+            "wstype": []
+          },
+          {
+            "displayName": "10",
+            "unit_type": "S-300PS 40B6MD sr",
+            "wstype": []
+          },
+          {
+            "displayName": "TR",
+            "unit_type": "S-300PS 40B6MD sr_19J6",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 34,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-10 'Grumble' - Big Bird",
+        "hint": "SAM SA-10 S-300 Grumble Big Bird SR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "10",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              7
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 35,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-2 'Guideline' - RD-75",
+        "hint": "SAM SA-2 S-75 RD-75 Amanzoka RF",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "2",
+            "unit_type": "RD_75",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 36,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-2/3/5 - Flat Face",
+        "hint": "SAM SA-2/3/5 P19 Flat Face SR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "S",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              75
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 37,
+        "display": true,
+        "friendly": false,
+        "group_name": "SAM SA-5 'Gammon' - Tall King",
+        "hint": "SAM SA-5 S-200 P-14 Tall King SR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "",
+            "unit_type": "P14_SR",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 38,
+        "display": true,
+        "friendly": false,
+        "group_name": "EWR 55G6",
+        "hint": "EWR 55G6",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "SR",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              2
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 39,
+        "display": true,
+        "friendly": false,
+        "group_name": "EWR 1L13",
+        "hint": "EWR 1L13",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "SR",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 40,
+        "display": true,
+        "friendly": false,
+        "group_name": "EWR AN/FPS-117",
+        "hint": "EWR AN/FPS-117 Radar\nEWR AN/FPS-117 Radar (domed)",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "SR",
+            "unit_type": "FPS-117",
+            "wstype": []
+          },
+          {
+            "displayName": "SR",
+            "unit_type": "FPS-117 Dome",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 41,
+        "display": true,
+        "friendly": false,
+        "group_name": "MiG-31",
+        "hint": "MiG-31",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "31",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              3,
+              9
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 42,
+        "display": true,
+        "friendly": false,
+        "group_name": "F-14",
+        "hint": "F-14A-135-GR\nF-14A-135-GR-Early\nF-14A\nF-14B\nF-14D",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "14",
+            "unit_type": "F-14A-135-GR",
+            "wstype": []
+          },
+          {
+            "displayName": "14",
+            "unit_type": "F-14A-135-GR-Early",
+            "wstype": []
+          },
+          {
+            "displayName": "14",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              5
+            ]
+          },
+          {
+            "displayName": "14",
+            "unit_type": "F-14A",
+            "wstype": []
+          },
+          {
+            "displayName": "14",
+            "unit_type": "F-14B",
+            "wstype": []
+          },
+          {
+            "displayName": "14",
+            "unit_type": "F-14D",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 43,
+        "display": true,
+        "friendly": false,
+        "group_name": "Su-30",
+        "hint": "Su-30",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "30",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              13
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 44,
+        "display": true,
+        "friendly": false,
+        "group_name": "MiG-29/Su-27/Su-33/J-11A",
+        "hint": "MiG-29A\nMiG-29G\nMiG-29S\nSu-27\nSu-33\nJ-11A",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              2
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              32
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              49
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              50
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "MiG-29 Fulcrum",
+            "wstype": []
+          },
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              3
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              4
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "J-11A",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 45,
+        "display": true,
+        "friendly": false,
+        "group_name": "F-15",
+        "hint": "F-15C\nF-15E\nF-15E S4+",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "15",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              6
+            ]
+          },
+          {
+            "displayName": "15",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              59
+            ]
+          },
+          {
+            "displayName": "15",
+            "unit_type": "F-15ESE",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 46,
+        "display": true,
+        "friendly": false,
+        "group_name": "F-16",
+        "hint": "F-16A\nF-16A MLU\nF-16C bl.50\nF-16C bl.52d\nF-16CM bl.50",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "16",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              7
+            ]
+          },
+          {
+            "displayName": "16",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              52
+            ]
+          },
+          {
+            "displayName": "16",
+            "unit_type": "F-16C_50",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 47,
+        "display": true,
+        "friendly": false,
+        "group_name": "F/A-18",
+        "hint": "F/A-18A\nF/A-18C\nF/A-18C Lot 20",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "18",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              14
+            ]
+          },
+          {
+            "displayName": "18",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              53
+            ]
+          },
+          {
+            "displayName": "18",
+            "unit_type": "FA-18C_hornet",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 48,
+        "display": true,
+        "friendly": false,
+        "group_name": "JF-17",
+        "hint": "JF-17",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "JF",
+            "unit_type": "JF-17",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 49,
+        "display": true,
+        "friendly": false,
+        "group_name": "Su-34",
+        "hint": "Su-34",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "34",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              20
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 50,
+        "display": true,
+        "friendly": false,
+        "group_name": "Mirage 2000",
+        "hint": "M-2000C\nMirage 2000-5",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "M2",
+            "unit_type": "M-2000C",
+            "wstype": []
+          },
+          {
+            "displayName": "M2",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              34
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 51,
+        "display": true,
+        "friendly": false,
+        "group_name": "Tornado",
+        "hint": "Tornado GR4\nTornado IDS",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "F2",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              10
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 52,
+        "display": true,
+        "friendly": false,
+        "group_name": "MiG-25",
+        "hint": "MiG-25PD",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "25",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              3,
+              24
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 53,
+        "display": true,
+        "friendly": false,
+        "group_name": "F-4",
+        "hint": "F-4E-45MC",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "F4",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              45
+            ]
+          },
+          {
+            "displayName": "F4",
+            "unit_type": "F-4E-45MC",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 54,
+        "display": true,
+        "friendly": false,
+        "group_name": "MiG-23",
+        "hint": "MiG-23MLD",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "23",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 55,
+        "display": true,
+        "friendly": false,
+        "group_name": "Mirage F1",
+        "hint": "Mirage F1AD\nMirage F1AZ\nMirage F1B\nMirage F1BD\nMirage F1BE\nMirage F1BQ\nMirage F1C\nMirage F1C-200\nMirage F1CE\nMirage F1CG\nMirage F1CH\nMirage F1CJ\nMirage F1CK\nMirage F1CR\nMirage F1CT\nMirage F1CZ\nMirage F1DDA\nMirage F1ED\nMirage F1EDA\nMirage F1EE\nMirage F1EH\nMirage F1EQ\nMirage F1JA\nMirage F1M (C.14 1-25/32-51)\nMirage F1M (C.14 52-73)",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1B",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1BD",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1BE",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1BQ",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1C-200",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1C",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CE",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CG",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CH",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CJ",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CK",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CR",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CT",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CZ",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1DDA",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1ED",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1EDA",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1EE",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1EH",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1EQ",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1JA",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1M-CE",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1M-EE",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1AD",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1AZ",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 56,
+        "display": true,
+        "friendly": false,
+        "group_name": "MiG-21",
+        "hint": "MiG-21Bis",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "21",
+            "unit_type": "MiG-21Bis",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 57,
+        "display": true,
+        "friendly": false,
+        "group_name": "Su-24",
+        "hint": "Su-24M\nSu-24MR",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "24",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              12
+            ]
+          },
+          {
+            "displayName": "24",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              51
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 58,
+        "display": true,
+        "friendly": false,
+        "group_name": "F-5",
+        "hint": "F-5E\nF-5E-3\nF-5E FC",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "F5",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              46
+            ]
+          },
+          {
+            "displayName": "F5",
+            "unit_type": "F-5E-3",
+            "wstype": []
+          },
+          {
+            "displayName": "F5",
+            "unit_type": "F-5E-3_FC",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 59,
+        "display": true,
+        "friendly": false,
+        "group_name": "AJS37",
+        "hint": "AJS37",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "37",
+            "unit_type": "AJS37",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 60,
+        "display": true,
+        "friendly": false,
+        "group_name": "MiG-19",
+        "hint": "MiG-19P",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "19",
+            "unit_type": "MiG-19P",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 61,
+        "display": true,
+        "friendly": false,
+        "group_name": "A-50",
+        "hint": "A-50",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "50",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              5,
+              26
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 62,
+        "display": true,
+        "friendly": false,
+        "group_name": "KJ-2000",
+        "hint": "KJ-2000",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "50",
+            "unit_type": "KJ-2000",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 63,
+        "display": true,
+        "friendly": false,
+        "group_name": "E-3",
+        "hint": "E-3A",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "E3",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              5,
+              27
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 64,
+        "display": true,
+        "friendly": false,
+        "group_name": "E-2",
+        "hint": "E-2D",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "E2",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              5,
+              41
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 65,
+        "display": true,
+        "friendly": false,
+        "group_name": "Kirov guided missile cruiser",
+        "hint": "Battlecruiser 1144.2 Pyotr Velikiy",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "HN",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              19
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 66,
+        "display": true,
+        "friendly": false,
+        "group_name": "Luyang II guided missile destroyer",
+        "hint": "Type 052C Destroyer",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "HN",
+            "unit_type": "Type_052C",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 67,
+        "display": true,
+        "friendly": false,
+        "group_name": "Slava guided missile cruiser",
+        "hint": "Cruiser 1164 Moskva",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "T2",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              13,
+              3
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 68,
+        "display": true,
+        "friendly": false,
+        "group_name": "Arleigh Burke guided missile destroyer",
+        "hint": "DDG Arleigh Burke Iia",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "AE",
+            "unit_type": "USS_Arleigh_Burke_IIa",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 69,
+        "display": true,
+        "friendly": false,
+        "group_name": "Ticonderoga guided missile cruiser",
+        "hint": "CG Ticonderoga",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "AE",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              21
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 70,
+        "display": true,
+        "friendly": false,
+        "group_name": "Jiangkai II guided missile frigate",
+        "hint": "Type 054A Frigate",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "MR",
+            "unit_type": "Type_054A",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 71,
+        "display": true,
+        "friendly": false,
+        "group_name": "Luyang I guided missile destroyer",
+        "hint": "Type 052B Destroyer",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "MR",
+            "unit_type": "Type_052B",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 72,
+        "display": true,
+        "friendly": false,
+        "group_name": "Oliver Hazard Perry guided missile frigate",
+        "hint": "FFG Oliver Hazard Perry",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "49",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              17
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 73,
+        "display": true,
+        "friendly": false,
+        "group_name": "Vasily Bykov patrol ship",
+        "hint": "Vasily Bykov patrol ship [CH]\nVasily Bykov patrol ship with Tor M2KM [CH]",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "T2",
+            "unit_type": "CHAP_Project22160",
+            "wstype": []
+          },
+          {
+            "displayName": "15",
+            "unit_type": "CHAP_Project22160_TorM2KM",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 74,
+        "display": true,
+        "friendly": false,
+        "group_name": "Neustrashimy guided missile frigate",
+        "hint": "Frigate 11540 Neustrashimy",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              28
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 75,
+        "display": true,
+        "friendly": false,
+        "group_name": "Admiral Kuznetsov heavy aircraft cruiser",
+        "hint": "CV 1143.5 Admiral Kuznetsov\nCV 1143.5 Admiral Kuznetsov (2017)",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "SW",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              12,
+              1
+            ]
+          },
+          {
+            "displayName": "SW",
+            "unit_type": "CV_1143_5",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 76,
+        "display": true,
+        "friendly": false,
+        "group_name": "Grisha anti-submarine corvette",
+        "hint": "Corvette 1124.4 Grisha",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "HP",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              11
+            ]
+          },
+          {
+            "displayName": "HP",
+            "unit_type": "ALBATROS",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 77,
+        "display": true,
+        "friendly": false,
+        "group_name": "Krivak II frigate/guard ship",
+        "hint": "Frigate 1135M Rezky",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              14
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 78,
+        "display": true,
+        "friendly": false,
+        "group_name": "Leander frigate",
+        "hint": "HMS Achilles (F12)\nHMS Andromeda (F57)\nHMS Ariadne (F72)",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              14
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 79,
+        "display": true,
+        "friendly": false,
+        "group_name": "Tarawa amphibious assault ship",
+        "hint": "LHA-1 Tarawa",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "40",
+            "unit_type": "LHA_Tarawa",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 80,
+        "display": true,
+        "friendly": false,
+        "group_name": "Nimitz aircraft carrier",
+        "hint": "CVN-71 Theodore Roosevelt\nCVN-72 Abraham Lincoln\nCVN-73 George Washington\nCVN-74 John C. Stennis\nCVN-75 Harry S. Truman",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "SS",
+            "unit_type": "CVN_71",
+            "wstype": []
+          },
+          {
+            "displayName": "SS",
+            "unit_type": "CVN_72",
+            "wstype": []
+          },
+          {
+            "displayName": "SS",
+            "unit_type": "CVN_73",
+            "wstype": []
+          },
+          {
+            "displayName": "SS",
+            "unit_type": "Stennis",
+            "wstype": []
+          },
+          {
+            "displayName": "SS",
+            "unit_type": "CVN_75",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 81,
+        "display": true,
+        "friendly": false,
+        "group_name": "Forrestal aircraft carrier",
+        "hint": "CV-59 Forrestal",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "FR",
+            "unit_type": "Forrestal",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 82,
+        "display": true,
+        "friendly": false,
+        "group_name": "Invincible light aircraft carrier",
+        "hint": "HMS Invincible (R05)",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "IV",
+            "unit_type": "hms_invincible",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 83,
+        "display": true,
+        "friendly": false,
+        "group_name": "Tarantul III missile corvette",
+        "hint": "Corvette 1241.1 Molniya",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "PS",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              15
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 84,
+        "display": true,
+        "friendly": false,
+        "group_name": "Condell frigate",
+        "hint": "CNS Almirante Condell (PFG-06)\nCNS Almirante Lynch (PFG-07)",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              14
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 85,
+        "display": true,
+        "friendly": false,
+        "group_name": "FAC La Combattante IIa",
+        "hint": "FAC La Combattante IIa",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "LC",
+            "unit_type": "La_Combattante_II",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 86,
+        "display": true,
+        "friendly": false,
+        "group_name": "Huangfeng missile boat",
+        "hint": "Type 021-1 Missile Boat",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "",
+            "unit_type": "Type_021_1",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 87,
+        "display": true,
+        "friendly": false,
+        "group_name": "Ropucha I large landing ship",
+        "hint": "LS Ropucha",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "SC",
+            "unit_type": "BDK-775",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 88,
+        "display": true,
+        "friendly": false,
+        "group_name": "Yuzhao amphibious transport dock",
+        "hint": "Type 071 Amphibious Transport Dock",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "PS",
+            "unit_type": "Type_071",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 89,
+        "display": true,
+        "friendly": false,
+        "group_name": "Unknown radar",
+        "hint": "Unknown radar",
+        "hostile": true,
+        "threats": [
+          {
+            "displayName": "U",
+            "unit_type": "U",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 90,
+        "display": false,
+        "friendly": true,
+        "group_name": "AH-64",
+        "hint": "AH-64D BLK.II",
+        "hostile": false,
+        "threats": [
+          {
+            "displayName": "",
+            "unit_type": "AH-64D_BLK_II",
+            "wstype": []
+          }
+        ]
+      }
+    ],
+    "RLWR": [
+      {
+        "PRI": 1,
+        "display": true,
+        "group_name": "R-77",
+        "hint": "R-77 (AA-12 Adder) - Active Rdr",
+        "threats": [
+          {
+            "displayName": "MM",
+            "unit_type": "",
+            "wstype": [
+              4,
+              4,
+              7,
+              19
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 2,
+        "display": true,
+        "group_name": "SD-10",
+        "hint": "SD-10A AAM",
+        "threats": [
+          {
+            "displayName": "MM",
+            "unit_type": "SD-10",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 3,
+        "display": true,
+        "group_name": "AIM-54",
+        "hint": "AIM-54A-Mk60\nAIM-54A-Mk47\nAIM-54C-Mk60\nAIM-54C-Mk47",
+        "threats": [
+          {
+            "displayName": "MM",
+            "unit_type": "",
+            "wstype": [
+              4,
+              4,
+              7,
+              23
+            ]
+          },
+          {
+            "displayName": "MM",
+            "unit_type": "AIM_54A_Mk60",
+            "wstype": []
+          },
+          {
+            "displayName": "MM",
+            "unit_type": "AIM_54A_Mk47",
+            "wstype": []
+          },
+          {
+            "displayName": "MM",
+            "unit_type": "AIM_54C_Mk47",
+            "wstype": []
+          },
+          {
+            "displayName": "MM",
+            "unit_type": "AIM_54C_Mk60",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 4,
+        "display": true,
+        "group_name": "MICA RF",
+        "hint": "MICA RF",
+        "threats": [
+          {
+            "displayName": "MM",
+            "unit_type": "",
+            "wstype": [
+              4,
+              4,
+              7,
+              3
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 5,
+        "display": true,
+        "group_name": "AIM-120",
+        "hint": "AIM-120B - Active Radar AAM\nAIM-120C - Active Radar AAM ",
+        "threats": [
+          {
+            "displayName": "MM",
+            "unit_type": "",
+            "wstype": [
+              4,
+              4,
+              7,
+              24
+            ]
+          },
+          {
+            "displayName": "MM",
+            "unit_type": "",
+            "wstype": [
+              4,
+              4,
+              7,
+              106
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 6,
+        "display": true,
+        "group_name": "Laser Threat",
+        "hint": "Laser Threat",
+        "threats": [
+          {
+            "displayName": "*",
+            "unit_type": "*",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 7,
+        "display": true,
+        "group_name": "SAM SA-15 'Gauntlet'",
+        "hint": "SAM SA-15 Tor Gauntlet\nSAM SA-15 Tor M2 Gauntlet [CH]",
+        "threats": [
+          {
+            "displayName": "15",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              102,
+              28
+            ]
+          },
+          {
+            "displayName": "15",
+            "unit_type": "CHAP_TorM2",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 8,
+        "display": true,
+        "group_name": "SAM SA-22 'Greyhound'",
+        "hint": "SAM SA-22 Pantsir-S1 Greyhound [CH]",
+        "threats": [
+          {
+            "displayName": "22",
+            "unit_type": "CHAP_PantsirS1",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 9,
+        "display": true,
+        "group_name": "SAM NASAMS - MPQ-64",
+        "hint": "SAM NASAMS SR MPQ64F1",
+        "threats": [
+          {
+            "displayName": "SA",
+            "unit_type": "NASAMS_Radar_MPQ64F1",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 10,
+        "display": true,
+        "group_name": "SAM IRIS-T - TRML-4D",
+        "hint": "SAM IRIS-T - TRML-4D SLM STR [CH]",
+        "threats": [
+          {
+            "displayName": "IT",
+            "unit_type": "CHAP_IRISTSLM_STR",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 11,
+        "display": true,
+        "group_name": "SAM HQ-7",
+        "hint": "HQ-7 Self-Propelled LN",
+        "threats": [
+          {
+            "displayName": "7",
+            "unit_type": "HQ-7_LN_SP",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 12,
+        "display": true,
+        "group_name": "SAM HQ-7 - ACU",
+        "hint": "HQ-7 Self-Propelled STR",
+        "threats": [
+          {
+            "displayName": "7",
+            "unit_type": "HQ-7_STR_SP",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 13,
+        "display": true,
+        "group_name": "SAM SA-19 'Grison'",
+        "hint": "SAM SA-19 Tunguska Grison",
+        "threats": [
+          {
+            "displayName": "S6",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              103,
+              29
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 14,
+        "display": true,
+        "group_name": "SAM SA-13 'Gopher'",
+        "hint": "SAM SA-13 Strela 10M3 Gopher TEL",
+        "threats": [
+          {
+            "displayName": "13",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              104,
+              26
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 15,
+        "display": true,
+        "group_name": "SAM SA-8 'Gecko'",
+        "hint": "SAM SA-8 Osa Gecko TEL",
+        "threats": [
+          {
+            "displayName": "8",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              102,
+              23
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 16,
+        "display": true,
+        "group_name": "SAM Roland",
+        "hint": "SAM Roland ADS",
+        "threats": [
+          {
+            "displayName": "RO",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              102,
+              31
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 17,
+        "display": true,
+        "group_name": "SAM Roland - EWR",
+        "hint": "SAM Roland EWR",
+        "threats": [
+          {
+            "displayName": "RO",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              32
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 18,
+        "display": true,
+        "group_name": "SAM Rapier - Blindfire",
+        "hint": "SAM Rapier Blindfire TR",
+        "threats": [
+          {
+            "displayName": "RA",
+            "unit_type": "rapier_fsa_blindfire_radar",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 19,
+        "display": true,
+        "group_name": "SAM Rapier",
+        "hint": "SAM Rapier LN",
+        "threats": [
+          {
+            "displayName": "RA",
+            "unit_type": "rapier_fsa_launcher",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 20,
+        "display": true,
+        "group_name": "SPAAA PGZ-09",
+        "hint": "SPAAG PGZ-09 [CH]",
+        "threats": [
+          {
+            "displayName": "",
+            "unit_type": "CHAP_PGZ09",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 21,
+        "display": true,
+        "group_name": "SPAAA Gepard",
+        "hint": "SPAAA Gepard",
+        "threats": [
+          {
+            "displayName": "GS",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              105,
+              38
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 22,
+        "display": true,
+        "group_name": "SPAAA ZSU-23-4 - Gun Dish",
+        "hint": "SPAAA ZSU-23-4 Shilka Gun Dish",
+        "threats": [
+          {
+            "displayName": "ZU",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              105,
+              30
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 23,
+        "display": true,
+        "group_name": "LPWS C-RAM",
+        "hint": "LPWS C-RAM",
+        "threats": [
+          {
+            "displayName": "GS",
+            "unit_type": "HEMTT_C-RAM_Phalanx",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 24,
+        "display": true,
+        "group_name": "SPAAA Vulcan",
+        "hint": "SPAAA Vulcan M163",
+        "threats": [
+          {
+            "displayName": "GS",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              105,
+              46
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 25,
+        "display": true,
+        "group_name": "SAM SA-11 'Gadfly' - Fire Dome",
+        "hint": "SAM SA-11 Buk Gadfly Fire Dome TEL",
+        "threats": [
+          {
+            "displayName": "11",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              102,
+              19
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 26,
+        "display": true,
+        "group_name": "SAM SA-11 'Gadfly' - Snow Drift",
+        "hint": "SAM SA-11 Buk Gadfly Snow Drift SR",
+        "threats": [
+          {
+            "displayName": "11",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              18
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 27,
+        "display": true,
+        "group_name": "SAM SA-6 'Gainful'",
+        "hint": "SAM SA-6 Kub Straight Flush STR",
+        "threats": [
+          {
+            "displayName": "6",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              21
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 28,
+        "display": true,
+        "group_name": "SAM SA-3 'Goa' - Low Blow",
+        "hint": "SAM SA-3 S-125 Low Blow TR",
+        "threats": [
+          {
+            "displayName": "3",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              73
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 29,
+        "display": true,
+        "group_name": "SAM Hawk - MPQ-46",
+        "hint": "SAM Hawk TR (AN/MPQ-46)",
+        "threats": [
+          {
+            "displayName": "HK",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              40
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 30,
+        "display": true,
+        "group_name": "SAM Hawk - MPQ-55",
+        "hint": "SAM Hawk CWAR AN/MPQ-55",
+        "threats": [
+          {
+            "displayName": "HK",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              42
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 31,
+        "display": true,
+        "group_name": "SAM Hawk – MPQ-50",
+        "hint": "SAM Hawk SR (AN/MPQ-50)",
+        "threats": [
+          {
+            "displayName": "HK",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              39
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 32,
+        "display": true,
+        "group_name": "AAA SON-9 - Fire Can",
+        "hint": "AAA Fire Can SON-9",
+        "threats": [
+          {
+            "displayName": "AA",
+            "unit_type": "SON_9",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 33,
+        "display": true,
+        "group_name": "MCC Sborka - Dog Ear",
+        "hint": "MCC-SR Sborka Dog Ear SR",
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              27
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 34,
+        "display": true,
+        "group_name": "MiG-31",
+        "hint": "MiG-31",
+        "threats": [
+          {
+            "displayName": "31",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              3,
+              9
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 35,
+        "display": true,
+        "group_name": "F-14",
+        "hint": "F-14A-135-GR\nF-14A-135-GR-Early\nF-14A\nF-14B\nF-14D",
+        "threats": [
+          {
+            "displayName": "14",
+            "unit_type": "F-14A-135-GR",
+            "wstype": []
+          },
+          {
+            "displayName": "14",
+            "unit_type": "F-14A-135-GR-Early",
+            "wstype": []
+          },
+          {
+            "displayName": "14",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              5
+            ]
+          },
+          {
+            "displayName": "14",
+            "unit_type": "F-14A",
+            "wstype": []
+          },
+          {
+            "displayName": "14",
+            "unit_type": "F-14B",
+            "wstype": []
+          },
+          {
+            "displayName": "14",
+            "unit_type": "F-14D",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 36,
+        "display": true,
+        "group_name": "Su-30",
+        "hint": "Su-30",
+        "threats": [
+          {
+            "displayName": "30",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              13
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 37,
+        "display": true,
+        "group_name": "MiG-29/Su-27/Su-33/J-11A",
+        "hint": "MiG-29A\nMiG-29G\nMiG-29S\nSu-27\nSu-33\nJ-11A",
+        "threats": [
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              2
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              32
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              49
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              50
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "MiG-29 Fulcrum",
+            "wstype": []
+          },
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              3
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              4
+            ]
+          },
+          {
+            "displayName": "29",
+            "unit_type": "J-11A",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 38,
+        "display": true,
+        "group_name": "F-15",
+        "hint": "F-15C\nF-15E\nF-15E S4+",
+        "threats": [
+          {
+            "displayName": "15",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              6
+            ]
+          },
+          {
+            "displayName": "15",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              59
+            ]
+          },
+          {
+            "displayName": "15",
+            "unit_type": "F-15ESE",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 39,
+        "display": true,
+        "group_name": "F-16",
+        "hint": "F-16A\nF-16A MLU\nF-16C bl.50\nF-16C bl.52d\nF-16CM bl.50",
+        "threats": [
+          {
+            "displayName": "16",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              7
+            ]
+          },
+          {
+            "displayName": "16",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              52
+            ]
+          },
+          {
+            "displayName": "16",
+            "unit_type": "F-16C_50",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 40,
+        "display": true,
+        "group_name": "F/A-18",
+        "hint": "F/A-18A\nF/A-18C\nF/A-18C Lot 20",
+        "threats": [
+          {
+            "displayName": "18",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              14
+            ]
+          },
+          {
+            "displayName": "18",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              53
+            ]
+          },
+          {
+            "displayName": "18",
+            "unit_type": "FA-18C_hornet",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 41,
+        "display": true,
+        "group_name": "JF-17",
+        "hint": "JF-17",
+        "threats": [
+          {
+            "displayName": "JF",
+            "unit_type": "JF-17",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 42,
+        "display": true,
+        "group_name": "Su-34",
+        "hint": "Su-34",
+        "threats": [
+          {
+            "displayName": "34",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              20
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 43,
+        "display": true,
+        "group_name": "Mirage 2000",
+        "hint": "M-2000C\nMirage 2000-5",
+        "threats": [
+          {
+            "displayName": "M2",
+            "unit_type": "M-2000C",
+            "wstype": []
+          },
+          {
+            "displayName": "M2",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              34
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 44,
+        "display": true,
+        "group_name": "Tornado",
+        "hint": "Tornado GR4\nTornado IDS",
+        "threats": [
+          {
+            "displayName": "F2",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              10
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 45,
+        "display": true,
+        "group_name": "MiG-25",
+        "hint": "MiG-25PD",
+        "threats": [
+          {
+            "displayName": "25",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              3,
+              24
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 46,
+        "display": true,
+        "group_name": "F-4",
+        "hint": "F-4E-45MC",
+        "threats": [
+          {
+            "displayName": "F4",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              45
+            ]
+          },
+          {
+            "displayName": "F4",
+            "unit_type": "F-4E-45MC",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 47,
+        "display": true,
+        "group_name": "MiG-23",
+        "hint": "MiG-23MLD",
+        "threats": [
+          {
+            "displayName": "23",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 48,
+        "display": true,
+        "group_name": "Mirage F1",
+        "hint": "Mirage F1AD\nMirage F1AZ\nMirage F1B\nMirage F1BD\nMirage F1BE\nMirage F1BQ\nMirage F1C\nMirage F1C-200\nMirage F1CE\nMirage F1CG\nMirage F1CH\nMirage F1CJ\nMirage F1CK\nMirage F1CR\nMirage F1CT\nMirage F1CZ\nMirage F1DDA\nMirage F1ED\nMirage F1EDA\nMirage F1EE\nMirage F1EH\nMirage F1EQ\nMirage F1JA\nMirage F1M (C.14 1-25/32-51)\nMirage F1M (C.14 52-73)",
+        "threats": [
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1B",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1BD",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1BE",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1BQ",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1C-200",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1C",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CE",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CG",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CH",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CJ",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CK",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CR",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CT",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1CZ",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1DDA",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1ED",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1EDA",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1EE",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1EH",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1EQ",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1JA",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1M-CE",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1M-EE",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1AD",
+            "wstype": []
+          },
+          {
+            "displayName": "F1",
+            "unit_type": "Mirage-F1AZ",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 49,
+        "display": true,
+        "group_name": "MiG-21",
+        "hint": "MiG-21Bis",
+        "threats": [
+          {
+            "displayName": "21",
+            "unit_type": "MiG-21Bis",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 50,
+        "display": true,
+        "group_name": "Su-24",
+        "hint": "Su-24M\nSu-24MR",
+        "threats": [
+          {
+            "displayName": "24",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              12
+            ]
+          },
+          {
+            "displayName": "24",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              51
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 51,
+        "display": true,
+        "group_name": "F-5",
+        "hint": "F-5E\nF-5E-3\nF-5E FC",
+        "threats": [
+          {
+            "displayName": "F5",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              1,
+              46
+            ]
+          },
+          {
+            "displayName": "F5",
+            "unit_type": "F-5E-3",
+            "wstype": []
+          },
+          {
+            "displayName": "F5",
+            "unit_type": "F-5E-3_FC",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 52,
+        "display": true,
+        "group_name": "AJS37",
+        "hint": "AJS37",
+        "threats": [
+          {
+            "displayName": "37",
+            "unit_type": "AJS37",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 53,
+        "display": true,
+        "group_name": "MiG-19",
+        "hint": "MiG-19P",
+        "threats": [
+          {
+            "displayName": "19",
+            "unit_type": "MiG-19P",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 54,
+        "display": true,
+        "group_name": "SAM SA-10 'Grumble' - Flap Lid",
+        "hint": "SAM SA-10 S-300 Grumble Flap Lid-A TR\nSAM SA-10 S-300 Grumble Flap Lid-A TR",
+        "threats": [
+          {
+            "displayName": "10",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              4
+            ]
+          },
+          {
+            "displayName": "10",
+            "unit_type": "S-300PS 5H63C 30H6_tr",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 55,
+        "display": true,
+        "group_name": "SAM SA-10 'Grumble' - Clam Shell",
+        "hint": "SAM SA-10 S-300 Grumble Clam Shell SR",
+        "threats": [
+          {
+            "displayName": "CS",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              5
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 56,
+        "display": true,
+        "group_name": "SAM SA-5/10 - Tin Shield",
+        "hint": "SAM SA-5 S-200 ST-68U Tin Shield SR\nSAM SA-10 S-300 Grumble Tin Shield SR",
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "RLS_19J6",
+            "wstype": []
+          },
+          {
+            "displayName": "10",
+            "unit_type": "S-300PS 40B6MD sr",
+            "wstype": []
+          },
+          {
+            "displayName": "TR",
+            "unit_type": "S-300PS 40B6MD sr_19J6",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 57,
+        "display": true,
+        "group_name": "SAM SA-10 'Grumble' - Big Bird",
+        "hint": "SAM SA-10 S-300 Grumble Big Bird SR",
+        "threats": [
+          {
+            "displayName": "10",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              7
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 58,
+        "display": true,
+        "group_name": "SAM Patriot - MPQ-53",
+        "hint": "SAM Patriot STR",
+        "threats": [
+          {
+            "displayName": "PT",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              34
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 59,
+        "display": true,
+        "group_name": "SAM SA-2 'Guideline' - Fan Song",
+        "hint": "SAM SA-2 S-75 Fan Song TR",
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "SNR_75V",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 60,
+        "display": true,
+        "group_name": "SAM SA-2 'Guideline' - RD-75",
+        "hint": "SAM SA-2 S-75 RD-75 Amanzoka RF",
+        "threats": [
+          {
+            "displayName": "2",
+            "unit_type": "RD_75",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 61,
+        "display": true,
+        "group_name": "SAM SA-2/3/5 - Flat Face",
+        "hint": "SAM SA-2/3/5 P19 Flat Face SR",
+        "threats": [
+          {
+            "displayName": "S",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              75
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 62,
+        "display": true,
+        "group_name": "SAM SA-5 'Gammon' - Square Pair",
+        "hint": "SAM SA-5 S-200 Square Pair TR",
+        "threats": [
+          {
+            "displayName": "5",
+            "unit_type": "RPC_5N62V",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 63,
+        "display": true,
+        "group_name": "SAM SA-5 'Gammon' - Tall King",
+        "hint": "SAM SA-5 S-200 P-14 Tall King SR",
+        "threats": [
+          {
+            "displayName": "",
+            "unit_type": "P14_SR",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 64,
+        "display": true,
+        "group_name": "A-50",
+        "hint": "A-50",
+        "threats": [
+          {
+            "displayName": "50",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              5,
+              26
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 65,
+        "display": true,
+        "group_name": "KJ-2000",
+        "hint": "KJ-2000",
+        "threats": [
+          {
+            "displayName": "50",
+            "unit_type": "KJ-2000",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 66,
+        "display": true,
+        "group_name": "E-3",
+        "hint": "E-3A",
+        "threats": [
+          {
+            "displayName": "E3",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              5,
+              27
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 67,
+        "display": true,
+        "group_name": "E-2",
+        "hint": "E-2D",
+        "threats": [
+          {
+            "displayName": "E2",
+            "unit_type": "",
+            "wstype": [
+              1,
+              1,
+              5,
+              41
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 68,
+        "display": true,
+        "group_name": "EWR 55G6",
+        "hint": "EWR 55G6",
+        "threats": [
+          {
+            "displayName": "SR",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              2
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 69,
+        "display": true,
+        "group_name": "EWR 1L13",
+        "hint": "EWR 1L13",
+        "threats": [
+          {
+            "displayName": "SR",
+            "unit_type": "",
+            "wstype": [
+              2,
+              16,
+              101,
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 70,
+        "display": true,
+        "group_name": "EWR AN/FPS-117",
+        "hint": "EWR AN/FPS-117 Radar\nEWR AN/FPS-117 Radar (domed)",
+        "threats": [
+          {
+            "displayName": "SR",
+            "unit_type": "FPS-117",
+            "wstype": []
+          },
+          {
+            "displayName": "SR",
+            "unit_type": "FPS-117 Dome",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 71,
+        "display": true,
+        "group_name": "Kirov guided missile cruiser",
+        "hint": "Battlecruiser 1144.2 Pyotr Velikiy",
+        "threats": [
+          {
+            "displayName": "HN",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              19
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 72,
+        "display": true,
+        "group_name": "Luyang II guided missile destroyer",
+        "hint": "Type 052C Destroyer",
+        "threats": [
+          {
+            "displayName": "HN",
+            "unit_type": "Type_052C",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 73,
+        "display": true,
+        "group_name": "Slava guided missile cruiser",
+        "hint": "Cruiser 1164 Moskva",
+        "threats": [
+          {
+            "displayName": "T2",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              13,
+              3
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 74,
+        "display": true,
+        "group_name": "Arleigh Burke guided missile destroyer",
+        "hint": "DDG Arleigh Burke Iia",
+        "threats": [
+          {
+            "displayName": "AE",
+            "unit_type": "USS_Arleigh_Burke_IIa",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 75,
+        "display": true,
+        "group_name": "Ticonderoga guided missile cruiser",
+        "hint": "CG Ticonderoga",
+        "threats": [
+          {
+            "displayName": "AE",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              21
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 76,
+        "display": true,
+        "group_name": "Jiangkai II guided missile frigate",
+        "hint": "Type 054A Frigate",
+        "threats": [
+          {
+            "displayName": "MR",
+            "unit_type": "Type_054A",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 77,
+        "display": true,
+        "group_name": "Luyang I guided missile destroyer",
+        "hint": "Type 052B Destroyer",
+        "threats": [
+          {
+            "displayName": "MR",
+            "unit_type": "Type_052B",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 78,
+        "display": true,
+        "group_name": "Oliver Hazard Perry guided missile frigate",
+        "hint": "FFG Oliver Hazard Perry",
+        "threats": [
+          {
+            "displayName": "49",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              17
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 79,
+        "display": true,
+        "group_name": "Vasily Bykov patrol ship",
+        "hint": "Vasily Bykov patrol ship [CH]\nVasily Bykov patrol ship with Tor M2KM [CH]",
+        "threats": [
+          {
+            "displayName": "T2",
+            "unit_type": "CHAP_Project22160",
+            "wstype": []
+          },
+          {
+            "displayName": "15",
+            "unit_type": "CHAP_Project22160_TorM2KM",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 80,
+        "display": true,
+        "group_name": "Neustrashimy guided missile frigate",
+        "hint": "Frigate 11540 Neustrashimy",
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              28
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 81,
+        "display": true,
+        "group_name": "Admiral Kuznetsov heavy aircraft cruiser",
+        "hint": "CV 1143.5 Admiral Kuznetsov\nCV 1143.5 Admiral Kuznetsov (2017)",
+        "threats": [
+          {
+            "displayName": "SW",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              12,
+              1
+            ]
+          },
+          {
+            "displayName": "SW",
+            "unit_type": "CV_1143_5",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 82,
+        "display": true,
+        "group_name": "Grisha anti-submarine corvette",
+        "hint": "Corvette 1124.4 Grisha",
+        "threats": [
+          {
+            "displayName": "HP",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              11
+            ]
+          },
+          {
+            "displayName": "HP",
+            "unit_type": "ALBATROS",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 83,
+        "display": true,
+        "group_name": "Krivak II frigate/guard ship",
+        "hint": "Frigate 1135M Rezky",
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              14
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 84,
+        "display": true,
+        "group_name": "Leander frigate",
+        "hint": "HMS Achilles (F12)\nHMS Andromeda (F57)\nHMS Ariadne (F72)",
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              14
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 85,
+        "display": true,
+        "group_name": "Tarawa amphibious assault ship",
+        "hint": "LHA-1 Tarawa",
+        "threats": [
+          {
+            "displayName": "40",
+            "unit_type": "LHA_Tarawa",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 86,
+        "display": true,
+        "group_name": "Nimitz aircraft carrier",
+        "hint": "CVN-71 Theodore Roosevelt\nCVN-72 Abraham Lincoln\nCVN-73 George Washington\nCVN-74 John C. Stennis\nCVN-75 Harry S. Truman",
+        "threats": [
+          {
+            "displayName": "SS",
+            "unit_type": "CVN_71",
+            "wstype": []
+          },
+          {
+            "displayName": "SS",
+            "unit_type": "CVN_72",
+            "wstype": []
+          },
+          {
+            "displayName": "SS",
+            "unit_type": "CVN_73",
+            "wstype": []
+          },
+          {
+            "displayName": "SS",
+            "unit_type": "Stennis",
+            "wstype": []
+          },
+          {
+            "displayName": "SS",
+            "unit_type": "CVN_75",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 87,
+        "display": true,
+        "group_name": "Forrestal aircraft carrier",
+        "hint": "CV-59 Forrestal",
+        "threats": [
+          {
+            "displayName": "FR",
+            "unit_type": "Forrestal",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 88,
+        "display": true,
+        "group_name": "Invincible light aircraft carrier",
+        "hint": "HMS Invincible (R05)",
+        "threats": [
+          {
+            "displayName": "IV",
+            "unit_type": "hms_invincible",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 89,
+        "display": true,
+        "group_name": "Tarantul III missile corvette",
+        "hint": "Corvette 1241.1 Molniya",
+        "threats": [
+          {
+            "displayName": "PS",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              15
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 90,
+        "display": true,
+        "group_name": "Condell frigate",
+        "hint": "CNS Almirante Condell (PFG-06)\nCNS Almirante Lynch (PFG-07)",
+        "threats": [
+          {
+            "displayName": "TR",
+            "unit_type": "",
+            "wstype": [
+              3,
+              12,
+              14,
+              14
+            ]
+          }
+        ]
+      },
+      {
+        "PRI": 91,
+        "display": true,
+        "group_name": "FAC La Combattante IIa",
+        "hint": "FAC La Combattante IIa",
+        "threats": [
+          {
+            "displayName": "LC",
+            "unit_type": "La_Combattante_II",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 92,
+        "display": true,
+        "group_name": "Huangfeng missile boat",
+        "hint": "Type 021-1 Missile Boat",
+        "threats": [
+          {
+            "displayName": "",
+            "unit_type": "Type_021_1",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 93,
+        "display": true,
+        "group_name": "Ropucha I large landing ship",
+        "hint": "LS Ropucha",
+        "threats": [
+          {
+            "displayName": "SC",
+            "unit_type": "BDK-775",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 94,
+        "display": true,
+        "group_name": "Yuzhao amphibious transport dock",
+        "hint": "Type 071 Amphibious Transport Dock",
+        "threats": [
+          {
+            "displayName": "PS",
+            "unit_type": "Type_071",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 95,
+        "display": true,
+        "group_name": "Unknown radar",
+        "hint": "Unknown radar",
+        "threats": [
+          {
+            "displayName": "U",
+            "unit_type": "U",
+            "wstype": []
+          }
+        ]
+      },
+      {
+        "PRI": 96,
+        "display": false,
+        "group_name": "AH-64",
+        "hint": "AH-64D BLK.II",
+        "threats": [
+          {
+            "displayName": "",
+            "unit_type": "AH-64D_BLK_II",
+            "wstype": []
+          }
+        ]
+      }
+    ]
+  },
+  "NAV": {
+    "MissionFile": 1,
+    "Mission_1": {
+      "ADF": {
+        "Preset_1": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_10": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_2": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_3": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_4": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_5": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_6": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_7": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_8": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_9": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "isEnabled": false
+      },
+      "Areas": [],
+      "Lines": [],
+      "Points": {
+        "CTRLM": {
+          "POINTS": [],
+          "isEnabled": false
+        },
+        "TGT": {
+          "POINTS": [],
+          "isEnabled": false
+        },
+        "WPTHZ": {
+          "POINTS": [],
+          "isEnabled": false
+        }
+      },
+      "Routes": [
+        {
+          "Name": "ALPHA",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "BRAVO",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "DELTA",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "ECHO ",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "HOTEL",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "INDIA",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "LIMA ",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "OSCAR",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "ROMEO",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "TANGO",
+          "POINTS": [],
+          "isEnabled": false
+        }
+      ],
+      "Zones": {
+        "NFZ": [],
+        "PFZ": []
+      }
+    },
+    "Mission_2": {
+      "ADF": {
+        "Preset_1": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_10": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_2": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_3": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_4": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_5": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_6": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_7": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_8": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "Preset_9": {
+          "Freq": 100,
+          "ID": ""
+        },
+        "isEnabled": false
+      },
+      "Areas": [],
+      "Lines": [],
+      "Points": {
+        "CTRLM": {
+          "POINTS": [],
+          "isEnabled": false
+        },
+        "TGT": {
+          "POINTS": [],
+          "isEnabled": false
+        },
+        "WPTHZ": {
+          "POINTS": [],
+          "isEnabled": false
+        }
+      },
+      "Routes": [
+        {
+          "Name": "ALPHA",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "BRAVO",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "DELTA",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "ECHO ",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "HOTEL",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "INDIA",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "LIMA ",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "OSCAR",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "ROMEO",
+          "POINTS": [],
+          "isEnabled": false
+        },
+        {
+          "Name": "TANGO",
+          "POINTS": [],
+          "isEnabled": false
+        }
+      ],
+      "Zones": {
+        "NFZ": [],
+        "PFZ": []
+      }
+    }
+  },
+  "Presets": {
+    "COMM": [
+      {
+        "COMMS": {
+          "FM1": {
+            "Encryption": 0,
+            "Frequency": 31.5,
+            "Modulation": 1
+          },
+          "FM2": {
+            "Encryption": 0,
+            "Frequency": 31.5,
+            "Modulation": 1
+          },
+          "HF_ALE": 1,
+          "HF_Pre": 1,
+          "HF_Rx": {
+            "Encryption": 0,
+            "Frequency": 2,
+            "Modulation": 2
+          },
+          "HF_Tx": {
+            "Encryption": 0,
+            "Frequency": 2,
+            "Modulation": 2
+          },
+          "UHF": {
+            "Encryption": 0,
+            "Frequency": 305,
+            "Modulation": 0
+          },
+          "VHF": {
+            "Encryption": 0,
+            "Frequency": 127.5,
+            "Modulation": 0
+          }
+        },
+        "DoNotUploadTabData": false,
+        "InitialMode": {
+          "CallSign": "PRE 1",
+          "DLNet": true,
+          "PrimaryFrequency": 1,
+          "UnitID": "PRESET 1"
+        }
+      },
+      {
+        "COMMS": {
+          "FM1": {
+            "Encryption": 0,
+            "Frequency": 45.7,
+            "Modulation": 1
+          },
+          "FM2": {
+            "Encryption": 0,
+            "Frequency": 45.7,
+            "Modulation": 1
+          },
+          "HF_ALE": 1,
+          "HF_Pre": 1,
+          "HF_Rx": {
+            "Encryption": 0,
+            "Frequency": 5.65,
+            "Modulation": 2
+          },
+          "HF_Tx": {
+            "Encryption": 0,
+            "Frequency": 5.65,
+            "Modulation": 2
+          },
+          "UHF": {
+            "Encryption": 0,
+            "Frequency": 264,
+            "Modulation": 0
+          },
+          "VHF": {
+            "Encryption": 0,
+            "Frequency": 135,
+            "Modulation": 0
+          }
+        },
+        "DoNotUploadTabData": false,
+        "InitialMode": {
+          "CallSign": "PRE 2",
+          "DLNet": true,
+          "PrimaryFrequency": 2,
+          "UnitID": "PRESET 2"
+        }
+      },
+      {
+        "COMMS": {
+          "FM1": {
+            "Encryption": 0,
+            "Frequency": 57,
+            "Modulation": 1
+          },
+          "FM2": {
+            "Encryption": 0,
+            "Frequency": 57,
+            "Modulation": 1
+          },
+          "HF_ALE": 1,
+          "HF_Pre": 1,
+          "HF_Rx": {
+            "Encryption": 0,
+            "Frequency": 4.25,
+            "Modulation": 2
+          },
+          "HF_Tx": {
+            "Encryption": 0,
+            "Frequency": 4.25,
+            "Modulation": 2
+          },
+          "UHF": {
+            "Encryption": 0,
+            "Frequency": 265,
+            "Modulation": 0
+          },
+          "VHF": {
+            "Encryption": 0,
+            "Frequency": 136,
+            "Modulation": 0
+          }
+        },
+        "DoNotUploadTabData": false,
+        "InitialMode": {
+          "CallSign": "PRE 3",
+          "DLNet": true,
+          "PrimaryFrequency": 3,
+          "UnitID": "PRESET 3"
+        }
+      },
+      {
+        "COMMS": {
+          "FM1": {
+            "Encryption": 0,
+            "Frequency": 38,
+            "Modulation": 1
+          },
+          "FM2": {
+            "Encryption": 0,
+            "Frequency": 38,
+            "Modulation": 1
+          },
+          "HF_ALE": 1,
+          "HF_Pre": 1,
+          "HF_Rx": {
+            "Encryption": 0,
+            "Frequency": 7.71,
+            "Modulation": 2
+          },
+          "HF_Tx": {
+            "Encryption": 0,
+            "Frequency": 7.71,
+            "Modulation": 2
+          },
+          "UHF": {
+            "Encryption": 0,
+            "Frequency": 256,
+            "Modulation": 0
+          },
+          "VHF": {
+            "Encryption": 0,
+            "Frequency": 127,
+            "Modulation": 0
+          }
+        },
+        "DoNotUploadTabData": false,
+        "InitialMode": {
+          "CallSign": "PRE 4",
+          "DLNet": true,
+          "PrimaryFrequency": 4,
+          "UnitID": "PRESET 4"
+        }
+      },
+      {
+        "COMMS": {
+          "FM1": {
+            "Encryption": 0,
+            "Frequency": 30,
+            "Modulation": 1
+          },
+          "FM2": {
+            "Encryption": 0,
+            "Frequency": 30,
+            "Modulation": 1
+          },
+          "HF_ALE": 1,
+          "HF_Pre": 1,
+          "HF_Rx": {
+            "Encryption": 0,
+            "Frequency": 9.255,
+            "Modulation": 2
+          },
+          "HF_Tx": {
+            "Encryption": 0,
+            "Frequency": 9.255,
+            "Modulation": 2
+          },
+          "UHF": {
+            "Encryption": 0,
+            "Frequency": 254,
+            "Modulation": 0
+          },
+          "VHF": {
+            "Encryption": 0,
+            "Frequency": 125,
+            "Modulation": 0
+          }
+        },
+        "DoNotUploadTabData": false,
+        "InitialMode": {
+          "CallSign": "PRE 5",
+          "DLNet": true,
+          "PrimaryFrequency": 0,
+          "UnitID": "PRESET 5"
+        }
+      },
+      {
+        "COMMS": {
+          "FM1": {
+            "Encryption": 0,
+            "Frequency": 32,
+            "Modulation": 1
+          },
+          "FM2": {
+            "Encryption": 0,
+            "Frequency": 32,
+            "Modulation": 1
+          },
+          "HF_ALE": 1,
+          "HF_Pre": 1,
+          "HF_Rx": {
+            "Encryption": 0,
+            "Frequency": 5.955,
+            "Modulation": 2
+          },
+          "HF_Tx": {
+            "Encryption": 0,
+            "Frequency": 5.955,
+            "Modulation": 2
+          },
+          "UHF": {
+            "Encryption": 0,
+            "Frequency": 250,
+            "Modulation": 0
+          },
+          "VHF": {
+            "Encryption": 0,
+            "Frequency": 121,
+            "Modulation": 0
+          }
+        },
+        "DoNotUploadTabData": false,
+        "InitialMode": {
+          "CallSign": "PRE 6",
+          "DLNet": true,
+          "PrimaryFrequency": 0,
+          "UnitID": "PRESET 6"
+        }
+      },
+      {
+        "COMMS": {
+          "FM1": {
+            "Encryption": 0,
+            "Frequency": 40,
+            "Modulation": 1
+          },
+          "FM2": {
+            "Encryption": 0,
+            "Frequency": 40,
+            "Modulation": 1
+          },
+          "HF_ALE": 1,
+          "HF_Pre": 1,
+          "HF_Rx": {
+            "Encryption": 0,
+            "Frequency": 5.85,
+            "Modulation": 2
+          },
+          "HF_Tx": {
+            "Encryption": 0,
+            "Frequency": 5.85,
+            "Modulation": 2
+          },
+          "UHF": {
+            "Encryption": 0,
+            "Frequency": 270,
+            "Modulation": 0
+          },
+          "VHF": {
+            "Encryption": 0,
+            "Frequency": 141,
+            "Modulation": 0
+          }
+        },
+        "DoNotUploadTabData": false,
+        "InitialMode": {
+          "CallSign": "PRE 7",
+          "DLNet": true,
+          "PrimaryFrequency": 0,
+          "UnitID": "PRESET 7"
+        }
+      },
+      {
+        "COMMS": {
+          "FM1": {
+            "Encryption": 0,
+            "Frequency": 50,
+            "Modulation": 1
+          },
+          "FM2": {
+            "Encryption": 0,
+            "Frequency": 50,
+            "Modulation": 1
+          },
+          "HF_ALE": 1,
+          "HF_Pre": 1,
+          "HF_Rx": {
+            "Encryption": 0,
+            "Frequency": 5.75,
+            "Modulation": 2
+          },
+          "HF_Tx": {
+            "Encryption": 0,
+            "Frequency": 5.75,
+            "Modulation": 2
+          },
+          "UHF": {
+            "Encryption": 0,
+            "Frequency": 257,
+            "Modulation": 0
+          },
+          "VHF": {
+            "Encryption": 0,
+            "Frequency": 128,
+            "Modulation": 0
+          }
+        },
+        "DoNotUploadTabData": false,
+        "InitialMode": {
+          "CallSign": "PRE 8",
+          "DLNet": true,
+          "PrimaryFrequency": 0,
+          "UnitID": "PRESET 8"
+        }
+      },
+      {
+        "COMMS": {
+          "FM1": {
+            "Encryption": 0,
+            "Frequency": 55.5,
+            "Modulation": 1
+          },
+          "FM2": {
+            "Encryption": 0,
+            "Frequency": 55.5,
+            "Modulation": 1
+          },
+          "HF_ALE": 1,
+          "HF_Pre": 1,
+          "HF_Rx": {
+            "Encryption": 0,
+            "Frequency": 6.872,
+            "Modulation": 2
+          },
+          "HF_Tx": {
+            "Encryption": 0,
+            "Frequency": 6.872,
+            "Modulation": 2
+          },
+          "UHF": {
+            "Encryption": 0,
+            "Frequency": 255,
+            "Modulation": 0
+          },
+          "VHF": {
+            "Encryption": 0,
+            "Frequency": 126,
+            "Modulation": 0
+          }
+        },
+        "DoNotUploadTabData": false,
+        "InitialMode": {
+          "CallSign": "PRE 9",
+          "DLNet": false,
+          "PrimaryFrequency": 0,
+          "UnitID": "PRESET 9"
+        }
+      },
+      {
+        "COMMS": {
+          "FM1": {
+            "Encryption": 0,
+            "Frequency": 39.9,
+            "Modulation": 1
+          },
+          "FM2": {
+            "Encryption": 0,
+            "Frequency": 39.9,
+            "Modulation": 1
+          },
+          "HF_ALE": 1,
+          "HF_Pre": 1,
+          "HF_Rx": {
+            "Encryption": 0,
+            "Frequency": 8,
+            "Modulation": 2
+          },
+          "HF_Tx": {
+            "Encryption": 0,
+            "Frequency": 8,
+            "Modulation": 2
+          },
+          "UHF": {
+            "Encryption": 0,
+            "Frequency": 262,
+            "Modulation": 0
+          },
+          "VHF": {
+            "Encryption": 0,
+            "Frequency": 133,
+            "Modulation": 0
+          }
+        },
+        "DoNotUploadTabData": false,
+        "InitialMode": {
+          "CallSign": "PRE 10",
+          "DLNet": false,
+          "PrimaryFrequency": 0,
+          "UnitID": "PRESET 10"
+        }
+      }
+    ],
+    "MPS": [
+      {
+        "Option": "MOVE TO NEXT WP",
+        "OptionID": 1,
+        "TextLine1": "CONTINUE MISSION",
+        "TextLine2": "MOVE TO NEXT WAYPOINT ALONG ROUTE",
+        "TextLine3": "",
+        "TextLine4": "",
+        "Title": "MOVE TO NEXT WP"
+      },
+      {
+        "Option": "MOVE TO NEXT BP",
+        "OptionID": 2,
+        "TextLine1": "CONTINUE MISSION",
+        "TextLine2": "MOVE TO NEXT BATTLE POSITION",
+        "TextLine3": "",
+        "TextLine4": "",
+        "Title": "MOVE TO NEXT BP"
+      },
+      {
+        "Option": "PERFORM RECON",
+        "OptionID": 3,
+        "TextLine1": "UN-MASK AND PERFORM RECONNAISSANCE OF AREA",
+        "TextLine2": "SEND REPORT WHEN COMPLETE",
+        "TextLine3": "",
+        "TextLine4": "",
+        "Title": "PERFORM RECON"
+      },
+      {
+        "Option": "EXECUTE ATTACK",
+        "OptionID": 4,
+        "TextLine1": "UN-MASK AND EXECUTE ATTACK",
+        "TextLine2": "SEND BDA WHEN COMPLETE",
+        "TextLine3": "",
+        "TextLine4": "",
+        "Title": "EXECUTE ATTACK"
+      },
+      {
+        "Option": "REQUEST SITREP",
+        "OptionID": 5,
+        "TextLine1": "REQUESTING SITUATION UPDATE",
+        "TextLine2": "",
+        "TextLine3": "",
+        "TextLine4": "",
+        "Title": "REQUEST SITREP"
+      },
+      {
+        "Option": "MOVE TO PREVIOUS WP",
+        "OptionID": 6,
+        "TextLine1": "RALLY AT PREVIOUS WAYPOINT ALONG ROUTE",
+        "TextLine2": "",
+        "TextLine3": "",
+        "TextLine4": "",
+        "Title": "MOVE TO PREVIOUS WP"
+      },
+      {
+        "Option": "MOVE TO PREVIOUS BP",
+        "OptionID": 7,
+        "TextLine1": "FALL BACK TO PREVIOUS BATTLE POSITION",
+        "TextLine2": "",
+        "TextLine3": "",
+        "TextLine4": "",
+        "Title": "MOVE TO PREVIOUS BP"
+      },
+      {
+        "Option": "RALLY AT FARP",
+        "OptionID": 8,
+        "TextLine1": "RALLY AT FARP",
+        "TextLine2": "",
+        "TextLine3": "",
+        "TextLine4": "",
+        "Title": "RALLY AT FARP"
+      },
+      {
+        "Option": "RETURN TO AA",
+        "OptionID": 9,
+        "TextLine1": "RETURN TO ASSEMBLY AREA",
+        "TextLine2": "",
+        "TextLine3": "",
+        "TextLine4": "",
+        "Title": "RETURN TO AA"
+      },
+      {
+        "Option": "ACKNOWLEDGE ORDERS",
+        "OptionID": 10,
+        "TextLine1": "ROGER, PROCEEDING AS ORDERED",
+        "TextLine2": "",
+        "TextLine3": "",
+        "TextLine4": "",
+        "Title": "ACKNOWLEDGE ORDERS"
+      }
+    ]
+  },
+  "Radios": {
+    "FM": {
+      "FM1_CUE_Frequency": 30,
+      "FM1_CUE_Modulation": 1,
+      "FM1_Power": 0,
+      "FM2_CUE_Frequency": 30,
+      "FM2_CUE_Modulation": 1
+    },
+    "IFF": {
+      "Mode1": {
+        "Code": "00",
+        "Enable": false
+      },
+      "Mode2": {
+        "Code": "0000",
+        "Enable": false
+      },
+      "Mode3A": {
+        "Code": "0000",
+        "Enable": true
+      },
+      "Mode4": {
+        "Code": 0,
+        "Enable": true
+      },
+      "ModeC": {
+        "Enable": true
+      },
+      "ModeS": {
+        "Address": "00000000",
+        "Enable": false,
+        "FlightID": "ENFLD 11"
+      }
+    },
+    "InitialRadioSettings": {
+      "FM1": {
+        "Encryption": 0,
+        "Frequency": 31.5,
+        "Mode": 0,
+        "Modulation": 1,
+        "Preset": 1
+      },
+      "FM2": {
+        "Encryption": 0,
+        "Frequency": 31.5,
+        "Mode": 0,
+        "Modulation": 1,
+        "Preset": 1
+      },
+      "HF": {
+        "Mode": 0,
+        "Preset": 1,
+        "RxEncryption": 0,
+        "RxFrequency": 2,
+        "RxModulation": 2,
+        "TxEncryption": 0,
+        "TxFrequency": 2,
+        "TxModulation": 2
+      },
+      "UHF": {
+        "Encryption": 0,
+        "Frequency": 305,
+        "Mode": 0,
+        "Modulation": 0,
+        "Preset": 1
+      },
+      "VHF": {
+        "Encryption": 0,
+        "Frequency": 127.5,
+        "Mode": 0,
+        "Modulation": 0,
+        "Preset": 1
+      }
+    },
+    "UHF_GuardReceiver": true
+  },
+  "Radios_HF": [],
+  "Weapon": {
+    "MissileChannels": {
+      "Ch1": 1,
+      "Ch2": 2,
+      "Ch3": 3,
+      "Ch4": 4
+    },
+    "OtherSettings": {
+      "CPG": {
+        "ACQ_Selection": 4,
+        "GunBurstLimit": 2,
+        "GunMode": 1,
+        "ManualRange": 3000,
+        "RocketSalvoQuantity": 2
+      },
+      "PLT": {
+        "ACQ_Cueing": true,
+        "ACQ_Selection": 5,
+        "GunBurstLimit": 1,
+        "GunMode": 1,
+        "ManualRange": 1500,
+        "RocketSalvoQuantity": 1
+      }
+    },
+    "SelectedChannels": {
+      "Alternate": 2,
+      "Priority": 1
+    }
+  },
+  "name": "",
+  "terrain": "",
+  "type": "AH-64D_BLK_II"
+}

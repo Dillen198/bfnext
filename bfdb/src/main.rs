@@ -60,6 +60,7 @@ mod news_image;
 mod db;
 mod progression;
 mod squadrons;
+mod flightplans;
 mod pilot_card;
 mod db_id;
 mod atc;
@@ -5594,6 +5595,139 @@ async fn api_intel_purge(
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
 
+// ── Flight plans (the briefing Planner) ────────────────────────────────────
+
+/// Plan saves per Discord user: generous for someone dragging waypoints and
+/// saving as they go, short of a script filling the tree.
+static PLAN_WRITES: std::sync::LazyLock<websec::RateLimiter<std::string::String>> =
+    std::sync::LazyLock::new(|| {
+        websec::RateLimiter::new(
+            120,
+            std::time::Duration::from_secs(600),
+            std::time::Duration::from_secs(300),
+        )
+    });
+
+fn side_name(side: dcso3::coalition::Side) -> &'static str {
+    match side {
+        dcso3::coalition::Side::Red => "Red",
+        dcso3::coalition::Side::Blue => "Blue",
+        _ => "Neutral",
+    }
+}
+
+fn plan_json(p: &flightplans::Stored, viewer_discord: &str, viewer_admin: bool) -> serde_json::Value {
+    serde_json::json!({
+        "id":      p.id.to_string(),
+        "side":    p.side,
+        "by_name": p.by_name,
+        "created": p.created.to_rfc3339(),
+        "updated": p.updated.to_rfc3339(),
+        "mine":    viewer_admin || p.by == viewer_discord,
+        "plan":    p.plan,
+    })
+}
+
+/// The plan `id` on this instance, if the caller's coalition may see it.
+fn plan_for_caller(db: &StatsDb, inst: &InstanceState, c: &Caller, id: &str) -> std::result::Result<flightplans::Stored, Error> {
+    let id: Uuid = id.parse().map_err(|e| websec::bad_request(format!("bad id: {e}")))?;
+    let p = task::block_in_place(|| db.flight_plans().get(&inst.id, &id))?
+        .ok_or_else(|| websec::not_found("plan not found"))?;
+    if !c.god_mode && p.side != side_name(c.side) {
+        return Err(websec::not_found("plan not found").into());
+    }
+    Ok(p)
+}
+
+/// GET /api/plans -- the caller's coalition's flight plans, newest first.
+async fn api_plans_list(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let side = if c.god_mode && query.get("side").map(|s| s.as_str()) == Some("all") {
+        None
+    } else {
+        Some(side_name(c.side))
+    };
+    let plans = task::block_in_place(|| db.flight_plans().list(&inst.id, side))?;
+    let json: Vec<_> = plans.iter().map(|p| plan_json(p, &c.session.discord_id, c.session.is_admin)).collect();
+    Ok(warp::reply::json(&json))
+}
+
+#[derive(Deserialize)]
+struct PlanSaveBody {
+    /// Absent to create a plan, set to overwrite one the caller owns.
+    id: Option<std::string::String>,
+    plan: flightplans::Plan,
+}
+
+/// POST /api/plans {id?, plan} -- create a plan, or update one (author or
+/// admin). Shared with the author's coalition, fixed to the side it was made on.
+async fn api_plans_save(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: PlanSaveBody,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    if !c.session.is_admin && !PLAN_WRITES.hit(&c.session.discord_id) {
+        return Err(websec::too_many("too many plan saves; wait a few minutes").into());
+    }
+    let plan = flightplans::validate(body.plan).map_err(|e| websec::bad_request(e.to_string()))?;
+    let now = chrono::Utc::now();
+    let stored = match body.id {
+        Some(id) => {
+            let mut p = plan_for_caller(&db, &inst, &c, &id)?;
+            if !c.session.is_admin && p.by != c.session.discord_id {
+                return Err(websec::forbidden("only the author or an admin can change this plan").into());
+            }
+            p.plan = plan;
+            p.updated = now;
+            p
+        }
+        None => {
+            let side = side_name(c.side);
+            task::block_in_place(|| db.flight_plans().check_quota(&inst.id, side, &c.session.discord_id))
+                .map_err(|e| websec::bad_request(e.to_string()))?;
+            flightplans::Stored {
+                id: Uuid::new_v4(),
+                side: side.into(),
+                by: c.session.discord_id.clone(),
+                by_name: c.ucid().and_then(|u| db.pilot_name(u)).unwrap_or_else(|| c.session.username.clone()),
+                created: now,
+                updated: now,
+                plan,
+            }
+        }
+    };
+    task::block_in_place(|| db.flight_plans().put(&inst.id, &stored))?;
+    Ok(warp::reply::json(&plan_json(&stored, &c.session.discord_id, c.session.is_admin)))
+}
+
+/// POST /api/plans/delete {id} -- remove a plan (author or admin).
+async fn api_plans_delete(
+    session_id: Option<Uuid>,
+    query: std::collections::HashMap<std::string::String, std::string::String>,
+    body: IntelDeleteBody,
+    db: StatsDb,
+    bot_cfg: Arc<Option<BotLinkConfig>>,
+    inst: Inst,
+) -> std::result::Result<impl warp::Reply, Error> {
+    let c = require_coalition(&query, session_id, &db, &bot_cfg, &inst).await?;
+    let p = plan_for_caller(&db, &inst, &c, &body.id)?;
+    if !c.god_mode && !c.session.is_admin && p.by != c.session.discord_id {
+        return Err(websec::forbidden("only the author or an admin can delete this plan").into());
+    }
+    task::block_in_place(|| db.flight_plans().delete(&inst.id, &p.id))?;
+    Ok(warp::reply::json(&serde_json::json!({"ok": true})))
+}
+
 // ── Recon intel markup ─────────────────────────────────────────────────────
 
 fn markup_json(id: &Uuid, m: &IntelMarkup, viewer_discord: &str, viewer_admin: bool) -> serde_json::Value {
@@ -10268,6 +10402,37 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .and(with_instance(db.clone()))
         .then(api_hq_command);
 
+    let plans_list_route = warp::path!("api" / "plans")
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_plans_list);
+
+    let plans_save_route = warp::path!("api" / "plans")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        // A full plan: 99 waypoints plus up to 48 KB of avionics settings.
+        .and(warp::body::content_length_limit(128 * 1024))
+        .and(warp::body::json::<PlanSaveBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_plans_save);
+
+    let plans_delete_route = warp::path!("api" / "plans" / "delete")
+        .and(warp::post())
+        .and(extract_session_cookie())
+        .and(warp::query::<std::collections::HashMap<std::string::String, std::string::String>>())
+        .and(warp::body::content_length_limit(JSON_BODY_LIMIT))
+        .and(warp::body::json::<IntelDeleteBody>())
+        .and(with_db(db.clone()))
+        .and(with_bot_link_cfg(bot_link_cfg.clone()))
+        .and(with_instance(db.clone()))
+        .then(api_plans_delete);
+
     let intel_markup_delete_route = warp::path!("api" / "intel" / "markup" / "delete")
         .and(warp::post())
         .and(extract_session_cookie())
@@ -10348,6 +10513,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .or(intel_list_route)
         .or(intel_get_image_route)
         .or(intel_markup_list_route)
+        .or(plans_list_route)
         .boxed();
 
     let auth_routes = auth_login
@@ -10502,6 +10668,8 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
             .or(intel_purge_route)
             .or(intel_markup_add_route)
             .or(intel_markup_delete_route)
+            .or(plans_delete_route)
+            .or(plans_save_route)
             .or(groundwar_command_route)
             .or(hq_command_route)
             .or(command_order_route)

@@ -1064,6 +1064,8 @@ pub(crate) struct StatsDbInner {
     /// XP, levels and challenges (`crate::progression`).
     progress: crate::progression::Progression,
     squadrons: crate::squadrons::Squadrons,
+    /// The Planner's coalition-shared routes (`crate::flightplans`).
+    flight_plans: crate::flightplans::FlightPlans,
     seq: Tree<(Scenario, RoundId), DateTime<Utc>>,
     round: Tree<(Scenario, RoundId), Round>,
     /// Pre-`session_v2` records (bincode `Cfg`). Moved over at startup where
@@ -1775,6 +1777,7 @@ impl StatsDb {
             pilots: Pilots::new(&db)?,
             progress: crate::progression::Progression::new(&db)?,
             squadrons: crate::squadrons::Squadrons::new(&db)?,
+            flight_plans: crate::flightplans::FlightPlans::new(&db)?,
             seq: Tree::open(&db, "seq")?,
             round: Tree::open(&db, "round")?,
             session: Tree::open(&db, "session")?,
@@ -3075,6 +3078,10 @@ impl StatsDb {
 
     pub(crate) fn squadrons(&self) -> &crate::squadrons::Squadrons {
         &self.squadrons
+    }
+
+    pub(crate) fn flight_plans(&self) -> &crate::flightplans::FlightPlans {
+        &self.flight_plans
     }
 
     /// The pilot card PNG (`crate::pilot_card`).
