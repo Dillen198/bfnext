@@ -314,6 +314,8 @@ local function compute_settings()
     local p = opts and type(opts.plugins) == 'table' and opts.plugins["BFCockpit"] or nil
     if type(p) ~= 'table' then p = nil end
     local s = { vr = detect_vr(opts), from_special = p ~= nil }
+    -- Options -> System -> Scale GUI.
+    s.gui_scale = opts and type(opts.graphics) == 'table' and tonumber(opts.graphics.scaleGui) or 1
 
     -- "[ctrl+][alt+][shift+]key" from a key dropdown and its three boxes.
     local function key_from(key, ctrl, alt, shift, fallback)
@@ -1787,6 +1789,14 @@ local function create()
     built_scale = settings.scale
     window = Window.new(x, y, w, h, "Vector Strike")
     window:setSkin(skins.window)
+    do  -- what DCS reports, for diagnosing layout reports from dcs.log
+        local sw, sh = screen_size()
+        local _, bx, by, bw, bh = pcall(function() return window:getBounds() end)
+        local _, cw, ch = pcall(function() return window:getClientRectSize() end)
+        logmsg(string.format("window: screen %sx%s, asked %d,%d %dx%d, bounds %s,%s %sx%s, client %sx%s, Scale GUI %s, panel %.2f, text %.2f",
+            tostring(sw), tostring(sh), x, y, w, h, tostring(bx), tostring(by), tostring(bw), tostring(bh),
+            tostring(cw), tostring(ch), tostring(settings.gui_scale), settings.scale, settings.text_scale or 1))
+    end
     window:setDraggable(true)
     window:setResizable(true)
     -- Above the cockpit, below DCS's own modal dialogs.

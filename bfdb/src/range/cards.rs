@@ -52,6 +52,7 @@ pub(crate) const SAND: &str = "#a8894a";
 pub(crate) const INK: &str = "#1b3a5c";
 const FONT: &str = "Arial, 'Segoe UI', Helvetica, sans-serif";
 
+#[cfg(test)]
 const FT: f64 = 3.28084;
 
 // ── fonts / rasterising ────────────────────────────────────────────────
@@ -322,6 +323,7 @@ pub(crate) fn grade_color(grade: &str) -> &'static str {
 }
 
 /// A "nice" axis value >= x: 1, 2, 2.5, 5 x 10^n.
+#[cfg(test)]
 fn nice_ceil(x: f64) -> f64 {
     if !(x > 0.) {
         return 1.;

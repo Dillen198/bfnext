@@ -21,9 +21,11 @@
 
 use bfprotocols::range::RangeResult;
 
+#[cfg(test)]
 const SOURCE: &str = include_str!("../../../shared/icons/index.tsx");
 
 /// Shared-set glyph -> the bot's icon key (emoji `vs_<key>`).
+#[cfg(test)]
 pub(crate) const RANGE_ICONS: [(&str, &str); 15] = [
     ("Trap", "r_trap"),
     ("Bombing", "r_bomb"),
@@ -68,6 +70,7 @@ pub(crate) fn kind_icon(r: &RangeResult) -> &'static str {
 }
 
 /// The paths of one glyph in the shared set, as written there.
+#[cfg(test)]
 fn body(name: &str) -> Option<&'static str> {
     let head = format!("export const {name} = createIcon('{name}', <>");
     let i = SOURCE.find(&head)? + head.len();
@@ -76,6 +79,7 @@ fn body(name: &str) -> Option<&'static str> {
 }
 
 /// The bot's palette (assets/icons/render_icons.py), for the accents.
+#[cfg(test)]
 fn accent(a: &str) -> &'static str {
     match a {
         "red" => "#c8102e",
@@ -88,6 +92,7 @@ fn accent(a: &str) -> &'static str {
 
 /// A glyph as an emoji-sized SVG: the bot set's steel, its stroke weight and
 /// round ends, the marked parts in their accent colour.
+#[cfg(test)]
 pub(crate) fn emoji_svg(name: &str, px: u32) -> Option<String> {
     let mut b = body(name)?.replace(" />", "/>");
     while let Some(i) = b.find("data-a=\"") {
