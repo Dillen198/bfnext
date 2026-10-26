@@ -1,10 +1,9 @@
 // Tacview's statistics window: every flight in the recording in one sortable
 // table -- shots, hits, kills, how it ended and how long it flew. Click a row
-// to follow that flight. And the telemetry export: the followed object's
-// whole track as CSV, the way Tacview exports a flight's data.
+// to follow that flight. (The telemetry CSV export lives in csv.ts.)
 
 import { useMemo, useState } from 'react'
-import { type RecMeta, type Seg, sideHex, fmtDuration, isStepChannel } from './data'
+import { type RecMeta, sideHex, fmtDuration } from './data'
 
 type Col = 'pilot' | 'aircraft' | 'color' | 'shots' | 'hits' | 'kills' | 'fate' | 'time'
 
@@ -73,30 +72,4 @@ export default function Stats({ meta, humans, focus, onPick }: {
       </div>
     </>
   )
-}
-
-/** Save one object's whole track as CSV: time, position, attitude and
- *  every recorded property, one row per sample. */
-export function downloadCsv(meta: RecMeta, idx: number, s: Seg) {
-  const o = meta.objects[idx]
-  const cols: [string, ArrayLike<number> | undefined, number][] = [
-    ['lon', s.lon, 7], ['lat', s.lat, 7], ['alt_m', s.alt, 1],
-    ['roll', s.roll, 2], ['pitch', s.pitch, 2], ['yaw', s.yaw, 2],
-    ['ias_ms', s.ias, 2], ['mach', s.mach, 3], ['aoa', s.aoa, 2], ['agl_m', s.agl, 1],
-  ]
-  for (const [k, v] of Object.entries(s.ch ?? {})) cols.push([k, v, isStepChannel(k) ? 0 : 3])
-  const used = cols.filter(c => c[1])
-  const base = meta.start_ms || 0
-  const lines = [['time_s', 'utc', ...used.map(c => c[0])].join(',')]
-  for (let i = 0; i < s.t.length; i++) {
-    const row = [(s.t[i] / 1000).toFixed(2), base ? new Date(base + s.t[i]).toISOString() : '']
-    for (const [, v, dp] of used) row.push(v![i].toFixed(dp))
-    lines.push(row.join(','))
-  }
-  const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `${(o?.p ?? o?.n ?? `object-${idx}`).replace(/[^\w.-]+/g, '_')}.csv`
-  a.click()
-  setTimeout(() => URL.revokeObjectURL(a.href), 5_000)
 }

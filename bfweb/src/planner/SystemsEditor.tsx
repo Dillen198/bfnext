@@ -28,7 +28,7 @@ const rowLabel: CSSProperties = {
 }
 
 /** "BurstQuantity" -> "Burst quantity", "mirror_COMM1" -> "Mirror COMM1". */
-export function humanise(key: string): string {
+function humanise(key: string): string {
   const s = key
     .replace(/_/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
