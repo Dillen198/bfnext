@@ -12,7 +12,7 @@
 // * point lists are JSON arrays, never objects with "1" keys.
 
 import { applyOverrides, clone, getAt, fromPointer, pruneOverrides, setAt, type Json, type JsonObject, type Overrides } from './model'
-import { terrainAt, toDcsXY } from './nav'
+import { fromDcsXY, hornetSequences, terrainAt, toDcsXY, type DcsTerrain } from './nav'
 import { aircraftDef, type NativeType, type Plan } from './types'
 import { ExportError, safeName } from './exports'
 import { lar, larCentre } from './f14lar'
@@ -80,6 +80,8 @@ export interface RouteFill {
   plan: Plan
   terrain: string
   xy: { x: number; y: number }[]
+  /** The map the route is on, for converting positions back to lat/lon. */
+  grid: DcsTerrain
   warnings: string[]
   /** Paths (JSON Pointers) the route filled; their tabs get switched on. */
   filled: string[]
@@ -140,42 +142,50 @@ const hornetName = (label: string) => label.toUpperCase().replace(/[^A-Z0-9]/g, 
 function hornetRoute(r: RouteFill) {
   const w = r.plan.waypoints
   const speed = r.plan.speed_kts * KTS_TO_KMH
-  // A Hornet sequence takes 15 points: the route runs on through SEQ 2 and
-  // SEQ 3, and anything past 45 is a waypoint outside every sequence.
-  const seqOf = (i: number) => (i < 45 ? Math.floor(i / 15) + 1 : 0)
-  if (w.length > 15) r.warnings.push(`A Hornet sequence holds 15 points; the route runs across SEQ 1-${Math.min(3, Math.ceil(w.length / 15))}.`)
-  if (w.length > 45) r.warnings.push('Waypoints past 45 are loaded but in no sequence.')
+  // A Hornet sequence takes 15 points; a longer route runs on through SEQ 2
+  // and 3, each starting at the previous sequence's last point.
+  const seqs = hornetSequences(w.length)
+  const covered = seqs.length ? seqs[seqs.length - 1][seqs[seqs.length - 1].length - 1] + 1 : 0
+  if (seqs.length > 1) r.warnings.push(`A Hornet sequence holds 15 points; the route runs across SEQ 1-${seqs.length}.`)
+  if (covered < w.length) r.warnings.push(`Waypoints past ${covered} are loaded but in no sequence.`)
   setAt(r.data, ['WYPT', 'NAV_PTS'], w.map((p, i) => {
     const n = i + 1
-    const s = seqOf(i)
     const pt: JsonObject = {
       id: `STPT${n}`, idOA: `OA${n}`, idOA_Line: `OA${n}Line`, wypt_num: n,
       x: r.xy[i].x, y: r.xy[i].y, alt: p.elev_ft * FT,
       note: p.note.slice(0, 200), text_note: name(p.name, i).slice(0, 5),
-      R1: s === 1, R2: s === 2, R3: s === 3,
+      R1: false, R2: false, R3: false,
       altitudeType: 1, velocityType: 3,
       isOA: false, OA_Range: 0, OA_Bearing: 0, OA_X: 0, OA_Y: 0, OA_Alt: 0, OA_DeltaX: 0, OA_DeltaY: 0,
       OA_Bearing_Units: 1, OA_Range_Units: 1, OA_Elevation_Units: 1,
     }
-    if (s) pt[`R${s}_order`] = i - (s - 1) * 15 + 1
+    seqs.forEach((seq, si) => {
+      const k = seq.indexOf(i)
+      if (k >= 0) {
+        pt[`R${si + 1}`] = true
+        pt[`R${si + 1}_order`] = k + 1
+      }
+    })
     return pt
   }))
   // One route plan per sequence; a sequence has at most one TGT point.
   const routes: JsonObject[] = [{}, {}, {}]
-  const tgtSeen = new Set<number>()
-  w.forEach((p, i) => {
-    const s = seqOf(i)
-    if (!s) return
-    const n = i + 1
-    const t = r.tos(i)
-    const tgt = p.target && !tgtSeen.has(s)
-    if (tgt) tgtSeen.add(s)
-    routes[s - 1][`STPT${n}`] = {
-      route_num: s, wypt_num: n, alt: p.alt_ft * FT, altitudeType: 1,
-      speed, ETA: t ?? 0, FIX_Time: t != null, TGT: tgt,
+  let extraTargets = 0
+  seqs.forEach((seq, si) => {
+    let tgtUsed = false
+    for (const i of seq) {
+      const p = w[i]
+      const t = r.tos(i)
+      const tgt = p.target && !tgtUsed
+      if (tgt) tgtUsed = true
+      else if (p.target) extraTargets++
+      routes[si][`STPT${i + 1}`] = {
+        route_num: si + 1, wypt_num: i + 1, alt: p.alt_ft * FT, altitudeType: 1,
+        speed, ETA: t ?? 0, FIX_Time: t != null, TGT: tgt,
+      }
     }
   })
-  if (w.filter(p => p.target).length > tgtSeen.size) r.warnings.push('A Hornet sequence takes one TGT point; extra targets are plain waypoints in it.')
+  if (extraTargets) r.warnings.push('A Hornet sequence takes one TGT point; extra targets are plain waypoints in it.')
   setAt(r.data, ['WYPT', 'NAV_ROUTE'], routes.map(o => (Object.keys(o).length ? o : [])))
   setAt(r.data, ['WYPT', 'terrain'], r.terrain)
   r.filled.push('/WYPT/NAV_PTS', '/WYPT/NAV_ROUTE')
@@ -302,6 +312,7 @@ function tomcatRoute(r: RouteFill) {
   const targets = w.map((p, i) => ({ p, i })).filter(({ p }) => p.target)
   let next = 0
   const stations = (getAt(r.data, ['JDAM', 'stations']) as JsonObject[] | undefined) ?? []
+  let zeroElev = 0
   for (const st of stations) {
     for (const t of (st.targets as JsonObject[] | undefined) ?? []) {
       if (!t.active) continue
@@ -310,11 +321,15 @@ function tomcatRoute(r: RouteFill) {
         if (!tg) throw new ExportError('An active F-14 JDAM target has no position; mark a target waypoint on the route for it.')
         Object.assign(t, { x: r.xy[tg.i].x, y: r.xy[tg.i].y, lat: tg.p.lat, lon: tg.p.lon, elev: tg.p.elev_ft * FT })
       }
+      // Placed on the map: the cartridge also stores lat/lon.
+      if (typeof t.lat !== 'number' || typeof t.lon !== 'number') Object.assign(t, fromDcsXY(t.x as number, t.y as number, r.grid.terrain))
+      if (t.elev === 0) zeroElev++
       const l = lar(t.drop_alt as number, t.drop_spd as number)
       const c = larCentre(t.x as number, t.y as number, (t.attack_heading as number) ?? 0, l)
       Object.assign(t, l, { launch_x: c.x, launch_y: c.y })
     }
   }
+  if (zeroElev) r.warnings.push(`${zeroElev} JDAM target${zeroElev > 1 ? 's are' : ' is'} at 0 m elevation; set the ground elevation for an accurate hit.`)
   r.filled.push('/NAV')
 }
 
@@ -411,7 +426,7 @@ export function buildNative(plan: Plan, type: NativeType, defaults: Json, ov: Ov
   data.name = nm
   data.terrain = map.id
   const r: RouteFill = {
-    data, plan, terrain: map.id,
+    data, plan, terrain: map.id, grid: map,
     xy: w.map(p => toDcsXY(p.lat, p.lon, map.terrain)),
     warnings: [], filled: [], tos,
   }

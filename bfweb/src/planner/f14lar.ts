@@ -45,3 +45,21 @@ export function larCentre(x: number, y: number, attackHeadingDeg: number, l: Lar
   const mid = ((l.lar_rmin_nmi + l.lar_rmax_nmi) / 2) * 1852
   return { x: x + mid * Math.cos(c), y: y + mid * Math.sin(c) }
 }
+
+/** The LAR outline, 11 vertices in map metres (port of calcLARPoints): the
+ *  inner arc at Rmin, the right edge, the outer arc at Rmax back to the left,
+ *  around the reciprocal of the attack heading (map grid, x north, y east). */
+export function larPolygon(x: number, y: number, attackHeadingDeg: number, l: Lar): { x: number; y: number }[] {
+  const rad = (d: number) => (d * Math.PI) / 180
+  const rMin = l.lar_rmin_nmi * 1852
+  const rMax = l.lar_rmax_nmi * 1852
+  const c = rad((attackHeadingDeg + 180) % 360)
+  const L = c - rad(l.lar_half_angle_deg)
+  const R = c + rad(l.lar_half_angle_deg)
+  const P = (r: number, a: number) => ({ x: x + r * Math.cos(a), y: y + r * Math.sin(a) })
+  const pts: { x: number; y: number }[] = []
+  for (let i = 0; i <= 3; i++) pts.push(P(rMin, L + ((R - L) / 3) * i))
+  pts.push(P(rMax, R))
+  for (let i = 5; i >= 0; i--) pts.push(P(rMax, L + ((R - L) / 6) * i))
+  return pts
+}

@@ -10,6 +10,7 @@
 //   system would come in ticked and wipe the pilot's own settings.
 
 import { applyOverrides, clone, pruneOverrides, type Json, type JsonObject, type Overrides } from './model'
+import { hornetSequences } from './nav'
 import { autoItemFlags, autoUploadFlags, switchesFor } from './dtc/switches'
 import type { Plan, PlanWaypoint } from './types'
 
@@ -234,10 +235,18 @@ function fillRoute(cfg: JsonObject, plan: Plan, t: DcsDtcTarget, tos: Tos): stri
     cfg.Waypoints = sys
     upload.Waypoints = true
     if (t.code === 'FA18C') {
-      // Put the route in sequence 1 (Mode 1 = all waypoints) and upload it.
+      // The route in sequences, 15 points each as the jet takes them, each
+      // starting where the last ended (the same split the native cartridge
+      // uses). Mode 1 = all waypoints, Mode 2 = waypoint range [from, to].
+      const split = hornetSequences(w.length)
       const seqs = (cfg.Sequences ?? {}) as JsonObject
-      seqs.Seq1 = { ...((seqs.Seq1 as JsonObject) ?? {}), Mode: 1, Waypoints: null }
-      seqs.EnableUpload1 = true
+      split.forEach((idx, k) => {
+        const from = t.firstSequence + idx[0]
+        const to = t.firstSequence + idx[idx.length - 1]
+        seqs[`Seq${k + 1}`] = { ...((seqs[`Seq${k + 1}`] as JsonObject) ?? {}), ...(split.length === 1 ? { Mode: 1, Waypoints: null } : { Mode: 2, Waypoints: [from, to] }) }
+        seqs[`EnableUpload${k + 1}`] = true
+      })
+      if (split.length > 1) warnings.push(`The Hornet route runs across SEQ 1-${split.length} (15 points each).`)
       cfg.Sequences = seqs
       upload.Sequences = true
     }

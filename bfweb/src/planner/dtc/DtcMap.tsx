@@ -1,107 +1,14 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import Map, { Layer, Marker, Source, type MapLayerMouseEvent } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useTheme } from '@shared/web/theme'
 import { mapStyleFor } from '../../lib/mapStyle'
-import { clone, getAt, patternSegs, type Json, type JsonObject, type Seg } from '../model'
+import { getAt, type Json, type JsonObject, type Seg } from '../model'
+import { addableList, numbered, positions, slotsOn } from './places'
 import { fromDcsXY, toDcsXY, type DcsTerrain } from '../nav'
+import { lar, larCentre, larPolygon } from '../f14lar'
 import type { Plan } from '../types'
-import { isObj, rowLabel, type Ctx } from './editor'
-
-/** A cartridge item with a map position. */
-interface Pos {
-  segs: Seg[]
-  lat: number
-  lon: number
-  label: string
-  /** On the page being edited (bright, draggable) or elsewhere (faint). */
-  here: boolean
-  editable: boolean
-}
-
-const under = (segs: Seg[], root: Seg[]) => root.every((s, i) => String(segs[i]) === String(s))
-
-/** Every object with a DCS map position (x north, y east) in the cartridge. */
-function positions(ctx: Ctx, map: DcsTerrain, pageSegs: Seg[]): Pos[] {
-  const out: Pos[] = []
-  const walk = (v: Json | undefined, segs: Seg[], managed: boolean, depth: number) => {
-    if (out.length > 600 || depth > 9 || v === null || typeof v !== 'object') return
-    const a = segs.length ? ctx.idx.get(segs) : undefined
-    const m = managed || !!a?.managed
-    if (isObj(v) && typeof v.x === 'number' && typeof v.y === 'number' && (v.x !== 0 || v.y !== 0)) {
-      const ll = fromDcsXY(v.x, v.y, map.terrain)
-      const parent = segs.slice(0, -1)
-      out.push({
-        segs, lat: ll.lat, lon: ll.lon,
-        label: rowLabel(ctx, parent, segs[segs.length - 1], v),
-        here: under(segs, pageSegs), editable: !m && !ctx.readOnly,
-      })
-    }
-    const entries: [Seg, Json][] = Array.isArray(v) ? v.map((x, i) => [i, x]) : Object.entries(v)
-    for (const [k, x] of entries) walk(x, [...segs, k], m, depth + 1)
-  }
-  walk(ctx.value, [], false, 0)
-  return out
-}
-
-/** The first editable list of positioned items on the page: where a map click adds one. */
-export function addableList(ctx: Ctx, pageSegs: Seg[]): { segs: Seg[]; template: JsonObject; label: string } | null {
-  const queue: Seg[][] = [pageSegs]
-  while (queue.length) {
-    const segs = queue.shift()!
-    const v = getAt(ctx.value, segs)
-    const a = ctx.idx.get(segs)
-    if (a?.managed || a?.hidden) continue
-    if (Array.isArray(v)) {
-      const tmpl = (a?.item ?? v[v.length - 1] ?? null) as Json
-      const full = a?.maxItems != null && v.length >= a.maxItems
-      if (isObj(tmpl) && typeof tmpl.x === 'number' && typeof tmpl.y === 'number' && !full && a?.fixedLength == null && !ctx.readOnly) {
-        return { segs, template: tmpl, label: a?.label ?? 'point' }
-      }
-      continue
-    }
-    if (isObj(v)) for (const k of Object.keys(v)) if (v[k] !== null && typeof v[k] === 'object') queue.push([...segs, k])
-  }
-  return null
-}
-
-/** Whether a page has anything to show on a map: route-filled nav, a list
- *  of points to add to, or items that carry a map position. Countermeasures,
- *  radios, RWR tables and the like do not. */
-export function pageHasMap(ctx: Ctx, segs: Seg[], routeFilled: boolean): boolean {
-  if (routeFilled || addableList(ctx, segs)) return true
-  // The route fills something deeper in the page (the F-14's flight plan 2).
-  const page = segs.map(s => (typeof s === 'number' ? '[]' : String(s)))
-  if (ctx.idx.ann.fields.some(f => f.managed === 'route' && patternSegs(f.path).length > page.length && page.every((p, i) => {
-    const q = patternSegs(f.path)[i]
-    return q === p || q === '[]' || q === '{}'
-  }))) return true
-  const walk = (v: Json | undefined, depth: number): boolean => {
-    if (depth > 8 || v === null || typeof v !== 'object') return false
-    if (isObj(v) && typeof v.x === 'number' && typeof v.y === 'number') return true
-    return (Array.isArray(v) ? v : Object.values(v)).some(x => walk(x, depth + 1))
-  }
-  return walk(getAt(ctx.value, segs), 0)
-}
-
-/** Number a new list item on from the last: num/number fields, and an id like
- *  "DEST81" whose numeric part keeps the template's offset from its number. */
-function numbered(list: Json[], tmpl: JsonObject): JsonObject {
-  const item = clone(tmpl)
-  const last = (list[list.length - 1] ?? null) as JsonObject | null
-  for (const f of ['num', 'number', 'Number', 'wypt_num']) {
-    if (typeof item[f] === 'number') {
-      const prev = last && typeof last[f] === 'number' ? (last[f] as number) : (tmpl[f] as number) - 1
-      const n = prev + 1
-      if (typeof item.id === 'string') {
-        const m = /^(.*?)(\d+)$/.exec(item.id)
-        if (m) item.id = `${m[1]}${Number(m[2]) - (tmpl[f] as number) + n}`
-      }
-      item[f] = n
-    }
-  }
-  return item
-}
+import type { Ctx } from './editor'
 
 interface Props {
   ctx: Ctx
@@ -120,6 +27,28 @@ export default function DtcMap({ ctx, plan, map, pageSegs }: Props) {
   const mapStyle = useMemo(() => mapStyleFor(theme), [theme])
   const pts = useMemo(() => positions(ctx, map, pageSegs), [ctx, map, pageSegs])
   const add = addableList(ctx, pageSegs)
+  const slots = add ? [] : slotsOn(ctx, pageSegs)
+  const [slotKey, setSlotKey] = useState<string | null>(null)
+  const slot = slots.find(x => x.segs.join('/') === slotKey) ?? slots.find(x => !x.placed) ?? slots[0]
+
+  // Release zones of active JDAM targets on this page, as the exporter
+  // computes them, and their launch points.
+  const lars = useMemo(() => {
+    const feats: { type: 'Feature'; properties: object; geometry: { type: 'Polygon'; coordinates: number[][][] } }[] = []
+    const launches: { lat: number; lon: number }[] = []
+    for (const p of pts) {
+      if (!p.here) continue
+      const t = getAt(ctx.value, p.segs) as JsonObject
+      if (typeof t.drop_alt !== 'number' || typeof t.drop_spd !== 'number' || typeof t.x !== 'number' || typeof t.y !== 'number') continue
+      const l = lar(t.drop_alt, t.drop_spd)
+      const head = typeof t.attack_heading === 'number' ? t.attack_heading : 0
+      const ring = larPolygon(t.x, t.y, head, l).map(q => { const ll = fromDcsXY(q.x, q.y, map.terrain); return [ll.lon, ll.lat] })
+      feats.push({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[...ring, ring[0]]] } })
+      const c = larCentre(t.x, t.y, head, l)
+      launches.push(fromDcsXY(c.x, c.y, map.terrain))
+    }
+    return { geo: { type: 'FeatureCollection' as const, features: feats }, launches }
+  }, [pts, ctx.value, map])
 
   const route = useMemo(() => ({
     type: 'FeatureCollection' as const,
@@ -148,6 +77,15 @@ export default function DtcMap({ ctx, plan, map, pageSegs }: Props) {
   }
 
   const click = (e: MapLayerMouseEvent) => {
+    if (!add && slot && !ctx.readOnly) {
+      // Put the chosen slot here and switch it on, then move to the next empty one.
+      const cur = getAt(ctx.value, slot.segs) as JsonObject
+      const { x, y } = toDcsXY(e.lngLat.lat, e.lngLat.lng, map.terrain)
+      ctx.set(slot.segs, { ...cur, active: true, x, y, lat: e.lngLat.lat, lon: e.lngLat.lng })
+      const next = slots.find(q => !q.placed && q.segs.join('/') !== slot.segs.join('/'))
+      setSlotKey(next ? next.segs.join('/') : null)
+      return
+    }
     if (!add) return
     const list = (getAt(ctx.value, add.segs) as Json[]) ?? []
     const item = numbered(list, add.template)
@@ -163,6 +101,15 @@ export default function DtcMap({ ctx, plan, map, pageSegs }: Props) {
     <div style={{ position: 'relative', height: '100%', minHeight: 220, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
       <Map key={theme} mapStyle={mapStyle} style={{ width: '100%', height: '100%' }} initialViewState={view}
         dragRotate={false} attributionControl={false} cursor={add ? 'crosshair' : 'grab'} onClick={click}>
+        <Source id="dtc-lar" type="geojson" data={lars.geo}>
+          <Layer id="dtc-lar-fill" type="fill" paint={{ 'fill-color': '#40a6ff', 'fill-opacity': 0.12 }} />
+          <Layer id="dtc-lar-line" type="line" paint={{ 'line-color': '#40a6ff', 'line-width': 1.2, 'line-dasharray': [3, 2] }} />
+        </Source>
+        {lars.launches.map((p, i) => (
+          <Marker key={`launch-${i}`} latitude={p.lat} longitude={p.lon}>
+            <div title="Launch point (centre of the release zone)" style={{ width: 8, height: 8, transform: 'rotate(45deg)', background: '#40a6ff', border: '1px solid #04121f' }} />
+          </Marker>
+        ))}
         <Source id="dtc-route" type="geojson" data={route}>
           <Layer id="dtc-route-line" type="line" paint={{ 'line-color': '#facc15', 'line-width': 2, 'line-opacity': 0.7, 'line-dasharray': [2, 1] }} />
         </Source>
@@ -187,8 +134,16 @@ export default function DtcMap({ ctx, plan, map, pageSegs }: Props) {
           </Marker>
         ))}
       </Map>
+      {slots.length > 0 && !add && !ctx.readOnly && (
+        <label style={{ position: 'absolute', left: 8, top: 8, display: 'flex', gap: 6, alignItems: 'center', padding: '4px 8px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', fontSize: '0.66rem' }}>
+          Place
+          <select className="vs-input" value={slot?.segs.join('/') ?? ''} onChange={e => setSlotKey(e.target.value)} style={{ fontSize: '0.66rem', padding: '2px 4px' }}>
+            {slots.map(q => <option key={q.segs.join('/')} value={q.segs.join('/')}>{q.label}{q.placed ? ' ✓' : ''}</option>)}
+          </select>
+        </label>
+      )}
       <div style={{ position: 'absolute', left: 8, bottom: 8, padding: '4px 8px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', fontSize: '0.62rem', color: 'var(--text-dim)', pointerEvents: 'none' }}>
-        {add ? <>Click the map to add a point to <b style={{ color: 'var(--text)' }}>{add.label}</b>. Drag a blue marker to move it.</> : <><span style={{ color: '#facc15' }}>●</span> your route · <span style={{ color: '#40a6ff' }}>■</span> this page · <span style={{ color: '#9aa3ad' }}>●</span> other cartridge points</>}
+        {slot && !add ? <>Click the map to place <b style={{ color: 'var(--text)' }}>{slot.label}</b>. Shaded: release zone, ◆ launch point.</> : add ? <>Click the map to add a point to <b style={{ color: 'var(--text)' }}>{add.label}</b>. Drag a blue marker to move it.</> : <><span style={{ color: '#facc15' }}>●</span> your route · <span style={{ color: '#40a6ff' }}>■</span> this page · <span style={{ color: '#9aa3ad' }}>●</span> other cartridge points</>}
       </div>
     </div>
   )

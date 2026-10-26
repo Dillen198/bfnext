@@ -47,10 +47,15 @@ describe('native Hornet sequences', () => {
     const out = buildNative(plan('FA-18C_hornet', { waypoints: many(32, [3, 5, 20]) }), 'FA-18C_hornet', hornet as Json, {}, () => null)
     const w = data(out.text).WYPT as { NAV_PTS: Obj[]; NAV_ROUTE: Obj[] }
     expect(w.NAV_PTS[0]).toMatchObject({ R1: true, R2: false, R1_order: 1, text_note: 'POINT' })
-    expect(w.NAV_PTS[15]).toMatchObject({ R1: false, R2: true, R2_order: 1 })
-    expect(w.NAV_PTS[31]).toMatchObject({ R3: true, R3_order: 2 })
+    // Point 15 ends SEQ 1 and starts SEQ 2, so the leg 15 -> 16 is flown.
+    expect(w.NAV_PTS[14]).toMatchObject({ R1: true, R1_order: 15, R2: true, R2_order: 1 })
+    expect(w.NAV_PTS[15]).toMatchObject({ R1: false, R2: true, R2_order: 2 })
+    expect(w.NAV_PTS[28]).toMatchObject({ R2: true, R2_order: 15, R3: true, R3_order: 1 })
+    expect(w.NAV_PTS[31]).toMatchObject({ R3: true, R3_order: 4 })
     expect(Object.keys(w.NAV_ROUTE[0])).toHaveLength(15)
-    expect(Object.keys(w.NAV_ROUTE[2])).toHaveLength(2)
+    expect(Object.keys(w.NAV_ROUTE[1])).toHaveLength(15)
+    expect(Object.keys(w.NAV_ROUTE[2])).toHaveLength(4)
+    expect((w.NAV_ROUTE[1].STPT15 as Obj).route_num).toBe(2)
     const tgts = Object.values(w.NAV_ROUTE[0]).filter(v => (v as Obj).TGT)
     expect(tgts).toHaveLength(1)
     expect((w.NAV_ROUTE[1].STPT21 as Obj).TGT).toBe(true)
@@ -191,5 +196,59 @@ describe('automatic load switches', () => {
     const cfg = JSON.parse(buildDcsDtc(plan('F-16C_50'), t, f16dtc as Json,
       { '/CMS/Programs/0/ChaffBurstQty': 4, '/Upload/CMS': false }, false, () => null).text)
     expect(cfg.Upload.CMS).toBe(false)
+  })
+})
+
+describe('DCS-DTC Hornet sequences', () => {
+  it('splits a long route into waypoint ranges, 15 points each', () => {
+    const t = DCSDTC_TARGETS.find(x => x.code === 'FA18C')!
+    const cfg = JSON.parse(buildDcsDtc(plan('FA-18C_hornet', { waypoints: many(32) }), t, f18dtc as Json, {}, false, () => null).text)
+    // Hornet waypoints are numbered from 0 in DCS-DTC.
+    expect(cfg.Sequences.Seq1).toEqual({ Mode: 2, Waypoints: [0, 14] })
+    expect(cfg.Sequences.Seq2).toEqual({ Mode: 2, Waypoints: [14, 28] })
+    expect(cfg.Sequences.Seq3).toEqual({ Mode: 2, Waypoints: [28, 31] })
+    expect([cfg.Sequences.EnableUpload1, cfg.Sequences.EnableUpload2, cfg.Sequences.EnableUpload3]).toEqual([true, true, true])
+    const short = JSON.parse(buildDcsDtc(plan('FA-18C_hornet'), t, f18dtc as Json, {}, false, () => null).text)
+    expect(short.Sequences.Seq1).toEqual({ Mode: 1, Waypoints: null })
+    expect(short.Sequences.EnableUpload2).toBe(false)
+  })
+})
+
+describe('F-14 JDAM targets placed on the map', () => {
+  it('draws an 11-point release zone around the reciprocal of the attack heading', async () => {
+    const { lar, larPolygon, larCentre } = await import('./f14lar')
+    const l = lar(20000, 450)
+    const poly = larPolygon(0, 0, 0, l)
+    expect(poly).toHaveLength(11)
+    // Attack heading 000 (north): the zone lies to the south (negative x).
+    expect(poly.every(p => p.x < 0)).toBe(true)
+    expect(Math.hypot(poly[0].x, poly[0].y)).toBeCloseTo(l.lar_rmin_nmi * 1852, 3)
+    expect(larCentre(0, 0, 0, l).x).toBeCloseTo(-((l.lar_rmin_nmi + l.lar_rmax_nmi) / 2) * 1852, 3)
+  })
+
+  it('exports a placed target with lat/lon and warns about a zero elevation', () => {
+    // The map writes the whole slot, as here.
+    const slot = (tomcat as { JDAM: { stations: { targets: Obj[] }[] } }).JDAM.stations[1].targets[0]
+    const out = buildNative(plan('F-14BU'), 'F-14BU', tomcat as Json, {
+      '/JDAM/stations/1/targets/0': { ...slot, active: true, x: -260000, y: 620000, elev: 0 } as Json,
+    }, () => null)
+    const t = data(out.text).JDAM.stations[1].targets[0]
+    expect(t).toMatchObject({ active: true, x: -260000, y: 620000 })
+    expect(t.lat).toBeGreaterThan(41)
+    expect(t.lon).toBeGreaterThan(41)
+    expect(typeof t.launch_x).toBe('number')
+    expect(out.warnings.join(' ')).toMatch(/0 m elevation/)
+  })
+
+  it('finds every JDAM slot on the page, labelled by station', async () => {
+    const { slotsOn } = await import('./dtc/places')
+    const { AnnotationIndex, normaliseAnnotations } = await import('./model')
+    const ann = (await import('./data/native/F-14BU.annotations.json')).default
+    const idx = new AnnotationIndex(normaliseAnnotations(ann as never))
+    const ctx = { idx, defaults: tomcat as Json, overrides: {}, value: tomcat as Json, readOnly: false, set: () => {}, hidden: new Set<string>(), points: [] }
+    const slots = slotsOn(ctx, ['JDAM'])
+    expect(slots).toHaveLength(32)
+    expect(slots[0].label).toBe('STA 3 › PP1')
+    expect(slots[31].label).toBe('STA 6 › PP8')
   })
 })

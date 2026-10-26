@@ -78,3 +78,14 @@ describe('file names', () => {
     expect(safeName('***')).toBe('Flight plan')
   })
 })
+
+describe('Hornet sequences', () => {
+  it('splits 15 points per sequence, sharing the boundary point', async () => {
+    const { hornetSequences } = await import('./nav')
+    expect(hornetSequences(4)).toEqual([[0, 1, 2, 3]])
+    const s = hornetSequences(50)
+    expect(s.map(q => [q[0], q[q.length - 1], q.length])).toEqual([[0, 14, 15], [14, 28, 15], [28, 42, 15]])
+    expect(hornetSequences(15)).toHaveLength(1)
+    expect(hornetSequences(16).map(q => q.length)).toEqual([15, 2])
+  })
+})

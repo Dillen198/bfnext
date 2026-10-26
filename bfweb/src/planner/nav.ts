@@ -151,3 +151,21 @@ export function fromDcsXY(x: number, y: number, terrain: Terrain): { lat: number
   const [lon, lat] = proj4(def).inverse([y, x])
   return { lat, lon }
 }
+
+/**
+ * A Hornet route split into its three sequences of at most 15 points. Each
+ * sequence after the first starts at the previous one's last point, so the
+ * leg between them is flown in a sequence too: 1-15, 15-29, 29-43. Indices
+ * into the route; points past 43 are in no sequence.
+ */
+export function hornetSequences(n: number): number[][] {
+  const out: number[][] = []
+  let start = 0
+  while (out.length < 3 && start < n) {
+    const end = Math.min(start + 15, n)
+    out.push(Array.from({ length: end - start }, (_, k) => start + k))
+    if (end >= n) break
+    start = end - 1
+  }
+  return out
+}

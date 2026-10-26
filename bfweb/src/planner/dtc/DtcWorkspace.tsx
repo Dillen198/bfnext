@@ -12,7 +12,8 @@ import { Body, collectLeaves, HitRow, type Ctx, type PointOption } from './edito
 import { buildPages, pageChanges, routeFilled, type Page } from './pages'
 import { flagPointers, isOn, switchesFor, type LoadSwitch } from './switches'
 import { DcsDtcGuide, NativeGuide } from './guides'
-import DtcMap, { addableList, pageHasMap } from './DtcMap'
+import DtcMap from './DtcMap'
+import { addableList, pageHasMap } from './places'
 import './dtc.css'
 
 export type Msg = { kind: 'ok' | 'warn' | 'err'; text: string }
