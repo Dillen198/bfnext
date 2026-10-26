@@ -7,7 +7,7 @@ import PlannerMap from './PlannerMap'
 import { fmtClock, fmtDuration, legs, parseClock, terrainAt } from './nav'
 import { combatFliteXml, download, safeName } from './exports'
 import { routeCardPng } from './card'
-import AvionicsPanel from './AvionicsPanel'
+import DtcCard from './dtc/DtcCard'
 import { targetsFor } from './targets'
 import {
   AIRCRAFT, aircraftDef, MAX_CHANNELS, MAX_WAYPOINTS, newPlan,
@@ -19,10 +19,13 @@ const GROUPS = [...new Set(AIRCRAFT.map(a => a.group))]
 
 /** What an aircraft can export, for the picker. */
 function exportsOf(a: AircraftDef): string {
-  const t: string[] = targetsFor(a).map(x => (x.tool === 'native' ? 'DCS DTC' : 'DCS-DTC'))
-  if (a.other) t.push('cartridge')
-  return t.length ? ` · ${t.join(' + ')}` : ''
+  const t: string[] = targetsFor(a).map(x => (x.tool === 'native' ? 'DCS cartridge' : 'DCS-DTC app'))
+  if (a.other) t.push('cartridge file')
+  return t.length ? ` · ${t.join(' + ')}` : ' · no DTC'
 }
+
+/** Has some way to load a cartridge: DCS's, DCS-DTC, or its own file. */
+const hasDtc = (a: AircraftDef) => targetsFor(a).length > 0 || !!a.other
 
 type Side = 'Blue' | 'Red'
 
@@ -334,7 +337,10 @@ export default function PlannerTab({ side, adminSide, report }: Props) {
                   onChange={e => edit(p => ({ ...p, aircraft: e.target.value }))}>
                   {GROUPS.map(g => (
                     <optgroup key={g} label={g}>
-                      {AIRCRAFT.filter(a => a.group === g).map(a => <option key={a.id} value={a.id}>{a.label}{exportsOf(a)}</option>)}
+                      {AIRCRAFT.filter(a => a.group === g).map(a => (
+                        // Kept in the list so pilots can see why, but not pickable.
+                        <option key={a.id} value={a.id} disabled={!hasDtc(a)}>{a.label}{exportsOf(a)}</option>
+                      ))}
                     </optgroup>
                   ))}
                 </select>
@@ -449,7 +455,7 @@ export default function PlannerTab({ side, adminSide, report }: Props) {
           </div>
         </Panel>
 
-        <AvionicsPanel
+        <DtcCard
           plan={plan}
           readOnly={readOnly}
           onSystems={(key, next) => edit(p => {
@@ -460,7 +466,6 @@ export default function PlannerTab({ side, adminSide, report }: Props) {
           })}
           tosSeconds={tosSeconds}
           tosText={tosText}
-          onMsg={setMsg}
           side={side}
         />
 

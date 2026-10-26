@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { courseTrue, distanceNm, fmtClock, legs, parseClock, terrainAt, toDcsXY } from './nav'
+import { courseTrue, distanceNm, fmtClock, fromDcsXY, legs, parseClock, terrainAt, toDcsXY } from './nav'
 import { combatFliteXml, safeName } from './exports'
 import { newPlan, type Plan, type PlanWaypoint } from './types'
 
@@ -56,6 +56,9 @@ describe('nav', () => {
     const { x, y } = toDcsXY(...BATUMI, terrainAt(...BATUMI)!.terrain)
     expect(x).toBeCloseTo(-355810.7, 0)
     expect(y).toBeCloseTo(617386.2, 0)
+    const back = fromDcsXY(x, y, terrainAt(...BATUMI)!.terrain)
+    expect(back.lat).toBeCloseTo(BATUMI[0], 7)
+    expect(back.lon).toBeCloseTo(BATUMI[1], 7)
   })
 })
 

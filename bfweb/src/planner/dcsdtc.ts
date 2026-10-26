@@ -10,6 +10,7 @@
 //   system would come in ticked and wipe the pilot's own settings.
 
 import { applyOverrides, clone, pruneOverrides, type Json, type JsonObject, type Overrides } from './model'
+import { autoItemFlags, autoUploadFlags, switchesFor } from './dtc/switches'
 import type { Plan, PlanWaypoint } from './types'
 
 /** U+2019: DCS-DTC types coordinates character by character and the minute
@@ -264,6 +265,10 @@ export function buildDcsDtc(plan: Plan, t: DcsDtcTarget, defaults: Json, ov: Ove
   cfg.Version = 2
   const warnings = fillRoute(cfg, plan, t, tos)
   const radios = fillRadios(cfg, plan, t, kept, warnings)
+  // A system the pilot changed switches itself on to upload, item flags included.
+  const changed = Object.keys(kept)
+  autoUploadFlags(cfg, switchesFor({ key: `dcsdtc:${t.code}`, tool: 'dcsdtc', code: t.code, label: t.label }, defaults), changed, kept)
+  autoItemFlags(cfg, changed, kept)
   if (plan.notes) cfg.KneeboardNotes = plan.notes
   const dropped = Object.keys(ov).length - Object.keys(kept).length
   if (dropped) warnings.push(`${dropped} saved setting${dropped > 1 ? 's' : ''} no longer match this preset's layout and were left out.`)

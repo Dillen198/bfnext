@@ -63,3 +63,15 @@ describe('annotations', () => {
     expect(checkValue(idx.get(['CMS', 'Programs', 3, 'Chaff', 'Qty']), 11)).toBe('max 10')
   })
 })
+
+describe('item labels', () => {
+  it('fills fields, numbers and offsets', async () => {
+    const { fillLabel } = await import('./model')
+    expect(fillLabel('W{num}', { num: 3 }, 2)).toBe('W3')
+    expect(fillLabel('DEST {80+index}', { number: 1 }, 0)).toBe('DEST 81')
+    expect(fillLabel('STA {index+2}', {}, 1)).toBe('STA 4')
+    expect(fillLabel('TCN {index0}', {}, 4)).toBe('TCN 4')
+    expect(fillLabel('Channel {n}', {}, 'Channel_12')).toBe('Channel 12')
+    expect(fillLabel('PP{index}', {}, 7)).toBe('PP8')
+  })
+})

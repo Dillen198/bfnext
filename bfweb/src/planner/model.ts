@@ -63,6 +63,8 @@ export interface FieldAnnotation {
   display?: { unit: string; factor: number; decimals?: number }
   /** Label for an element of this list/dict: "W{num}" fills from its fields. */
   itemLabel?: string
+  /** Explicit labels per element, by index. */
+  itemLabels?: string[]
   /** The element field that names a dict entry. */
   keyField?: string
   keyLabels?: Record<string, string>
@@ -93,16 +95,36 @@ export function normaliseAnnotations(raw: RawAnnotations): Annotations {
     }
   }
   const derived = (raw.derived ?? []).map(d => (typeof d === 'string' ? d : `${d.path ?? ''}: ${d.formula ?? ''}`))
-  // A field annotation beats a section-derived one on the same path.
-  const seen = new Set(raw.fields.map(f => f.path))
-  return { ...raw, sections: top, fields: [...raw.fields, ...fields.filter(f => !seen.has(f.path))], derived }
+  // Section rules and the field annotation on the same path merge; the field
+  // wins where both say something.
+  const byPath = new Map<string, FieldAnnotation>()
+  for (const f of [...fields, ...raw.fields]) byPath.set(f.path, { ...byPath.get(f.path), ...f })
+  // Key lists come as plain strings in one dialect, {value, label} in the other.
+  const opt = (k: unknown) => (typeof k === 'string' ? { value: k, label: k } : k as { value: string; label: string })
+  const merged = [...byPath.values()].map(f => ({
+    ...f,
+    ...(f.keyOptions ? { keyOptions: (f.keyOptions as unknown[]).map(opt) } : {}),
+  }))
+  return { ...raw, sections: top, fields: merged, derived }
 }
 
-/** "W{num}" with an element's fields filled in. */
-export function fillLabel(tmpl: string, el: Json): string {
-  return tmpl.replace(/\{(\w+)\}/g, (_, k: string) => {
-    const v = el !== null && typeof el === 'object' && !Array.isArray(el) ? (el as JsonObject)[k] : undefined
-    return v == null ? '' : String(v)
+/** "W{num}" with an element's fields filled in. Besides field names a
+ *  template may use `{index}` (1-based), `{index0}`, offsets like
+ *  `{index+2}` or `{80+index}`, `{n}` (the digits of the key, else the
+ *  index) and `{key}`. */
+export function fillLabel(tmpl: string, el: Json, key?: string | number): string {
+  const i = typeof key === 'number' ? key : undefined
+  return tmpl.replace(/\{([^}]+)\}/g, (_, expr: string) => {
+    const v = el !== null && typeof el === 'object' && !Array.isArray(el) ? (el as JsonObject)[expr] : undefined
+    if (v != null) return String(v)
+    if (expr === 'key' && key !== undefined) return String(key)
+    if (expr === 'n' && key !== undefined) return i !== undefined ? String(i + 1) : (/(\d+)$/.exec(String(key))?.[1] ?? String(key))
+    if (i === undefined) return ''
+    if (expr === 'index') return String(i + 1)
+    if (expr === 'index0') return String(i)
+    const m = /^(?:index\+(\d+)|(\d+)\+index)$/.exec(expr)
+    if (m) return String(i + 1 + Number(m[1] ?? m[2]))
+    return ''
   })
 }
 

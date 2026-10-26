@@ -21,7 +21,7 @@ const FT = 0.3048
 const KTS_TO_KMH = 1.852
 
 /** A tab and the flag that keeps it out of the jet. */
-interface Tab {
+export interface Tab {
   path: string
   flag: string
   /** The flag value that loads the tab: false for mirror_* ("do not
@@ -30,7 +30,7 @@ interface Tab {
 }
 
 /** Per aircraft: tabs with their "do not upload" flags. */
-const TABS: Partial<Record<NativeType, Tab[]>> = {
+export const TABS: Partial<Record<NativeType, Tab[]>> = {
   'F-16C_50': [
     { path: '/MPD/NAV_PTS', flag: '/MPD/mirror_NAV_PTS' },
     { path: '/MPD/VIPVRP', flag: '/MPD/mirror_NAV_PTS' },

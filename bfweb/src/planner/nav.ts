@@ -2,6 +2,7 @@
 // DCS map metres a native cartridge stores.
 
 import geomagnetism from 'geomagnetism'
+import proj4 from 'proj4'
 import { getRange, toMercProj } from '../scope/util'
 import { Terrains, type Terrain } from '../scope/dcs/terrain'
 import type { Plan } from './types'
@@ -137,4 +138,16 @@ export function terrainAt(lat: number, lon: number): DcsTerrain | null {
 export function toDcsXY(lat: number, lon: number, terrain: Terrain): { x: number; y: number } {
   const [east, north] = toMercProj([lat, lon], terrain)
   return { x: north, y: east }
+}
+
+/** DCS map metres back to lat/lon: the inverse of `toDcsXY`, same
+ *  transverse Mercator (pydcs' parameters, as the scope uses). */
+export function fromDcsXY(x: number, y: number, terrain: Terrain): { lat: number; lon: number } {
+  const p = terrain.projection
+  const def = [
+    '+proj=tmerc', '+lat_0=0', `+lon_0=${p.centralMeridian}`, `+k_0=${p.scaleFactor}`,
+    `+x_0=${p.falseEasting}`, `+y_0=${p.falseNorthing}`, '+towgs84=0,0,0,0,0,0,0', '+units=m', '+ellps=WGS84', '+no_defs',
+  ].join(' ')
+  const [lon, lat] = proj4(def).inverse([y, x])
+  return { lat, lon }
 }

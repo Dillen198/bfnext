@@ -170,3 +170,26 @@ describe('second verification pass', () => {
     expect(got.every((n: string) => /^[A-Z0-9]{1,6}$/.test(n))).toBe(true)
   })
 })
+
+describe('automatic load switches', () => {
+  it('switches on the DCS-DTC upload and item flags for what changed', () => {
+    const t = DCSDTC_TARGETS.find(x => x.code === 'F16C')!
+    const cfg = JSON.parse(buildDcsDtc(plan('F-16C_50'), t, f16dtc as Json,
+      { '/CMS/Programs/0/ChaffBurstQty': 4, '/Misc/TGPCode': 1511, '/Misc/Bingo': 3000 }, false, () => null).text)
+    expect(cfg.Upload.CMS).toBe(true)
+    expect(cfg.Upload.Misc).toBe(true)
+    expect(cfg.Upload.Radios).toBe(false)
+    expect(cfg.CMS.Programs[0].ToBeUpdated).toBe(true)
+    expect(cfg.CMS.Programs[1].ToBeUpdated).toBe(false)
+    expect(cfg.Misc.LaserSettingsToBeUpdated).toBe(true)
+    expect(cfg.Misc.BingoToBeUpdated).toBe(true)
+    expect(cfg.Misc.TACANToBeUpdated).toBe(false)
+  })
+
+  it('leaves a switch the pilot set by hand', () => {
+    const t = DCSDTC_TARGETS.find(x => x.code === 'F16C')!
+    const cfg = JSON.parse(buildDcsDtc(plan('F-16C_50'), t, f16dtc as Json,
+      { '/CMS/Programs/0/ChaffBurstQty': 4, '/Upload/CMS': false }, false, () => null).text)
+    expect(cfg.Upload.CMS).toBe(false)
+  })
+})
