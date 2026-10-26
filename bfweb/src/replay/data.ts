@@ -3,11 +3,14 @@
 // layout documented there.
 
 import { API_ROOT } from '../api'
+import { shortNameOf } from '../../../shared/models/catalog'
 import { deadline, LONG_TIMEOUT_MS } from '@shared/web/api'
 
 export type Kind =
   | 'air' | 'helo' | 'missile' | 'bomb' | 'rocket' | 'torpedo'
   | 'sam' | 'armor' | 'vehicle' | 'infantry' | 'static' | 'ship' | 'carrier'
+  // Ingest v4 keeps what Tacview shows and v3 dropped at the door:
+  | 'shell' | 'flare' | 'chaff' | 'decoy' | 'explosion' | 'parachutist' | 'bullseye' | 'misc'
 
 export interface RecObject {
   k: Kind
@@ -26,9 +29,16 @@ export interface RecObject {
   f: number
   /** ms it was destroyed at */
   d?: number | null
+  /** Tacview's own `Type=` tags, e.g. "Air+FixedWing" (ingest v4) */
+  ty?: string | null
+  /** Tacview object id, hex (ingest v4) */
+  id?: string | null
 }
 
-export type EventKind = 'fired' | 'kill' | 'destroyed' | 'lost' | 'takeoff' | 'landing'
+export type EventKind =
+  | 'fired' | 'kill' | 'destroyed' | 'lost' | 'takeoff' | 'landing'
+  // Tacview's own `Event=` lines, passed through (ingest v4)
+  | 'message' | 'bookmark' | 'hit' | 'left'
 
 export interface RecEvent {
   t: number
@@ -43,6 +53,8 @@ export interface RecEvent {
   md?: number | null
   hit?: boolean
   te?: number
+  /** the text of a message/bookmark event */
+  text?: string | null
 }
 
 export interface RecFlight {
@@ -121,6 +133,13 @@ export const F_ATT = 1, F_IAS = 2, F_MACH = 4, F_AOA = 8, F_AGL = 16
 
 /** One object's samples within one chunk (or a stitched whole track). */
 export interface Seg {
+  /**
+   * Every other numeric Tacview property the object carries (ingest v4),
+   * one value per sample, carried forward between updates: "TAS", "HDG",
+   * "FuelWeight", "Throttle", "RadarMode", "RadarRange", "Radius", ...
+   * `LockedTarget`..`LockedTarget9` hold the target's meta index, -1 for none.
+   */
+  ch?: Record<string, Float64Array>
   t: Float64Array
   lon: Float64Array
   lat: Float64Array
@@ -134,20 +153,51 @@ export interface Seg {
   agl?: Float64Array
 }
 
-/** Decode a `BFR1` buffer into object index -> segment. */
+/**
+ * Decode a track chunk into object index -> segment. `BFR1` is ingest v3;
+ * `BFR2` (v4) adds a channel table:
+ *
+ * ```text
+ * "BFR2" u16:nchan, per channel: u8:len, utf8 name, f32:scale
+ * u32:nobj
+ * per object: u32:idx u32:n u8:flags u16:nch, nch x u16:channel
+ *   t, lon, lat, alt [ATT roll pitch yaw] [IAS] [MACH] [AOA] [AGL]  as BFR1
+ *   then each listed channel: n i32, delta-coded, value = int * scale
+ * ```
+ */
 export function decodeChunk(buf: ArrayBuffer): Map<number, Seg> {
   const dv = new DataView(buf)
   const out = new Map<number, Seg>()
-  if (buf.byteLength < 8 || dv.getUint32(0, true) !== 0x31524642 /* "BFR1" */) {
-    throw new Error('not a replay chunk')
+  const magic = buf.byteLength >= 8 ? dv.getUint32(0, true) : 0
+  const v2 = magic === 0x32524642 /* "BFR2" */
+  if (!v2 && magic !== 0x31524642 /* "BFR1" */) throw new Error('not a replay chunk')
+  let at = 4
+  const chans: { name: string; scale: number }[] = []
+  if (v2) {
+    const nchan = dv.getUint16(at, true)
+    at += 2
+    const td = new TextDecoder()
+    for (let c = 0; c < nchan; c++) {
+      const len = dv.getUint8(at)
+      const name = td.decode(new Uint8Array(buf, at + 1, len))
+      const scale = dv.getFloat32(at + 1 + len, true)
+      chans.push({ name, scale })
+      at += 1 + len + 4
+    }
   }
-  const nobj = dv.getUint32(4, true)
-  let at = 8
+  const nobj = dv.getUint32(at, true)
+  at += 4
   for (let o = 0; o < nobj; o++) {
     const idx = dv.getUint32(at, true)
     const n = dv.getUint32(at + 4, true)
     const flags = dv.getUint8(at + 8)
     at += 9
+    const mine: number[] = []
+    if (v2) {
+      const nch = dv.getUint16(at, true)
+      at += 2
+      for (let c = 0; c < nch; c++) { mine.push(dv.getUint16(at, true)); at += 2 }
+    }
     const col = (scale: number): Float64Array => {
       const a = new Float64Array(n)
       let acc = 0
@@ -164,6 +214,14 @@ export function decodeChunk(buf: ArrayBuffer): Map<number, Seg> {
     if (flags & F_MACH) seg.mach = col(0.001)
     if (flags & F_AOA) seg.aoa = col(0.01)
     if (flags & F_AGL) seg.agl = col(0.1)
+    if (mine.length) {
+      seg.ch = {}
+      for (const c of mine) {
+        const ch = chans[c]
+        if (!ch) throw new Error('bad channel in replay chunk')
+        seg.ch[ch.name] = col(ch.scale)
+      }
+    }
     out.set(idx, seg)
   }
   return out
@@ -243,6 +301,14 @@ export interface State {
   mach?: number
   aoa?: number
   agl?: number
+  /** the segment's extra channels at this moment (see `Seg.ch`) */
+  ch?: Record<string, number>
+}
+
+/** Channels that jump between values rather than blend: target ids, modes,
+ *  switch positions. */
+export function isStepChannel(name: string): boolean {
+  return /^LockedTarget\d?$|Mode$|^LandingGear|^Tailhook|^Parachute|^DragChute|^Afterburner|^Visible|^Disabled|^Importance/.test(name)
 }
 
 const lerp = (a: number, b: number, f: number) => a + (b - a) * f
@@ -265,7 +331,7 @@ export function bearingDeg(lon1: number, lat1: number, lon2: number, lat2: numbe
 }
 
 /** Index of the last sample at or before `t` (-1 if none). */
-function bisect(ts: Float64Array, t: number): number {
+export function bisect(ts: Float64Array, t: number): number {
   let lo = 0, hi = ts.length - 1
   if (hi < 0 || t < ts[0]) return -1
   if (t >= ts[hi]) return hi
@@ -309,7 +375,39 @@ export function sampleSeg(s: Seg, t: number): State | null {
   if (s.mach) st.mach = lerp(s.mach[i], s.mach[j], f)
   if (s.aoa) st.aoa = lerp(s.aoa[i], s.aoa[j], f)
   if (s.agl) st.agl = lerp(s.agl[i], s.agl[j], f)
+  if (s.ch) {
+    st.ch = {}
+    for (const k in s.ch) {
+      const c = s.ch[k]
+      st.ch[k] = isStepChannel(k) ? c[f < 1 ? i : j] : lerp(c[i], c[j], f)
+    }
+  }
   return st
+}
+
+/**
+ * What the viewer plays: a server recording streamed in chunks
+ * (`TrackStore`) or a local .acmi read whole in the browser
+ * (`acmi/store.ts`). Times are ms from the recording start.
+ */
+export interface TrackSource {
+  readonly meta: RecMeta
+  /** bumps whenever more data arrives, so views redraw what they cache */
+  version: number
+  onChange: (() => void) | null
+  error: string | null
+  /** fetch what is needed around the playhead (no-op when all is loaded) */
+  around(t: number): void
+  /** whether the data under `t` is here */
+  isLoaded(t: number): boolean
+  /** meta indices that may be alive at `t` (callers still check t0/t1) */
+  present(t: number): number[]
+  /** interpolated state, or null when not alive or not loaded */
+  state(idx: number, t: number): State | null
+  /** the whole track (null until it arrives; asking starts the fetch) */
+  wholeTrack(idx: number): Seg | null
+  /** [lon, lat, alt] points from t-len to t, at most one per `step` ms */
+  trail(idx: number, t: number, len: number, step?: number): [number, number, number][]
 }
 
 /**
@@ -317,7 +415,7 @@ export function sampleSeg(s: Seg, t: number): State | null {
  * playhead; `version` bumps whenever something new arrives so views know to
  * redraw what is static (trails).
  */
-export class TrackStore {
+export class TrackStore implements TrackSource {
   readonly meta: RecMeta
   readonly rec: string
   private chunks = new Map<number, Map<number, Seg>>()
@@ -425,22 +523,28 @@ export class TrackStore {
         if (s) segs.push(s)
       }
     }
-    const pts: [number, number, number][] = []
-    let lastT = -Infinity
-    for (const s of segs) {
-      for (let i = 0; i < s.t.length; i++) {
-        const ti = s.t[i]
-        if (ti < t - len || ti <= lastT) continue
-        if (ti > t) break
-        if (step && ti - lastT < step) continue
-        pts.push([s.lon[i], s.lat[i], s.alt[i]])
-        lastT = ti
-      }
-    }
-    const now = this.state(idx, t)
-    if (now) pts.push([now.lon, now.lat, now.alt])
-    return pts
+    return trailOf(segs, t, len, step, this.state(idx, t))
   }
+}
+
+/** [lon, lat, alt] points of `segs` (in time order) between t-len and t, at
+ *  most one per `step` ms, ending at `now`. Starts by bisection: a whole
+ *  track holds hours of samples and this runs every frame. */
+export function trailOf(segs: Seg[], t: number, len: number, step: number, now: State | null): [number, number, number][] {
+  const pts: [number, number, number][] = []
+  let lastT = -Infinity
+  for (const s of segs) {
+    for (let i = Math.max(0, bisect(s.t, t - len)); i < s.t.length; i++) {
+      const ti = s.t[i]
+      if (ti < t - len || ti <= lastT) continue
+      if (ti > t) break
+      if (step && ti - lastT < step) continue
+      pts.push([s.lon[i], s.lat[i], s.alt[i]])
+      lastT = ti
+    }
+  }
+  if (now) pts.push([now.lon, now.lat, now.alt])
+  return pts
 }
 
 // ── shots ──────────────────────────────────────────────────────────────
@@ -474,9 +578,18 @@ export function sideHex(c?: string | null): string {
 
 export function isAir(k: Kind) { return k === 'air' || k === 'helo' }
 export function isWeapon(k: Kind) { return k === 'missile' || k === 'bomb' || k === 'rocket' || k === 'torpedo' }
+/** Shells, flares, chaff, decoys, explosions: drawn as effects, never a target. */
+export function isEffect(k: Kind) { return k === 'shell' || k === 'flare' || k === 'chaff' || k === 'decoy' || k === 'explosion' }
+/** Ground units, ships and statics. */
+export function isSurface(k: Kind) { return !isAir(k) && !isWeapon(k) && !isEffect(k) && k !== 'parachutist' && k !== 'bullseye' && k !== 'misc' }
+
+/** The type as Tacview names it ("F-16C" for "F-16C_50"), else the raw name. */
+export function typeLabel(o: RecObject): string {
+  return shortNameOf(o.n) || (o.n ?? o.k).replace(/_/g, ' ')
+}
 
 export function objLabel(o: RecObject): string {
-  const type = (o.n ?? o.k).replace(/_/g, ' ')
+  const type = typeLabel(o)
   return o.p ? `${o.p} (${type})` : type
 }
 

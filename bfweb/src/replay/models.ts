@@ -46,6 +46,10 @@ export function familyOf(kind: Kind, name?: string | null): Family {
     case 'static': return 'static'
     case 'ship': return 'ship'
     case 'carrier': return 'carrier'
+    case 'parachutist': return 'infantry'
+    // Effects are drawn by the theatre itself; these keep the type total.
+    case 'shell': case 'flare': case 'chaff': case 'decoy': case 'explosion': return 'bomb'
+    case 'bullseye': case 'misc': return 'static'
   }
 }
 
@@ -199,14 +203,14 @@ export function modelOf(f: Family): THREE.BufferGeometry {
 }
 
 // ── real models ────────────────────────────────────────────────────────
-// public/models/*.glb, made by scripts/build-replay-model(s).mjs (credits in
-// public/models/CREDITS.txt). Which type gets which model is the shared
-// catalogue (shared/models/catalog.ts, used by the range site too). Types
-// without a model of their own borrow the nearest lookalike; anything
-// unmatched keeps the built-in shapes above.
+// public/models/*.glb: Tacview's meshes, made by scripts/build-tacview-models.mjs
+// (credits and licence in public/models). Which type gets which model is the
+// shared catalogue (shared/models/catalog.ts, used by the range site too),
+// built on Tacview's own object database. The built-in shapes above draw
+// while a model loads, and for anything without one.
 
-import { realOf, type Real } from '../../../shared/models/catalog'
-export { realOf, type Real }
+import { realOf, tacviewType, shortNameOf, type Real } from '../../../shared/models/catalog'
+export { realOf, tacviewType, shortNameOf, type Real }
 
 const realCache = new Map<Real, THREE.BufferGeometry | null>()
 const realLoading = new Set<Real>()
@@ -219,7 +223,7 @@ export function realModel(r: Real, onReady: () => void): THREE.BufferGeometry | 
   if (!realLoading.has(r)) {
     realLoading.add(r)
     loader.load(
-      `${import.meta.env.BASE_URL}models/${r}.glb`,
+      `${import.meta.env.BASE_URL}models/${encodeURIComponent(r)}.glb`,
       gltf => {
         const parts: THREE.BufferGeometry[] = []
         gltf.scene.updateMatrixWorld(true)

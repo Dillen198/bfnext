@@ -1,7 +1,7 @@
 """Draw the dashboard's wireframe art from the replay's real 3D models.
 
 Each view takes one of public/models/*.glb (the flight replay's models; see
-public/models/CREDITS.txt) and keeps the lines a draughtsman would: the
+public/models/CREDITS.txt: Tacview's meshes) and keeps the lines a draughtsman would: the
 mesh's creases (faces meeting at a sharp angle), its open edges, and its
 silhouette from that view's camera. Not every triangle -- on a 6,000-face
 model that is a grey smear.
@@ -40,14 +40,14 @@ OUT = WEB / "public" / "media" / "wire"
 VIEWS = {
     # The top bar's: drawn on every page and too small to show hidden lines,
     # so it ships without them (HIDDEN_OFF) -- half the download.
-    "carrier": ("CVN", 62, 16, 10, 40),
-    "carrier-quarter": ("CVN", -140, 22, 12, 40),
-    "flanker": ("Su-35", 38, 24, 18, 32),
-    "flanker-rear": ("Su-35", 215, 14, 18, 32),
-    "hornet": ("F-18", -32, 16, 18, 32),
-    "hornet-top": ("F-18", 60, 62, 18, 32),
-    "apache": ("AH-64", 30, 12, 20, 36),
-    "abrams": ("M1A2", 36, 18, 20, 36),
+    "carrier": ("Watercraft.CVN-74", 62, 16, 10, 40),
+    "carrier-quarter": ("Watercraft.CVN-74", -140, 22, 12, 40),
+    "flanker": ("FixedWing.Su-27", 38, 24, 18, 32),
+    "flanker-rear": ("FixedWing.Su-27", 215, 14, 18, 32),
+    "hornet": ("FixedWing.F-18C", -32, 16, 18, 32),
+    "hornet-top": ("FixedWing.F-18C", 60, 62, 18, 32),
+    "apache": ("Rotorcraft.AH-64", 30, 12, 20, 36),
+    "abrams": ("Vehicle.Tank.M1", 36, 18, 20, 36),
 }
 
 HIDDEN_OFF = {"carrier"}

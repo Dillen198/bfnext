@@ -287,7 +287,7 @@ export function carrier(g: DeckGeom, name: string | undefined): THREE.Group {
 }
 
 /** The dashboard model of each class we have one for. */
-export const CARRIER_MODEL: Partial<Record<DeckKind, Real>> = { nimitz: 'CVN', kuznetsov: 'Kuznetsov' }
+export const CARRIER_MODEL: Partial<Record<DeckKind, Real>> = { nimitz: 'Watercraft.CVN-74', kuznetsov: 'Watercraft.Admiral Kuznetsov' }
 
 const SHIP_GREY = new THREE.MeshStandardMaterial({ color: '#7d868f', roughness: 0.75, metalness: 0.15, flatShading: true })
 

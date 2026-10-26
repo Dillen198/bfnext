@@ -11,17 +11,38 @@
 //! - `c<n>.bin.gz`: the tracks of everything alive in the n-th five-minute
 //!   window, so a viewer loads only the part of the war it is looking at.
 //!
-//! Tracks are thinned per kind (aircraft and weapons several times a second,
-//! ground units every few seconds, static objects once) and the newest
-//! unwritten state is always flushed when an object leaves or a window
-//! closes, so a missile's last point is where it actually ended. Shells,
-//! bullets, flares, chaff and other clutter are dropped at the door.
+//! Tracks are thinned per kind and the newest unwritten state is always
+//! flushed when an object leaves or a window closes, so a missile's last
+//! point is where it actually ended. Minimum sample spacing:
 //!
-//! Chunk layout, little-endian, gzip'd:
+//! | kind                                   | spacing        |
+//! |----------------------------------------|----------------|
+//! | aircraft, helicopters, guided weapons  | 100 ms         |
+//! | flares, chaff, other decoys            | 500 ms         |
+//! | ground units, ships, shells, parachutists, misc | 1 s   |
+//! | statics, explosions, bullseyes         | once           |
+//!
+//! Everything Tacview shows is kept except `Shrapnel` and `Beam`. Shells,
+//! countermeasures, explosions, parachutists, bullseyes and other markers
+//! (`Kind::is_effect`) are drawn but never take part in a shot: they are
+//! never a weapon's target or launcher.
+//!
+//! Besides the fixed columns (position, attitude, IAS, Mach, AOA, AGL),
+//! every other object property whose value is a number is kept as a named
+//! *channel*: `TAS`, `HDG`, `Throttle`, `FuelWeight`, `RadarMode`,
+//! `LockedTargetRange`, `Health`, ... The object's last value is carried
+//! forward into every sample after it was first set; samples before the
+//! first set take that first value. `LockedTarget`, `LockedTarget2` ..
+//! `LockedTarget9` are object ids in Tacview and are stored as the target's
+//! meta index (resolved when the chunk is written), `-1` for none, unknown,
+//! a target never written, or any sample before the first lock.
+//!
+//! Chunk layout (`BFR2`), little-endian, gzip'd:
 //!
 //! ```text
-//! "BFR1" u32:nobj
-//! per object: u32:idx u32:n u8:flags
+//! "BFR2" u16:nchan, per channel: u8:len, utf8 name, f32:scale
+//! u32:nobj
+//! per object: u32:idx u32:n u8:flags u16:nch, nch x u16:channel (index into the table above)
 //!   then columns of n i32 each, delta-coded (first absolute):
 //!   t (ms from recording start), lon (1e-7 deg), lat (1e-7 deg), alt (dm MSL)
 //!   [flags&1  ATT]  roll, pitch, yaw (centidegrees)
@@ -29,7 +50,22 @@
 //!   [flags&4  MACH] x1000
 //!   [flags&8  AOA]  centidegrees
 //!   [flags&16 AGL]  dm
+//!   then one column per listed channel, in the listed order:
+//!   round(value / scale), so value = int x scale
 //! ```
+//!
+//! The channel table holds only the channels used in that chunk. Channel
+//! integers are clamped to +-(i32::MAX / 2) so every delta fits an i32.
+//! Channel scales ([`channel_scale`]; a trailing digit, as in `Throttle2`,
+//! is ignored): `LockedTarget*` 1; `*Mode`, `LandingGear`, `Tailhook`,
+//! `Afterburner`, `AirBrakes`, `Flaps`, `Throttle*`, `Health` 0.001; `HDG`,
+//! `HDM`, `AOS`, `*Azimuth`, `*Elevation`, `*Roll`, `*Pitch`, `*Yaw`,
+//! `*Beamwidth` 0.01; `*Range`, `Radius`, `Length`, `Width`, `Height` 0.1;
+//! `TAS`, `CAS` 0.01; `*GForce*` 0.001; `FuelWeight*`, `FuelVolume*` 0.1;
+//! anything else 0.001.
+//!
+//! The older `BFR1` layout (ingest v3) is the same without the channel
+//! table and the `nch` list; [`read_chunk`] reads both.
 //!
 //! Each chunk also repeats an object's last sample from before the window,
 //! so any one chunk interpolates on its own.
@@ -71,6 +107,17 @@ pub(crate) enum Kind {
     Static,
     Ship,
     Carrier,
+    /// Shells, bullets, projectiles, grenades.
+    Shell,
+    Flare,
+    Chaff,
+    /// Any other decoy.
+    Decoy,
+    Explosion,
+    Parachutist,
+    Bullseye,
+    /// Any other typed object: smoke, waypoints, ...
+    Misc,
 }
 
 impl Kind {
@@ -89,17 +136,27 @@ impl Kind {
             Kind::Static => "static",
             Kind::Ship => "ship",
             Kind::Carrier => "carrier",
+            Kind::Shell => "shell",
+            Kind::Flare => "flare",
+            Kind::Chaff => "chaff",
+            Kind::Decoy => "decoy",
+            Kind::Explosion => "explosion",
+            Kind::Parachutist => "parachutist",
+            Kind::Bullseye => "bullseye",
+            Kind::Misc => "misc",
         }
     }
 
     /// Minimum spacing of stored samples.
     fn interval_ms(self) -> i64 {
         match self {
-            Kind::Air | Kind::Helo => 500,
-            Kind::Missile | Kind::Bomb | Kind::Rocket | Kind::Torpedo => 250,
-            Kind::Ship | Kind::Carrier => 5_000,
-            Kind::Sam | Kind::Armor | Kind::Vehicle | Kind::Infantry => 5_000,
-            Kind::Static => i64::MAX,
+            Kind::Air | Kind::Helo => 100,
+            Kind::Missile | Kind::Bomb | Kind::Rocket | Kind::Torpedo => 100,
+            Kind::Ship | Kind::Carrier => 1_000,
+            Kind::Sam | Kind::Armor | Kind::Vehicle | Kind::Infantry => 1_000,
+            Kind::Flare | Kind::Chaff | Kind::Decoy => 500,
+            Kind::Shell | Kind::Parachutist | Kind::Misc => 1_000,
+            Kind::Static | Kind::Explosion | Kind::Bullseye => i64::MAX,
         }
     }
 
@@ -110,17 +167,58 @@ impl Kind {
     fn is_air(self) -> bool {
         matches!(self, Kind::Air | Kind::Helo)
     }
+
+    /// Shown, but never a party to a shot: shells, countermeasures,
+    /// explosions, parachutists, bullseyes and other markers.
+    pub(crate) fn is_effect(self) -> bool {
+        matches!(
+            self,
+            Kind::Shell
+                | Kind::Flare
+                | Kind::Chaff
+                | Kind::Decoy
+                | Kind::Explosion
+                | Kind::Parachutist
+                | Kind::Bullseye
+                | Kind::Misc
+        )
+    }
+
+    /// What a weapon can be fired at or fired from: aircraft, ground units,
+    /// ships and statics.
+    fn is_target(self) -> bool {
+        !self.is_weapon() && !self.is_effect()
+    }
 }
 
-/// Map a Tacview `Type=` tag list to what we keep; `None` drops the object.
+/// Map a Tacview `Type=` tag list to what we keep; `None` drops the object
+/// (only `Shrapnel` and `Beam`). Tag order matters: DCS types flares
+/// `Misc+Decoy+Flare` and shells `Projectile+Shell`.
 pub(crate) fn classify(ty: &str) -> Option<Kind> {
     let has = |t: &str| ty.split('+').any(|x| x == t);
-    const CLUTTER: [&str; 14] = [
-        "Shell", "Bullet", "Projectile", "Grenade", "Flare", "Chaff", "Decoy", "SmokeGrenade",
-        "Shrapnel", "Explosion", "Parachutist", "Bullseye", "Waypoint", "Beam",
-    ];
-    if CLUTTER.iter().any(|c| has(c)) {
+    if has("Shrapnel") || has("Beam") {
         return None;
+    }
+    if has("Flare") {
+        return Some(Kind::Flare);
+    }
+    if has("Chaff") {
+        return Some(Kind::Chaff);
+    }
+    if has("Decoy") {
+        return Some(Kind::Decoy);
+    }
+    if ["Shell", "Bullet", "Projectile", "Grenade"].iter().any(|t| has(t)) {
+        return Some(Kind::Shell);
+    }
+    if has("Explosion") {
+        return Some(Kind::Explosion);
+    }
+    if has("Parachutist") {
+        return Some(Kind::Parachutist);
+    }
+    if has("Bullseye") {
+        return Some(Kind::Bullseye);
     }
     if has("Air") {
         Some(if has("Rotorcraft") { Kind::Helo } else { Kind::Air })
@@ -134,7 +232,7 @@ pub(crate) fn classify(ty: &str) -> Option<Kind> {
         } else if has("Torpedo") {
             Some(Kind::Torpedo)
         } else {
-            None
+            Some(Kind::Misc)
         }
     } else if has("Ground") {
         Some(if has("AntiAircraft") {
@@ -151,8 +249,97 @@ pub(crate) fn classify(ty: &str) -> Option<Kind> {
     } else if has("Sea") {
         Some(if has("AircraftCarrier") { Kind::Carrier } else { Kind::Ship })
     } else {
-        None
+        Some(Kind::Misc)
     }
+}
+
+/// Properties that are never channels: identity and text, the transform,
+/// object-id references other than `LockedTarget*`, and the four kept as
+/// fixed columns.
+const NOT_CHANNELS: &[&str] = &[
+    "T",
+    "Type",
+    "Name",
+    "Pilot",
+    "Group",
+    "Color",
+    "Coalition",
+    "CallSign",
+    "Country",
+    "Parent",
+    "Next",
+    "Registration",
+    "Squawk",
+    "Label",
+    "ICAO24",
+    "FocusedTarget",
+    "Shape",
+    "Debug",
+    "ShortName",
+    "LongName",
+    "FullName",
+    "IAS",
+    "Mach",
+    "AOA",
+    "AGL",
+];
+
+/// `LockedTarget`, `LockedTarget2` .. `LockedTarget9`: an object id, stored
+/// as the target's meta index.
+pub(crate) fn is_lock_channel(name: &str) -> bool {
+    match name.strip_prefix("LockedTarget") {
+        Some("") => true,
+        Some(d) => d.len() == 1 && matches!(d.as_bytes()[0], b'2'..=b'9'),
+        None => false,
+    }
+}
+
+/// value = stored integer x scale. A trailing digit (`Throttle2`,
+/// `EngagementRange2`, `FuelWeight3`) is ignored.
+pub(crate) fn channel_scale(name: &str) -> f64 {
+    if is_lock_channel(name) {
+        return 1.0;
+    }
+    let n = name.strip_suffix(|c: char| c.is_ascii_digit()).unwrap_or(name);
+    let ends = |s: &[&str]| s.iter().any(|x| n.ends_with(x));
+    if n.ends_with("Mode")
+        || matches!(n, "LandingGear" | "Tailhook" | "Afterburner" | "AirBrakes" | "Flaps" | "Health")
+        || n.starts_with("Throttle")
+    {
+        0.001
+    } else if matches!(n, "HDG" | "HDM" | "AOS") || ends(&["Azimuth", "Elevation", "Roll", "Pitch", "Yaw", "Beamwidth"])
+    {
+        0.01
+    } else if n.ends_with("Range") || matches!(n, "Radius" | "Length" | "Width" | "Height") {
+        0.1
+    } else if matches!(n, "TAS" | "CAS") {
+        0.01
+    } else if n.contains("GForce") {
+        0.001
+    } else if n.starts_with("FuelWeight") || n.starts_with("FuelVolume") {
+        0.1
+    } else {
+        0.001
+    }
+}
+
+/// Largest stored channel integer: any two differ by less than i32::MAX.
+const CH_LIM: f64 = (i32::MAX / 2) as f64;
+
+fn quantize(v: f64, scale: f64) -> i64 {
+    let q = (v / scale).round();
+    if q.is_nan() {
+        0
+    } else {
+        q.clamp(-CH_LIM, CH_LIM) as i64
+    }
+}
+
+/// A channel known to the recording.
+struct ChanDef {
+    name: String,
+    scale: f64,
+    lock: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -172,7 +359,11 @@ struct S {
 
 #[derive(Default)]
 struct Obj {
+    /// Tacview object id.
+    tid: u64,
     kind: Option<Kind>,
+    /// Raw `Type=` tags.
+    ty: Option<String>,
     typed: bool,
     skip: bool,
     name: Option<String>,
@@ -211,6 +402,17 @@ struct Obj {
     /// Left the recording before it ended, and whether it was flying then.
     removed: bool,
     removed_airborne: bool,
+    // ── channels: every other numeric property (see the module docs) ──
+    /// Channel ids (into `Builder::chans`), in the order first seen.
+    ch_ids: Vec<u32>,
+    /// Current value of each; for lock channels the target's sid, or -1.
+    ch_cur: Vec<f64>,
+    /// What samples before the first set hold.
+    ch_first: Vec<f64>,
+    /// One column per channel, aligned with `buf`.
+    ch_buf: Vec<Vec<f64>>,
+    /// Channel values of `carry` (shorter when channels came after it).
+    carry_ch: Vec<f64>,
 }
 
 impl Obj {
@@ -219,17 +421,44 @@ impl Obj {
     }
 
     fn emit(&mut self) {
-        self.buf.push(self.cur);
+        // Two states at the same moment: the later one stands.
+        if let Some(last) = self.buf.last_mut().filter(|l| l.t == self.cur.t) {
+            *last = self.cur;
+            for (col, v) in self.ch_buf.iter_mut().zip(&self.ch_cur) {
+                if let Some(x) = col.last_mut() {
+                    *x = *v;
+                }
+            }
+        } else {
+            self.buf.push(self.cur);
+            for (col, v) in self.ch_buf.iter_mut().zip(&self.ch_cur) {
+                col.push(*v);
+            }
+        }
         self.last_emit = self.cur.t;
         self.emitted = true;
         self.pending = false;
+    }
+
+    fn set_channel(&mut self, id: u32, v: f64, lock: bool) {
+        match self.ch_ids.iter().position(|c| *c == id) {
+            Some(i) => self.ch_cur[i] = v,
+            None => {
+                let before = if lock { -1.0 } else { v };
+                self.ch_ids.push(id);
+                self.ch_cur.push(v);
+                self.ch_first.push(before);
+                self.ch_buf.push(vec![before; self.buf.len()]);
+            }
+        }
     }
 }
 
 /// Ingest logic version. Recordings processed by an older one are read again
 /// (bumped when what we derive from a recording changes, or when a file an
-/// older one gave up on can now be read -- 3: cut-off zips).
-pub(crate) const INGEST_VERSION: u32 = 3;
+/// older one gave up on can now be read -- 3: cut-off zips; 4: effects kept,
+/// native sample rates, channels, BFR2 chunks, Tacview events passed through).
+pub(crate) const INGEST_VERSION: u32 = 4;
 
 /// A weapon whose closest approach to an enemy is within this is a hit.
 fn lethal_radius_m(k: Kind) -> f64 {
@@ -258,6 +487,16 @@ struct Ev {
     t: i64,
     kind: EvKind,
     sid: u32,
+}
+
+/// A Tacview `Event=` line passed through as it is: message, bookmark, hit,
+/// left the area.
+struct TvEv {
+    t: i64,
+    k: &'static str,
+    /// The first object it names that we know.
+    sid: Option<u32>,
+    text: Option<String>,
 }
 
 /// One flight found in a recording: an aircraft with a pilot name.
@@ -322,6 +561,25 @@ struct Builder<'a> {
     active: Vec<u32>,
     next_idx: u32,
     events: Vec<Ev>,
+    tv_events: Vec<TvEv>,
+    /// Every channel seen in the recording, and name -> its id.
+    chans: Vec<ChanDef>,
+    chan_of: FxHashMap<String, u32>,
+}
+
+/// The id of channel `name`, registered on first sight. `None` for a name
+/// the format cannot hold (over 255 bytes, or past 65535 channels).
+fn chan_id(chans: &mut Vec<ChanDef>, chan_of: &mut FxHashMap<String, u32>, name: &str) -> Option<u32> {
+    if let Some(id) = chan_of.get(name) {
+        return Some(*id);
+    }
+    if name.len() > 255 || chans.len() >= u16::MAX as usize {
+        return None;
+    }
+    let id = chans.len() as u32;
+    chans.push(ChanDef { name: name.to_string(), scale: channel_scale(name), lock: is_lock_channel(name) });
+    chan_of.insert(name.to_string(), id);
+    Some(id)
 }
 
 impl<'a> Builder<'a> {
@@ -365,6 +623,10 @@ impl<'a> Builder<'a> {
             Some("Destroyed") => EvKind::Destroyed,
             Some("TakenOff") => EvKind::TakeOff,
             Some("Landed") => EvKind::Landing,
+            Some(k @ ("Message" | "Bookmark" | "Hit" | "LeftArea")) => {
+                self.tv_event(k, v);
+                return;
+            }
             _ => return,
         };
         let Some(sid) = parts
@@ -376,6 +638,9 @@ impl<'a> Builder<'a> {
         };
         let now = self.now;
         let o = &mut self.objs[sid as usize];
+        if o.kind.map(Kind::is_effect).unwrap_or(false) {
+            return;
+        }
         if kind == EvKind::Destroyed {
             if o.destroyed.is_some() {
                 return;
@@ -383,6 +648,34 @@ impl<'a> Builder<'a> {
             o.destroyed = Some((now, o.cur));
         }
         self.events.push(Ev { t: now, kind, sid });
+    }
+
+    /// `Message|ids...|text`, `Bookmark|text`, `Hit|id|...`, `LeftArea|id|`:
+    /// the ids are the fields between the first and the last (for Hit and
+    /// LeftArea written without the trailing `|`, the second field), the
+    /// text is the last field.
+    fn tv_event(&mut self, head: &str, v: &str) {
+        let parts: Vec<&str> = v.split('|').collect();
+        let (k, id_only) = match head {
+            "Message" => ("message", false),
+            "Bookmark" => ("bookmark", false),
+            "Hit" => ("hit", true),
+            _ => ("left", true),
+        };
+        let ids: &[&str] = if parts.len() >= 3 {
+            &parts[1..parts.len() - 1]
+        } else if id_only && parts.len() == 2 {
+            &parts[1..]
+        } else {
+            &[]
+        };
+        let sid = ids
+            .iter()
+            .filter_map(|id| u64::from_str_radix(id.trim(), 16).ok())
+            .find_map(|tid| self.alive.get(&tid).copied());
+        let text = if parts.len() >= 2 { parts.last().map(|s| s.trim()).filter(|s| !s.is_empty()) } else { None };
+        let text = text.filter(|_| !(id_only && parts.len() == 2)).map(str::to_string);
+        self.tv_events.push(TvEv { t: self.now, k, sid, text });
     }
 
     fn remove(&mut self, tid: u64) {
@@ -473,7 +766,7 @@ impl<'a> Builder<'a> {
             }
             let o = &self.objs[c as usize];
             let Some(k) = o.kind else { continue };
-            if o.skip || !o.positioned || k.is_weapon() {
+            if o.skip || !o.positioned || !k.is_target() {
                 continue;
             }
             if side.is_some() && o.color == side {
@@ -498,7 +791,14 @@ impl<'a> Builder<'a> {
             Some(sid) => *sid,
             None => {
                 let sid = self.objs.len() as u32;
-                self.objs.push(Obj { t0: self.now, t1: self.now, alive: true, last_emit: i64::MIN, ..Default::default() });
+                self.objs.push(Obj {
+                    tid,
+                    t0: self.now,
+                    t1: self.now,
+                    alive: true,
+                    last_emit: i64::MIN,
+                    ..Default::default()
+                });
                 self.alive.insert(tid, sid);
                 self.active.push(sid);
                 sid
@@ -521,8 +821,10 @@ impl<'a> Builder<'a> {
                     if o.kind.is_none() {
                         o.skip = true;
                         o.buf = Vec::new();
+                        o.ch_buf = Vec::new();
                         return;
                     }
+                    o.ty = Some(v.into_owned());
                 }
                 "Name" => o.name = Some(v.into_owned()),
                 "Pilot" => o.pilot = Some(v.into_owned()),
@@ -533,17 +835,42 @@ impl<'a> Builder<'a> {
                 "Parent" => o.parent_tid = u64::from_str_radix(v.trim(), 16).ok(),
                 "IAS" | "Mach" | "AOA" | "AGL" => {
                     let Ok(x) = v.parse::<f64>() else { continue };
-                    let (slot, flag) = match k {
-                        "IAS" => (&mut o.cur.ias, F_IAS),
-                        "Mach" => (&mut o.cur.mach, F_MACH),
-                        "AOA" => (&mut o.cur.aoa, F_AOA),
-                        _ => (&mut o.cur.agl, F_AGL),
+                    let (flag, set): (u8, fn(&mut S, f64)) = match k {
+                        "IAS" => (F_IAS, |s, x| s.ias = x),
+                        "Mach" => (F_MACH, |s, x| s.mach = x),
+                        "AOA" => (F_AOA, |s, x| s.aoa = x),
+                        _ => (F_AGL, |s, x| s.agl = x),
                     };
-                    *slot = x;
+                    if o.flags & flag == 0 {
+                        // Samples from before it was known hold its first value.
+                        for s in o.buf.iter_mut().chain(o.carry.as_mut()) {
+                            set(s, x);
+                        }
+                    }
+                    set(&mut o.cur, x);
                     o.flags |= flag;
                     moved = true;
                 }
-                _ => (),
+                k if NOT_CHANNELS.contains(&k) => (),
+                k => {
+                    let lock = is_lock_channel(k);
+                    let x = if lock {
+                        match u64::from_str_radix(v.trim(), 16) {
+                            Ok(0) | Err(_) => -1.0,
+                            Ok(t) => self.alive.get(&t).map_or(-1.0, |s| *s as f64),
+                        }
+                    } else {
+                        match v.trim().parse::<f64>() {
+                            Ok(x) if x.is_finite() => x,
+                            _ => continue,
+                        }
+                    };
+                    let Some(id) = chan_id(&mut self.chans, &mut self.chan_of, k) else {
+                        continue;
+                    };
+                    o.set_channel(id, x, lock);
+                    moved = true;
+                }
             }
         }
         if let Some(tf) = tf {
@@ -557,7 +884,6 @@ impl<'a> Builder<'a> {
                 o.cur.alt = x;
             }
             if tf.has_att {
-                o.flags |= F_ATT;
                 if let Some(x) = tf.roll {
                     o.cur.roll = x;
                 }
@@ -567,6 +893,13 @@ impl<'a> Builder<'a> {
                 if let Some(x) = tf.yaw {
                     o.cur.yaw = x;
                 }
+                if o.flags & F_ATT == 0 {
+                    let c = o.cur;
+                    for s in o.buf.iter_mut().chain(o.carry.as_mut()) {
+                        (s.roll, s.pitch, s.yaw) = (c.roll, c.pitch, c.yaw);
+                    }
+                }
+                o.flags |= F_ATT;
             }
             moved = true;
         }
@@ -616,7 +949,7 @@ impl<'a> Builder<'a> {
             }
             let o = &self.objs[c as usize];
             let Some(k) = o.kind else { continue };
-            if o.skip || !o.positioned || k.is_weapon() {
+            if o.skip || !o.positioned || !k.is_target() {
                 continue;
             }
             let d = dist_m(&o.cur, &at);
@@ -632,7 +965,10 @@ impl<'a> Builder<'a> {
     }
 
     fn flush_chunk(&mut self) -> Result<()> {
-        let mut entries: Vec<(u32, u8, Vec<S>)> = vec![];
+        // First who is written (giving each its meta index), then what:
+        // a lock channel names its target by index, so every object in
+        // the chunk must have one before any is encoded.
+        let mut writing: Vec<u32> = vec![];
         let mut still = Vec::with_capacity(self.active.len());
         for &sid in &self.active {
             let o = &mut self.objs[sid as usize];
@@ -655,25 +991,56 @@ impl<'a> Builder<'a> {
                 }
                 continue;
             }
-            let idx = *o.idx.get_or_insert_with(|| {
+            o.idx.get_or_insert_with(|| {
                 let i = self.next_idx;
                 self.next_idx += 1;
                 i
             });
-            let mut samples = Vec::with_capacity(o.buf.len() + 1);
-            if let Some(c) = o.carry {
-                if o.buf.first().map(|f| c.t < f.t).unwrap_or(true) {
-                    samples.push(c);
-                }
-            }
-            samples.append(&mut o.buf);
-            o.carry = samples.last().copied();
-            entries.push((idx, o.flags, samples));
+            writing.push(sid);
             if o.alive {
                 still.push(sid);
             }
         }
         self.active = still;
+        let mut entries: Vec<Entry> = Vec::with_capacity(writing.len());
+        for sid in writing {
+            let o = &mut self.objs[sid as usize];
+            let carry = o.carry.filter(|c| o.buf.first().map(|f| c.t < f.t).unwrap_or(true));
+            let mut samples = Vec::with_capacity(o.buf.len() + 1);
+            samples.extend(carry);
+            samples.append(&mut o.buf);
+            let mut cols: Vec<(u32, Vec<f64>)> = Vec::with_capacity(o.ch_ids.len());
+            for (i, buf) in o.ch_buf.iter_mut().enumerate() {
+                let mut col = Vec::with_capacity(samples.len());
+                if carry.is_some() {
+                    col.push(o.carry_ch.get(i).copied().unwrap_or(o.ch_first[i]));
+                }
+                col.append(buf);
+                cols.push((o.ch_ids[i], col));
+            }
+            o.carry = samples.last().copied();
+            o.carry_ch = cols.iter().map(|(_, c)| c.last().copied().unwrap_or(-1.0)).collect();
+            let (idx, flags) = (o.idx.unwrap_or_default(), o.flags);
+            let objs = &self.objs;
+            let ch = cols
+                .into_iter()
+                .map(|(id, col)| {
+                    let d = &self.chans[id as usize];
+                    let vals = if d.lock {
+                        col.iter()
+                            .map(|v| match *v {
+                                v if v < 0.0 => -1,
+                                v => objs.get(v as usize).and_then(|t| t.idx).map_or(-1, i64::from),
+                            })
+                            .collect()
+                    } else {
+                        col.iter().map(|v| quantize(*v, d.scale)).collect()
+                    };
+                    Chan { name: d.name.clone(), scale: d.scale, vals }
+                })
+                .collect();
+            entries.push(Entry { idx, flags, cols: base_cols(flags, &samples), ch });
+        }
         write_chunk(&self.out.join(format!("c{}.bin.gz", self.chunk)), &entries)
     }
 
@@ -800,6 +1167,9 @@ impl<'a> Builder<'a> {
             landed_last.insert(o, landing);
             events.push(json!({ "t": ev.t, "k": if landing { "landing" } else { "takeoff" }, "o": o }));
         }
+        for ev in &self.tv_events {
+            events.push(json!({ "t": ev.t, "k": ev.k, "o": ev.sid.and_then(idx_of), "text": ev.text }));
+        }
         events.sort_by_key(|e| e["t"].as_i64().unwrap_or(0));
 
         // meta index -> time it was destroyed or lost
@@ -832,6 +1202,8 @@ impl<'a> Builder<'a> {
                     "par": o.launcher.and_then(idx_of),
                     "f": o.flags,
                     "d": deaths.get(&o.idx.unwrap_or(u32::MAX)).copied(),
+                    "ty": o.ty,
+                    "id": format!("{:x}", o.tid),
                 })
             })
             .collect();
@@ -842,7 +1214,9 @@ impl<'a> Builder<'a> {
             if !k.is_air() {
                 continue;
             }
-            let Some(pilot) = o.pilot.as_deref().map(str::trim).filter(|p| !p.is_empty()) else { continue };
+            let Some(pilot) = o.pilot.as_deref().map(str::trim).filter(|p| !p.is_empty()) else {
+                continue;
+            };
             flights.push(Flight {
                 i,
                 pilot: pilot.to_string(),
@@ -884,14 +1258,7 @@ impl<'a> Builder<'a> {
             "flights": flights,
         });
         write_gz(&self.out.join("meta.json.gz"), &serde_json::to_vec(&meta)?)?;
-        Ok(Built {
-            title: self.title,
-            start_ms,
-            duration_ms: end,
-            objects: objects.len(),
-            chunks,
-            flights,
-        })
+        Ok(Built { title: self.title, start_ms, duration_ms: end, objects: objects.len(), chunks, flights })
     }
 }
 
@@ -903,118 +1270,295 @@ fn write_gz(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn write_chunk(path: &Path, entries: &[(u32, u8, Vec<S>)]) -> Result<()> {
-    let mut b: Vec<u8> = Vec::with_capacity(64 + entries.iter().map(|e| 9 + e.2.len() * 44).sum::<usize>());
-    b.extend_from_slice(b"BFR1");
-    b.extend_from_slice(&(entries.len() as u32).to_le_bytes());
-    for (idx, flags, s) in entries {
-        b.extend_from_slice(&idx.to_le_bytes());
-        b.extend_from_slice(&(s.len() as u32).to_le_bytes());
-        b.push(*flags);
-        let mut col = |f: &dyn Fn(&S) -> i64| {
-            let mut prev = 0i64;
-            for x in s {
-                let v = f(x);
-                b.extend_from_slice(&((v - prev) as i32).to_le_bytes());
-                prev = v;
-            }
-        };
-        col(&|x| x.t);
-        col(&|x| (x.lon * 1e7).round() as i64);
-        col(&|x| (x.lat * 1e7).round() as i64);
-        col(&|x| (x.alt * 10.0).round() as i64);
-        if flags & F_ATT != 0 {
-            col(&|x| (x.roll * 100.0).round() as i64);
-            col(&|x| (x.pitch * 100.0).round() as i64);
-            col(&|x| (x.yaw * 100.0).round() as i64);
-        }
-        if flags & F_IAS != 0 {
-            col(&|x| (x.ias * 100.0).round() as i64);
-        }
-        if flags & F_MACH != 0 {
-            col(&|x| (x.mach * 1000.0).round() as i64);
-        }
-        if flags & F_AOA != 0 {
-            col(&|x| (x.aoa * 100.0).round() as i64);
-        }
-        if flags & F_AGL != 0 {
-            col(&|x| (x.agl * 10.0).round() as i64);
-        }
+/// The fixed columns of `s` with these flags, as absolute integers.
+fn base_cols(flags: u8, s: &[S]) -> Vec<Vec<i64>> {
+    let col = |f: fn(&S) -> f64, k: f64| s.iter().map(|x| (f(x) * k).round() as i64).collect::<Vec<i64>>();
+    let mut v = vec![s.iter().map(|x| x.t).collect(), col(|x| x.lon, 1e7), col(|x| x.lat, 1e7), col(|x| x.alt, 10.0)];
+    if flags & F_ATT != 0 {
+        v.push(col(|x| x.roll, 100.0));
+        v.push(col(|x| x.pitch, 100.0));
+        v.push(col(|x| x.yaw, 100.0));
     }
-    write_gz(path, &b)
+    if flags & F_IAS != 0 {
+        v.push(col(|x| x.ias, 100.0));
+    }
+    if flags & F_MACH != 0 {
+        v.push(col(|x| x.mach, 1000.0));
+    }
+    if flags & F_AOA != 0 {
+        v.push(col(|x| x.aoa, 100.0));
+    }
+    if flags & F_AGL != 0 {
+        v.push(col(|x| x.agl, 10.0));
+    }
+    v
 }
 
-/// Number of i32 columns an entry with these flags carries.
+fn write_chunk(path: &Path, entries: &[Entry]) -> Result<()> {
+    write_gz(path, &encode_entries(entries))
+}
+
+/// Number of fixed i32 columns an entry with these flags carries.
 fn ncols(flags: u8) -> usize {
     4 + if flags & F_ATT != 0 { 3 } else { 0 }
         + [F_IAS, F_MACH, F_AOA, F_AGL].iter().filter(|f| flags & **f != 0).count()
 }
 
-/// One decoded chunk entry: object index, flags, absolute column values.
-type Entry = (u32, u8, Vec<Vec<i64>>);
+/// One channel column of a chunk entry: absolute integers, value = int x scale.
+#[derive(Debug, Clone)]
+struct Chan {
+    name: String,
+    scale: f64,
+    vals: Vec<i64>,
+}
 
-/// Decode a chunk's (inflated) bytes, keeping only object `want` if given.
-fn read_chunk(b: &[u8], want: Option<u32>) -> Result<Vec<Entry>> {
-    let rd_u32 = |at: usize| -> Result<u32> {
-        Ok(u32::from_le_bytes(b.get(at..at + 4).context("truncated chunk")?.try_into()?))
-    };
-    if b.get(..4) != Some(b"BFR1".as_slice()) {
-        bail!("not a replay chunk");
+/// One chunk entry: object index, flags, the fixed columns (absolute
+/// integers, in the order the flags give) and the channels.
+#[derive(Debug, Clone)]
+struct Entry {
+    idx: u32,
+    flags: u8,
+    cols: Vec<Vec<i64>>,
+    ch: Vec<Chan>,
+}
+
+/// Encode entries as a `BFR2` chunk (not yet gzip'd).
+fn encode_entries(entries: &[Entry]) -> Vec<u8> {
+    let mut table: Vec<(&str, f64)> = vec![];
+    let mut at: FxHashMap<&str, u16> = FxHashMap::default();
+    for e in entries {
+        for c in &e.ch {
+            if !at.contains_key(c.name.as_str()) && table.len() < u16::MAX as usize && c.name.len() <= 255 {
+                at.insert(&c.name, table.len() as u16);
+                table.push((&c.name, c.scale));
+            }
+        }
     }
-    let nobj = rd_u32(4)?;
-    let mut at = 8;
+    let body: usize = entries
+        .iter()
+        .map(|e| 11 + 2 * e.ch.len() + 4 * e.cols.first().map_or(0, Vec::len) * (e.cols.len() + e.ch.len()))
+        .sum();
+    let mut b: Vec<u8> = Vec::with_capacity(16 + table.len() * 24 + body);
+    b.extend_from_slice(b"BFR2");
+    b.extend_from_slice(&(table.len() as u16).to_le_bytes());
+    for (name, scale) in &table {
+        b.push(name.len() as u8);
+        b.extend_from_slice(name.as_bytes());
+        b.extend_from_slice(&(*scale as f32).to_le_bytes());
+    }
+    b.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    let col = |b: &mut Vec<u8>, c: &[i64]| {
+        let mut prev = 0i64;
+        for v in c {
+            b.extend_from_slice(&((v - prev) as i32).to_le_bytes());
+            prev = *v;
+        }
+    };
+    for e in entries {
+        let n = e.cols.first().map_or(0, Vec::len);
+        let ch: Vec<&Chan> = e.ch.iter().filter(|c| at.contains_key(c.name.as_str())).collect();
+        b.extend_from_slice(&e.idx.to_le_bytes());
+        b.extend_from_slice(&(n as u32).to_le_bytes());
+        b.push(e.flags);
+        b.extend_from_slice(&(ch.len() as u16).to_le_bytes());
+        for c in &ch {
+            b.extend_from_slice(&at[c.name.as_str()].to_le_bytes());
+        }
+        for c in &e.cols {
+            col(&mut b, c);
+        }
+        for c in &ch {
+            col(&mut b, &c.vals);
+        }
+    }
+    b
+}
+
+/// Bounds-checked little-endian reads.
+struct Rd<'a> {
+    b: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Rd<'a> {
+    fn take(&mut self, n: usize) -> Result<&'a [u8]> {
+        let end = self.at.checked_add(n).context("truncated chunk")?;
+        let s = self.b.get(self.at..end).context("truncated chunk")?;
+        self.at = end;
+        Ok(s)
+    }
+    fn u8(&mut self) -> Result<u8> {
+        Ok(self.take(1)?[0])
+    }
+    fn u16(&mut self) -> Result<u16> {
+        Ok(u16::from_le_bytes(self.take(2)?.try_into()?))
+    }
+    fn u32(&mut self) -> Result<u32> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into()?))
+    }
+    fn f32(&mut self) -> Result<f32> {
+        Ok(f32::from_le_bytes(self.take(4)?.try_into()?))
+    }
+}
+
+/// Decode a chunk's (inflated) bytes, `BFR2` or the older `BFR1`, keeping
+/// only object `want` if given.
+fn read_chunk(b: &[u8], want: Option<u32>) -> Result<Vec<Entry>> {
+    let mut r = Rd { b, at: 0 };
+    let v2 = match r.take(4) {
+        Ok(b"BFR2") => true,
+        Ok(b"BFR1") => false,
+        _ => bail!("not a replay chunk"),
+    };
+    let mut table: Vec<(String, f64)> = vec![];
+    if v2 {
+        for _ in 0..r.u16()? {
+            let len = r.u8()? as usize;
+            let name = String::from_utf8_lossy(r.take(len)?).into_owned();
+            table.push((name, r.f32()? as f64));
+        }
+    }
+    let nobj = r.u32()?;
     let mut out = vec![];
     for _ in 0..nobj {
-        let idx = rd_u32(at)?;
-        let n = rd_u32(at + 4)? as usize;
-        let flags = *b.get(at + 8).context("truncated chunk")?;
-        at += 9;
-        let cols = ncols(flags);
-        let len = cols * n * 4;
+        let idx = r.u32()?;
+        let n = r.u32()? as usize;
+        let flags = r.u8()?;
+        let mut mine = vec![];
+        if v2 {
+            for _ in 0..r.u16()? {
+                let c = r.u16()? as usize;
+                if c >= table.len() {
+                    bail!("bad channel in replay chunk");
+                }
+                mine.push(c);
+            }
+        }
+        let base = ncols(flags);
+        let len = (base + mine.len()).checked_mul(n).and_then(|x| x.checked_mul(4)).context("truncated chunk")?;
+        let body = r.take(len)?;
         if want.map(|w| w == idx).unwrap_or(true) {
-            let body = b.get(at..at + len).context("truncated chunk")?;
-            let mut columns = Vec::with_capacity(cols);
-            for c in 0..cols {
+            let col = |c: usize| -> Vec<i64> {
                 let mut acc = 0i64;
-                let col = (0..n)
+                (0..n)
                     .map(|i| {
                         let o = (c * n + i) * 4;
                         acc += i32::from_le_bytes(body[o..o + 4].try_into().unwrap()) as i64;
                         acc
                     })
-                    .collect();
-                columns.push(col);
-            }
-            out.push((idx, flags, columns));
+                    .collect()
+            };
+            let cols = (0..base).map(col).collect();
+            let ch = mine
+                .iter()
+                .enumerate()
+                .map(|(j, &c)| Chan { name: table[c].0.clone(), scale: table[c].1, vals: col(base + j) })
+                .collect();
+            out.push(Entry { idx, flags, cols, ch });
         }
-        at += len;
     }
     Ok(out)
 }
 
-fn write_entries_gz(path: &Path, entries: &[Entry]) -> Result<()> {
-    let mut b = Vec::new();
-    b.extend_from_slice(b"BFR1");
-    b.extend_from_slice(&(entries.len() as u32).to_le_bytes());
-    for (idx, flags, cols) in entries {
-        let n = cols.first().map(Vec::len).unwrap_or(0);
-        b.extend_from_slice(&idx.to_le_bytes());
-        b.extend_from_slice(&(n as u32).to_le_bytes());
-        b.push(*flags);
-        for col in cols {
-            let mut prev = 0i64;
-            for v in col {
-                b.extend_from_slice(&((v - prev) as i32).to_le_bytes());
-                prev = *v;
+/// The flag each fixed column belongs to (0: always there), in column order.
+const SLOT_FLAG: [u8; 11] = [0, 0, 0, 0, F_ATT, F_ATT, F_ATT, F_IAS, F_MACH, F_AOA, F_AGL];
+
+/// One object's track being stitched from chunks: every fixed column it
+/// ever had and every channel, all `n` long.
+#[derive(Default)]
+struct Stitch {
+    n: usize,
+    slots: [Option<Vec<i64>>; 11],
+    ch: Vec<Chan>,
+}
+
+impl Stitch {
+    /// Append a chunk's part after the samples already held. A column or
+    /// channel one side lacks is filled with the nearest known value of it
+    /// (`-1` for a lock channel).
+    fn add(&mut self, e: Entry) {
+        let mut it = e.cols.into_iter();
+        let mut part: [Option<Vec<i64>>; 11] = Default::default();
+        for (slot, f) in part.iter_mut().zip(SLOT_FLAG) {
+            if f == 0 || e.flags & f != 0 {
+                *slot = it.next();
             }
         }
+        let Some(t) = part[0].as_ref() else { return };
+        let last_t = self.slots[0].as_ref().and_then(|c| c.last().copied());
+        let skip = last_t.map_or(0, |lt| t.iter().take_while(|x| **x <= lt).count());
+        let m = t.len() - skip;
+        if m == 0 {
+            return;
+        }
+        let n = self.n;
+        for (mine, theirs) in self.slots.iter_mut().zip(part) {
+            match (mine.as_mut(), theirs) {
+                (Some(a), Some(b)) => a.extend_from_slice(&b[skip..]),
+                (Some(a), None) => {
+                    let fill = a.last().copied().unwrap_or(0);
+                    a.resize(n + m, fill);
+                }
+                (None, Some(b)) => {
+                    let mut c = vec![b[skip]; n];
+                    c.extend_from_slice(&b[skip..]);
+                    *mine = Some(c);
+                }
+                (None, None) => (),
+            }
+        }
+        for c in e.ch {
+            let lock = is_lock_channel(&c.name);
+            match self.ch.iter_mut().find(|x| x.name == c.name) {
+                Some(x) => {
+                    let rescale = !lock && (x.scale as f32) != (c.scale as f32);
+                    let (from, to) = (c.scale, x.scale);
+                    x.vals.extend(c.vals[skip..].iter().map(
+                        |v| {
+                            if rescale {
+                                quantize(*v as f64 * from, to)
+                            } else {
+                                *v
+                            }
+                        },
+                    ));
+                }
+                None => {
+                    let fill = if lock { -1 } else { c.vals[skip] };
+                    let mut vals = vec![fill; n];
+                    vals.extend_from_slice(&c.vals[skip..]);
+                    self.ch.push(Chan { name: c.name, scale: c.scale, vals });
+                }
+            }
+        }
+        for x in &mut self.ch {
+            if x.vals.len() < n + m {
+                let fill = if is_lock_channel(&x.name) { -1 } else { x.vals.last().copied().unwrap_or(0) };
+                x.vals.resize(n + m, fill);
+            }
+        }
+        self.n = n + m;
     }
-    write_gz(path, &b)
+
+    fn entry(self, idx: u32) -> Option<Entry> {
+        if self.n == 0 {
+            return None;
+        }
+        let mut flags = 0;
+        for (s, f) in self.slots.iter().zip(SLOT_FLAG) {
+            if s.is_some() {
+                flags |= f;
+            }
+        }
+        Some(Entry { idx, flags, cols: self.slots.into_iter().flatten().collect(), ch: self.ch })
+    }
 }
 
 /// One object's whole track, stitched from the chunks `first..=last`, in the
 /// chunk format (one entry). Written once to `o<idx>.bin.gz` and reused;
-/// returns that file's path.
+/// returns that file's path. Chunks that disagree on which columns or
+/// channels the object has are joined on the union of them
+/// ([`Stitch::add`]).
 pub(crate) fn object_track(dir: &Path, idx: u32, first: u32, last: u32) -> Result<PathBuf> {
     use flate2::read::GzDecoder;
     use std::io::Read;
@@ -1022,35 +1566,20 @@ pub(crate) fn object_track(dir: &Path, idx: u32, first: u32, last: u32) -> Resul
     if path.exists() {
         return Ok(path);
     }
-    let mut merged: Option<Entry> = None;
+    let mut merged = Stitch::default();
     for n in first..=last {
         let p = dir.join(format!("c{n}.bin.gz"));
         let Ok(f) = fs::File::open(&p) else { continue };
         let mut raw = vec![];
         GzDecoder::new(f).read_to_end(&mut raw)?;
-        for (i, flags, cols) in read_chunk(&raw, Some(idx))? {
-            match &mut merged {
-                None => merged = Some((i, flags, cols)),
-                Some((_, mflags, mcols)) => {
-                    if *mflags != flags {
-                        // Flags only ever gain bits; keep the old columns'
-                        // shape by dropping the new extras (rare: telemetry
-                        // that first appears mid-flight).
-                        continue;
-                    }
-                    let last_t = *mcols[0].last().unwrap_or(&i64::MIN);
-                    let skip = cols[0].iter().take_while(|t| **t <= last_t).count();
-                    for (m, c) in mcols.iter_mut().zip(cols) {
-                        m.extend_from_slice(&c[skip..]);
-                    }
-                }
-            }
+        for e in read_chunk(&raw, Some(idx))? {
+            merged.add(e);
         }
     }
-    let entries: Vec<Entry> = merged.into_iter().collect();
+    let entries: Vec<Entry> = merged.entry(idx).into_iter().collect();
     // Write via a temp name so a concurrent request never reads half a file.
     let tmp = dir.join(format!("o{idx}.bin.gz.{}", std::process::id()));
-    write_entries_gz(&tmp, &entries)?;
+    write_chunk(&tmp, &entries)?;
     fs::rename(&tmp, &path)?;
     Ok(path)
 }
@@ -1079,6 +1608,9 @@ pub(crate) fn build(path: &Path, out: &Path) -> Result<Built> {
         active: vec![],
         next_idx: 0,
         events: vec![],
+        tv_events: vec![],
+        chans: vec![],
+        chan_of: FxHashMap::default(),
     };
     acmi::open(path, |r| {
         while let Some(line) = r.next_line()? {
@@ -1116,12 +1648,350 @@ mod tests {
         assert_eq!(classify("Air+FixedWing"), Some(Kind::Air));
         assert_eq!(classify("Air+Rotorcraft"), Some(Kind::Helo));
         assert_eq!(classify("Weapon+Missile"), Some(Kind::Missile));
-        assert_eq!(classify("Projectile+Shell"), None);
-        assert_eq!(classify("Misc+Decoy+Flare"), None);
+        assert_eq!(classify("Projectile+Shell"), Some(Kind::Shell));
+        assert_eq!(classify("Weapon+Bullet"), Some(Kind::Shell));
+        assert_eq!(classify("Misc+Decoy+Flare"), Some(Kind::Flare));
+        assert_eq!(classify("Misc+Decoy+Chaff"), Some(Kind::Chaff));
+        assert_eq!(classify("Misc+Decoy"), Some(Kind::Decoy));
+        assert_eq!(classify("Misc+Explosion"), Some(Kind::Explosion));
+        assert_eq!(classify("Ground+Light+Human+Air+Parachutist"), Some(Kind::Parachutist));
+        assert_eq!(classify("Misc+SmokeGrenade"), Some(Kind::Misc));
+        assert_eq!(classify("Navaid+Static+Waypoint"), Some(Kind::Misc));
+        assert_eq!(classify("Misc+Shrapnel"), None);
+        assert_eq!(classify("Misc+Beam"), None);
         assert_eq!(classify("Ground+AntiAircraft"), Some(Kind::Sam));
         assert_eq!(classify("Ground+Heavy+Armor+Vehicle+Tank"), Some(Kind::Armor));
         assert_eq!(classify("Sea+Watercraft+AircraftCarrier"), Some(Kind::Carrier));
-        assert_eq!(classify("Navaid+Static+Bullseye"), None);
+        assert_eq!(classify("Navaid+Static+Bullseye"), Some(Kind::Bullseye));
+        for k in [
+            Kind::Shell,
+            Kind::Flare,
+            Kind::Chaff,
+            Kind::Decoy,
+            Kind::Explosion,
+            Kind::Parachutist,
+            Kind::Bullseye,
+            Kind::Misc,
+        ] {
+            assert!(k.is_effect() && !k.is_target() && !k.is_weapon() && !k.is_air(), "{k:?}");
+        }
+    }
+
+    #[test]
+    fn channel_scales() {
+        assert!(is_lock_channel("LockedTarget") && is_lock_channel("LockedTarget9"));
+        assert!(
+            !is_lock_channel("LockedTargetMode")
+                && !is_lock_channel("LockedTargetRange")
+                && !is_lock_channel("LockedTarget1")
+        );
+        let cases = [
+            ("LockedTarget", 1.0),
+            ("LockedTarget3", 1.0),
+            ("LockedTargetMode", 0.001),
+            ("RadarMode", 0.001),
+            ("LandingGear", 0.001),
+            ("Throttle2", 0.001),
+            ("Health", 0.001),
+            ("HDG", 0.01),
+            ("AOS", 0.01),
+            ("RadarAzimuth", 0.01),
+            ("LockedTargetElevation", 0.01),
+            ("PilotHeadRoll", 0.01),
+            ("RadarHorizontalBeamwidth", 0.01),
+            ("RadarRange", 0.1),
+            ("EngagementRange2", 0.1),
+            ("Radius", 0.1),
+            ("Height", 0.1),
+            ("TAS", 0.01),
+            ("CAS", 0.01),
+            ("VerticalGForce", 0.001),
+            ("FuelWeight", 0.1),
+            ("FuelVolume4", 0.1),
+            ("Visible", 0.001),
+        ];
+        for (n, s) in cases {
+            assert_eq!(channel_scale(n), s, "{n}");
+        }
+        assert_eq!(quantize(1e12, 0.001), (i32::MAX / 2) as i64);
+        assert_eq!(quantize(-1e12, 0.001), -((i32::MAX / 2) as i64));
+    }
+
+    fn chunk(p: &Path) -> Vec<Entry> {
+        read_chunk(&gunzip(p), None).unwrap()
+    }
+
+    /// Channel values of an entry, as real values.
+    fn chan(e: &Entry, name: &str) -> Vec<f64> {
+        let c = e.ch.iter().find(|c| c.name == name).unwrap_or_else(|| panic!("no {name} in {:?}", e.ch));
+        c.vals.iter().map(|v| *v as f64 * c.scale).collect()
+    }
+
+    /// A tiny recording from header lines and `(seconds, lines)` frames.
+    fn record(dir: &Path, frames: &[(f64, String)]) -> PathBuf {
+        let _ = fs::remove_dir_all(dir);
+        fs::create_dir_all(dir).unwrap();
+        let mut t = String::from(
+            "FileType=text/acmi/tacview\nFileVersion=2.2\n\
+             0,ReferenceTime=2026-10-08T10:00:00Z,RecordingTime=2026-10-08T12:00:00Z,\
+             ReferenceLongitude=41,ReferenceLatitude=42\n",
+        );
+        for (ts, lines) in frames {
+            t.push_str(&format!("#{ts}\n{lines}"));
+        }
+        let src = dir.join("r.txt.acmi");
+        fs::write(&src, t).unwrap();
+        let out = dir.join("out");
+        build(&src, &out).unwrap();
+        out
+    }
+
+    fn meta_of(out: &Path) -> Value {
+        serde_json::from_slice(&gunzip(&out.join("meta.json.gz"))).unwrap()
+    }
+
+    fn idx_by_id(meta: &Value, id: &str) -> u32 {
+        meta["objects"].as_array().unwrap().iter().position(|o| o["id"] == id).unwrap() as u32
+    }
+
+    /// Numeric properties come back as channels with their scale; one first
+    /// set mid-chunk holds its first value before that; a byte-level read
+    /// that follows bfweb's `decodeChunk` step by step agrees.
+    #[test]
+    fn channels_round_trip() {
+        let dir = std::env::temp_dir().join(format!("bfdb-replay-ch-{}", std::process::id()));
+        let mut frames = vec![(
+            0.0,
+            "a1,T=0.1|0.1|5000|0|0|90,Type=Air+FixedWing,Name=F-16C_50,Pilot=Viper,Color=Blue,\
+             TAS=250.25,FuelWeight=3000.5,HDG=90.5,Squawk=7700\n"
+                .to_string(),
+        )];
+        for i in 1..=10 {
+            let mut l = format!(
+                "a1,T={}||,FuelWeight={},TAS={}",
+                0.1 + i as f64 * 0.001,
+                3000.5 - i as f64 * 1.5,
+                250.25 + i as f64
+            );
+            if i == 5 {
+                l.push_str(",Throttle=0.75,RadarRange=40000.3");
+            }
+            frames.push((i as f64 * 0.5, l + "\n"));
+        }
+        let out = record(&dir, &frames);
+        let raw = gunzip(&out.join("c0.bin.gz"));
+        let e = read_chunk(&raw, None).unwrap();
+        assert_eq!(e.len(), 1);
+        let e = &e[0];
+        let n = e.cols[0].len();
+        assert_eq!(n, 11, "one sample per frame: {:?}", e.cols[0]);
+        let names: Vec<&str> = e.ch.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["TAS", "FuelWeight", "HDG", "Throttle", "RadarRange"], "Squawk is not a channel");
+        let scale = |n: &str| e.ch.iter().find(|c| c.name == n).unwrap().scale;
+        assert_eq!(
+            (scale("TAS"), scale("FuelWeight"), scale("Throttle")),
+            (0.01f32 as f64, 0.1f32 as f64, 0.001f32 as f64)
+        );
+        let fuel = chan(e, "FuelWeight");
+        let tas = chan(e, "TAS");
+        for i in 0..n {
+            assert!((fuel[i] - (3000.5 - i as f64 * 1.5)).abs() < 0.06, "{fuel:?}");
+            assert!((tas[i] - (250.25 + i as f64)).abs() < 0.006, "{tas:?}");
+        }
+        assert!(chan(e, "HDG").iter().all(|v| (v - 90.5).abs() < 0.006));
+        assert!(chan(e, "Throttle").iter().all(|v| (v - 0.75).abs() < 1e-6), "first value before the first set");
+        assert!(chan(e, "RadarRange").iter().all(|v| (v - 40000.3).abs() < 0.01));
+
+        // The same bytes, read the way data.ts does.
+        let mut at = 0usize;
+        let u16_ = |at: &mut usize| {
+            let v = u16::from_le_bytes(raw[*at..*at + 2].try_into().unwrap());
+            *at += 2;
+            v as usize
+        };
+        let u32_ = |at: &mut usize| {
+            let v = u32::from_le_bytes(raw[*at..*at + 4].try_into().unwrap());
+            *at += 4;
+            v as usize
+        };
+        assert_eq!(&raw[..4], b"BFR2");
+        at += 4;
+        let nchan = u16_(&mut at);
+        let mut table = vec![];
+        for _ in 0..nchan {
+            let len = raw[at] as usize;
+            let name = std::str::from_utf8(&raw[at + 1..at + 1 + len]).unwrap().to_string();
+            let scale = f32::from_le_bytes(raw[at + 1 + len..at + 5 + len].try_into().unwrap());
+            table.push((name, scale));
+            at += 1 + len + 4;
+        }
+        assert_eq!(table.len(), 5);
+        assert_eq!(u32_(&mut at), 1, "nobj");
+        assert_eq!(u32_(&mut at), 0, "idx");
+        assert_eq!(u32_(&mut at), n, "n");
+        let flags = raw[at];
+        at += 1;
+        assert_eq!(flags, F_ATT);
+        let nch = u16_(&mut at);
+        let mine: Vec<usize> = (0..nch).map(|_| u16_(&mut at)).collect();
+        // t, lon, lat, alt, roll, pitch, yaw, then the channels
+        at += 7 * n * 4;
+        let fw = mine.iter().position(|c| table[*c].0 == "FuelWeight").unwrap();
+        at += fw * n * 4;
+        let first = i32::from_le_bytes(raw[at..at + 4].try_into().unwrap()) as f64 * table[mine[fw]].1 as f64;
+        assert!((first - 3000.5).abs() < 0.06, "{first}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `LockedTarget` holds the target's meta index while locked and -1
+    /// before the first lock and after the unlock.
+    #[test]
+    fn locked_target_resolves_to_meta_index() {
+        let dir = std::env::temp_dir().join(format!("bfdb-replay-lock-{}", std::process::id()));
+        let mut frames = vec![(
+            0.0,
+            "a1,T=0.1|0.1|5000|0|0|90,Type=Air+FixedWing,Name=F-16C_50,Pilot=Viper,Color=Blue\n\
+             b2,T=0.3|0.1|5000|0|0|270,Type=Air+FixedWing,Name=MiG-29S,Pilot=Ivan,Color=Red\n"
+                .to_string(),
+        )];
+        for i in 1..=10 {
+            let mut l = format!("a1,T={}||\n", 0.1 + i as f64 * 0.001);
+            if i == 2 {
+                l = format!("a1,T={}||,LockedTarget=b2,LockedTargetRange=15000\n", 0.1 + i as f64 * 0.001);
+            }
+            if i == 6 {
+                l = format!("a1,T={}||,LockedTarget=0\n", 0.1 + i as f64 * 0.001);
+            }
+            frames.push((i as f64 * 0.5, l));
+        }
+        let out = record(&dir, &frames);
+        let meta = meta_of(&out);
+        let (f16, mig) = (idx_by_id(&meta, "a1"), idx_by_id(&meta, "b2"));
+        assert_eq!(meta["objects"][f16 as usize]["ty"], "Air+FixedWing");
+        let c0 = chunk(&out.join("c0.bin.gz"));
+        let e = c0.iter().find(|e| e.idx == f16).unwrap();
+        let lock = chan(e, "LockedTarget");
+        let ts = &e.cols[0];
+        assert_eq!(e.ch.iter().find(|c| c.name == "LockedTarget").unwrap().scale, 1.0);
+        for (t, v) in ts.iter().zip(&lock) {
+            let want = if (1_000..3_000).contains(t) { mig as f64 } else { -1.0 };
+            assert_eq!(*v, want, "at {t}: {lock:?} / {ts:?}");
+        }
+        let range = chan(e, "LockedTargetRange");
+        assert!(range.iter().all(|r| (r - 15000.0).abs() < 0.01), "{range:?}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The whole track joins chunks whose columns and channels differ: what
+    /// appears later is filled backwards with its first value (-1 for a
+    /// lock), and nothing is dropped.
+    #[test]
+    fn object_track_stitches_changing_channels() {
+        let dir = std::env::temp_dir().join(format!("bfdb-replay-stitch-{}", std::process::id()));
+        let mut frames = vec![(
+            0.0,
+            "a1,T=0.1|0.1|5000|0|0|90,Type=Air+FixedWing,Name=F-16C_50,Pilot=Viper,Color=Blue,TAS=200\n\
+             b2,T=0.3|0.1|5000,Type=Ground+Heavy+Armor+Vehicle+Tank,Name=T-72B,Color=Red\n"
+                .to_string(),
+        )];
+        for i in 1..=8 {
+            let ts = i as f64 * 50.0;
+            let mut l = format!("a1,T={}||,TAS={}", 0.1 + i as f64 * 0.001, 200 + i);
+            if ts > 300.0 {
+                l.push_str(",FuelWeight=1000,AGL=50,LockedTarget=b2");
+            }
+            frames.push((ts, l + "\n"));
+        }
+        let out = record(&dir, &frames);
+        let meta = meta_of(&out);
+        let (f16, tank) = (idx_by_id(&meta, "a1"), idx_by_id(&meta, "b2"));
+        let c0 = chunk(&out.join("c0.bin.gz"));
+        let e0 = c0.iter().find(|e| e.idx == f16).unwrap();
+        assert_eq!(e0.ch.len(), 1, "chunk 0 has TAS only");
+        assert_eq!(e0.flags & F_AGL, 0);
+        let path = object_track(&out, f16, 0, 1).unwrap();
+        let e = chunk(&path);
+        assert_eq!(e.len(), 1);
+        let e = &e[0];
+        let ts = &e.cols[0];
+        assert_eq!(ts, &(0..=8).map(|i| i * 50_000).collect::<Vec<i64>>());
+        assert_eq!(e.flags, F_ATT | F_AGL, "union of the chunks' flags");
+        assert_eq!(e.cols.len(), ncols(e.flags));
+        assert!(e.cols[7].iter().all(|v| *v == 500), "AGL backfilled: {:?}", e.cols[7]);
+        let tas = chan(e, "TAS");
+        assert!(tas.iter().enumerate().all(|(i, v)| (v - (200 + i) as f64).abs() < 0.006), "{tas:?}");
+        assert!(chan(e, "FuelWeight").iter().all(|v| (v - 1000.0).abs() < 0.06));
+        let lock = chan(e, "LockedTarget");
+        for (t, v) in ts.iter().zip(&lock) {
+            assert_eq!(*v, if *t > 300_000 { tank as f64 } else { -1.0 }, "{lock:?}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Shells, flares and chaff right where a missile is launched and where
+    /// it ends are neither its launcher nor its target, and the shot, hit
+    /// and kill come out as without them.
+    #[test]
+    fn effects_are_never_shot_parties() {
+        let dir = std::env::temp_dir().join(format!("bfdb-replay-fx-{}", std::process::id()));
+        let mut frames = vec![(
+            0.0,
+            "a1,T=0.1|0.1|5000|0|0|90,Type=Air+FixedWing,Name=F-16C_50,Pilot=Viper,Color=Blue\n\
+             b2,T=0.2|0.1|5000|0|0|270,Type=Air+FixedWing,Name=MiG-29S,Pilot=Ivan,Color=Red\n\
+             a9,T=0.5|0.1|10,Type=Ground+AntiAircraft,Name=Tor 9A331,Color=Red\n"
+                .to_string(),
+        )];
+        for i in 1..=100 {
+            let t = i as f64 * 0.1;
+            let mut l = format!("a1,T={}||\n", 0.1 + t * 0.00001);
+            if i == 20 {
+                // A SAM launch with a shell nearer the missile than the SAM
+                // (no aircraft near, so the nearest anything would win).
+                l.push_str("b8,T=0.50005|0.1|10,Type=Projectile+Shell,Color=Red\n");
+                l.push_str("b9,T=0.50005|0.1|10,Type=Weapon+Missile,Name=9M331,Color=Red\n");
+            }
+            if i == 10 {
+                // At the rail, there before the missile: closer to it than
+                // the F-16 is.
+                l.push_str("d4,T=0.1001|0.1|5000,Type=Projectile+Shell,Color=Red\n");
+                l.push_str("e5,T=0.1001|0.1|5000,Type=Misc+Decoy+Flare,Color=Red\n");
+                l.push_str("c3,T=0.1001|0.1|5000|0|0|90,Type=Weapon+Missile,Name=AIM-120C,Color=Blue\n");
+            }
+            if i > 10 {
+                let lon = 0.1001 + (t - 1.0) * (0.0998 / 9.0);
+                l.push_str(&format!("c3,T={lon}||\n"));
+            }
+            if i == 95 {
+                // Where the missile ends, nearer to it than the MiG.
+                l.push_str("f6,T=0.1999|0.1|5000,Type=Misc+Decoy+Flare,Color=Red\n");
+                l.push_str("f7,T=0.1999|0.1|5000,Type=Misc+Decoy+Chaff,Color=Red\n");
+                l.push_str("f8,T=0.1999|0.1|5000,Type=Misc+Explosion\n");
+            }
+            frames.push((t, l));
+        }
+        frames.push((10.5, "-c3\n".into()));
+        frames.push((11.0, "-b2\n".into()));
+        let out = record(&dir, &frames);
+        let meta = meta_of(&out);
+        let (f16, mig, aim) = (idx_by_id(&meta, "a1"), idx_by_id(&meta, "b2"), idx_by_id(&meta, "c3"));
+        for id in ["d4", "e5", "f6", "f7", "f8"] {
+            let k = &meta["objects"][idx_by_id(&meta, id) as usize]["k"];
+            assert!(["shell", "flare", "chaff", "explosion"].contains(&k.as_str().unwrap()), "{id}: {k}");
+        }
+        assert_eq!(meta["objects"][aim as usize]["par"], f16, "launcher");
+        let (sam, sam_msl) = (idx_by_id(&meta, "a9"), idx_by_id(&meta, "b9"));
+        assert_eq!(meta["objects"][sam_msl as usize]["par"], sam, "the SAM, not the shell");
+        let ev = meta["events"].as_array().unwrap();
+        let fired: Vec<&Value> = ev.iter().filter(|e| e["k"] == "fired" && e["w"] == aim).collect();
+        assert_eq!(fired.len(), 1);
+        assert_eq!((fired[0]["o"].as_u64(), fired[0]["tg"].as_u64()), (Some(f16 as u64), Some(mig as u64)));
+        assert_eq!(fired[0]["hit"], true);
+        let kill = ev.iter().find(|e| e["k"] == "kill").expect("a kill");
+        assert_eq!(
+            (kill["o"].as_u64(), kill["by"].as_u64(), kill["w"].as_u64()),
+            (Some(mig as u64), Some(f16 as u64), Some(aim as u64))
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// What DCS actually writes: no Destroyed/TakenOff/Landed lines at all.
@@ -1151,7 +2021,7 @@ mod tests {
             if ts > 20.0 && ts < 150.0 {
                 lon += 0.0015; // ~120 m per frame = 240 m/s
                 agl = (agl + 25.0).min(4000.0);
-            } else if ts >= 150.0 && ts < 170.0 {
+            } else if (150.0..170.0).contains(&ts) {
                 lon += 0.0002; // slowing down on the runway
                 agl = 1.0;
             }
@@ -1241,7 +2111,10 @@ mod tests {
              #0\n\
              a1,T=0.1|0.1|5000|0|0|90,Type=Air+FixedWing,Name=F-16C_50,Pilot=Viper,Color=Blue\n\
              b2,T=0.2|0.1|5000|0|0|270,Type=Air+FixedWing,Name=MiG-29S,Pilot=Ivan,Color=Red\n\
-             0,Event=TakenOff|a1|\n",
+             0,Event=TakenOff|a1|\n\
+             0,Event=Message|a1|Fox three\n\
+             0,Event=Bookmark|Merge\n\
+             0,Event=LeftArea|b2|\n",
         );
         // 0.1 s frames for 10 s: the shooter moves, the missile flies.
         for i in 1..=100 {
@@ -1263,14 +2136,24 @@ mod tests {
         assert_eq!(built.chunks, 2, "400 s spans two 300 s chunks");
         assert_eq!(built.duration_ms, 400_000);
         assert_eq!(built.start_ms, DateTime::parse_from_rfc3339("2026-10-08T12:00:00Z").unwrap().timestamp_millis());
-        assert_eq!(built.objects, 3, "the shell is dropped");
+        assert_eq!(built.objects, 4, "the shell is kept");
 
         let meta: Value = serde_json::from_slice(&gunzip(&out.join("meta.json.gz"))).unwrap();
         let objs = meta["objects"].as_array().unwrap();
         let idx = |name: &str| objs.iter().position(|o| o["n"] == name).unwrap() as u64;
         let (f16, mig, aim) = (idx("F-16C_50"), idx("MiG-29S"), idx("AIM-120C"));
+        let shell = objs.iter().position(|o| o["k"] == "shell").unwrap() as u64;
+        assert_eq!(
+            (&objs[shell as usize]["ty"], &objs[shell as usize]["id"]),
+            (&json!("Projectile+Shell"), &json!("d4"))
+        );
+        assert_eq!((&objs[f16 as usize]["ty"], &objs[f16 as usize]["id"]), (&json!("Air+FixedWing"), &json!("a1")));
         assert_eq!(objs[aim as usize]["par"], f16, "launcher found by proximity");
         let ev = meta["events"].as_array().unwrap();
+        let tv = |k: &str| ev.iter().find(|e| e["k"] == k).unwrap_or_else(|| panic!("no {k} in {ev:?}"));
+        assert_eq!((&tv("message")["o"], &tv("message")["text"]), (&json!(f16), &json!("Fox three")));
+        assert_eq!((&tv("bookmark")["o"], &tv("bookmark")["text"]), (&Value::Null, &json!("Merge")));
+        assert_eq!((&tv("left")["o"], &tv("left")["text"]), (&json!(mig), &Value::Null));
         let kill = ev.iter().find(|e| e["k"] == "kill").expect("a kill");
         assert_eq!((kill["o"].as_u64(), kill["by"].as_u64()), (Some(mig), Some(f16)));
         assert!(ev.iter().any(|e| e["k"] == "fired" && e["o"] == f16));
@@ -1282,20 +2165,20 @@ mod tests {
         assert_eq!(ivan.fate, "destroyed");
 
         // Chunk 1 carries the F-16's last pre-window sample so it stands alone.
-        let c1 = gunzip(&out.join("c1.bin.gz"));
-        assert_eq!(&c1[..4], b"BFR1");
-        let nobj = u32::from_le_bytes(c1[4..8].try_into().unwrap());
-        assert_eq!(nobj, 1, "only the F-16 is still alive");
-        let n = u32::from_le_bytes(c1[12..16].try_into().unwrap());
-        assert_eq!(n, 2, "carry + the t=400 s sample");
-        let first_t = i32::from_le_bytes(c1[17..21].try_into().unwrap());
-        assert!(first_t < 300_000);
+        assert_eq!(&gunzip(&out.join("c1.bin.gz"))[..4], b"BFR2");
+        let c1 = chunk(&out.join("c1.bin.gz"));
+        let mut live: Vec<u64> = c1.iter().map(|e| e.idx as u64).collect();
+        live.sort();
+        assert_eq!(live, vec![f16, shell], "only the F-16 and the never-removed shell are still alive");
+        let e = c1.iter().find(|e| e.idx as u64 == f16).unwrap();
+        assert_eq!(e.cols[0].len(), 2, "carry + the t=400 s sample");
+        assert!(e.cols[0][0] < 300_000);
 
         // The stitched track has every F-16 sample exactly once, in order.
         let f16_track = object_track(&out, f16 as u32, 0, 1).unwrap();
         let e = read_chunk(&gunzip(&f16_track), None).unwrap();
         assert_eq!(e.len(), 1);
-        let ts = &e[0].2[0];
+        let ts = &e[0].cols[0];
         assert!(ts.windows(2).all(|w| w[0] < w[1]), "strictly increasing: {ts:?}");
         assert_eq!(*ts.last().unwrap(), 400_000);
         assert_eq!(ts[0], 0);

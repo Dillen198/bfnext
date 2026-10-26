@@ -4,14 +4,14 @@
 // launch, fetched only for the rows on screen.
 
 import { useMemo, useState } from 'react'
-import { type RecMeta, type Shot, type TrackStore, shotsOf, objLabel, sampleSeg, M_TO_FT, MS_TO_KT, fmtClock, fmtDuration } from './data'
+import { type RecMeta, type Shot, type TrackSource, shotsOf, objLabel, sampleSeg, M_TO_FT, MS_TO_KT, fmtClock, fmtDuration } from './data'
 import { braa, aspectWord, M_TO_NM, tasOf } from './analysis'
 
 type Scope = 'by' | 'at' | 'all'
 
 export default function Shots({ meta, store, focus, version, onPick }: {
   meta: RecMeta
-  store: TrackStore
+  store: TrackSource
   focus: number | null
   /** bumps when tracks arrive, to fill in launch geometry */
   version: number
@@ -64,7 +64,7 @@ export default function Shots({ meta, store, focus, version, onPick }: {
 }
 
 function ShotRow({ shot, store, version, withGeometry, shooter, target, weapon, clock, onPick }: {
-  shot: Shot; store: TrackStore; version: number; withGeometry: boolean
+  shot: Shot; store: TrackSource; version: number; withGeometry: boolean
   shooter: string; target: string; weapon: string; clock: string; onPick: () => void
 }) {
   const { ev, result } = shot

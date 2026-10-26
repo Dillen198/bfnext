@@ -19,15 +19,8 @@
 .rp-theater canvas { display: block; width: 100%; height: 100%; cursor: grab; }
 /* the cockpit HUD, over the scene; clicks go through to the scene */
 .rp-theater canvas.rp-hud { position: absolute; inset: 0; pointer-events: none; cursor: default; }
-.rp-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
-.rp-label {
-  position: absolute; left: 0; top: 0;
-  font: 600 10.5px/1 var(--font-mono);
-  white-space: pre;
-  text-shadow: 0 0 3px #000, 0 0 2px #000, 0 1px 1px #000;
-  will-change: transform;
-}
-.rp-label-focus { font-size: 12px; }
+/* icons, trails and labels (2D), labels (3D): one canvas, clicks go through */
+.rp-root > .rp-overlay { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
 
 .rp-state {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -44,7 +37,7 @@
 
 /* top bar */
 .rp-top {
-  top: 10px; left: 10px; right: 54px;
+  top: 10px; left: 10px; right: 10px;
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 6px 10px;
 }
@@ -54,7 +47,9 @@
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .rp-title-sub, .rp-clock-sub { font-size: 0.62rem; color: var(--text-dim); letter-spacing: 0.06em; }
-.rp-clock { text-align: right; }
+.rp-clock { text-align: left; min-width: 86px; }
+.rp-counts { display: flex; gap: 8px; font: 700 0.8rem var(--font-mono); }
+.rp-counts span::before { content: '✈ '; font-size: 0.62rem; opacity: 0.8; }
 .rp-clock-main { font: 600 0.95rem var(--font-mono); color: var(--accent-bright); }
 
 .rp-seg { display: inline-flex; border: 1px solid var(--border-light); }
@@ -89,7 +84,7 @@
   font: 600 0.62rem var(--font-mono); letter-spacing: 0.1em; padding: 4px 8px; cursor: pointer;
 }
 .rp-side {
-  left: 10px; top: 92px; bottom: 150px; width: 290px;
+  left: 10px; top: 92px; bottom: 120px; width: 300px;
   display: flex; flex-direction: column; min-height: 0;
 }
 .rp-tabs { display: flex; border-bottom: 1px solid var(--border-light); }
@@ -143,7 +138,14 @@
 .rp-chip.on { color: var(--accent-bright); border-color: var(--accent-border); background: var(--accent-glow); }
 
 /* focus card */
-.rp-focus { right: 54px; top: 64px; width: 270px; padding: 8px 10px; max-height: calc(100% - 230px); overflow-y: auto; }
+.rp-focus { right: 10px; top: 64px; width: 285px; padding: 8px 10px; max-height: calc(100% - 200px); overflow-y: auto; }
+.rp-focus-tags { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 5px; }
+.rp-focus-tags span { font: 0.55rem var(--font-mono); letter-spacing: 0.06em; color: var(--text-dim); border: 1px solid var(--border-light); padding: 0 4px; }
+.rp-lock { color: var(--yellow); font-family: var(--font-mono); }
+.rp-channels { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border-light); }
+.rp-channels table { width: 100%; margin-top: 6px; border-collapse: collapse; font: 0.62rem var(--font-mono); }
+.rp-channels td { padding: 1px 0; color: var(--text-muted); }
+.rp-channels td + td { text-align: right; color: var(--text); }
 .rp-focus-head { display: flex; align-items: center; gap: 7px; }
 .rp-focus-name { flex: 1; font-weight: 700; font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rp-focus-sub { font-size: 0.62rem; color: var(--text-dim); margin-top: 3px; }
@@ -193,7 +195,7 @@
 .rp-credit:hover { color: #fff; text-decoration: underline; }
 
 /* bottom: graph + transport */
-.rp-bottom { left: 10px; right: 54px; bottom: 26px; padding: 6px 10px 8px; }
+.rp-bottom { left: 10px; right: 10px; bottom: 26px; padding: 6px 10px 8px; }
 .rp-transport { display: flex; align-items: center; gap: 10px; }
 .rp-play {
   width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
@@ -216,14 +218,9 @@
 .rp-mark-death { background: #ffffff; height: 10px; }
 .rp-mark-shot { background: var(--yellow); opacity: 0.8; }
 .rp-mark-nav { background: var(--accent); }
+.rp-mark-book { background: var(--cyan); height: 10px; }
 
-.rp-graph svg { width: 100%; height: 56px; display: block; cursor: crosshair; }
-.rp-graph-alt { fill: none; stroke: var(--accent-bright); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.rp-graph-spd { fill: none; stroke: var(--cyan); stroke-width: 1.2; vector-effect: non-scaling-stroke; opacity: 0.85; }
-.rp-graph-head { stroke: #fff; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.rp-graph-legend { display: flex; gap: 14px; font: 0.6rem var(--font-mono); color: var(--text-dim); margin: 2px 0 4px; }
-.rp-graph-legend .alt { color: var(--accent-bright); }
-.rp-graph-legend .spd { color: var(--cyan); }
+
 
 /* MapLibre controls in the dashboard's colours */
 .rp-root .maplibregl-ctrl-group { background: var(--bg-chrome-solid); border: 1px solid var(--border-light); border-radius: 0; }
@@ -231,8 +228,77 @@
 .rp-root .maplibregl-ctrl button .maplibregl-ctrl-icon { filter: invert(0.85); }
 .rp-root .maplibregl-ctrl-scale { background: rgba(0,0,0,0.5); color: var(--text-muted); border-color: var(--text-muted); }
 
+/* search box with its icon */
+.rp-searchbox {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+  background: var(--bg-input); border: 1px solid var(--border-light); color: var(--text-dim);
+}
+.rp-searchbox input { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0; color: var(--text); padding: 5px 0; font-size: 0.72rem; }
+
+/* object tree */
+.rp-tree-side {
+  position: sticky; top: 0; z-index: 1; padding: 6px 10px 4px;
+  background: var(--bg-chrome-solid); border-bottom: 1px solid var(--border-light);
+  font: 700 0.66rem var(--font-mono); letter-spacing: 0.16em;
+}
+.rp-tree-side span, .rp-tree-cat span { color: var(--text-dim); font-weight: 500; margin-left: 4px; }
+.rp-tree-cat {
+  width: 100%; text-align: left; padding: 4px 10px; background: transparent; border: 0; cursor: pointer;
+  color: var(--text-muted); font: 600 0.66rem var(--font-body); letter-spacing: 0.08em; text-transform: uppercase;
+}
+.rp-tree-cat:hover { color: var(--text); }
+.rp-tree-row {
+  width: 100%; display: flex; align-items: baseline; gap: 8px; padding: 3px 10px 3px 24px;
+  background: transparent; border: 0; cursor: pointer; text-align: left; color: var(--text);
+}
+.rp-tree-row:hover { background: var(--bg-hover); }
+.rp-tree-row.on { background: var(--accent-glow); box-shadow: inset 2px 0 0 var(--accent); }
+.rp-tree-row.tgt { box-shadow: inset 2px 0 0 #fff; }
+.rp-tree-row.dim { opacity: 0.5; }
+.rp-tree-row .rp-row-name { font-size: 0.7rem; font-weight: 500; }
+
+/* layers popover */
+.rp-pop-anchor { position: relative; }
+.rp-layers-btn { padding: 6px 9px; }
+.rp-pop {
+  position: absolute; top: 34px; right: 0; z-index: 6; width: 220px; padding: 4px 0;
+  background: var(--bg-chrome-solid); border: 1px solid var(--border-light); box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+}
+.rp-pop-row {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+  background: transparent; border: 0; cursor: pointer; color: var(--text-dim); font-size: 0.72rem; text-align: left;
+}
+.rp-pop-row:hover { background: var(--bg-hover); color: var(--text); }
+.rp-pop-row.on { color: var(--text); }
+.rp-pop-row.on svg { color: var(--accent-bright); }
+.rp-pop-row span { flex: 1; }
+.rp-pop-sub { cursor: default; gap: 5px; border-top: 1px solid var(--border-light); margin-top: 4px; padding-top: 7px; }
+.rp-root kbd {
+  font: 600 0.58rem var(--font-mono); color: var(--text-muted); border: 1px solid var(--border-light);
+  padding: 0 4px; border-radius: 2px;
+}
+
+/* keys help */
+.rp-help {
+  position: absolute; z-index: 7; top: 64px; left: 50%; transform: translateX(-50%); width: min(440px, calc(100% - 20px));
+  padding: 10px 14px; background: var(--bg-chrome-solid); border: 1px solid var(--accent-border);
+  box-shadow: 0 12px 32px rgba(0,0,0,0.5); font-size: 0.72rem; color: var(--text-muted);
+}
+.rp-help table { width: 100%; margin: 8px 0; border-collapse: collapse; }
+.rp-help td { padding: 3px 0; vertical-align: top; }
+.rp-help td:first-child { width: 110px; white-space: nowrap; }
+.rp-help p { line-height: 1.5; margin: 0; }
+
+/* drop a file to open it */
+.rp-drop {
+  position: absolute; inset: 10px; z-index: 8; display: flex; align-items: center; justify-content: center;
+  border: 2px dashed var(--accent); background: rgba(0,0,0,0.55); pointer-events: none;
+  font: 600 1.1rem var(--font-display); letter-spacing: 0.14em; color: var(--accent-bright);
+}
+
 @media (max-width: 900px) {
   .rp-top { right: 10px; top: 6px; left: 6px; gap: 6px; }
+  .rp-counts { display: none; }
   .rp-title-sub, .rp-clock-sub { display: none; }
   .rp-side { left: 6px; right: 6px; width: auto; top: 128px; bottom: 170px; }
   .rp-side-toggle { top: 100px; left: 6px; }
@@ -264,3 +330,58 @@
 .rp-range-kind { font-family: var(--font-mono); font-size: 10px; letter-spacing: .06em; color: var(--yellow); flex-shrink: 0; }
 .rp-range-link { flex-shrink: 0; font-size: 11px; color: var(--text-dim); text-decoration: none; white-space: nowrap; padding: 5px 10px 5px 4px; }
 .rp-range-link:hover { color: var(--text); }
+
+/* open a local Tacview file */
+.rp-open {
+  display: flex; align-items: center; gap: 12px; padding: 14px 16px; max-width: 760px; cursor: pointer;
+  border: 1px dashed var(--border-light); color: var(--text-muted); font-size: 0.75rem; line-height: 1.5;
+}
+.rp-open:hover, .rp-open.over { border-color: var(--accent); color: var(--text); background: var(--accent-glow); }
+.rp-open b { color: var(--accent-bright); font-weight: 600; letter-spacing: 0.04em; }
+.rp-open.compact { padding: 8px 12px; }
+.rp-open-bad { color: var(--red); }
+.rp-loading { width: min(420px, 90%); display: flex; flex-direction: column; gap: 8px; }
+.rp-progress { height: 4px; background: var(--border-light); overflow: hidden; }
+.rp-progress > div { height: 100%; background: var(--accent); transition: width 0.2s; }
+
+/* telemetry charts (Tacview's charts window) */
+.rp-chart canvas { width: 100%; display: block; cursor: crosshair; }
+.rp-chart-keys { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; max-height: 52px; overflow-y: auto; }
+.rp-chart-key {
+  background: transparent; border: 1px solid var(--border-light); color: var(--text-dim); cursor: pointer;
+  font: 600 0.58rem var(--font-mono); letter-spacing: 0.06em; padding: 1px 6px;
+}
+.rp-chart-key.on b { color: #fff; font-weight: 600; }
+.rp-chart-key b { font-weight: 500; }
+.rp-chart-wait { font: 0.6rem var(--font-mono); color: var(--text-dim); }
+
+/* statistics table */
+.rp-stats { width: 100%; border-collapse: collapse; font: 0.66rem var(--font-mono); }
+.rp-stats th {
+  position: sticky; top: 0; background: var(--bg-chrome-solid); text-align: left; padding: 5px 6px; cursor: pointer;
+  color: var(--text-dim); font-weight: 600; letter-spacing: 0.06em; border-bottom: 1px solid var(--border-light); white-space: nowrap;
+}
+.rp-stats td { padding: 4px 6px; border-bottom: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.rp-stats td:first-child { color: var(--text); }
+.rp-stats td .rp-dot { display: inline-block; width: 6px; height: 6px; margin-right: 3px; }
+.rp-stats td.k { color: var(--yellow); font-weight: 700; }
+.rp-stats td.x { color: var(--red); }
+.rp-stats tr { cursor: pointer; }
+.rp-stats tr:hover td { background: var(--bg-hover); }
+.rp-stats tr.on td { background: var(--accent-glow); }
+.rp-stats-tot { font: 0.6rem var(--font-mono); color: var(--text-dim); }
+
+/* cursor coordinates and the ruler */
+.rp-coords {
+  position: absolute; z-index: 3; left: 120px; bottom: 6px; pointer-events: none;
+  font: 0.62rem var(--font-mono); color: rgba(255,255,255,0.8); text-shadow: 0 0 3px #000; white-space: pre;
+}
+.rp-ruler {
+  position: absolute; z-index: 4; top: 60px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 12px;
+  background: rgba(0,0,0,0.75); border: 1px solid #ffe680; color: #ffe680; font: 600 0.75rem var(--font-mono);
+}
+.rp-bull { font-family: var(--font-mono); color: var(--text-muted); }
+.rp-pop-sub input[type='range'] { flex: 1; accent-color: var(--accent); }
+.rp-pop-sub b { font: 600 0.62rem var(--font-mono); color: var(--text); min-width: 30px; text-align: right; }
+.rp-long { color: var(--text-muted); }

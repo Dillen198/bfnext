@@ -1,64 +1,69 @@
 import { describe, expect, it } from 'vitest'
-import { realOf } from './models'
+import { existsSync, readFileSync } from 'node:fs'
+import db from '../../../shared/models/tacview.json'
+import { realOf, tacviewType, shortNameOf } from './models'
 import live from './live-types.json'
 
+const catalog = readFileSync(new URL('../../../shared/models/catalog.ts', import.meta.url), 'utf8')
+
 describe('realOf', () => {
-  it('maps the common DCS types to their models', () => {
-    expect(realOf('air', 'KC135MPRS')).toBe('KC-135')
-    expect(realOf('air', 'KC-135')).toBe('KC-135')
-    expect(realOf('air', 'E-3A')).toBe('E-3')
-    expect(realOf('air', 'A-50')).toBe('E-3')
-    expect(realOf('air', 'Su-27')).toBe('Su-35')
-    expect(realOf('air', 'Su-34')).toBe('Su-34')
-    expect(realOf('air', 'MiG-29S')).toBe('MiG-29')
-    expect(realOf('air', 'FA-18C_hornet')).toBe('F-18')
-    expect(realOf('air', 'F-16C_50')).toBe('F-16')
-    expect(realOf('air', 'An-26B')).toBe('An-26')
-    expect(realOf('air', 'IL-76MD')).toBe('Il-76')
-    expect(realOf('air', 'MQ-9 Reaper')).toBe('MQ-1')
-    expect(realOf('air', 'WingLoong-I')).toBe('MQ-1')
-    expect(realOf('air', 'B-52H')).toBe('B-52')
-    expect(realOf('air', 'Tu-160')).toBe('Tu-160')
-    expect(realOf('sam', 'ZSU-23-4 Shilka')).toBe('Shilka')
-    expect(realOf('ship', 'USS_Arleigh_Burke_IIa')).toBe('DDG-51')
-    expect(realOf('ship', 'TICONDEROG')).toBe('CG-47')
-    expect(realOf('helo', 'UH-60A')).toBe('SH-60')
-    expect(realOf('helo', 'Mi-8MT')).toBe('Mi-8')
-    expect(realOf('helo', 'CH-47Fbl1')).toBe('CH-47')
-    expect(realOf('helo', 'AH-64D_BLK_II')).toBe('AH-64')
-    expect(realOf('armor', 'T-72B')).toBe('T-90')
-    expect(realOf('armor', 'M-1 Abrams')).toBe('M1A2')
-    expect(realOf('vehicle', 'Ural-4320T')).toBe('ZIL-131')
-    expect(realOf('sam', 'S-300PS 5P85C ln')).toBe('Patriot')
-    expect(realOf('sam', 'S-300PS 40B6M tr')).toBeNull()
-    expect(realOf('sam', 'Osa 9A33 ln')).toBe('Osa')
-    expect(realOf('vehicle', 'CHAP_M1083')).toBe('ZIL-131')
-    expect(realOf('sam', 'Strela-1 9P31')).toBe('Osa')
-    expect(realOf('sam', 'p-19 s-125 sr')).toBeNull()
-    expect(realOf('sam', '5p73 s-125 ln')).toBe('Patriot')
-    expect(realOf('ship', 'HandyWind')).toBeNull()
-    expect(realOf('carrier', 'KUZNECOW')).toBe('Kuznetsov')
-    expect(realOf('carrier', 'CVN_71')).toBe('CVN')
-    expect(realOf('armor', 'CHAP_M142_ATACMS_M48')).toBe('HIMARS')
-    expect(realOf('sam', 'CHAP_TorM2')).toBe('Osa')
-    expect(realOf('sam', 'S-300PS 40B6MD sr_19J6')).toBeNull()
-    expect(realOf('sam', 'S_75M_Volhov')).toBe('Patriot')
-    expect(realOf('air', 'AJS37')).toBe('EF2000')
-    expect(realOf('missile', 'AIM_120C')).toBe('AIM-7')
-    expect(realOf('missile', 'AIM_9M')).toBe('AIM-9')
-    expect(realOf('missile', 'R_27ER')).toBe('R-27')
-    expect(realOf('missile', 'AGM_88')).toBe('AGM-65')
-    expect(realOf('missile', 'BGM_109B')).toBe('Kh-29')
-    expect(realOf('missile', 'SA5B55')).toBe('R-27')
-    expect(realOf('missile', 'SA_IRIS_T_SL')).toBe('AIM-9')
-    expect(realOf('missile', 'Ataka_9M120')).toBe('AGM-114')
-    expect(realOf('bomb', 'GBU_12')).toBe('GBU-12')
-    expect(realOf('bomb', 'GBU_38')).toBe('JDAM')
-    expect(realOf('bomb', 'KAB_500Kr')).toBe('KAB-500L')
+  it("draws the common DCS types with Tacview's meshes, matched as Tacview matches them", () => {
+    // its database, exact or ignoring separators
+    expect(realOf('air', 'FA-18C_hornet')).toBe('FixedWing.F-18C')
+    expect(realOf('air', 'MiG-29S')).toBe('FixedWing.MiG-29')
+    expect(realOf('air', 'E-3A')).toBe('FixedWing.E-3')
+    expect(realOf('air', 'A-50')).toBe('FixedWing.A-50')
+    expect(realOf('air', 'AJS37')).toBe('FixedWing.AJ 37')
+    expect(realOf('helo', 'UH-60A')).toBe('Rotorcraft.UH-60')
+    expect(realOf('sam', 'ZSU-23-4 Shilka')).toBe('AntiAircraft.AAA.ZSU-23-4')
+    expect(realOf('sam', 'S_75M_Volhov')).toBe('AntiAircraft.SAM.SA-2.LN')
+    expect(realOf('sam', '5p73 s-125 ln')).toBe('AntiAircraft.SAM.SA-3.5P73')
+    expect(realOf('carrier', 'KUZNECOW')).toBe('Watercraft.Admiral Kuznetsov')
+    expect(realOf('carrier', 'Stennis')).toBe('Watercraft.CVN-74')
+    expect(realOf('missile', 'AIM_120C')).toBe('Missile.AIM-120C')
+    // the longest name it knows that the recorded one starts with
+    expect(realOf('air', 'F-16C_50')).toBe('FixedWing.F-16')
+    expect(realOf('helo', 'CH-47Fbl1')).toBe('Rotorcraft.Chinook')
+    expect(realOf('air', 'KC135MPRS')).toBe('FixedWing.KC-135C')
+    // short names too, without splitting a number
+    expect(realOf('air', 'J-10A')).toBe('FixedWing.J-10')
+    expect(realOf('air', 'A-4E-C')).toBe('FixedWing.A-4')
+    expect(realOf('air', 'F4U-1D')).toBe('FixedWing.F4U')
+    expect(realOf('air', 'A400M')).toBe('FixedWing.A400M')
+    // lookalikes for what Tacview does not know
+    expect(realOf('armor', 'CHAP_T90M')).toBe('Vehicle.Tank.T-80U')
+    expect(realOf('armor', 'CHAP_MATV')).toBe('Vehicle.Car.Humvee')
+    expect(realOf('ship', 'USS_Arleigh_Burke_IIa')).toBe('Watercraft.F710')
+    expect(realOf('air', 'WingLoong-I')).toBe('FixedWing.MQ-9')
+    // and a kind's generic mesh when nothing else fits
+    expect(realOf('air', 'Totally_Unknown_Jet')).toBe('Core.FixedWing')
+    expect(realOf('rocket', 'S_8KOM')).toBe('Rocket.Hydra 70') // Tacview's own pick for the S-8
   })
 
-  it('reports how the live server types map', () => {
-    const rows = (live as [string, string, number][]).map(([k, n, c]) => `${c}\t${k}\t${n}\t-> ${realOf(k as never, n) ?? 'built-in'}`)
-    console.log(rows.join('\n'))
+  it('never takes a name match across kinds', () => {
+    // "F-16" as a ground object's name is not a jet
+    expect(realOf('vehicle', 'F-16 tow tractor')).not.toMatch(/^FixedWing/)
+  })
+
+  it("reads Tacview's names and ranges", () => {
+    expect(shortNameOf('F-16C_50')).toBe('F-16C')
+    expect(tacviewType('FA-18C_hornet')?.long).toMatch(/Hornet/)
+    expect(tacviewType('ZU-23 Emplacement')?.engage).toBeGreaterThan(1000)
+  })
+
+  it("every mesh Tacview's database or the catalogue names is installed", () => {
+    const named = new Set<string>(db.shapes)
+    for (const m of catalog.matchAll(/'((?:FixedWing|Rotorcraft|Rotocraft|AntiAircraft|Vehicle|Watercraft|Missile|Bomb|Rocket|Core|Other)\.[^']+)'/g)) named.add(m[1])
+    named.delete('Core.Empty') // Tacview's invisible placeholder: no geometry
+    const missing = [...named].filter(r => !existsSync(new URL(`../../public/models/${r}.glb`, import.meta.url)))
+    expect(missing).toEqual([])
+  })
+
+  it('every type seen on the live servers has a model, and every model a file', () => {
+    for (const [k, n] of live as [string, string, number][]) {
+      const r = realOf(k, n)
+      expect(r, `${k} ${n}`).toBeTruthy()
+      expect(existsSync(new URL(`../../public/models/${r}.glb`, import.meta.url)), `${n} -> ${r}.glb`).toBe(true)
+    }
   })
 })

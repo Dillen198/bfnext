@@ -1,14 +1,46 @@
-// /replay -- the selected server's Tacview recordings, newest first.
+// /replay -- the selected server's Tacview recordings, newest first, and a
+// place to open a Tacview file from this computer.
 
-import { Link } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { PlayCircle } from '@icons'
+import { PlayCircle, Upload } from '@icons'
 import { api } from '../api'
 import { useInstance } from '../context/InstanceContext'
 import PageHeader from '../components/PageHeader'
 import QueryState from '../components/QueryState'
 import { fmtDuration } from './data'
+import { acmiFrom, isAcmi, setPendingFile } from './local'
 import './replay.css'
+
+/** Drop or pick a .acmi: it opens in the local viewer, read in the browser. */
+export function OpenFile({ compact = false }: { compact?: boolean }) {
+  const navigate = useNavigate()
+  const [over, setOver] = useState(false)
+  const [bad, setBad] = useState(false)
+  const open = (f: File | null | undefined) => {
+    if (!f) return
+    if (!isAcmi(f)) { setBad(true); return }
+    setPendingFile(f)
+    navigate('/replay/file')
+  }
+  return (
+    <label
+      className={`rp-open ${over ? 'over' : ''} ${compact ? 'compact' : ''}`}
+      onDragOver={ev => { ev.preventDefault(); setOver(true) }}
+      onDragLeave={() => setOver(false)}
+      onDrop={ev => { ev.preventDefault(); setOver(false); open(acmiFrom(ev.dataTransfer) ?? ev.dataTransfer.files[0]) }}
+    >
+      <Upload size={compact ? 14 : 18} />
+      <span>
+        <b>Open a Tacview file</b>
+        {!compact && <span> -- drop a <code>.acmi</code> here or click to pick one. It is read in your browser, never uploaded.</span>}
+        {bad && <span className="rp-open-bad"> That is not a Tacview .acmi file.</span>}
+      </span>
+      <input type="file" accept=".acmi" hidden onChange={ev => open(ev.target.files?.[0])} />
+    </label>
+  )
+}
 
 export default function ReplayListPage() {
   const { selected, current } = useInstance()
@@ -26,7 +58,7 @@ export default function ReplayListPage() {
       <PageHeader
         icon={PlayCircle}
         title="FLIGHT REPLAY"
-        sub="Every sortie, replayed in 2D or 3D in the browser. No Tacview needed."
+        sub="Every sortie, replayed in 3D or on the map in the browser. No Tacview needed."
       />
       <div className="flex-1 overflow-auto p-4" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.6, maxWidth: 760 }}>
@@ -34,6 +66,7 @@ export default function ReplayListPage() {
           pilot page. Recordings are kept for {status.data?.retention_days ?? 30} days.
           {note && <div style={{ color: 'var(--yellow)', marginTop: 6 }}>{note}</div>}
         </div>
+        <OpenFile />
         {recs.data && recs.data.length > 0 ? (
           <div className="rp-recs">
             {recs.data.map(r => (

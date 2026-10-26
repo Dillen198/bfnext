@@ -37,6 +37,7 @@ const ReplayListPage   = lazy(() => import('./replay/ReplayListPage'))
 const RoundsPage       = lazy(() => import('./pages/RoundsPage'))
 const SquadronsPage    = lazy(() => import('./pages/SquadronsPage'))
 const ReplayPage       = lazy(() => import('./replay/ReplayPage'))
+const LocalReplayPage  = lazy(() => import('./replay/LocalReplayPage'))
 
 /** Shown while a route chunk is in flight. Deliberately quiet -- on a fast
  *  connection the chunk arrives before this is perceptible, and a spinner
@@ -123,6 +124,7 @@ export default function App() {
                 <Route path="replay" element={<ReplayListPage />} />
                 <Route path="rounds" element={<RoundsPage />} />
                 <Route path="squadrons" element={<SquadronsPage />} />
+                <Route path="replay/file" element={<LocalReplayPage />} />
                 <Route path="replay/:rec" element={<ReplayPage />} />
               <Route path="intel" element={<RequireCoalition what="recon intel"><IntelPage /></RequireCoalition>} />
               <Route path="command" element={<RequireCoalition what="command"><GroundWarPage /></RequireCoalition>} />

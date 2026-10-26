@@ -340,7 +340,8 @@ fn cut<R: std::io::BufRead>(rd: &mut acmi::Reader<R>, path: &Path, req: &ClipReq
                         }
                         "Type" => {
                             o.kind = classify(&v);
-                            if o.kind.is_none() {
+                            // The replay keeps shells, flares and the like; a clip has no use for them.
+                            if o.kind.map_or(true, |k| k.is_effect()) {
                                 o.skip = true;
                             }
                         }

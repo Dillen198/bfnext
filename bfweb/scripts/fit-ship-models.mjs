@@ -13,10 +13,11 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import * as THREE from 'three'
 
 const DIR = new URL('../public/models/', import.meta.url)
-const SHIPS = ['CVN', 'Kuznetsov', 'CG-47', 'DDG-51', 'FFG-7', 'Type054']
+// every ship model: Tacview's watercraft meshes and its generic hulls
+const SHIPS = fs.readdirSync(DIR).filter(f => /^(Watercraft\.|Core\.(Watercraft|AircraftCarrier)).*\.glb$/.test(f)).map(f => f.slice(0, -4)).sort()
 
 async function load(name) {
-  const buf = fs.readFileSync(new URL(`${name}.glb`, DIR))
+  const buf = fs.readFileSync(new URL(`${encodeURIComponent(name)}.glb`, DIR))
   const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
   return new Promise((res, rej) => new GLTFLoader().parse(ab, '', g => res(g.scene), rej))
 }

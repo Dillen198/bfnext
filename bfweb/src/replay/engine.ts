@@ -1,31 +1,78 @@
-// The replay engine: owns the MapLibre map, the playback clock, the 2D
-// layers, the 3D layer and the label overlay. React only renders controls
-// and reads a throttled snapshot (`onUi`); nothing here re-renders React per
-// frame.
+// The replay engine: owns the playback clock, the MapLibre basemap (2D), the
+// screen overlay and the 3D theatre. React only renders controls and reads a
+// throttled snapshot (`onUi`); nothing here re-renders React per frame.
+//
+// It plays any `TrackSource` -- a server recording streamed in chunks or a
+// local .acmi read whole in the browser -- the way Tacview does: every object
+// in the picture, labelled, with trails, lock lines, radar sweeps, threat
+// rings and the bullseye, from a top-down map or any 3D camera.
 
-import maplibregl, { type GeoJSONSource, type Map as MLMap, type StyleSpecification } from 'maplibre-gl'
+import maplibregl, { type Map as MLMap, type StyleSpecification } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import {
-  type Kind, type State, type TrackStore,
-  isAir, isWeapon, sideHex, M_TO_FT,
+  type Kind, type State, type TrackSource,
+  isAir, isWeapon, isEffect, isSurface, distM, bearingDeg,
 } from './data'
-import { Theater, type Cam3D } from './theater'
+import { Theater, type Cam3D, type TheaterFrame } from './theater'
 import { gAt, iasOf, machOf, nearest, velAt } from './analysis'
 import type { HudData } from './hud'
+import { Overlay, SIDE_COLOR, sideKey, type Item, type Polyline, type Ring, type Text2D, type Wedge } from './overlay'
+import { threatOf } from './threats'
+import { type Units, fmtDist, labelAlt, labelSpeed } from './units'
+import { airfields, type Airfield } from './dcs/theatre'
+import { shortNameOf } from '../../../shared/models/catalog'
 
 export type ViewMode = '2d' | '3d'
-/** follow = keep it centred (2D) / orbit it (3D); chase, cockpit and padlock are 3D only. */
+/** follow = keep it centred (2D) / orbit it (3D); the rest are 3D only. */
 export type CamMode = Cam3D
-export type Basemap = 'dark' | 'sat'
+/** dark and satellite rasters, or the F10-style topographic map */
+export type Basemap = 'dark' | 'sat' | 'topo'
 
 export interface ViewOpts {
-  ground: boolean
-  weapons: boolean
   labels: boolean
-  /** Trail length behind each aircraft, ms (0 = off). */
+  weapons: boolean
+  ground: boolean
+  /** flares, chaff, shells, explosions */
+  effects: boolean
+  /** trail length behind each aircraft, ms (0 = off) */
   trail: number
+  /** 3D: Tacview's smoke ribbons (wing-oriented bands) instead of thin trails */
+  ribbons: boolean
+  /** lines from each shooter to what its radar has locked */
+  locks: boolean
+  /** radar sweeps, when the recording has them */
+  radar: boolean
+  /** engagement rings round air defences */
+  threats: boolean
+  /** range rings round each coalition's bullseye */
+  bullseye: boolean
   /** the HUD over the cockpit camera */
   hud: boolean
+  /** which coalitions are drawn (the followed object always is) */
+  sides: { blue: boolean; red: boolean; other: boolean }
+  /** where each aircraft will be in 20 s at its present velocity */
+  vectors: boolean
+  /** 3D: a line from each aircraft down to the ground */
+  verticals: boolean
+  /** map: latitude/longitude grid */
+  grid: boolean
+  /** objects drawn this much bigger than life-size-or-minimum (Tacview's exaggeration) */
+  scale: number
+  units: Units
+  /** label lines: name only, + type/level/speed, + Mach/AOA */
+  labelDetail: 'min' | 'std' | 'full'
+  /** airfields and runways on the map */
+  airfields: boolean
+}
+
+/** A point-to-point measurement on the map. */
+export interface RulerUi { a: [number, number]; b: [number, number] | null; dist: number; brg: number }
+
+export const DEFAULT_OPTS: ViewOpts = {
+  labels: true, weapons: true, ground: true, effects: true, trail: 60_000, ribbons: true,
+  locks: true, radar: true, threats: false, bullseye: true, hud: true,
+  sides: { blue: true, red: true, other: true }, vectors: false, verticals: false, grid: false,
+  scale: 1, units: 'imperial', labelDetail: 'std', airfields: true,
 }
 
 export interface EngineUi {
@@ -41,18 +88,42 @@ export interface EngineUi {
   /** second object for the BRAA tool, and its state */
   measure: number | null
   measureState: State | null
-  /** the next map click picks the measured object */
+  /** the next click picks the measured object */
   measuring: boolean
   opts: ViewOpts
+  /** objects in the picture now, by coalition */
+  counts: { blue: number; red: number; other: number }
+  /** the ruler tool is armed (clicks place its ends) */
+  ruling: boolean
+  ruler: RulerUi | null
   error: string | null
 }
 
-const FOCUS_HEX = '#b6f04a'
-const COLORS: Record<string, string> = { blue: '#4a8fd4', red: '#d24b4b', other: '#c9a227', focus: FOCUS_HEX }
-const colorKey = (c?: string | null) => (c === 'Blue' ? 'blue' : c === 'Red' ? 'red' : 'other')
+const BULLSEYE_NM = [20, 40, 60, 80, 100]
+const NM = 1852
+const DEG = Math.PI / 180
+const LOCK_KEYS = ['LockedTarget', 'LockedTarget2', 'LockedTarget3', 'LockedTarget4', 'LockedTarget5', 'LockedTarget6', 'LockedTarget7', 'LockedTarget8', 'LockedTarget9']
 
-/** Kinds whose icon turns with the heading. */
-const ROTATES: Partial<Record<Kind, true>> = { air: true, helo: true, missile: true, bomb: true, rocket: true, torpedo: true, ship: true, carrier: true, vehicle: true, armor: true }
+/** The F10-style map: OpenFreeMap's vector tiles (OpenStreetMap; free, no
+ *  key) with hillshade from the same elevation tiles as the 3D terrain. */
+const TOPO_STYLE = 'https://tiles.openfreemap.org/styles/liberty'
+
+function withHillshade(next: StyleSpecification): StyleSpecification {
+  const layers = [...next.layers]
+  const at = layers.findIndex(l => l.type === 'symbol')
+  layers.splice(at < 0 ? layers.length : at, 0, {
+    id: 'rp-hills', type: 'hillshade', source: 'rp-dem',
+    paint: { 'hillshade-exaggeration': 0.55, 'hillshade-shadow-color': '#3b3424', 'hillshade-highlight-color': '#fffdf5' },
+  })
+  return {
+    ...next,
+    sources: {
+      ...next.sources,
+      'rp-dem': { type: 'raster-dem', tiles: ['https://tiles.mapterhorn.com/{z}/{x}/{y}.webp'], tileSize: 512, encoding: 'terrarium', maxzoom: 12, attribution: '© Mapterhorn' },
+    },
+    layers,
+  }
+}
 
 function style(): StyleSpecification {
   return {
@@ -80,138 +151,21 @@ function style(): StyleSpecification {
   }
 }
 
-// ── icons ──────────────────────────────────────────────────────────────
-
-type Shape = 'jet' | 'helo' | 'missile' | 'bomb' | 'vehicle' | 'armor' | 'sam' | 'infantry' | 'static' | 'ship' | 'carrier'
-const SHAPE: Record<Kind, Shape> = {
-  air: 'jet', helo: 'helo', missile: 'missile', bomb: 'bomb', rocket: 'missile', torpedo: 'missile',
-  sam: 'sam', armor: 'armor', vehicle: 'vehicle', infantry: 'infantry', static: 'static', ship: 'ship', carrier: 'carrier',
-}
-
-function drawShape(ctx: CanvasRenderingContext2D, shape: Shape, s: number) {
-  const c = s / 2
-  ctx.beginPath()
-  switch (shape) {
-    case 'jet':
-      ctx.moveTo(c, s * 0.04)
-      ctx.lineTo(c + s * 0.07, s * 0.36)
-      ctx.lineTo(c + s * 0.44, s * 0.6)
-      ctx.lineTo(c + s * 0.44, s * 0.68)
-      ctx.lineTo(c + s * 0.08, s * 0.6)
-      ctx.lineTo(c + s * 0.06, s * 0.8)
-      ctx.lineTo(c + s * 0.2, s * 0.92)
-      ctx.lineTo(c - s * 0.2, s * 0.92)
-      ctx.lineTo(c - s * 0.06, s * 0.8)
-      ctx.lineTo(c - s * 0.08, s * 0.6)
-      ctx.lineTo(c - s * 0.44, s * 0.68)
-      ctx.lineTo(c - s * 0.44, s * 0.6)
-      ctx.lineTo(c - s * 0.07, s * 0.36)
-      ctx.closePath()
-      break
-    case 'helo':
-      ctx.ellipse(c, s * 0.42, s * 0.14, s * 0.22, 0, 0, Math.PI * 2)
-      ctx.rect(c - s * 0.04, s * 0.6, s * 0.08, s * 0.32)
-      ctx.rect(c - s * 0.42, s * 0.4, s * 0.84, s * 0.05)
-      ctx.rect(c - s * 0.025, s * 0.02, s * 0.05, s * 0.8)
-      break
-    case 'missile':
-      ctx.moveTo(c, s * 0.1)
-      ctx.lineTo(c + s * 0.06, s * 0.3)
-      ctx.lineTo(c + s * 0.06, s * 0.7)
-      ctx.lineTo(c + s * 0.18, s * 0.9)
-      ctx.lineTo(c - s * 0.18, s * 0.9)
-      ctx.lineTo(c - s * 0.06, s * 0.7)
-      ctx.lineTo(c - s * 0.06, s * 0.3)
-      ctx.closePath()
-      break
-    case 'bomb':
-      ctx.ellipse(c, c, s * 0.12, s * 0.26, 0, 0, Math.PI * 2)
-      break
-    case 'vehicle':
-      ctx.rect(s * 0.3, s * 0.22, s * 0.4, s * 0.56)
-      break
-    case 'armor':
-      ctx.rect(s * 0.26, s * 0.2, s * 0.48, s * 0.6)
-      ctx.moveTo(c, s * 0.02)
-      ctx.lineTo(c, s * 0.3)
-      break
-    case 'sam':
-      ctx.moveTo(c, s * 0.12)
-      ctx.lineTo(s * 0.86, s * 0.82)
-      ctx.lineTo(s * 0.14, s * 0.82)
-      ctx.closePath()
-      break
-    case 'infantry':
-      ctx.arc(c, c, s * 0.14, 0, Math.PI * 2)
-      break
-    case 'static':
-      ctx.rect(s * 0.34, s * 0.34, s * 0.32, s * 0.32)
-      break
-    case 'ship':
-      ctx.moveTo(c, s * 0.04)
-      ctx.lineTo(c + s * 0.14, s * 0.3)
-      ctx.lineTo(c + s * 0.14, s * 0.94)
-      ctx.lineTo(c - s * 0.14, s * 0.94)
-      ctx.lineTo(c - s * 0.14, s * 0.3)
-      ctx.closePath()
-      break
-    case 'carrier':
-      ctx.moveTo(c - s * 0.1, s * 0.02)
-      ctx.lineTo(c + s * 0.16, s * 0.02)
-      ctx.lineTo(c + s * 0.16, s * 0.98)
-      ctx.lineTo(c - s * 0.16, s * 0.98)
-      ctx.closePath()
-      break
-  }
-}
-
-function addIcons(map: MLMap) {
-  const px = 44 // 22 css px at pixelRatio 2
-  for (const shape of Object.keys({ jet: 1, helo: 1, missile: 1, bomb: 1, vehicle: 1, armor: 1, sam: 1, infantry: 1, static: 1, ship: 1, carrier: 1 }) as Shape[]) {
-    for (const [ck, hex] of Object.entries(COLORS)) {
-      const cv = document.createElement('canvas')
-      cv.width = cv.height = px
-      const ctx = cv.getContext('2d')!
-      const small = shape === 'missile' || shape === 'bomb' || shape === 'infantry' || shape === 'static'
-      const s = small ? px * 0.7 : px
-      ctx.translate((px - s) / 2, (px - s) / 2)
-      drawShape(ctx, shape, s)
-      ctx.lineJoin = 'round'
-      ctx.lineWidth = 4
-      ctx.strokeStyle = 'rgba(0,0,0,0.75)'
-      ctx.stroke()
-      const hollow = shape === 'vehicle' || shape === 'sam'
-      if (hollow) {
-        ctx.lineWidth = 2.5
-        ctx.strokeStyle = hex
-        ctx.stroke()
-      } else {
-        ctx.fillStyle = hex
-        ctx.fill()
-      }
-      const img = ctx.getImageData(0, 0, px, px)
-      const name = `rp-${shape}-${ck}`
-      if (!map.hasImage(name)) map.addImage(name, { width: px, height: px, data: new Uint8Array(img.data.buffer) }, { pixelRatio: 2 })
-    }
-  }
-}
-
-// ── engine ─────────────────────────────────────────────────────────────
-
+/** One object in the picture this frame, before projection. */
 interface Drawn {
   idx: number
   kind: Kind
-  color: string
-  ck: string
+  side: ReturnType<typeof sideKey>
   st: State
   focus: boolean
+  target: boolean
 }
 
-const EMPTY: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] }
+const shortType = (n?: string | null) => (n ?? '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim()
 
 export class ReplayEngine {
   readonly map: MLMap
-  readonly store: TrackStore
+  readonly store: TrackSource
   readonly w0: number
   readonly w1: number
   t: number
@@ -223,53 +177,85 @@ export class ReplayEngine {
   focus: number | null = null
   measure: number | null = null
   measuring = false
-  opts: ViewOpts = { ground: true, weapons: true, labels: true, trail: 60_000, hud: true }
+  opts: ViewOpts = { ...DEFAULT_OPTS }
   onUi: ((ui: EngineUi) => void) | null = null
 
   /** The 3D view, made the first time someone switches to it. */
   private theater: Theater | null = null
+  private overlay: Overlay
   private mapEl: HTMLDivElement
-  private labelsEl: HTMLDivElement
-  private labelPool: HTMLDivElement[] = []
+  private root: HTMLElement
   private raf = 0
   private lastFrame = 0
   private lastUi = 0
-  private lastSlow = -Infinity
-  private slowDirty = true
   private buffering = false
   private ready = false
   private centred = false
   private destroyed = false
+  /** what was drawn last, in screen pixels, for picking */
+  private hits: { idx: number; x: number; y: number; pri: number }[] = []
+  private counts = { blue: 0, red: 0, other: 0 }
+  private scratch = new Float32Array(4096)
+  /** ruler: armed, its ends, and the live end under the cursor */
+  ruling = false
+  private rulerA: [number, number] | null = null
+  private rulerB: [number, number] | null = null
+  private cursor: [number, number] | null = null
+  /** where the cursor is on the map, for the coordinate readout */
+  onCursor: ((lonlat: [number, number] | null) => void) | null = null
+  private fields: Airfield[] = []
+  private topo = false
+  /** the recording's in-game clock at t = 0 (unix ms), for the sun */
+  private sunBase: number | null
 
-  constructor(container: HTMLDivElement, labelsEl: HTMLDivElement, store: TrackStore, w0: number, w1: number, t: number) {
+  constructor(container: HTMLDivElement, store: TrackSource, w0: number, w1: number, t: number) {
     this.store = store
     this.w0 = w0
     this.w1 = w1
     this.t = Math.min(Math.max(t, w0), w1)
-    this.labelsEl = labelsEl
     this.mapEl = container
+    this.root = container.parentElement ?? container
+    const ref = store.meta.reference_time ? Date.parse(store.meta.reference_time) : NaN
+    this.sunBase = Number.isFinite(ref) ? ref + (store.meta.first_frame_s ?? 0) * 1000 : store.meta.start_ms || null
     this.map = new maplibregl.Map({
       container,
       style: style(),
       center: [42, 42],
       zoom: 6,
-      maxPitch: 85,
+      maxPitch: 0,
+      dragRotate: false,
+      pitchWithRotate: false,
       attributionControl: { compact: true },
-      // the 3D layer reads the GL canvas back for nothing, but a resize
-      // without this flickers on some drivers
-      preserveDrawingBuffer: false,
     })
-    this.map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right')
+    this.map.touchZoomRotate.disableRotation()
     this.map.addControl(new maplibregl.ScaleControl({ unit: 'nautical' }), 'bottom-left')
-    this.map.on('load', () => this.onLoad())
+    this.overlay = new Overlay(this.root)
+    // style.load, not load: load waits for every basemap tile, and a slow tile
+    // server would hold the whole viewer up.
+    this.map.once('style.load', () => {
+      this.ready = true
+      this.applyMode()
+      this.applyBasemap()
+      this.kick()
+    })
     this.map.on('dragstart', e => {
       if ((e as { originalEvent?: unknown }).originalEvent && this.cam !== 'free') this.setCam('free')
     })
-    // While paused the map still moves under the user; 'render' (not 'move')
-    // so 3D labels use the positions the layer has just projected.
-    this.map.on('render', () => { if (!this.playing && this.mode === '2d') this.drawLabels() })
-    this.map.on('click', e => this.pick(e.point.x, e.point.y, (e.originalEvent as MouseEvent).shiftKey))
-    store.onChange = () => { this.slowDirty = true; this.kick() }
+    // The overlay is drawn when the map draws, so the two never drift apart
+    // -- whether the clock moved it or the user is panning.
+    this.map.on('render', () => { if (this.mode === '2d') this.paint2D() })
+    this.map.on('click', e => {
+      if (this.ruling) this.rulerClick([e.lngLat.lng, e.lngLat.lat])
+      else this.pick(e.point.x, e.point.y, (e.originalEvent as MouseEvent).shiftKey)
+    })
+    this.map.on('mousemove', e => {
+      this.cursor = [e.lngLat.lng, e.lngLat.lat]
+      this.onCursor?.(this.cursor)
+      if (this.ruling && this.rulerA && !this.rulerB) { this.map.triggerRepaint(); this.emitUi() }
+    })
+    this.map.on('mouseout', () => { this.cursor = null; this.onCursor?.(null) })
+    store.onChange = () => this.kick()
+    void airfields().then(f => { this.fields = f; this.kick(); if (this.mode === '2d') this.map.triggerRepaint() }).catch(() => {})
   }
 
   destroy() {
@@ -277,53 +263,14 @@ export class ReplayEngine {
     cancelAnimationFrame(this.raf)
     this.store.onChange = null
     this.theater?.destroy()
+    this.overlay.destroy()
     this.map.remove()
-  }
-
-  private onLoad() {
-    const map = this.map
-    addIcons(map)
-    map.addSource('rp-trails', { type: 'geojson', data: EMPTY })
-    map.addSource('rp-slow', { type: 'geojson', data: EMPTY })
-    map.addSource('rp-dyn', { type: 'geojson', data: EMPTY })
-    map.addSource('rp-measure', { type: 'geojson', data: EMPTY })
-    map.addLayer({
-      id: 'rp-trails', type: 'line', source: 'rp-trails',
-      layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: { 'line-color': ['get', 'color'], 'line-opacity': ['get', 'op'], 'line-width': ['get', 'w'] },
-    })
-    map.addLayer({
-      id: 'rp-measure', type: 'line', source: 'rp-measure',
-      paint: { 'line-color': '#ffffff', 'line-width': 1.5, 'line-dasharray': [3, 2], 'line-opacity': 0.9 },
-    })
-    const symbol = (id: string, source: string) => map.addLayer({
-      id, type: 'symbol', source,
-      layout: {
-        'icon-image': ['get', 'icon'],
-        'icon-rotate': ['get', 'rot'],
-        'icon-rotation-alignment': 'map',
-        'icon-allow-overlap': true,
-        'icon-ignore-placement': true,
-        'symbol-sort-key': ['get', 'z'],
-      },
-    })
-    symbol('rp-slow', 'rp-slow')
-    map.addLayer({
-      id: 'rp-focus', type: 'circle', source: 'rp-dyn', filter: ['==', ['get', 'focus'], 1],
-      paint: { 'circle-radius': 17, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': FOCUS_HEX, 'circle-stroke-width': 1.5, 'circle-stroke-opacity': 0.9 },
-    })
-    symbol('rp-dyn', 'rp-dyn')
-    this.ready = true
-    this.applyMode()
-    this.applyBasemap()
-    this.kick()
   }
 
   // ── controls ──
 
   setTime(t: number) {
     this.t = Math.min(Math.max(t, this.w0), this.w1)
-    this.slowDirty = true
     this.changed()
   }
   play() {
@@ -344,7 +291,6 @@ export class ReplayEngine {
     } else if (this.cam !== 'free') {
       this.cam = 'free'
     }
-    this.slowDirty = true
     this.changed()
   }
   /** Pick the object the BRAA tool measures to (null clears it). */
@@ -355,7 +301,7 @@ export class ReplayEngine {
     if (idx != null) this.store.wholeTrack(idx)
     this.changed()
   }
-  /** The next click on the map picks the measured object. */
+  /** The next click picks the measured object. */
   startMeasuring(on = true) {
     this.measuring = on
     this.changed()
@@ -363,8 +309,8 @@ export class ReplayEngine {
   setCam(c: CamMode) {
     this.cam = this.focus == null ? 'free' : c
     if (this.cam === 'padlock' && this.measure == null) this.cam = 'chase'
+    if (this.mode === '2d' && this.cam !== 'free') this.cam = 'follow'
     this.map.scrollZoom.enable(this.cam === 'free' ? undefined : { around: 'center' })
-    if (this.cam === 'free') this.map.dragPan.enable()
     this.changed()
   }
   setMode(m: ViewMode) {
@@ -380,12 +326,53 @@ export class ReplayEngine {
   }
   setOpts(o: Partial<ViewOpts>) {
     this.opts = { ...this.opts, ...o }
-    this.slowDirty = true
     this.changed()
+  }
+  /** Arm or disarm the ruler; disarming clears it. */
+  setRuling(on: boolean) {
+    this.ruling = on
+    if (!on) { this.rulerA = null; this.rulerB = null }
+    else if (this.mode === '3d') this.setMode('2d')
+    this.map.getCanvas().style.cursor = on ? 'crosshair' : ''
+    this.changed()
+  }
+  private rulerClick(ll: [number, number]) {
+    if (!this.rulerA || this.rulerB) { this.rulerA = ll; this.rulerB = null }
+    else this.rulerB = ll
+    this.changed()
+  }
+  private rulerUi(): RulerUi | null {
+    const a = this.rulerA
+    const b = this.rulerB ?? (this.ruling ? this.cursor : null)
+    if (!a) return null
+    if (!b) return { a, b: null, dist: 0, brg: 0 }
+    return { a, b, dist: distM(a[0], a[1], b[0], b[1]), brg: bearingDeg(a[0], a[1], b[0], b[1]) }
+  }
+
+  /** Jump to the next (1) or previous (-1) event worth seeing: kills,
+   *  shots, losses and bookmarks -- the followed object's own when there is
+   *  one. Lands a few seconds before it. */
+  jumpEvent(dir: 1 | -1) {
+    const lead = 5_000
+    const f = this.focus
+    const evs = this.store.meta.events.filter(ev =>
+      (ev.k === 'kill' || ev.k === 'destroyed' || ev.k === 'lost' || ev.k === 'fired' || ev.k === 'bookmark') &&
+      (f == null || ev.o === f || ev.by === f || ev.tg === f || ev.k === 'bookmark'))
+    const now = this.t + lead
+    const next = dir > 0
+      ? evs.find(ev => ev.t > now + 500)
+      : [...evs].reverse().find(ev => ev.t < now - 1_500)
+    if (next) this.setTime(next.t - lead)
+  }
+
+  /** Step one sample-ish forward or back, paused. */
+  step(ms: number) {
+    this.pause()
+    this.setTime(this.t + ms)
   }
 
   /** Screen space the panels cover, so following keeps the aircraft in
-   *  the visible part of the map rather than under the side panel. */
+   *  the visible part of the map rather than under a panel. */
   setPadding(p: { top: number; right: number; bottom: number; left: number }) {
     this.map.setPadding(p)
     this.kick()
@@ -393,17 +380,30 @@ export class ReplayEngine {
 
   private applyBasemap() {
     const map = this.map
+    const topo = this.basemap === 'topo'
+    if (topo !== this.topo) {
+      this.topo = topo
+      if (topo) map.setStyle(TOPO_STYLE, { transformStyle: (_prev, next) => withHillshade(next) })
+      else {
+        map.setStyle(style())
+        map.once('style.load', () => this.applyBasemap())
+      }
+      this.root.classList.toggle('rp-light', topo)
+      return
+    }
+    if (topo || !map.getLayer('dark')) return
     map.setLayoutProperty('dark', 'visibility', this.basemap === 'dark' ? 'visible' : 'none')
     map.setLayoutProperty('sat', 'visibility', this.basemap === 'sat' ? 'visible' : 'none')
   }
 
   private applyMode() {
     const three = this.mode === '3d'
-    if (three && !this.theater && this.mapEl.parentElement) {
-      const th = new Theater(this.mapEl.parentElement)
-      // The theatre sits under the panels and the label overlay.
-      this.mapEl.parentElement.insertBefore(th.el, this.mapEl.nextSibling)
+    if (three && !this.theater) {
+      const th = new Theater(this.root)
+      // The theatre sits over the map, under the overlay and the panels.
+      this.root.insertBefore(th.el, this.overlay.el)
       th.onChange = () => this.kick()
+      th.onUserMove = () => { if (this.cam !== 'free' && this.cam !== 'follow') this.setCam('follow') }
       th.el.addEventListener('click', ev => {
         const r = th.el.getBoundingClientRect()
         this.pick(ev.clientX - r.left, ev.clientY - r.top, ev.shiftKey)
@@ -413,7 +413,6 @@ export class ReplayEngine {
     if (this.theater) this.theater.el.style.display = three ? '' : 'none'
     this.mapEl.style.visibility = three ? 'hidden' : ''
     if (!three) this.map.resize()
-    this.slowDirty = true
   }
 
   private centreOn(idx: number) {
@@ -455,7 +454,13 @@ export class ReplayEngine {
     }
     if (this.ready) {
       if (!this.centred) this.firstCentre()
-      this.draw(now)
+      if (this.mode === '2d') {
+        // Move the camera, then let the map's own render draw the overlay.
+        this.camera2D()
+        this.map.triggerRepaint()
+      } else {
+        this.paint3D()
+      }
     }
     if (now - this.lastUi > 100 || !this.playing) {
       this.lastUi = now
@@ -480,12 +485,15 @@ export class ReplayEngine {
       measureState: this.measure != null ? this.store.state(this.measure, this.t) : null,
       measuring: this.measuring,
       opts: this.opts,
+      counts: { ...this.counts },
+      ruling: this.ruling,
+      ruler: this.rulerUi(),
       error: this.store.error,
     })
   }
 
   /** Frame the action the first time there is data: the focus aircraft,
-   *  or the box around every aircraft in the air. */
+   *  or the box round every aircraft in the air. */
   private firstCentre() {
     if (this.focus != null) {
       this.centreOn(this.focus)
@@ -495,17 +503,14 @@ export class ReplayEngine {
     if (!ids.length) return
     const b = new maplibregl.LngLatBounds()
     let any = false
-    for (const idx of ids) {
-      const o = this.store.meta.objects[idx]
-      if (!isAir(o.k)) continue
-      const st = this.store.state(idx, this.t)
-      if (st) { b.extend([st.lon, st.lat]); any = true }
-    }
-    if (!any) {
-      for (const idx of ids.slice(0, 500)) {
+    for (const pass of [true, false]) {
+      for (const idx of ids) {
+        const o = this.store.meta.objects[idx]
+        if (!o || (pass && !isAir(o.k)) || isEffect(o.k) || o.k === 'bullseye') continue
         const st = this.store.state(idx, this.t)
         if (st) { b.extend([st.lon, st.lat]); any = true }
       }
+      if (any) break
     }
     if (any) {
       this.map.fitBounds(b, { padding: 80, maxZoom: 10, duration: 0 })
@@ -513,104 +518,379 @@ export class ReplayEngine {
     }
   }
 
-  private collect(): { dyn: Drawn[]; slow: Drawn[] } {
+  /** Everything in the picture now, filtered by the layer toggles. */
+  private collect(): Drawn[] {
     const t = this.t
     const { objects } = this.store.meta
-    const dyn: Drawn[] = []
-    const slow: Drawn[] = []
+    const out: Drawn[] = []
+    const counts = { blue: 0, red: 0, other: 0 }
     for (const idx of this.store.present(t)) {
       const o = objects[idx]
-      if (t < o.t0 || t > o.t1) continue
-      const air = isAir(o.k), weapon = isWeapon(o.k)
-      if (weapon && !this.opts.weapons) continue
-      if (!air && !weapon && !this.opts.ground) continue
+      if (!o || t < o.t0 || t > o.t1) continue
+      const focus = idx === this.focus, target = idx === this.measure
+      if (!focus && !target) {
+        if (isWeapon(o.k) && !this.opts.weapons) continue
+        if (isEffect(o.k) && !this.opts.effects) continue
+        if (isSurface(o.k) && !this.opts.ground) continue
+        if (o.k === 'bullseye' && !this.opts.bullseye) continue
+        if (!this.opts.sides[sideKey(o.c)]) continue
+      }
       const st = this.store.state(idx, t)
       if (!st) continue
-      const focus = idx === this.focus
-      const ck = focus ? 'focus' : colorKey(o.c)
-      const d: Drawn = { idx, kind: o.k, color: sideHex(o.c), ck, st, focus }
-      ;(air || weapon ? dyn : slow).push(d)
+      const side = sideKey(o.c)
+      if (isAir(o.k)) counts[side]++
+      out.push({ idx, kind: o.k, side, st, focus, target })
     }
-    if (this.measure != null && this.measure !== this.focus && !dyn.some(d => d.idx === this.measure)) {
-      const o = objects[this.measure]
-      const st = this.store.state(this.measure, t)
-      if (o && st) (isAir(o.k) || isWeapon(o.k) ? dyn : slow).push({ idx: this.measure, kind: o.k, color: sideHex(o.c), ck: colorKey(o.c), st, focus: false })
-    }
-    // The focus always draws, even if its kind is filtered out.
-    if (this.focus != null && !dyn.some(d => d.focus)) {
-      const o = objects[this.focus]
-      const st = this.store.state(this.focus, t)
-      if (o && st) dyn.push({ idx: this.focus, kind: o.k, color: sideHex(o.c), ck: 'focus', st, focus: true })
-    }
-    return { dyn, slow }
+    this.counts = counts
+    return out
   }
 
-  private trails(dyn: Drawn[]): { pts: [number, number, number][]; color: string; op: number; w: number }[] {
-    const out = []
-    const t = this.t
-    for (const d of dyn) {
-      if (d.focus) {
-        // Whole flight so far.
-        const o = this.store.meta.objects[d.idx]
-        out.push({ pts: this.store.trail(d.idx, t, t - o.t0, 1000), color: FOCUS_HEX, op: 0.95, w: 2.2 })
-      } else if (isAir(d.kind) && this.opts.trail > 0) {
-        out.push({ pts: this.store.trail(d.idx, t, this.opts.trail, 1000), color: d.color, op: 0.55, w: 1.4 })
-      } else if (isWeapon(d.kind)) {
-        out.push({ pts: this.store.trail(d.idx, t, 20_000), color: '#e9e4d0', op: 0.7, w: 1.2 })
+  /** Label text, Tacview-style: who, then type / flight level / speed. */
+  private labelOf(d: Drawn): [string, string, number] {
+    const o = this.store.meta.objects[d.idx]
+    const type = shortNameOf(o.n) || shortType(o.n) || d.kind
+    if (isAir(d.kind)) {
+      const who = (o.p ?? o.cs ?? '').trim()
+      const pri = 500 + (who ? 400 : 0) + d.st.alt / 100
+      if (this.opts.labelDetail === 'min') return [who || type, '', pri]
+      const u = this.opts.units
+      const bits = [labelAlt(d.st.alt, u), labelSpeed(iasOf(d.st), u)]
+      if (this.opts.labelDetail === 'full') {
+        bits.push(`M${machOf(d.st).toFixed(2)}`)
+        if (d.st.aoa != null) bits.push(`α${d.st.aoa.toFixed(0)}`)
+        const g = d.st.ch?.VerticalGForce
+        if (g != null) bits.push(`${g.toFixed(1)}G`)
       }
+      return [who || type, who ? `${type}  ${bits.join('  ')}` : bits.join('  '), pri]
+    }
+    if (isWeapon(d.kind)) return [type, '', 200]
+    if (d.focus || d.target) return [type, o.g ?? '', 0]
+    return ['', '', 0]
+  }
+
+  private toItem(d: Drawn, x: number, y: number): Item {
+    const [line1, line2, pri] = this.labelOf(d)
+    const kindPri = isAir(d.kind) ? 3 : isWeapon(d.kind) ? 2 : isEffect(d.kind) ? 0 : 1
+    return {
+      idx: d.idx, kind: d.kind, side: d.side, st: d.st, x, y, focus: d.focus, target: d.target,
+      line1, line2,
+      pri: d.focus ? 1e9 : d.target ? 1e8 : pri + kindPri * 1000,
+    }
+  }
+
+  /** Trail points, newest last: the whole flight so far for the focus,
+   *  `opts.trail` for other aircraft, 20 s of smoke for weapons. */
+  private trailSpec(d: Drawn): { len: number; step: number; color: string; alpha: number; width: number } | null {
+    const o = this.store.meta.objects[d.idx]
+    if (d.focus) return { len: this.t - o.t0, step: 500, color: SIDE_COLOR.focus, alpha: 0.95, width: 2.2 }
+    if (isAir(d.kind) && this.opts.trail > 0) return { len: this.opts.trail, step: 500, color: SIDE_COLOR[d.side], alpha: 0.6, width: 1.4 }
+    if (isWeapon(d.kind)) return { len: 20_000, step: 0, color: '#eae6d6', alpha: 0.75, width: 1.2 }
+    if (d.kind === 'flare' && this.opts.effects) return { len: 2_500, step: 0, color: '#fff3d0', alpha: 0.55, width: 1 }
+    return null
+  }
+
+  /** Locked targets of a drawn object, as meta indices. */
+  private locksOf(d: Drawn): number[] {
+    const ch = d.st.ch
+    if (!ch) return []
+    const out: number[] = []
+    for (const k of LOCK_KEYS) {
+      const v = ch[k]
+      if (v != null && v >= 0) out.push(Math.round(v))
     }
     return out
   }
 
-  private draw(now: number) {
-    const { dyn, slow } = this.collect()
-    const trails = this.trails(dyn)
+  // ── 2D ──
+
+  private camera2D() {
+    if (this.focus == null || this.cam === 'free') return
+    const st = this.store.state(this.focus, this.t)
+    if (st) this.map.jumpTo({ center: [st.lon, st.lat] })
+  }
+
+  private paint2D() {
+    if (!this.ready || this.destroyed) return
+    const map = this.map
+    const drawn = this.collect()
+    const items: Item[] = []
+    const byIdx = new Map<number, Item>()
+    for (const d of drawn) {
+      const p = map.project([d.st.lon, d.st.lat])
+      const it = this.toItem(d, p.x, p.y)
+      items.push(it)
+      byIdx.set(d.idx, it)
+    }
+    items.sort((a, b) => a.pri - b.pri)
+
+    const zoom = map.getZoom()
+    const centreLat = map.getCenter().lat
+    const pxPerM = (lat: number) => (512 * 2 ** zoom) / (40_075_016.686 * Math.cos(lat * DEG))
+
+    const lines: Polyline[] = []
+    const texts: Text2D[] = []
+    if (this.opts.airfields) this.runways(lines, texts, zoom, pxPerM)
+    let used = 0
+    const take = (n: number): Float32Array => {
+      if (used + n * 2 > this.scratch.length) {
+        this.scratch = new Float32Array(Math.max(this.scratch.length * 2, used + n * 2))
+        used = 0 // the old buffer stays with the lines made from it
+      }
+      const a = this.scratch.subarray(used, used + n * 2)
+      used += n * 2
+      return a
+    }
+    for (const d of drawn) {
+      const spec = this.trailSpec(d)
+      if (!spec || spec.len <= 0) continue
+      const pts = this.store.trail(d.idx, this.t, spec.len, spec.step)
+      if (pts.length < 2) continue
+      const a = take(pts.length)
+      for (let i = 0; i < pts.length; i++) {
+        const p = map.project([pts[i][0], pts[i][1]])
+        a[i * 2] = p.x; a[i * 2 + 1] = p.y
+      }
+      lines.push({ pts: a, n: pts.length, color: spec.color, alpha: spec.alpha, width: spec.width })
+    }
+    // Lock lines.
+    if (this.opts.locks) {
+      for (const d of drawn) {
+        for (const tg of this.locksOf(d)) {
+          const a = byIdx.get(d.idx), b = byIdx.get(tg)
+          if (!a || !b) continue
+          lines.push({ pts: new Float32Array([a.x, a.y, b.x, b.y]), n: 2, color: SIDE_COLOR[d.side], alpha: 0.85, width: 1.2, dash: [5, 4] })
+        }
+      }
+    }
+    // BRAA line to the measured object.
+    if (this.focus != null && this.measure != null) {
+      const a = byIdx.get(this.focus), b = byIdx.get(this.measure)
+      if (a && b) lines.push({ pts: new Float32Array([a.x, a.y, b.x, b.y]), n: 2, color: '#ffffff', alpha: 0.9, width: 1.5, dash: [4, 3] })
+    }
+
+    const rings: Ring[] = []
+    const wedges: Wedge[] = []
+    for (const d of drawn) {
+      const it = byIdx.get(d.idx)!
+      const o = this.store.meta.objects[d.idx]
+      if (this.opts.threats) {
+        const th = threatOf(d.kind, o.n)
+        if (th) rings.push({ x: it.x, y: it.y, r: th.range * pxPerM(d.st.lat), color: SIDE_COLOR[d.side], alpha: th.short ? 0.35 : 0.6, label: th.label, dash: th.short })
+      }
+      if (d.kind === 'bullseye' && this.opts.bullseye) {
+        for (const nm of BULLSEYE_NM) {
+          rings.push({ x: it.x, y: it.y, r: nm * NM * pxPerM(d.st.lat), color: SIDE_COLOR[d.side], alpha: 0.32, label: nm === BULLSEYE_NM[0] ? 'BULLSEYE' : `${nm}` })
+        }
+      }
+      if (this.opts.radar) {
+        const r = this.radarOf(d)
+        if (r) {
+          const a = (r.az - 90) * DEG
+          wedges.push({ x: it.x, y: it.y, r: r.range * pxPerM(centreLat), from: a - (r.hbw / 2) * DEG, to: a + (r.hbw / 2) * DEG, color: SIDE_COLOR[d.side] })
+        }
+      }
+    }
+
+    // Velocity vectors: 20 s ahead at the present ground track and speed.
+    if (this.opts.vectors) {
+      for (const d of drawn) {
+        if (!isAir(d.kind) && !isWeapon(d.kind)) continue
+        const it = byIdx.get(d.idx)!
+        const [lon, lat] = this.ahead(d.st, 20)
+        const q = map.project([lon, lat])
+        lines.push({ pts: new Float32Array([it.x, it.y, q.x, q.y]), n: 2, color: d.focus ? SIDE_COLOR.focus : SIDE_COLOR[d.side], alpha: 0.7, width: 1 })
+      }
+    }
+    if (this.opts.grid) this.grid(lines, texts)
+    const r = this.rulerUi()
+    if (r) {
+      const a = map.project(r.a)
+      if (r.b) {
+        const b = map.project(r.b)
+        lines.push({ pts: new Float32Array([a.x, a.y, b.x, b.y]), n: 2, color: '#ffe680', alpha: 1, width: 1.6 })
+        texts.push({ x: (a.x + b.x) / 2 + 8, y: (a.y + b.y) / 2 - 8, text: `${fmtDist(r.dist, this.opts.units)}  ${String(Math.round(r.brg) % 360).padStart(3, '0')}°`, color: '#ffe680', box: true })
+      }
+      rings.push({ x: a.x, y: a.y, r: 4, color: '#ffe680', alpha: 1 })
+    }
+
+    const ov = this.overlay
+    ov.begin()
+    ov.draw2D({ items, lines, rings, wedges, texts, labels: this.opts.labels, scale: this.opts.scale })
+    this.hits = items.filter(it => !isEffect(it.kind)).map(it => ({ idx: it.idx, x: it.x, y: it.y, pri: it.pri }))
+  }
+
+  /** Where a moving object will be `s` seconds on, [lon, lat, alt]. */
+  private ahead(st: State, s: number): [number, number, number] {
+    const d = st.gs * s
+    const h = st.hdg * DEG
+    return [
+      st.lon + (Math.sin(h) * d) / (111_320 * Math.cos(st.lat * DEG)),
+      st.lat + (Math.cos(h) * d) / 110_540,
+      st.alt + st.vs * s,
+    ]
+  }
+
+  /** Runways, at their real width once that is more than a couple of pixels,
+   *  and airfield names as the F10 map shows them. */
+  private runways(lines: Polyline[], texts: Text2D[], zoom: number, pxPerM: (lat: number) => number) {
+    if (zoom < 5.5 || !this.fields.length) return
+    const b = this.map.getBounds()
+    const pad = 0.2
+    const color = this.topo ? '#4a4a48' : '#cfd2c8'
+    const named = zoom >= 7.2
+    for (const f of this.fields) {
+      if (f.lat < b.getSouth() - pad || f.lat > b.getNorth() + pad || f.lon < b.getWest() - pad || f.lon > b.getEast() + pad) continue
+      for (const r of f.runways) {
+        const p = this.map.project([r[3], r[2]]), q = this.map.project([r[5], r[4]])
+        const w = Math.max(2, (r[7] || 150) * 0.3048 * pxPerM(f.lat))
+        lines.push({ pts: new Float32Array([p.x, p.y, q.x, q.y]), n: 2, color, alpha: 0.9, width: w })
+      }
+      if (named) {
+        const c = this.map.project([f.lon, f.lat])
+        texts.push({ x: c.x + 10, y: c.y + 14, text: f.name, color: this.topo ? '#202020' : '#e8eadf', alpha: 0.85 })
+      }
+    }
+  }
+
+  /** Latitude/longitude lines across the view, spaced for the zoom, labelled
+   *  at the left and top edges. */
+  private grid(lines: Polyline[], texts: Text2D[]) {
+    const map = this.map
+    const b = map.getBounds()
+    const span = Math.max(b.getEast() - b.getWest(), b.getNorth() - b.getSouth())
+    const steps = [10, 5, 2, 1, 0.5, 0.25, 1 / 6, 1 / 12, 1 / 30, 1 / 60]
+    const step = steps.find(x => span / x >= 4) ?? steps[steps.length - 1]
+    const fmt = (v: number, pos: string, neg: string) => {
+      const a = Math.abs(v), d = Math.floor(a + 1e-9), m = Math.round((a - d) * 60)
+      return `${d}°${m ? String(m).padStart(2, '0') + "'" : ''}${v >= 0 ? pos : neg}`
+    }
+    const color = 'rgba(200,210,190,0.9)'
+    for (let lon = Math.ceil(b.getWest() / step) * step; lon <= b.getEast(); lon += step) {
+      const p = map.project([lon, b.getNorth()]), q = map.project([lon, b.getSouth()])
+      lines.push({ pts: new Float32Array([p.x, p.y, q.x, q.y]), n: 2, color, alpha: 0.18, width: 1 })
+      texts.push({ x: p.x + 3, y: 70, text: fmt(lon, 'E', 'W'), color, alpha: 0.7 })
+    }
+    for (let lat = Math.ceil(b.getSouth() / step) * step; lat <= b.getNorth(); lat += step) {
+      const p = map.project([b.getWest(), lat]), q = map.project([b.getEast(), lat])
+      lines.push({ pts: new Float32Array([p.x, p.y, q.x, q.y]), n: 2, color, alpha: 0.18, width: 1 })
+      texts.push({ x: Math.max(p.x, 0) + 4, y: p.y - 3, text: fmt(lat, 'N', 'S'), color, alpha: 0.7 })
+    }
+  }
+
+  /** The radar sweep an object's recording describes, if its radar is on. */
+  private radarOf(d: Drawn): { az: number; el: number; range: number; hbw: number; vbw: number } | null {
+    const ch = d.st.ch
+    if (!ch || !(ch.RadarMode > 0) || !(ch.RadarRange > 0)) return null
+    return {
+      az: d.st.hdg + (ch.RadarAzimuth ?? 0),
+      el: d.st.pitch + (ch.RadarElevation ?? 0),
+      range: ch.RadarRange,
+      hbw: ch.RadarHorizontalBeamwidth ?? 120,
+      vbw: ch.RadarVerticalBeamwidth ?? 30,
+    }
+  }
+
+  // ── 3D ──
+
+  private paint3D() {
+    const th = this.theater
+    if (!th) return
+    const drawn = this.collect()
+    const { objects } = this.store.meta
     const fs = this.focus != null ? this.store.state(this.focus, this.t) : null
     const ms = this.measure != null ? this.store.state(this.measure, this.t) : null
-    const line: [number, number, number][] | null = fs && ms ? [[fs.lon, fs.lat, fs.alt], [ms.lon, ms.lat, ms.alt]] : null
-    if (this.mode === '2d') {
-      const feat = (d: Drawn): GeoJSON.Feature => ({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [d.st.lon, d.st.lat] },
-        properties: {
-          idx: d.idx,
-          icon: `rp-${SHAPE[d.kind]}-${d.ck}`,
-          rot: ROTATES[d.kind] ? d.st.hdg : 0,
-          focus: d.focus ? 1 : 0,
-          z: d.focus ? 1e9 : isAir(d.kind) ? d.st.alt : 0,
-        },
-      })
-      ;(this.map.getSource('rp-dyn') as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: dyn.map(feat) })
-      if (this.slowDirty || now - this.lastSlow > 1000) {
-        this.lastSlow = now
-        this.slowDirty = false
-        ;(this.map.getSource('rp-slow') as GeoJSONSource | undefined)?.setData({ type: 'FeatureCollection', features: slow.map(feat) })
+
+    const trails: TheaterFrame['trails'] = []
+    const ribbons: TheaterFrame['ribbons'] = []
+    for (const d of drawn) {
+      const spec = this.trailSpec(d)
+      if (!spec || spec.len <= 0) continue
+      // From behind or inside the followed jet its own ribbon would fill the
+      // screen: it gets the thin trail there instead.
+      const inside = d.focus && (this.cam === 'chase' || this.cam === 'cockpit' || this.cam === 'padlock')
+      if (this.opts.ribbons && isAir(d.kind) && !inside) {
+        ribbons.push({ pts: this.ribbon(d.idx, Math.min(spec.len, d.focus ? 120_000 : this.opts.trail || 30_000)), color: spec.color, opacity: d.focus ? 0.55 : spec.alpha * 0.8 })
+        if (!d.focus) continue
       }
-      ;(this.map.getSource('rp-measure') as GeoJSONSource | undefined)?.setData(line
-        ? { type: 'Feature', geometry: { type: 'LineString', coordinates: line.map(p => [p[0], p[1]]) }, properties: {} }
-        : EMPTY)
-      ;(this.map.getSource('rp-trails') as GeoJSONSource | undefined)?.setData({
-        type: 'FeatureCollection',
-        features: trails.filter(tr => tr.pts.length > 1).map(tr => ({
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: tr.pts.map(p => [p[0], p[1]]) },
-          properties: { color: tr.color, op: tr.op, w: tr.w },
-        })),
-      })
-    } else if (this.theater) {
-      const { objects } = this.store.meta
-      this.theater.render({
-        objects: [...slow, ...dyn].map(d => ({ idx: d.idx, kind: d.kind, name: objects[d.idx]?.n, color: d.color, st: d.st, focus: d.focus })),
-        trails: trails.map(tr => ({ pts: tr.pts, color: tr.color, opacity: tr.op })),
-        line,
-        focus: this.focus,
-        measure: this.measure,
-        cam: this.cam,
-        hud: this.cam === 'cockpit' && this.opts.hud && fs ? this.hudData(fs, ms) : null,
-      })
+      trails.push({ pts: this.store.trail(d.idx, this.t, spec.len, spec.step), color: spec.color, opacity: spec.alpha })
     }
-    if (this.mode === '2d') this.camera()
-    this.drawLabels(dyn)
+    const present = new Set(drawn.map(d => d.idx))
+    const locks: TheaterFrame['locks'] = []
+    if (this.opts.locks) {
+      for (const d of drawn) for (const tg of this.locksOf(d)) if (present.has(tg)) locks.push({ a: d.idx, b: tg, color: SIDE_COLOR[d.side] })
+    }
+    const rings: TheaterFrame['rings'] = []
+    const cones: TheaterFrame['cones'] = []
+    for (const d of drawn) {
+      const o = objects[d.idx]
+      if (this.opts.threats) {
+        const th3 = threatOf(d.kind, o.n)
+        if (th3) rings.push({ idx: d.idx, r: th3.range, color: SIDE_COLOR[d.side], opacity: th3.short ? 0.3 : 0.55, dome: !th3.short })
+      }
+      if (d.kind === 'bullseye' && this.opts.bullseye) {
+        for (const nm of BULLSEYE_NM) rings.push({ idx: d.idx, r: nm * NM, color: SIDE_COLOR[d.side], opacity: 0.3, dome: false })
+      }
+      if (this.opts.radar) {
+        const r = this.radarOf(d)
+        if (r) cones.push({ idx: d.idx, ...r, color: SIDE_COLOR[d.side] })
+      }
+    }
+    const vectors: TheaterFrame['vectors'] = []
+    if (this.opts.vectors) {
+      for (const d of drawn) {
+        if (!isAir(d.kind) && !isWeapon(d.kind)) continue
+        vectors.push({ a: [d.st.lon, d.st.lat, d.st.alt], b: this.ahead(d.st, 20), color: d.focus ? SIDE_COLOR.focus : SIDE_COLOR[d.side] })
+      }
+    }
+    th.render({
+      vectors,
+      verticals: this.opts.verticals,
+      scale: this.opts.scale,
+      sunMs: this.sunBase != null ? this.sunBase + this.t : null,
+      objects: drawn.map(d => ({
+        idx: d.idx, kind: d.kind, name: objects[d.idx]?.n,
+        color: SIDE_COLOR[d.side], st: d.st, focus: d.focus, target: d.target,
+      })),
+      trails,
+      ribbons,
+      locks,
+      rings,
+      cones,
+      line: fs && ms ? [[fs.lon, fs.lat, fs.alt], [ms.lon, ms.lat, ms.alt]] : null,
+      focus: this.focus,
+      measure: this.measure,
+      cam: this.cam,
+      hud: this.cam === 'cockpit' && this.opts.hud && fs ? this.hudData(fs, ms) : null,
+    })
+    // Labels over the scene, at the positions the theatre just projected.
+    const pos = new Map<number, { x: number; y: number }>()
+    for (const p of th.projected) pos.set(p.idx, p)
+    const items: Item[] = []
+    for (const d of drawn) {
+      const p = pos.get(d.idx)
+      if (!p) continue
+      if (this.cam === 'cockpit' && d.focus) continue
+      items.push(this.toItem(d, p.x, p.y))
+    }
+    const ov = this.overlay
+    ov.begin()
+    ov.labels(items, this.opts.labels)
+    this.hits = items.filter(it => !isEffect(it.kind)).map(it => ({ idx: it.idx, x: it.x, y: it.y, pri: it.pri }))
+  }
+
+  /** A ribbon: position and roll every 500 ms over the last `len` ms. */
+  private ribbon(idx: number, len: number): [number, number, number, number][] {
+    const out: [number, number, number, number][] = []
+    const o = this.store.meta.objects[idx]
+    const from = Math.max(o.t0, this.t - len)
+    const step = 500
+    for (let t = Math.ceil(from / step) * step; t < this.t; t += step) {
+      const st = this.store.state(idx, t)
+      if (st) out.push([st.lon, st.lat, st.alt, st.roll])
+    }
+    const now = this.store.state(idx, this.t)
+    if (now) out.push([now.lon, now.lat, now.alt, now.roll])
+    return out
   }
 
   /** What the cockpit HUD shows for the followed aircraft at t. */
@@ -621,7 +901,7 @@ export class ReplayEngine {
     let target: HudData['target'] = null
     if (ms && this.measure != null) {
       const o = this.store.meta.objects[this.measure]
-      const dx = (ms.lon - fs.lon) * 111_320 * Math.cos(((fs.lat + ms.lat) / 2) * (Math.PI / 180))
+      const dx = (ms.lon - fs.lon) * 111_320 * Math.cos(((fs.lat + ms.lat) / 2) * DEG)
       const dy = (ms.lat - fs.lat) * 110_540
       target = { label: (o?.p ?? o?.n ?? 'TGT').replace(/_/g, ' ').toUpperCase().slice(0, 18), range: Math.hypot(dx, dy, ms.alt - fs.alt) }
     }
@@ -637,70 +917,18 @@ export class ReplayEngine {
     }
   }
 
-  /** 2D: keep the followed aircraft centred (the theatre moves its own
-   *  camera in 3D). */
-  private camera() {
-    if (this.focus == null || this.cam === 'free') return
-    const st = this.store.state(this.focus, this.t)
-    if (st) this.map.jumpTo({ center: [st.lon, st.lat] })
-  }
-
-  private label(i: number): HTMLDivElement {
-    while (this.labelPool.length <= i) {
-      const el = document.createElement('div')
-      el.className = 'rp-label'
-      this.labelsEl.appendChild(el)
-      this.labelPool.push(el)
-    }
-    return this.labelPool[i]
-  }
-
-  private drawLabels(dyn?: Drawn[]) {
-    const { objects } = this.store.meta
-    const items = (dyn ?? this.collect().dyn).filter(d => isAir(d.kind))
-    let n = 0
-    if (this.opts.labels || this.focus != null) {
-      const pos = new Map<number, { x: number; y: number }>()
-      if (this.mode === '3d' && this.theater) for (const p of this.theater.projected) pos.set(p.idx, p)
-      for (const d of items) {
-        if (!this.opts.labels && !d.focus && d.idx !== this.measure) continue
-        let xy = pos.get(d.idx)
-        if (this.mode === '2d') xy = this.map.project([d.st.lon, d.st.lat])
-        if (!xy) continue
-        const o = objects[d.idx]
-        const el = this.label(n++)
-        const name = o.p ?? (o.n ?? '').replace(/_/g, ' ')
-        const fl = Math.round((d.st.alt * M_TO_FT) / 100)
-        const text = `${name}  ${String(fl).padStart(3, '0')}`
-        if (el.textContent !== text) el.textContent = text
-        el.style.transform = `translate(${Math.round(xy.x + 14)}px, ${Math.round(xy.y - 8)}px)`
-        el.style.color = d.focus ? FOCUS_HEX : d.color
-        el.style.display = ''
-        el.classList.toggle('rp-label-focus', d.focus)
-      }
-    }
-    for (let i = n; i < this.labelPool.length; i++) this.labelPool[i].style.display = 'none'
-  }
-
+  /** The drawn object nearest a screen point (aircraft over what they fly
+   *  over); shift-click (or the measure tool) picks the BRAA target. */
   private pick(x: number, y: number, shift = false) {
-    let best: { idx: number; d: number } | null = null
-    if (this.mode === '2d') {
-      const feats = this.map.queryRenderedFeatures([[x - 12, y - 12], [x + 12, y + 12]], { layers: ['rp-dyn', 'rp-slow'] })
-      for (const f of feats) {
-        const idx = Number(f.properties?.idx)
-        const o = this.store.meta.objects[idx]
-        if (!o) continue
-        // Prefer aircraft over whatever they are flying over.
-        const d = isAir(o.k) ? 0 : 1
-        if (!best || d < best.d) best = { idx, d }
-      }
-    } else if (this.theater) {
-      const idx = this.theater.pick(x, y)
-      if (idx != null) best = { idx, d: 0 }
+    let best: { idx: number; d: number; pri: number } | null = null
+    for (const h of this.hits) {
+      const d = Math.hypot(h.x - x, h.y - y)
+      if (d > 18) continue
+      const score = d - (h.pri >= 3000 ? 8 : 0)
+      if (!best || score < best.d) best = { idx: h.idx, d: score, pri: h.pri }
     }
     if (!best) return
     if ((shift || this.measuring) && best.idx !== this.focus && this.focus != null) this.setMeasure(best.idx)
     else this.setFocus(best.idx)
   }
 }
-
