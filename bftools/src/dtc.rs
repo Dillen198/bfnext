@@ -104,15 +104,42 @@ pub(crate) fn assign(lua: &Lua, mission: &Table, carts: &[Cartridge]) -> Result<
                         if !player {
                             continue;
                         }
-                        let cartridges = lua.create_table()?;
-                        for (i, c) in list.iter().enumerate() {
+                        // Add to what the mission maker already assigned rather
+                        // than replace it: keep their cartridges, their default
+                        // and their AutoLoad choice.
+                        let dtc = match unit.raw_get::<_, Option<Table>>("DTC")? {
+                            Some(t) => t,
+                            None => {
+                                let t = lua.create_table()?;
+                                t.raw_set("AutoLoad", true)?;
+                                t
+                            }
+                        };
+                        let cartridges = match dtc.raw_get::<_, Option<Table>>("Cartridges")? {
+                            Some(t) => t,
+                            None => lua.create_table()?,
+                        };
+                        let mut names = Vec::new();
+                        let mut has_default = false;
+                        for e in cartridges.clone().sequence_values::<Table>() {
+                            let e = e?;
+                            names.push(e.raw_get::<_, Option<std::string::String>>("name")?.unwrap_or_default());
+                            has_default |= e.raw_get::<_, Option<bool>>("default")?.unwrap_or(false);
+                        }
+                        for c in list {
+                            if names.iter().any(|n| *n == c.name) {
+                                continue;
+                            }
                             let e = lua.create_table()?;
                             e.raw_set("name", c.name.as_str())?;
-                            e.raw_set("default", i == 0)?;
-                            cartridges.raw_set(i + 1, e)?;
+                            e.raw_set("default", !has_default)?;
+                            has_default = true;
+                            cartridges.raw_set(cartridges.raw_len() + 1, e)?;
+                            names.push(c.name.clone());
                         }
-                        let dtc = lua.create_table()?;
-                        dtc.raw_set("AutoLoad", true)?;
+                        if dtc.raw_get::<_, Option<bool>>("AutoLoad")?.is_none() {
+                            dtc.raw_set("AutoLoad", true)?;
+                        }
                         dtc.raw_set("Cartridges", cartridges)?;
                         unit.raw_set("DTC", dtc)?;
                         *counts.entry(typ.clone()).or_insert(0) += 1;
@@ -237,5 +264,40 @@ mod tests {
         write(&dir, "x.dtc", r#"{"name":"Tomcat","type":"F-14BU","data":{"type":"F-14BU"}}"#);
         assert_eq!(load_dir(&dir, "Syria").unwrap().len(), 1);
         let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_cartridges_the_mission_already_assigns() {
+        let lua = Lua::new();
+        lua.load(
+            r#"mission = { theatre = "Caucasus", coalition = { blue = { country = { [1] = { plane = { group = { [1] = { units = {
+                [1] = { type = "F-16C_50", skill = "Client",
+                        DTC = { AutoLoad = false, Cartridges = { [1] = { name = "Squadron", default = true } } } },
+            } } } } } } } } }"#,
+        )
+        .exec()
+        .unwrap();
+        let mission: Table = lua.globals().get("mission").unwrap();
+        let carts = vec![
+            Cartridge { name: "Campaign".into(), typ: "F-16C_50".into(), source: PathBuf::new() },
+            Cartridge { name: "Squadron".into(), typ: "F-16C_50".into(), source: PathBuf::new() },
+        ];
+        assign(&lua, &mission, &carts).unwrap();
+        let dtc: Table = lua.load("return mission.coalition.blue.country[1].plane.group[1].units[1].DTC").eval().unwrap();
+        // The mission maker's AutoLoad choice and default stay.
+        assert!(!dtc.get::<_, bool>("AutoLoad").unwrap());
+        let list: Table = dtc.get("Cartridges").unwrap();
+        assert_eq!(list.raw_len(), 2);
+        let first: Table = list.get(1).unwrap();
+        let second: Table = list.get(2).unwrap();
+        assert_eq!(first.get::<_, std::string::String>("name").unwrap(), "Squadron");
+        assert!(first.get::<_, bool>("default").unwrap());
+        assert_eq!(second.get::<_, std::string::String>("name").unwrap(), "Campaign");
+        assert!(!second.get::<_, bool>("default").unwrap());
     }
 }

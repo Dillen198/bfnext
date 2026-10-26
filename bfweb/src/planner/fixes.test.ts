@@ -301,3 +301,38 @@ describe('offset aimpoints and VIP/VRP', () => {
     expect(w[0]).toMatchObject({ UseOA: false, OffsetAimpoint1: null, UseVIP: false, VIPtoTGT: null })
   })
 })
+
+describe('third verification pass', () => {
+  const tg = (c: string) => DCSDTC_TARGETS.find(t => t.code === c)!
+
+  it('moves a MiG-29 preset that clashes on its one radio', () => {
+    const out = buildNative(plan('MiG-29 Fulcrum', {
+      include_comms: true,
+      comm1: [{ preset: 1, freq_mhz: 251, label: '', modulation: 'AM' }],
+      comm2: [{ preset: 1, freq_mhz: 127.5, label: '', modulation: 'AM' }],
+    }), 'MiG-29 Fulcrum', fulcrum as Json, {}, () => null)
+    const radio = data(out.text).Program_1.Radio
+    expect(radio.Channel_1.freq).toBe(251)
+    expect(radio.Channel_2.freq).toBe(127.5)
+    expect(out.warnings.join(' ')).toMatch(/moved to free channels/)
+  })
+
+  it('keeps the first of two frequencies on one Apache radio and preset', () => {
+    const out = buildNative(plan('AH-64D_BLK_II', {
+      include_comms: true,
+      comm1: [{ preset: 2, freq_mhz: 251, label: '', modulation: 'AM' }],
+      comm2: [{ preset: 2, freq_mhz: 262, label: '', modulation: 'AM' }],
+    }), 'AH-64D_BLK_II', apache as Json, {}, () => null)
+    expect(data(out.text).Presets.COMM[1].COMMS.UHF.Frequency).toBe(251)
+    expect(out.warnings.join(' ')).toMatch(/second frequency/)
+  })
+
+  it('never writes a DCS-DTC bearing of 360 and cuts over-long offsets', () => {
+    const w = many(3)
+    w[1] = { ...w[1], oa: [{ range_ft: 150000, bearing_deg: 359.97, elev_ft: 0 }] }
+    const out = buildDcsDtc(plan('F-16C_50', { waypoints: w }), tg('F16C'), f16dtc as Json, {}, false, () => null)
+    const oa = JSON.parse(out.text).Waypoints.Waypoints[1].OffsetAimpoint1
+    expect(oa).toEqual({ Range: 99999, Bearing: 0, Elevation: 0 })
+    expect(out.warnings.join(' ')).toMatch(/longer than the F-16 takes/)
+  })
+})

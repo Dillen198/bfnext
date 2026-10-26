@@ -1,21 +1,6 @@
 import type { CSSProperties } from 'react'
 import type { PlanOffset, PlanOffsetPair, PlanWaypoint } from '../types'
-
-/** What a target can carry beyond the route itself. */
-export interface OffsetSupport {
-  /** Offset aimpoints per steerpoint. */
-  oa: number
-  /** VIP and VRP (F-16). */
-  vipvrp: boolean
-}
-
-/** Which cartridges take offsets: the F-16 (native and DCS-DTC) and the
- *  native Hornet. */
-export function offsetSupport(code: string): OffsetSupport | null {
-  if (code === 'F-16C_50' || code === 'F16C') return { oa: 2, vipvrp: true }
-  if (code === 'FA-18C_hornet') return { oa: 1, vipvrp: false }
-  return null
-}
+import type { OffsetSupport } from './core'
 
 const FT_PER_NM = 6076.12
 const inp: CSSProperties = { padding: '3px 5px', fontSize: '0.7rem', width: 66, fontFamily: 'var(--font-mono)' }

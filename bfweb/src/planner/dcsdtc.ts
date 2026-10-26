@@ -158,14 +158,17 @@ function fillRadios(cfg: JsonObject, plan: Plan, t: DcsDtcTarget, ov: Overrides,
     const width = t.radios === 'six' ? 6 : 4
     const byNum = new Map<number, JsonObject>()
     let skipped = 0
+    let clashes = 0
     for (const c of [...plan.comm1, ...plan.comm2]) {
       const ix = radioIndex(c.freq_mhz)
       if (c.preset > 10 || ix == null) { skipped++; continue }
       const p = byNum.get(c.preset) ?? { Number: c.preset, Name: c.label ? c.label.toUpperCase().slice(0, 8) : null, Frequencies: Array(width).fill('') }
+      if ((p.Frequencies as string[])[ix]) { clashes++; continue }
       ;(p.Frequencies as string[])[ix] = freqStr(c.freq_mhz)
       byNum.set(c.preset, p)
     }
     if (skipped) warnings.push(`${skipped} preset${skipped > 1 ? 's' : ''} outside 1-10 or the UHF/VHF/FM bands were left out.`)
+    if (clashes) warnings.push(`${clashes} preset${clashes > 1 ? 's' : ''} put a second frequency on the same radio and preset; the first was kept.`)
     const r = (radios.Radio ?? {}) as JsonObject
     r.Presets = [...byNum.values()].sort((a, b) => (a.Number as number) - (b.Number as number))
     // The Kiowa's uploader reads four selected modes by position (UHF, VHF,
@@ -215,17 +218,22 @@ function fillRoute(cfg: JsonObject, plan: Plan, t: DcsDtcTarget, tos: Tos): stri
       if (t.code === 'F16C') {
         // DCS-DTC types these into the DED: OA and VRP ranges in whole feet,
         // VIP ranges in NM to a tenth, bearings true to a tenth, feet MSL.
-        const off = (o: PlanOffset | undefined, nm = false): JsonObject | null => o
-          ? { Range: nm ? Math.round((o.range_ft / 6076.12) * 10) / 10 : Math.round(o.range_ft), Bearing: Math.round(o.bearing_deg * 10) / 10, Elevation: Math.round(o.elev_ft) }
-          : null
+        const off = (o: PlanOffset | undefined, maxFt: number, nm = false): JsonObject | null => {
+          if (!o) return null
+          if (o.range_ft > maxFt) warnings.push(`An offset of steerpoint ${seq} is longer than the F-16 takes; cut to ${nm ? `${(maxFt / 6076.12).toFixed(1)} NM` : `${maxFt} ft`}.`)
+          const ft = Math.min(o.range_ft, maxFt)
+          const bearing = (Math.round((((o.bearing_deg % 360) + 360) % 360) * 10) / 10) % 360
+          return { Range: nm ? Math.round((ft / 6076.12) * 10) / 10 : Math.round(ft), Bearing: bearing, Elevation: Math.round(o.elev_ft) }
+        }
         const oa = p.oa ?? []
         return wpt(p, seq, t, {
           TimeOverSteerpoint: tos(i),
           UseOA: oa.length > 0,
-          OffsetAimpoint1: off(oa[0]) ?? (oa.length ? { Range: 0, Bearing: 0, Elevation: 0 } : null),
-          OffsetAimpoint2: oa.length ? off(oa[1]) ?? { Range: 0, Bearing: 0, Elevation: 0 } : null,
-          UseVIP: !!p.vip, VIPtoTGT: off(p.vip?.point, true), VIPtoPUP: off(p.vip?.pup, true),
-          UseVRP: !!p.vrp, TGTtoVRP: off(p.vrp?.point), TGTtoPUP: off(p.vrp?.pup),
+          // Both OAs must be present once UseOA is on.
+          OffsetAimpoint1: oa.length ? off(oa[0], 99999) : null,
+          OffsetAimpoint2: oa.length ? off(oa[1], 99999) ?? { Range: 0, Bearing: 0, Elevation: 0 } : null,
+          UseVIP: !!p.vip, VIPtoTGT: off(p.vip?.point, 99.9 * 6076.12, true), VIPtoPUP: off(p.vip?.pup, 99.9 * 6076.12, true),
+          UseVRP: !!p.vrp, TGTtoVRP: off(p.vrp?.point, 486090), TGTtoPUP: off(p.vrp?.pup, 486090),
         })
       }
       const out = wpt(p, seq, t, { TimeOverSteerpoint: t.code === 'FA18C' ? tos(i) : null })

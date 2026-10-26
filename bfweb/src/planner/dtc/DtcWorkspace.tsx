@@ -8,18 +8,18 @@ import { download, ExportError, safeName } from '../exports'
 import { dcsdtcTarget, loadModel, type Target } from '../targets'
 import { aircraftDef, type NativeType, type Plan, type PlanWaypoint } from '../types'
 import { Body, HitRow } from './editor'
-import { collectLeaves, playerHelp, type Ctx, type PointOption } from './core'
+import { collectLeaves, offsetSupport, playerHelp, type Ctx, type PointOption } from './core'
 import { buildFor, METHOD, type Msg } from './build'
 import { buildPages, pageChanges, routeFilled, type Page } from './pages'
 import { flagPointers, isOn, switchesFor, type LoadSwitch } from './switches'
 import { DcsDtcGuide, NativeGuide } from './guides'
 import DtcMap from './DtcMap'
 import { addableList, pageHasMap } from './places'
-import OffsetsEditor, { offsetSupport } from './OffsetsEditor'
+import OffsetsEditor from './OffsetsEditor'
+import './dtc.css'
 
 /** Pages that are the route's steerpoints: where offsets are edited. */
 const STEERPOINT_PAGES = new Set(['/MPD/NAV_PTS', '/MPD/VIPVRP', '/WYPT/NAV_PTS', '/Waypoints'])
-import './dtc.css'
 
 interface Props {
   plan: Plan

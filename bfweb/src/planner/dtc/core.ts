@@ -165,3 +165,19 @@ export function playerHelp(text: string | undefined): string | undefined {
   const out = kept.join(' ').trim()
   return out || undefined
 }
+
+/** What a target can carry beyond the route itself. */
+export interface OffsetSupport {
+  /** Offset aimpoints per steerpoint. */
+  oa: number
+  /** VIP and VRP (F-16). */
+  vipvrp: boolean
+}
+
+/** Which cartridges take offsets: the F-16 (native and DCS-DTC) and the
+ *  native Hornet. */
+export function offsetSupport(code: string): OffsetSupport | null {
+  if (code === 'F-16C_50' || code === 'F16C') return { oa: 2, vipvrp: true }
+  if (code === 'FA-18C_hornet') return { oa: 1, vipvrp: false }
+  return null
+}

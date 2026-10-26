@@ -125,7 +125,8 @@ function f16Route(r: RouteFill) {
   // bearing in radians, metres (the descriptor's own conventions).
   const pts = getAt(r.data, ['MPD', 'NAV_PTS']) as JsonObject[]
   w.forEach((p, i) => {
-    ;(p.oa ?? []).slice(0, 2).forEach((o, k) => {
+    ;(p.oa ?? []).slice(0, 2).forEach((o0, k) => {
+      const o = capRange(o0, 99999, `OA${k + 1} of steerpoint ${i + 1}`, r.warnings)
       const g = offsetOnGrid(p.lat, p.lon, o, r.grid.terrain)
       const n = k + 1
       Object.assign(pts[i], {
@@ -139,12 +140,13 @@ function f16Route(r: RouteFill) {
   })
   // VIP / VRP: the first steerpoint marked as each.
   const vipvrp = { ...((getAt(r.data, ['MPD', 'VIPVRP']) as JsonObject) ?? {}) }
-  const group = (anchor: typeof w[number], o: { range_ft: number; bearing_deg: number; elev_ft: number }, g: string) => {
+  const group = (anchor: typeof w[number], o0: { range_ft: number; bearing_deg: number; elev_ft: number }, g: string) => {
+    const o = capRange(o0, 486090, g, r.warnings)
     const q = offsetOnGrid(anchor.lat, anchor.lon, o, r.grid.terrain)
     Object.assign(vipvrp, {
       [`${g}_id`]: g, [`${g}_LineName`]: `${g}_Line`,
       [`${g}_X`]: q.x, [`${g}_Y`]: q.y, [`${g}_DeltaX`]: q.deltaX, [`${g}_DeltaY`]: q.deltaY,
-      [`${g}_Bearing`]: q.bearingRad, [`${g}_Range`]: Math.min(q.range, 148160), [`${g}_Elevation`]: o.elev_ft * FT,
+      [`${g}_Bearing`]: q.bearingRad, [`${g}_Range`]: q.range, [`${g}_Elevation`]: o.elev_ft * FT,
     })
   }
   const vi = w.findIndex(p => p.vip)
@@ -206,7 +208,7 @@ function hornetRoute(r: RouteFill) {
       isOA: false, OA_Range: 0, OA_Bearing: 0, OA_X: 0, OA_Y: 0, OA_Alt: 0, OA_DeltaX: 0, OA_DeltaY: 0,
       OA_Bearing_Units: 1, OA_Range_Units: 1, OA_Elevation_Units: 1,
     }
-    const o = p.oa?.[0]
+    const o = p.oa?.[0] && capRange(p.oa[0], 400000, `the OA of waypoint ${i + 1}`, r.warnings)
     if (o) {
       const g = offsetOnGrid(p.lat, p.lon, o, r.grid.terrain)
       Object.assign(pt, {
@@ -314,10 +316,14 @@ function apacheRoute(r: RouteFill) {
     let skipped = 0
     const band = (mhz: number): [string, number] | null =>
       mhz >= 225 && mhz < 400 ? ['UHF', 0] : mhz >= 108 && mhz < 152 ? ['VHF', 0] : mhz >= 30 && mhz < 88 ? ['FM1', 1] : null
+    const taken = new Set<string>()
+    let clashes = 0
     for (const c of [...r.plan.comm1, ...r.plan.comm2]) {
       const b = band(c.freq_mhz)
       if (c.preset > 10 || !b) { skipped++; continue }
       const [radio, modulation] = b
+      if (taken.has(`${c.preset}/${radio}`)) { clashes++; continue }
+      taken.add(`${c.preset}/${radio}`)
       const at = ['Presets', 'COMM', c.preset - 1, 'COMMS', radio]
       setAt(r.data, at, { ...((getAt(r.data, at) as JsonObject) ?? { Encryption: 0 }), Frequency: c.freq_mhz, Modulation: modulation })
       const init = getAt(r.data, ['Radios', 'InitialRadioSettings', radio]) as JsonObject | undefined
@@ -325,6 +331,7 @@ function apacheRoute(r: RouteFill) {
       r.filled.push('/Presets/COMM')
     }
     if (skipped) r.warnings.push(`${skipped} radio preset${skipped > 1 ? 's' : ''} outside the Apache's presets 1-10 or its UHF/VHF/FM bands were left out.`)
+    if (clashes) r.warnings.push(`${clashes} preset${clashes > 1 ? 's' : ''} put a second frequency on the same Apache radio and preset; the first was kept.`)
   }
 }
 
@@ -433,14 +440,33 @@ function fulcrumRoute(r: RouteFill) {
   // cockpit numbers match the plan's. Modulation 1 = AM, 2 = FM.
   if (r.plan.include_comms) {
     let skipped = 0
+    // COMM1 and COMM2 share the one radio: a clash moves to the next free channel.
+    const used = new Set<number>()
+    let moved = 0
     for (const c of [...r.plan.comm1, ...r.plan.comm2]) {
       const inBand = (c.freq_mhz >= 100 && c.freq_mhz < 150) || (c.freq_mhz >= 220 && c.freq_mhz < 400)
       if (!inBand || c.preset > 20) { skipped++; continue }
-      setAt(r.data, [...p1, 'Radio', `Channel_${c.preset % 20}`], { freq: c.freq_mhz, modulation: c.modulation === 'FM' ? 2 : 1 })
+      let ch = c.preset % 20
+      if (used.has(ch)) {
+        const free = Array.from({ length: 20 }, (_, k) => (c.preset + k) % 20).find(k => !used.has(k))
+        if (free == null) { skipped++; continue }
+        ch = free
+        moved++
+      }
+      used.add(ch)
+      setAt(r.data, [...p1, 'Radio', `Channel_${ch}`], { freq: c.freq_mhz, modulation: c.modulation === 'FM' ? 2 : 1 })
       r.filled.push('/Program_1/Radio')
     }
+    if (moved) r.warnings.push(`COMM1 and COMM2 share the MiG-29's one radio: ${moved} preset${moved > 1 ? 's' : ''} moved to free channels.`)
     if (skipped) r.warnings.push(`${skipped} radio preset${skipped > 1 ? 's' : ''} outside the R-862's bands (100-149.975, 220-399.975 MHz) were left out.`)
   }
+}
+
+/** An offset no longer than the cockpit takes, with a warning if cut. */
+function capRange<T extends { range_ft: number }>(o: T, maxFt: number, what: string, warnings: string[]): T {
+  if (o.range_ft <= maxFt) return o
+  warnings.push(`${what} is longer than the jet takes; cut to ${Math.round(maxFt)} ft.`)
+  return { ...o, range_ft: maxFt }
 }
 
 /** Route fillers, per aircraft. */
