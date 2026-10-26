@@ -582,8 +582,10 @@ export class ReplayEngine {
    *  `opts.trail` for other aircraft, 20 s of smoke for weapons. */
   private trailSpec(d: Drawn): { len: number; step: number; color: string; alpha: number; width: number } | null {
     const o = this.store.meta.objects[d.idx]
-    if (d.focus) return { len: this.t - o.t0, step: 500, color: SIDE_COLOR.focus, alpha: 0.95, width: 2.2 }
-    if (isAir(d.kind) && this.opts.trail > 0) return { len: this.opts.trail, step: 500, color: SIDE_COLOR[d.side], alpha: 0.6, width: 1.4 }
+    // a point every half second, thinning out so no trail passes ~600 points
+    const step = (len: number) => Math.max(500, Math.round(len / 600))
+    if (d.focus) return { len: this.t - o.t0, step: step(this.t - o.t0), color: SIDE_COLOR.focus, alpha: 0.95, width: 2.2 }
+    if (isAir(d.kind) && this.opts.trail > 0) return { len: this.opts.trail, step: step(this.opts.trail), color: SIDE_COLOR[d.side], alpha: 0.6, width: 1.4 }
     if (isWeapon(d.kind)) return { len: 20_000, step: 0, color: '#eae6d6', alpha: 0.75, width: 1.2 }
     if (d.kind === 'flare' && this.opts.effects) return { len: 2_500, step: 0, color: '#fff3d0', alpha: 0.55, width: 1 }
     return null
@@ -878,12 +880,12 @@ export class ReplayEngine {
     this.hits = items.filter(it => !isEffect(it.kind)).map(it => ({ idx: it.idx, x: it.x, y: it.y, pri: it.pri }))
   }
 
-  /** A ribbon: position and roll every 500 ms over the last `len` ms. */
+  /** A ribbon: position and roll every 500 ms (fewer for long ones) over the last `len` ms. */
   private ribbon(idx: number, len: number): [number, number, number, number][] {
     const out: [number, number, number, number][] = []
     const o = this.store.meta.objects[idx]
     const from = Math.max(o.t0, this.t - len)
-    const step = 500
+    const step = Math.max(500, Math.round(len / 300)) // long ribbons thin out, as trails do
     for (let t = Math.ceil(from / step) * step; t < this.t; t += step) {
       const st = this.store.state(idx, t)
       if (st) out.push([st.lon, st.lat, st.alt, st.roll])

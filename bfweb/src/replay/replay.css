@@ -385,3 +385,5 @@
 .rp-pop-sub input[type='range'] { flex: 1; accent-color: var(--accent); }
 .rp-pop-sub b { font: 600 0.62rem var(--font-mono); color: var(--text); min-width: 30px; text-align: right; }
 .rp-long { color: var(--text-muted); }
+/* the top bar's menus (Layers) open over the side panels and telemetry */
+.rp-root > .rp-top { z-index: 5; }

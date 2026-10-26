@@ -462,13 +462,34 @@ function Layers({ ui, onSet, onClose }: { ui: EngineUi; onSet: (o: Partial<ViewO
       {ui.opts.trail > 0 && (
         <div className="rp-pop-row rp-pop-sub">
           <span>Trail</span>
-          {[15_000, 60_000, 300_000].map(ms => (
-            <button key={ms} className={`rp-chip ${ui.opts.trail === ms ? 'on' : ''}`} onClick={() => onSet({ trail: ms })}>{ms / 1000 >= 60 ? `${ms / 60_000}m` : `${ms / 1000}s`}</button>
-          ))}
+          <input
+            type="range" min={0} max={100} step={1} value={trailToSlider(ui.opts.trail)}
+            onChange={ev => onSet({ trail: sliderToTrail(Number(ev.target.value)) })}
+            aria-label="Trail length"
+          />
+          <b>{fmtTrail(ui.opts.trail)}</b>
         </div>
       )}
     </div>
   )
+}
+
+// Trail length on a log scale: 5 s at the left, 30 min at the right, so the
+// short trails a dogfight wants get as much of the slider as long ones.
+const TRAIL_MIN = 5_000, TRAIL_MAX = 1_800_000
+function sliderToTrail(v: number): number {
+  const ms = TRAIL_MIN * (TRAIL_MAX / TRAIL_MIN) ** (v / 100)
+  const step = ms < 60_000 ? 1_000 : ms < 600_000 ? 5_000 : 30_000
+  return Math.round(ms / step) * step
+}
+function trailToSlider(ms: number): number {
+  return Math.round((100 * Math.log(Math.max(TRAIL_MIN, Math.min(TRAIL_MAX, ms)) / TRAIL_MIN)) / Math.log(TRAIL_MAX / TRAIL_MIN))
+}
+function fmtTrail(ms: number): string {
+  const s = Math.round(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60), r = s % 60
+  return r ? `${m}m${String(r).padStart(2, '0')}` : `${m}m`
 }
 
 function Help({ onClose }: { onClose: () => void }) {
