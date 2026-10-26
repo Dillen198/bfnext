@@ -75,3 +75,21 @@ describe('item labels', () => {
     expect(fillLabel('PP{index}', {}, 7)).toBe('PP8')
   })
 })
+
+describe('player help', () => {
+  it('drops notes written for the exporter and keeps cockpit facts', async () => {
+    const { playerHelp } = await import('./dtc/core')
+    expect(playerHelp('Steerpoint i = array index i. Filled by the exporter from the route. Must be a JSON array (an object throws in setData).')).toBeUndefined()
+    expect(playerHelp('Chaff released per burst. Merged per field on import.')).toBe('Chaff released per burst.')
+    expect(playerHelp('Engagement areas, labelled EA1..EA12 by index in the cockpit.')).toBe('Engagement areas, labelled EA1..EA12 by index in the cockpit.')
+  })
+})
+
+describe('player help, stragglers', () => {
+  it('drops null and flag notes', async () => {
+    const { playerHelp } = await import('./dtc/core')
+    expect(playerHelp('No nulls.')).toBeUndefined()
+    expect(playerHelp('ALE-47 programs. Not terrain-gated, no upload flag. Set the CMDS knob to STBY before loading.'))
+      .toBe('ALE-47 programs. Set the CMDS knob to STBY before loading.')
+  })
+})

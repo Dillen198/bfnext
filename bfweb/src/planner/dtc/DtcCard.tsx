@@ -13,6 +13,7 @@ interface Props {
   plan: Plan
   readOnly: boolean
   onSystems: (key: string, ov: Overrides) => void
+  onWaypoints: (w: Plan['waypoints']) => void
   tosSeconds: (i: number) => number | null
   tosText: (i: number) => string | null
   side: 'Blue' | 'Red'
@@ -23,7 +24,7 @@ interface Props {
  * editor, download. Aircraft with their own cartridge files (Mirage, Viggen,
  * JF-17) get their steps right here.
  */
-export default function DtcCard({ plan, readOnly, onSystems, tosSeconds, tosText, side }: Props) {
+export default function DtcCard({ plan, readOnly, onSystems, onWaypoints, tosSeconds, tosText, side }: Props) {
   const def = aircraftDef(plan.aircraft)
   const targets = targetsFor(def)
   const [pick, setPick] = useState<string | null>(null)
@@ -77,7 +78,7 @@ export default function DtcCard({ plan, readOnly, onSystems, tosSeconds, tosText
             </div>
             {open && (
               <DtcWorkspace plan={plan} targets={targets} target={target} onTarget={t => setPick(t.key)} readOnly={readOnly}
-                onSystems={onSystems} tosSeconds={tosSeconds} tosText={tosText} onClose={() => setOpen(false)} />
+                onSystems={onSystems} onWaypoints={onWaypoints} tosSeconds={tosSeconds} tosText={tosText} onClose={() => setOpen(false)} />
             )}
           </>
         ) : def.other === 'M-2000C' ? (

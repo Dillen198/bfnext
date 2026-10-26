@@ -150,3 +150,18 @@ export function collectLeaves(ctx: Ctx, segs: Seg[] = [], path: string[] = [], o
   }
   return out
 }
+
+/** Sentences written for the exporter, not for a pilot. */
+const DEV = /setData|returnData|JSON|throws?\b|\barray\b|wholesale|descriptor|\bnil\b|\bnulls?\b|terrain-gated|upload flags?\b|\bholes\b|\bids?\b|mirror_|\bLua\b|exporter|importer|merged|\bkeys?\b|\bindex\b|\.lua|Newtonsoft|constructor|serialis|deserialis|getter|uploader|\bUI\b/i
+const HARD = /setData|returnData|JSON|throws?\b|exporter|importer|\bnil\b|Newtonsoft|\.lua|mirror_/i
+
+/** Annotation help as a pilot should read it: implementation notes dropped,
+ *  anything about the cockpit kept. */
+export function playerHelp(text: string | undefined): string | undefined {
+  if (!text) return undefined
+  const kept = text
+    .split(/(?<=[.!?])\s+/)
+    .filter(s => !DEV.test(s) || (/cockpit|\bjet\b|pilot|in flight|HUD|MFD|DED|UFC/i.test(s) && !HARD.test(s)))
+  const out = kept.join(' ').trim()
+  return out || undefined
+}

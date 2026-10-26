@@ -44,10 +44,14 @@ export function dcsdtcTarget(code: string): DcsDtcTarget | undefined {
   return DCSDTC_TARGETS.find(t => t.code === code)
 }
 
+/** A target's data file name: its code with spaces as underscores, so the
+ *  built chunks have plain URLs ("MiG-29 Fulcrum" -> MiG-29_Fulcrum). */
+const fileOf = (t: Target, kind: 'defaults' | 'annotations') => `./data/${t.tool}/${t.code.replace(/ /g, '_')}.${kind}.json`
+
 /** Whether the target's data files are in this build. */
 export function hasModel(t: Target): boolean {
   const files = t.tool === 'dcsdtc' ? dcsdtcFiles : nativeFiles
-  return `./data/${t.tool}/${t.code}.defaults.json` in files && `./data/${t.tool}/${t.code}.annotations.json` in files
+  return fileOf(t, 'defaults') in files && fileOf(t, 'annotations') in files
 }
 
 const cache = new Map<string, Promise<TargetModel>>()
@@ -56,8 +60,8 @@ export function loadModel(t: Target): Promise<TargetModel> {
   let p = cache.get(t.key)
   if (!p) {
     const files = t.tool === 'dcsdtc' ? dcsdtcFiles : nativeFiles
-    const d = files[`./data/${t.tool}/${t.code}.defaults.json`]
-    const a = files[`./data/${t.tool}/${t.code}.annotations.json`]
+    const d = files[fileOf(t, 'defaults')]
+    const a = files[fileOf(t, 'annotations')]
     if (!d || !a) return Promise.reject(new Error(`No data for ${t.key}`))
     p = Promise.all([d(), a()]).then(([dm, am]) => ({ defaults: unwrap(dm), annotations: normaliseAnnotations(unwrap(am)) }))
     cache.set(t.key, p)

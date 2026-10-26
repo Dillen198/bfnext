@@ -37,6 +37,40 @@ pub(crate) struct Waypoint {
     pub(crate) target: bool,
     #[serde(default)]
     pub(crate) note: String,
+    /// Offset aimpoints from this point (the F-16 takes two, the Hornet one).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) oa: Vec<Offset>,
+    /// This steerpoint is the VIP: offsets to the target and the pull-up point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) vip: Option<OffsetPair>,
+    /// This steerpoint is the target: offsets to the VRP and the pull-up point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) vrp: Option<OffsetPair>,
+}
+
+/// A point given relative to a waypoint.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub(crate) struct Offset {
+    pub(crate) range_ft: f64,
+    /// Degrees true from the waypoint.
+    pub(crate) bearing_deg: f64,
+    /// Feet MSL.
+    pub(crate) elev_ft: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub(crate) struct OffsetPair {
+    pub(crate) point: Offset,
+    pub(crate) pup: Offset,
+}
+
+fn offset(o: Offset, what: &str) -> Result<Offset> {
+    let ok = |v: f64, lo: f64, hi: f64| v.is_finite() && (lo..=hi).contains(&v);
+    // 80 NM is the longest VIP/VRP leg the F-16 takes.
+    if !ok(o.range_ft, 0.0, 486_090.0) || !ok(o.bearing_deg, 0.0, 360.0) || !ok(o.elev_ft, -1500.0, 80_000.0) {
+        bail!("{what}: range, bearing or elevation out of range")
+    }
+    Ok(Offset { range_ft: o.range_ft.round(), bearing_deg: (o.bearing_deg * 10.0).round() / 10.0, elev_ft: o.elev_ft.round() })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -227,6 +261,14 @@ pub(crate) fn validate(p: Plan) -> Result<Plan> {
                 elev_ft: w.elev_ft.round(),
                 target: w.target,
                 note: clean(&w.note, 200, "a waypoint note")?,
+                oa: {
+                    if w.oa.len() > 2 {
+                        bail!("waypoint {n}: at most two offset aimpoints")
+                    }
+                    w.oa.into_iter().map(|o| offset(o, "an offset aimpoint")).collect::<Result<_>>()?
+                },
+                vip: w.vip.map(|p| -> Result<_> { Ok(OffsetPair { point: offset(p.point, "the VIP target")?, pup: offset(p.pup, "the VIP pull-up")? }) }).transpose()?,
+                vrp: w.vrp.map(|p| -> Result<_> { Ok(OffsetPair { point: offset(p.point, "the VRP")?, pup: offset(p.pup, "the VRP pull-up")? }) }).transpose()?,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -323,7 +365,27 @@ mod tests {
             elev_ft: 0.0,
             target: false,
             note: String::new(),
+            oa: vec![],
+            vip: None,
+            vrp: None,
         }
+    }
+
+    #[test]
+    fn validate_offsets() {
+        let o = Offset { range_ft: 3000.4, bearing_deg: 90.04, elev_ft: 120.0 };
+        let mut p = plan();
+        p.waypoints[1].oa = vec![o, o];
+        p.waypoints[1].vip = Some(OffsetPair { point: o, pup: o });
+        let v = validate(p).unwrap();
+        assert_eq!(v.waypoints[1].oa[0], Offset { range_ft: 3000.0, bearing_deg: 90.0, elev_ft: 120.0 });
+        assert!(v.waypoints[1].vip.is_some());
+        let mut bad = plan();
+        bad.waypoints[0].oa = vec![o, o, o];
+        assert!(validate(bad).is_err());
+        let mut bad = plan();
+        bad.waypoints[0].vrp = Some(OffsetPair { point: Offset { bearing_deg: 400.0, ..o }, pup: o });
+        assert!(validate(bad).is_err());
     }
 
     fn plan() -> Plan {

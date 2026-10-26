@@ -2,19 +2,23 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Search, X } from '@icons'
 import { AnnotationIndex, applyOverrides, withOverride, type Json, type Overrides } from '../model'
-import { terrainAt, toDcsXY } from '../nav'
+import { offsetOnGrid, terrainAt, toDcsXY, type DcsTerrain } from '../nav'
 import { shareString } from '../dcsdtc'
 import { download, ExportError, safeName } from '../exports'
 import { dcsdtcTarget, loadModel, type Target } from '../targets'
-import { aircraftDef, type NativeType, type Plan } from '../types'
+import { aircraftDef, type NativeType, type Plan, type PlanWaypoint } from '../types'
 import { Body, HitRow } from './editor'
-import { collectLeaves, type Ctx, type PointOption } from './core'
+import { collectLeaves, playerHelp, type Ctx, type PointOption } from './core'
 import { buildFor, METHOD, type Msg } from './build'
 import { buildPages, pageChanges, routeFilled, type Page } from './pages'
 import { flagPointers, isOn, switchesFor, type LoadSwitch } from './switches'
 import { DcsDtcGuide, NativeGuide } from './guides'
 import DtcMap from './DtcMap'
 import { addableList, pageHasMap } from './places'
+import OffsetsEditor, { offsetSupport } from './OffsetsEditor'
+
+/** Pages that are the route's steerpoints: where offsets are edited. */
+const STEERPOINT_PAGES = new Set(['/MPD/NAV_PTS', '/MPD/VIPVRP', '/WYPT/NAV_PTS', '/Waypoints'])
 import './dtc.css'
 
 interface Props {
@@ -24,12 +28,14 @@ interface Props {
   onTarget: (t: Target) => void
   readOnly: boolean
   onSystems: (key: string, ov: Overrides) => void
+  /** Change the plan's route points (their offsets). */
+  onWaypoints: (w: PlanWaypoint[]) => void
   tosSeconds: (i: number) => number | null
   tosText: (i: number) => string | null
   onClose: () => void
 }
 
-export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly, onSystems, tosSeconds, tosText, onClose }: Props) {
+export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly, onSystems, onWaypoints, tosSeconds, tosText, onClose }: Props) {
   const def = aircraftDef(plan.aircraft)
   const { data: model, error } = useQuery({ queryKey: ['planner-model', target.key], queryFn: () => loadModel(target), staleTime: Infinity })
   const ov = (plan.systems?.[target.key] ?? {}) as Overrides
@@ -208,7 +214,7 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
                 <div style={{ flex: '1 1 300px' }}>
                   <div style={{ fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>{page.group ?? def.label}</div>
                   <h3 style={{ ...h3, marginTop: 2 }}>{page.label}</h3>
-                  {page.help && <p style={{ ...dim, margin: '4px 0 0', maxWidth: 720 }}>{page.help}</p>}
+                  {playerHelp(page.help) && <p style={{ ...dim, margin: '4px 0 0', maxWidth: 720 }}>{playerHelp(page.help)}</p>}
                 </div>
                 {page.sw && <LoadToggle state={switchState(page.sw)} readOnly={readOnly} onSet={on => setSwitch(page.sw!, on)} />}
               </div>
@@ -222,13 +228,18 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
                       {showMap ? 'Hide map' : 'Show map'}
                     </button>
                   </div>
-                  {showMap && <div style={{ height: 300 }}><DtcMap ctx={ctx} plan={plan} map={map} pageSegs={page.segs} /></div>}
+                  {showMap && <div style={{ height: 300 }}><DtcMap ctx={ctx} plan={plan} map={map} pageSegs={page.segs} extras={STEERPOINT_PAGES.has(page.key) ? offsetMarks(plan.waypoints, map) : []} /></div>}
                 </div>
               ) : (
                 <div style={{ ...dim, marginBottom: 10 }}>Add your route on the planner map to see this cartridge on a map.</div>
               )}
               {page.managed
-                ? <div style={{ ...dim, padding: '12px 0' }}>This page is filled from your route on the map: {plan.waypoints.length} point{plan.waypoints.length === 1 ? '' : 's'}. Edit the route to change it.</div>
+                ? <>
+                    <div style={{ ...dim, padding: '6px 0 12px' }}>This page is filled from your route on the map: {plan.waypoints.length} point{plan.waypoints.length === 1 ? '' : 's'}. Edit the route to change it.</div>
+                    {STEERPOINT_PAGES.has(page.key) && offsetSupport(target.code) && (
+                      <OffsetsEditor waypoints={plan.waypoints} support={offsetSupport(target.code)!} readOnly={readOnly} onChange={onWaypoints} />
+                    )}
+                  </>
                 : <Body key={page.key} ctx={ctx} segs={page.segs} scalarsOnly={page.scalarsOnly} />}
             </>
           ) : null}
@@ -259,6 +270,19 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
       </div>
     </Shell>
   )
+}
+
+/** Offset aimpoints and VIP/VRP points of the route, for the map. */
+function offsetMarks(w: PlanWaypoint[], map: DcsTerrain) {
+  const out: { lat: number; lon: number; label: string; from: { lat: number; lon: number } }[] = []
+  w.forEach((p, i) => {
+    const at = (o: { range_ft: number; bearing_deg: number }, label: string) =>
+      out.push({ ...offsetOnGrid(p.lat, p.lon, o, map.terrain), label, from: { lat: p.lat, lon: p.lon } })
+    ;(p.oa ?? []).forEach((o, k) => at(o, `OA${k + 1}·${i + 1}`))
+    if (p.vip) { at(p.vip.point, 'VIP TGT'); at(p.vip.pup, 'VIP PUP') }
+    if (p.vrp) { at(p.vrp.point, 'VRP'); at(p.vrp.pup, 'VRP PUP') }
+  })
+  return out
 }
 
 const h3 = { margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)' } as const

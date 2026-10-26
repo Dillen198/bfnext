@@ -15,7 +15,7 @@ import kiowa from './data/dcsdtc/OH58D.defaults.json'
 import c130 from './data/dcsdtc/C130.defaults.json'
 import a10 from './data/dcsdtc/A10.defaults.json'
 import tomcat from './data/native/F-14BU.defaults.json'
-import fulcrum from './data/native/MiG-29 Fulcrum.defaults.json'
+import fulcrum from './data/native/MiG-29_Fulcrum.defaults.json'
 
 type Obj = Record<string, unknown>
 const wp = (name: string, lat: number, lon: number, extra: Partial<PlanWaypoint> = {}): PlanWaypoint => ({
@@ -250,5 +250,54 @@ describe('F-14 JDAM targets placed on the map', () => {
     expect(slots).toHaveLength(32)
     expect(slots[0].label).toBe('STA 3 › PP1')
     expect(slots[31].label).toBe('STA 6 › PP8')
+  })
+})
+
+describe('offset aimpoints and VIP/VRP', () => {
+  const east = { range_ft: 3000, bearing_deg: 90, elev_ft: 150 }
+  const route = () => {
+    const w = many(4, [2])
+    w[2] = { ...w[2], oa: [east, { range_ft: 6076.12, bearing_deg: 0, elev_ft: 200 }], vrp: { point: { range_ft: 9000, bearing_deg: 180, elev_ft: 100 }, pup: { range_ft: 18000, bearing_deg: 200, elev_ft: 100 } } }
+    w[1] = { ...w[1], vip: { point: { range_ft: 5 * 6076.12, bearing_deg: 45, elev_ft: 100 }, pup: { range_ft: 3 * 6076.12, bearing_deg: 30, elev_ft: 0 } } }
+    return w
+  }
+
+  it('writes F-16 OAs and VIP/VRP on the map grid', () => {
+    const d = data(buildNative(plan('F-16C_50', { waypoints: route() }), 'F-16C_50', f16 as Json, {}, () => null).text)
+    const s = d.MPD.NAV_PTS[2]
+    expect(s.isOAP_1).toBe(true)
+    // 3000 ft east: about 914 m along +y, delta = steerpoint - OAP.
+    expect(s.OAP_1_Range).toBeCloseTo(914.4, -1)
+    expect(s.OAP_1_Y - s.y).toBeGreaterThan(900)
+    expect(s.OAP_1_DeltaY).toBeCloseTo(s.y - s.OAP_1_Y, 6)
+    expect(s.OAP_1_Bearing).toBeGreaterThan(1.4)
+    expect(s.OAP_1_Bearing).toBeLessThan(1.75)
+    expect(s.OAP_1_Alt).toBeCloseTo(150 * 0.3048, 6)
+    expect(s.isOAP_2).toBe(true)
+    expect(s.OAP_2_Range).toBeCloseTo(1852, -1)
+    const v = d.MPD.VIPVRP
+    expect(v).toMatchObject({ VIP_Number: 2, VRP_Number: 3, VIP_Enabled: true, VIPPUP_Enabled: true, VRP_Enabled: true, VRPPUP_Enabled: true })
+    expect(v.VIPTOTGT_Range).toBeCloseTo(5 * 1852, -1)
+    expect(v.TGTTOVRP_X).toBeLessThan(d.MPD.NAV_PTS[2].x)
+    expect(d.MPD.mirror_NAV_PTS).toBe(false)
+  })
+
+  it('writes the Hornet OA in grid degrees', () => {
+    const d = data(buildNative(plan('FA-18C_hornet', { waypoints: route() }), 'FA-18C_hornet', hornet as Json, {}, () => null).text)
+    const p = d.WYPT.NAV_PTS[2]
+    expect(p.isOA).toBe(true)
+    expect(p.OA_Bearing).toBeGreaterThan(80)
+    expect(p.OA_Bearing).toBeLessThan(100)
+    expect(p.OA_Range).toBeCloseTo(914.4, -1)
+    expect(d.WYPT.NAV_PTS[0].isOA).toBe(false)
+  })
+
+  it('writes DCS-DTC F-16 offsets in its units', () => {
+    const t = DCSDTC_TARGETS.find(x => x.code === 'F16C')!
+    const w = JSON.parse(buildDcsDtc(plan('F-16C_50', { waypoints: route() }), t, f16dtc as Json, {}, false, () => null).text).Waypoints.Waypoints
+    expect(w[2]).toMatchObject({ UseOA: true, OffsetAimpoint1: { Range: 3000, Bearing: 90, Elevation: 150 }, OffsetAimpoint2: { Range: 6076, Bearing: 0, Elevation: 200 } })
+    expect(w[2]).toMatchObject({ UseVRP: true, TGTtoVRP: { Range: 9000, Bearing: 180, Elevation: 100 } })
+    expect(w[1]).toMatchObject({ UseVIP: true, VIPtoTGT: { Range: 5, Bearing: 45 }, VIPtoPUP: { Range: 3 } })
+    expect(w[0]).toMatchObject({ UseOA: false, OffsetAimpoint1: null, UseVIP: false, VIPtoTGT: null })
   })
 })

@@ -68,6 +68,9 @@ class BFWeather(Extension):
                 live_time: false                      # optional, default false
                 options_overrides: 'E:\\...\\overrides.json'  # optional -- a path that does not
                 # exist is skipped with a warning rather than failing the build
+                dtc: 'E:\\...\\cartridges'            # optional folder of DCS Data Transfer
+                # Cartridges (.dtc, exported from the dashboard Planner) pre-loaded on
+                # every player slot of their aircraft; same skip-if-missing rule
                 map_view: 'onlyallies'                # optional F10 map view for
                 # players in a slot: all | allies (fog of war) | onlyallies |
                 # myaircraft | onlymap. Unset => whatever the options template
@@ -161,6 +164,9 @@ class BFWeather(Extension):
         options_overrides = self._optional_path('options_overrides')
         if options_overrides:
             cmd += ['--options-overrides', options_overrides]
+        dtc = self._optional_path('dtc')
+        if dtc:
+            cmd += ['--dtc', dtc]
         # F10 map view. Left alone, bftools still locks spectators and
         # observers to map-only on its own -- these only exist to set the
         # in-slot view (and to opt out of the whole thing).

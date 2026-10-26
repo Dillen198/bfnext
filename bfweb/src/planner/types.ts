@@ -12,6 +12,30 @@ export interface PlanWaypoint {
   elev_ft: number
   target: boolean
   note: string
+  /** Offset aimpoints from this point: the F-16 takes two (OA1, OA2), the
+   *  Hornet one. */
+  oa?: PlanOffset[]
+  /** This steerpoint is the visual initial point: offsets to the target and
+   *  the pull-up point (F-16). */
+  vip?: PlanOffsetPair
+  /** This steerpoint is the target: offsets to the visual reference point and
+   *  the pull-up point (F-16). */
+  vrp?: PlanOffsetPair
+}
+
+/** A point given relative to a waypoint. */
+export interface PlanOffset {
+  range_ft: number
+  /** Degrees true, from the waypoint. */
+  bearing_deg: number
+  /** Feet MSL. */
+  elev_ft: number
+}
+
+export interface PlanOffsetPair {
+  /** The target (VIP) or the reference point (VRP). */
+  point: PlanOffset
+  pup: PlanOffset
 }
 
 export interface PlanChannel {

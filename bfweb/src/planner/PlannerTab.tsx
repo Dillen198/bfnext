@@ -467,6 +467,7 @@ export default function PlannerTab({ side, adminSide, report }: Props) {
           tosSeconds={tosSeconds}
           tosText={tosText}
           side={side}
+          onWaypoints={w => edit(p => ({ ...p, waypoints: w }))}
         />
 
         <Panel title="Route & kneeboard" size="sm">

@@ -12,7 +12,7 @@
 import { applyOverrides, clone, pruneOverrides, type Json, type JsonObject, type Overrides } from './model'
 import { hornetSequences } from './nav'
 import { autoItemFlags, autoUploadFlags, switchesFor } from './dtc/switches'
-import type { Plan, PlanWaypoint } from './types'
+import type { Plan, PlanOffset, PlanWaypoint } from './types'
 
 /** U+2019: DCS-DTC types coordinates character by character and the minute
  *  mark must be this, not an ASCII apostrophe. */
@@ -213,11 +213,19 @@ function fillRoute(cfg: JsonObject, plan: Plan, t: DcsDtcTarget, tos: Tos): stri
     sys.Waypoints = w.map((p, i) => {
       const seq = t.firstSequence + i
       if (t.code === 'F16C') {
+        // DCS-DTC types these into the DED: OA and VRP ranges in whole feet,
+        // VIP ranges in NM to a tenth, bearings true to a tenth, feet MSL.
+        const off = (o: PlanOffset | undefined, nm = false): JsonObject | null => o
+          ? { Range: nm ? Math.round((o.range_ft / 6076.12) * 10) / 10 : Math.round(o.range_ft), Bearing: Math.round(o.bearing_deg * 10) / 10, Elevation: Math.round(o.elev_ft) }
+          : null
+        const oa = p.oa ?? []
         return wpt(p, seq, t, {
           TimeOverSteerpoint: tos(i),
-          UseOA: false, OffsetAimpoint1: null, OffsetAimpoint2: null,
-          UseVIP: false, VIPtoTGT: null, VIPtoPUP: null,
-          UseVRP: false, TGTtoVRP: null, TGTtoPUP: null,
+          UseOA: oa.length > 0,
+          OffsetAimpoint1: off(oa[0]) ?? (oa.length ? { Range: 0, Bearing: 0, Elevation: 0 } : null),
+          OffsetAimpoint2: oa.length ? off(oa[1]) ?? { Range: 0, Bearing: 0, Elevation: 0 } : null,
+          UseVIP: !!p.vip, VIPtoTGT: off(p.vip?.point, true), VIPtoPUP: off(p.vip?.pup, true),
+          UseVRP: !!p.vrp, TGTtoVRP: off(p.vrp?.point), TGTtoPUP: off(p.vrp?.pup),
         })
       }
       const out = wpt(p, seq, t, { TimeOverSteerpoint: t.code === 'FA18C' ? tos(i) : null })

@@ -40,3 +40,24 @@ copy one over.
 The production snapshots that used to sit here (`ODFv2_CFG production*`,
 `ODFv2_CFG.pre-defence`) were removed. The live config is on the server,
 and git history has the old snapshots.
+
+## Cartridges (DTC) baked into the mission
+
+Pilots can load their own Data Transfer Cartridges, but the campaign can
+also hand every slot a default one: radio presets, countermeasure programs
+and so on, loaded the moment a pilot takes the slot.
+
+1. Build the cartridge in the dashboard: Briefing > Planner, pick the
+   aircraft, "Set up & download cartridge" with the **DCS built-in
+   cartridge** method, and download the `.dtc`. Plan it on the map the
+   campaign runs on: a cartridge only loads its nav data on its own map.
+2. Put the `.dtc` files for the server in one folder (one per aircraft
+   type; a second one for the same type is offered as an alternative, the
+   first is the default).
+3. Point the build at it: `bftools miz ... --dtc <folder>`, or `dtc:` in the
+   BFWeather extension's `nodes.yaml` block.
+
+bftools copies each cartridge into the mission as `DTC/<name>.dtc` and sets
+it, pre-loaded, on every player slot of that type (static Client slots and
+dynamic-slot templates). Cartridges for another map are skipped with a
+warning, and a broken one fails the build rather than reaching pilots.

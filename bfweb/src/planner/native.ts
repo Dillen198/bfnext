@@ -12,7 +12,7 @@
 // * point lists are JSON arrays, never objects with "1" keys.
 
 import { applyOverrides, clone, getAt, fromPointer, pruneOverrides, setAt, type Json, type JsonObject, type Overrides } from './model'
-import { fromDcsXY, hornetSequences, terrainAt, toDcsXY, type DcsTerrain } from './nav'
+import { fromDcsXY, hornetSequences, offsetOnGrid, terrainAt, toDcsXY, type DcsTerrain } from './nav'
 import { aircraftDef, type NativeType, type Plan } from './types'
 import { ExportError, safeName } from './exports'
 import { lar, larCentre } from './f14lar'
@@ -120,6 +120,53 @@ function f16Route(r: RouteFill) {
   }))
   setAt(r.data, ['MPD', 'terrain'], r.terrain)
   r.filled.push('/MPD/NAV_PTS')
+
+  // Offset aimpoints: absolute position, delta = steerpoint - OAP, grid
+  // bearing in radians, metres (the descriptor's own conventions).
+  const pts = getAt(r.data, ['MPD', 'NAV_PTS']) as JsonObject[]
+  w.forEach((p, i) => {
+    ;(p.oa ?? []).slice(0, 2).forEach((o, k) => {
+      const g = offsetOnGrid(p.lat, p.lon, o, r.grid.terrain)
+      const n = k + 1
+      Object.assign(pts[i], {
+        [`isOAP_${n}`]: true,
+        [`OAP_${n}_X`]: g.x, [`OAP_${n}_Y`]: g.y,
+        [`OAP_${n}_DeltaX`]: g.deltaX, [`OAP_${n}_DeltaY`]: g.deltaY,
+        [`OAP_${n}_Range`]: g.range, [`OAP_${n}_Bearing`]: g.bearingRad,
+        [`OAP_${n}_Alt`]: o.elev_ft * FT,
+      })
+    })
+  })
+  // VIP / VRP: the first steerpoint marked as each.
+  const vipvrp = { ...((getAt(r.data, ['MPD', 'VIPVRP']) as JsonObject) ?? {}) }
+  const group = (anchor: typeof w[number], o: { range_ft: number; bearing_deg: number; elev_ft: number }, g: string) => {
+    const q = offsetOnGrid(anchor.lat, anchor.lon, o, r.grid.terrain)
+    Object.assign(vipvrp, {
+      [`${g}_id`]: g, [`${g}_LineName`]: `${g}_Line`,
+      [`${g}_X`]: q.x, [`${g}_Y`]: q.y, [`${g}_DeltaX`]: q.deltaX, [`${g}_DeltaY`]: q.deltaY,
+      [`${g}_Bearing`]: q.bearingRad, [`${g}_Range`]: Math.min(q.range, 148160), [`${g}_Elevation`]: o.elev_ft * FT,
+    })
+  }
+  const vi = w.findIndex(p => p.vip)
+  if (vi >= 0) {
+    vipvrp.VIP_Number = vi + 1
+    group(w[vi], w[vi].vip!.point, 'VIPTOTGT')
+    group(w[vi], w[vi].vip!.pup, 'VIPTOPUP')
+    vipvrp.VIP_Enabled = true
+    vipvrp.VIPPUP_Enabled = true
+  }
+  const ri = w.findIndex(p => p.vrp)
+  if (ri >= 0) {
+    vipvrp.VRP_Number = ri + 1
+    group(w[ri], w[ri].vrp!.point, 'TGTTOVRP')
+    group(w[ri], w[ri].vrp!.pup, 'TGTTOPUP')
+    vipvrp.VRP_Enabled = true
+    vipvrp.VRPPUP_Enabled = true
+  }
+  if (vi >= 0 || ri >= 0) {
+    setAt(r.data, ['MPD', 'VIPVRP'], vipvrp)
+    if (vi >= 0 && vi === ri) r.warnings.push('The F-16 guide recommends different steerpoints for the VIP and the VRP target.')
+  }
   // Plan radios: COMM is replaced wholesale on import, so these overlay the
   // full 20-channel tables already in `data`. Modulation 1 = AM, 2 = FM.
   if (r.plan.include_comms) {
@@ -158,6 +205,14 @@ function hornetRoute(r: RouteFill) {
       altitudeType: 1, velocityType: 3,
       isOA: false, OA_Range: 0, OA_Bearing: 0, OA_X: 0, OA_Y: 0, OA_Alt: 0, OA_DeltaX: 0, OA_DeltaY: 0,
       OA_Bearing_Units: 1, OA_Range_Units: 1, OA_Elevation_Units: 1,
+    }
+    const o = p.oa?.[0]
+    if (o) {
+      const g = offsetOnGrid(p.lat, p.lon, o, r.grid.terrain)
+      Object.assign(pt, {
+        isOA: true, OA_X: g.x, OA_Y: g.y, OA_Alt: o.elev_ft * FT,
+        OA_Range: g.range, OA_Bearing: (g.bearingRad * 180) / Math.PI, OA_DeltaX: g.deltaX, OA_DeltaY: g.deltaY,
+      })
     }
     seqs.forEach((seq, si) => {
       const k = seq.indexOf(i)

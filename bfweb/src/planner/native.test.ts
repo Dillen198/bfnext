@@ -6,7 +6,7 @@ import f16 from './data/native/F-16C_50.defaults.json'
 import hornet from './data/native/FA-18C_hornet.defaults.json'
 import apache from './data/native/AH-64D_BLK_II.defaults.json'
 import tomcat from './data/native/F-14BU.defaults.json'
-import fulcrum from './data/native/MiG-29 Fulcrum.defaults.json'
+import fulcrum from './data/native/MiG-29_Fulcrum.defaults.json'
 import { lar } from './f14lar'
 
 // Each check below is an item from the exporter checklists, which were

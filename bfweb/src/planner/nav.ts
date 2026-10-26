@@ -169,3 +169,40 @@ export function hornetSequences(n: number): number[][] {
   }
   return out
 }
+
+/** The point `rangeM` metres from (lat, lon) along a true bearing: great
+ *  circle on a sphere, plenty for offsets of a few miles. */
+export function destination(lat: number, lon: number, bearingTrueDeg: number, rangeM: number): { lat: number; lon: number } {
+  const R = 6371008.8
+  const d = rangeM / R
+  const b = (bearingTrueDeg * Math.PI) / 180
+  const p1 = (lat * Math.PI) / 180
+  const l1 = (lon * Math.PI) / 180
+  const p2 = Math.asin(Math.sin(p1) * Math.cos(d) + Math.cos(p1) * Math.sin(d) * Math.cos(b))
+  const l2 = l1 + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(p1), Math.cos(d) - Math.sin(p1) * Math.sin(p2))
+  return { lat: (p2 * 180) / Math.PI, lon: ((((l2 * 180) / Math.PI) + 540) % 360) - 180 }
+}
+
+/** The grid angle of true north at a point, radians from +x (grid north)
+ *  toward +y: the meridian convergence of the map's projection. */
+export function gridConvergence(lat: number, lon: number, terrain: Terrain): number {
+  const a = toDcsXY(lat, lon, terrain)
+  const n = toDcsXY(lat + 0.01, lon, terrain)
+  return Math.atan2(n.y - a.y, n.x - a.x)
+}
+
+/**
+ * An offset from a waypoint as a map position, with its grid geometry from
+ * the anchor: what DCS's cartridges store. DCS's world is the flat map grid,
+ * so the range is laid out in grid metres (the cockpit's 3000 ft is 914.4 m
+ * of x/y); only the bearing is turned from true to grid.
+ */
+export function offsetOnGrid(anchorLat: number, anchorLon: number, off: { range_ft: number; bearing_deg: number }, terrain: Terrain) {
+  const a = toDcsXY(anchorLat, anchorLon, terrain)
+  const r = off.range_ft * 0.3048
+  const b = (((off.bearing_deg * Math.PI) / 180 + gridConvergence(anchorLat, anchorLon, terrain)) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI)
+  const x = a.x + r * Math.cos(b)
+  const y = a.y + r * Math.sin(b)
+  const ll = fromDcsXY(x, y, terrain)
+  return { x, y, lat: ll.lat, lon: ll.lon, range: r, bearingRad: b, deltaX: a.x - x, deltaY: a.y - y }
+}

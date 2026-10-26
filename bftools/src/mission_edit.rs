@@ -2583,6 +2583,13 @@ pub fn run(cfg: &MizCmd) -> Result<()> {
             .context("applying dyn spawn templates")?,
         None => HashMap::default(),
     };
+    if let Some(dir) = cfg.dtc.as_ref() {
+        let entries = crate::dtc::embed(lua, &base.mission, &base.miz.root, dir)
+            .with_context(|| format_compact!("embedding cartridges from {dir:?}"))?;
+        for (entry, path) in entries {
+            base.miz.files.insert(String::from(entry.as_str()), path);
+        }
+    }
     let s = serialize_to_lua("mission", Value::Table((&*base.mission).clone()))?;
     fs::write(&base.miz.files["mission"], &s).context("writing mission file")?;
     info!("wrote serialized mission to mission file.");

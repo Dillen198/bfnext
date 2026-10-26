@@ -15,7 +15,7 @@ import { ChevronDown, ChevronRight, Plus, RotateCcw, Trash2 } from '@icons'
 import { checkValue, clone, deepEqual, getAt, toPointer, type Json, type JsonObject, type Seg } from '../model'
 
 import {
-  changesUnder, entriesOf, humanise, isMatrix, isMatrixList, isObj, isRecordTable, isScalar, labelOf, rowLabel,
+  changesUnder, entriesOf, humanise, isMatrix, isMatrixList, isObj, isRecordTable, isScalar, labelOf, playerHelp, rowLabel,
   type Ctx, type LeafHit,
 } from './core'
 
@@ -34,7 +34,7 @@ export function Control({ ctx, segs, compact }: { ctx: Ctx; segs: Seg[]; compact
   const err = checkValue(a, v)
   const name = labelOf(ctx, segs)
   const style: CSSProperties = { ...inputStyle, borderColor: err ? '#f0a030' : undefined, width: compact ? '100%' : undefined }
-  const title = [a?.help, err ? `Check: ${err}` : ''].filter(Boolean).join('\n') || undefined
+  const title = [playerHelp(a?.help), err ? `Check: ${err}` : ''].filter(Boolean).join('\n') || undefined
 
   if (a?.options?.length) {
     const i = a.options.findIndex(o => deepEqual(o.value, v))
@@ -96,9 +96,9 @@ export function FieldRow({ ctx, segs, label }: { ctx: Ctx; segs: Seg[]; label?: 
   const changed = changesUnder(ctx, segs) > 0
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(120px, 42%) 1fr', gap: 8, alignItems: 'center', padding: '3px 0' }}>
-      <span title={a?.help} style={{ fontSize: '0.7rem', color: changed ? 'var(--accent)' : 'var(--text-muted, var(--text-dim))', lineHeight: 1.3 }}>
+      <span title={playerHelp(a?.help)} style={{ fontSize: '0.7rem', color: changed ? 'var(--accent)' : 'var(--text-muted, var(--text-dim))', lineHeight: 1.3 }}>
         {label ?? labelOf(ctx, segs)}{unit ? <span style={{ color: 'var(--text-dim)' }}> ({unit})</span> : null}
-        {a?.help && <span style={{ color: 'var(--text-dim)', marginLeft: 4, cursor: 'help' }} aria-hidden>ⓘ</span>}
+        {playerHelp(a?.help) && <span style={{ color: 'var(--text-dim)', marginLeft: 4, cursor: 'help' }} aria-hidden>ⓘ</span>}
       </span>
       <span style={{ display: 'flex', gap: 6, alignItems: 'center', minWidth: 0 }}>
         <Control ctx={ctx} segs={segs} />
@@ -190,7 +190,7 @@ function RecordTable({ ctx, segs }: { ctx: Ctx; segs: Seg[] }) {
                 const ca = ctx.idx.get([...segs, firstRow, c])
                 const unit = ca?.display?.unit ?? ca?.unit
                 return (
-                  <th key={c} style={th} title={ca?.help}>
+                  <th key={c} style={th} title={playerHelp(ca?.help)}>
                     {shortLabel(ca?.label ?? humanise(c), rowWords)}{unit ? ` (${unit})` : ''}
                   </th>
                 )
@@ -284,7 +284,7 @@ function MatrixCard({ ctx, segs, title }: { ctx: Ctx; segs: Seg[]; title?: strin
             const unit = ka?.display?.unit ?? ka?.unit
             return (
               <tr key={k}>
-                <td style={{ ...td, paddingRight: 6, color: 'var(--text-dim)' }} title={ka?.help}>
+                <td style={{ ...td, paddingRight: 6, color: 'var(--text-dim)' }} title={playerHelp(ka?.help)}>
                   {shortLabel(ka?.label ?? humanise(k), [first, groups[0]])}{unit ? ` (${unit})` : ''}
                 </td>
                 {groups.map(g => <td key={g} style={td}><Control ctx={ctx} segs={[...segs, g, k]} compact /></td>)}
@@ -381,7 +381,7 @@ export function Body({ ctx, segs, depth = 0, scalarsOnly = false }: { ctx: Ctx; 
         const ka = ctx.idx.get(ks)
         if (ka?.managed) return <RouteNote key={String(k)} ctx={ctx} segs={ks} />
         return (
-          <Section key={String(k)} title={typeof k === 'string' ? labelOf(ctx, ks) : rowLabel(ctx, segs, k, x)} help={ka?.help} changed={changesUnder(ctx, ks)}
+          <Section key={String(k)} title={typeof k === 'string' ? labelOf(ctx, ks) : rowLabel(ctx, segs, k, x)} help={playerHelp(ka?.help)} changed={changesUnder(ctx, ks)}
             defaultOpen={groups.length <= 3 || depth === 0 && groups.length <= 6}
             right={<ResetButton ctx={ctx} segs={ks} />}>
             <Body ctx={ctx} segs={ks} depth={depth + 1} />

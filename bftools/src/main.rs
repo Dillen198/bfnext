@@ -3,6 +3,7 @@ use clap::{Args, Parser, Subcommand};
 use serde_derive::Serialize;
 use std::path::PathBuf;
 
+mod dtc;
 mod mission_edit;
 mod unitdb;
 
@@ -120,6 +121,13 @@ struct MizCmd {
     /// exactly as it is
     #[clap(long)]
     no_force_map_view: bool,
+    /// a folder of DCS Data Transfer Cartridges (.dtc, as the dashboard's
+    /// Planner exports them) to bake into the mission: each is copied in and
+    /// pre-loaded on every player slot of its aircraft type, so pilots get
+    /// the campaign's presets the moment they take the slot. Cartridges made
+    /// for another map are skipped
+    #[clap(long)]
+    dtc: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Clone, Debug, Serialize)]

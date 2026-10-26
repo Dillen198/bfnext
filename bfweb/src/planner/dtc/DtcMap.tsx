@@ -11,6 +11,8 @@ import type { Plan } from '../types'
 import type { Ctx } from './core'
 
 interface Props {
+  /** Points derived from the route (offset aimpoints, VIP/VRP), drawn from their steerpoint. */
+  extras?: { lat: number; lon: number; label: string; from: { lat: number; lon: number } }[]
   ctx: Ctx
   plan: Plan
   map: DcsTerrain
@@ -22,7 +24,7 @@ interface Props {
  * you are on (drag to move, click the map to add), and every other cartridge
  * point faintly.
  */
-export default function DtcMap({ ctx, plan, map, pageSegs }: Props) {
+export default function DtcMap({ ctx, plan, map, pageSegs, extras = [] }: Props) {
   const { theme } = useTheme()
   const mapStyle = useMemo(() => mapStyleFor(theme), [theme])
   const pts = useMemo(() => positions(ctx, map, pageSegs), [ctx, map, pageSegs])
@@ -108,6 +110,17 @@ export default function DtcMap({ ctx, plan, map, pageSegs }: Props) {
         {lars.launches.map((p, i) => (
           <Marker key={`launch-${i}`} latitude={p.lat} longitude={p.lon}>
             <div title="Launch point (centre of the release zone)" style={{ width: 8, height: 8, transform: 'rotate(45deg)', background: '#40a6ff', border: '1px solid #04121f' }} />
+          </Marker>
+        ))}
+        <Source id="dtc-offsets" type="geojson" data={{
+          type: 'FeatureCollection',
+          features: extras.map(e => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[e.from.lon, e.from.lat], [e.lon, e.lat]] } })),
+        }}>
+          <Layer id="dtc-offsets-line" type="line" paint={{ 'line-color': '#f0a030', 'line-width': 1.2, 'line-dasharray': [2, 2] }} />
+        </Source>
+        {extras.map((e, i) => (
+          <Marker key={`x-${i}`} latitude={e.lat} longitude={e.lon}>
+            <div title={e.label} style={{ padding: '0 4px', borderRadius: 3, background: '#f0a030', color: '#1a1004', fontSize: 9, fontWeight: 800, border: '1px solid #1a1004', whiteSpace: 'nowrap' }}>{e.label}</div>
           </Marker>
         ))}
         <Source id="dtc-route" type="geojson" data={route}>
