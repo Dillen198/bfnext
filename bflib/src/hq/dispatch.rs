@@ -320,8 +320,7 @@ pub(crate) fn launch(
         }
         d
     };
-    let bal = ctx.db.persisted.adjust_treasury(side, -cost);
-    ctx.db.ephemeral.dirty();
+    let bal = super::treasury::pay(&mut ctx.db, side, cost);
     let r = ctx.db.persisted.hq.side_mut(side).record.entry(c.kind).or_default();
     r.launched += 1;
     let id = ctx.hq.next_id();

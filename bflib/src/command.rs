@@ -415,17 +415,12 @@ fn rate_limited(ctx: &mut Context, who: Option<Ucid>, now: DateTime<Utc>) -> Res
 
 /// Can the treasury pay `cost`? Admin orders are paid like anyone's.
 fn afford(ctx: &Context, side: Side, cost: i64) -> Result<(), CompactString> {
-    let t = ctx.db.persisted.treasury(side);
-    if cost > t {
-        return Err(format_compact!("that costs {cost} and the treasury has {t}"));
-    }
-    Ok(())
+    crate::hq::treasury::afford(&ctx.db, side, cost)
 }
 
 fn pay(ctx: &mut Context, side: Side, cost: i64) {
     if cost > 0 {
-        ctx.db.persisted.adjust_treasury(side, -cost);
-        ctx.db.ephemeral.dirty();
+        crate::hq::treasury::pay(&mut ctx.db, side, cost);
     }
 }
 

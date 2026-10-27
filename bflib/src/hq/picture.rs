@@ -639,6 +639,111 @@ pub(crate) fn build(ctx: &Context, cfg: &HqCfg, side: Side, now: DateTime<Utc>) 
     }
 }
 
+// ---------------------------------------------------------------------------
+// The objective summary the rules mode scores (`super::rules`)
+// ---------------------------------------------------------------------------
+
+/// One objective, as the rules mode sees it. Built straight from the db
+/// (`side_objectives`), without the rest of the HQ picture: the rules mode
+/// runs on servers with no HQ config, and its numbers are the ones the old
+/// Smart Commander event picker used.
+#[derive(Debug, Clone)]
+pub(crate) struct ObjSummary {
+    pub(crate) oid: ObjectiveId,
+    pub(crate) pos: Vector2,
+    pub(crate) health: u8,
+    pub(crate) supply: u8,
+    pub(crate) threatened: bool,
+    /// Enemy troops actively in the capture zone right now.
+    pub(crate) being_captured: bool,
+    /// logi == 0 -- no logistics units, can be captured immediately.
+    pub(crate) capturable: bool,
+    /// A logistics hub -- extra strategic value.
+    pub(crate) is_logi_hub: bool,
+    /// A factory -- extra strategic value.
+    pub(crate) is_factory: bool,
+    /// Has alive Armor/Mr/Lr groups that can fire on enemies.
+    pub(crate) has_fire_groups: bool,
+    /// Display name, for messages.
+    pub(crate) name: CompactString,
+}
+
+/// Every objective `side` owns, summarised for the rules mode.
+pub(crate) fn side_objectives(db: &crate::db::Db, side: Side) -> Vec<ObjSummary> {
+    let being_captured: Vec<ObjectiveId> = db.objectives_being_captured_by(side);
+    db.persisted
+        .objectives
+        .into_iter()
+        .filter(|(_, o)| o.owner() == side)
+        .map(|(id, obj)| {
+            let has_fire_groups = obj
+                .groups()
+                .get(&side)
+                .map(|gids| {
+                    gids.into_iter().any(|gid| {
+                        db.persisted
+                            .groups
+                            .get(gid)
+                            .map(|g| {
+                                matches!(g.class, ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Lr)
+                                    && g.units.into_iter().any(|uid| {
+                                        db.persisted.units.get(uid).map(|u| !u.dead).unwrap_or(false)
+                                    })
+                            })
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false);
+            ObjSummary {
+                oid: *id,
+                pos: obj.pos(),
+                health: obj.health(),
+                supply: obj.supply(),
+                threatened: obj.threatened(),
+                being_captured: being_captured.contains(id),
+                capturable: obj.captureable(),
+                is_logi_hub: matches!(obj.kind(), ObjectiveKind::Logistics),
+                is_factory: matches!(obj.kind(), ObjectiveKind::Factory { .. }),
+                has_fire_groups,
+                name: CompactString::from(obj.name()),
+            }
+        })
+        .collect()
+}
+
+/// `side`'s deployed or action groups that can fire cruise missiles (tagged
+/// `ALCM`), with where they are (`None` when the db can't place one).
+pub(crate) fn missile_groups(db: &crate::db::Db, side: Side) -> SmallVec<[(GroupId, Option<Vector2>); 4]> {
+    db.deployed()
+        .chain(db.actions())
+        .filter(|g| g.side == side && g.tags.contains(UnitTag::ALCM))
+        .map(|g| (g.id, db.group_center(&g.id).ok()))
+        .collect()
+}
+
+/// `side`'s players in fixed-wing aircraft right now (helicopters don't
+/// count; a slot whose type isn't classified does).
+pub(crate) fn fixedwing_pilots(db: &crate::db::Db, side: Side) -> u32 {
+    db.persisted
+        .players()
+        .into_iter()
+        .filter(|(_, p)| {
+            if p.side != side {
+                return false;
+            }
+            if let Some((_, Some(inst))) = &p.current_slot {
+                match db.ephemeral.cfg.unit_classification.get(&inst.typ) {
+                    Some(tags) => tags.contains(UnitTag::Aircraft) && !tags.contains(UnitTag::Helicopter),
+                    None => true,
+                }
+            } else {
+                false
+            }
+        })
+        .count() as u32
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

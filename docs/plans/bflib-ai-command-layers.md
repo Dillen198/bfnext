@@ -1,6 +1,8 @@
 # bflib: three overlapping AI command layers
 
-Audit finding f126. Status: plan only.
+Audit finding f126. Status: **merged as far as it goes without changing AI
+behaviour** (branch `bflib-redesign-870271`); see "What was done" at the
+end for the state now and what is left.
 
 ## What exists
 
@@ -70,3 +72,58 @@ such a server before release.
 
 Rough size: step 1 two days, step 2 two to three, step 3 three, step 4 two,
 step 5 one to two.
+
+## What was done
+
+The merge stops where the next step would change what the AI does on an
+existing config. On every config the AI makes the same decisions as before.
+
+- **One planner, two modes.** `hq::tick` is the AI's planning pass for both
+  sides on every server with a `smart_commander`. With the theatre HQ on it
+  runs the full planner as before. With it off it runs the **rules mode**
+  (`hq/rules.rs`): the Smart Commander's old event picker
+  (`commander::tick_events`), moved into the HQ unchanged. One event per
+  pass, best value per treasury point, same cadence
+  (`tick_period_secs`, `check_interval_secs`, the 30 s emergency interval,
+  `max_concurrent_events` with the capture bypass), same keys. The second
+  picker is gone as a separate layer, and `hq::active` decides the mode in
+  one place.
+- **Pinned.** The scorer is now a pure function (`rules::score` over
+  `rules::Inputs`, which `Inputs::gather` reads from the db first), with
+  tests for every buy (barrage range and weakness, missile range, cost and
+  one-at-a-time, ambush, CAP balance, cooldown and cover), the
+  value-per-point choice and the check cadence.
+- **One picture module.** The rules mode's objective summary
+  (`build_side_assessment`, ALCM groups, fixed-wing pilot count) is now
+  `hq::picture::{side_objectives, missile_groups, fixedwing_pilots}`, next to
+  the HQ's own picture.
+- **One spending path.** `hq/treasury.rs` (`scaled`, `afford`, `shortfall`,
+  `pay`) is what the HQ's planner and dispatcher, the rules mode and the
+  command map's human orders (`command.rs`, `command/orders.rs`) all price
+  and pay through.
+- **The economy on its own.** What was left of `commander.rs` (treasury
+  income, objective funding, holding bonuses) is `economy.rs`, run by
+  `tick_economy` in the slow pass just before `hq::tick`, as before.
+
+## What is left, and why
+
+- **Rules mode -> HQ valuation** (plan step 3 in full): running the HQ
+  planner in a one-operation-per-check mode *instead of* the rules scorer.
+  The two value things differently (the HQ's operation valuation vs the
+  rules mode's weakness/strategic formula), so this changes what a no-HQ
+  server's AI buys. It needs a design decision and a live session on such a
+  server, not a refactor.
+- **One dispatcher for human orders** (step 4): command-map orders start
+  actions with `start_action` at cost 0 and pay up front, while the HQ uses
+  `start_treasury_action` and records the operation. Routing human orders
+  through `hq::dispatch` would make them HQ operations (tracked, counted in
+  the HQ's record, shown in its ops list): visible behaviour, so not done
+  here. They share the spending path now.
+- **Ground AI from the plan only** (step 5): `groundwar::ai` already
+  follows the HQ's main effort when there is one; dropping its own objective
+  scoring changes formations' choices on servers without the HQ.
+- **One picture for everything** (step 2 in full): `hq::picture::build`,
+  the rules mode's summary and `groundwar::picture` still each walk the
+  objectives. Folding them into one cached picture per pass is a
+  performance change; the three compute different things today and merging
+  them is only safe together with the steps above.

@@ -713,7 +713,7 @@ impl EventScheduler {
                             effects.push(EventEffect::DeleteMarks { ids: marks });
                         }
                         // Record when this commander CAP ended so the cooldown
-                        // enforcer in commander.rs can gate the next dispatch.
+                        // check in hq::rules can gate the next dispatch.
                         match *cap_side {
                             Side::Blue => self.last_commander_cap_ended_blue = Some(now),
                             Side::Red => self.last_commander_cap_ended_red = Some(now),
@@ -773,7 +773,7 @@ impl EventScheduler {
 
     /// Spawn a barrage event using the pre-selected (src, target) pair chosen by
     /// the Smart Commander. All target selection and range checking has already been
-    /// done by `commander::score_actions`; this function only records the event.
+    /// done by `hq::rules::score`; this function only records the event.
     pub(crate) fn spawn_barrage_event(
         &mut self,
         cfg: &CampaignEventsCfg,

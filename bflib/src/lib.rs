@@ -24,8 +24,8 @@ mod chatcmd;
 mod clock;
 mod cockpit;
 mod command;
-mod commander;
 mod db;
+mod economy;
 mod ewr;
 mod frontline;
 mod groundwar;
@@ -3037,7 +3037,10 @@ fn award_periodic_points(ctx: &mut Context, ts: DateTime<Utc>) {
     }
 }
 
-fn tick_smart_commander(_lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
+/// The economy (`economy`): income into the treasuries and the bases' funds.
+/// What the AI buys with it is the HQ's (`hq::tick`, which runs the rules
+/// mode when the theatre HQ is off).
+fn tick_economy(ctx: &mut Context, ts: DateTime<Utc>) {
     let cfg = match ctx.db.ephemeral.cfg.smart_commander.as_ref() {
         Some(c) => c.clone(),
         None => return,
@@ -3060,25 +3063,7 @@ fn tick_smart_commander(_lua: MizLua, ctx: &mut Context, ts: DateTime<Utc>) {
                 .push(ifo.ucid);
         }
     }
-    commander::tick(&mut ctx.db, &cfg, ts, &ucids_by_side);
-
-    // Strategic events — only when campaign_events is also configured.
-    // The theatre HQ runs these itself (as part of everything else it runs),
-    // so the old one-action-per-check picker stands down while it is on.
-    if hq::active(&ctx.db.ephemeral.cfg) {
-        return;
-    }
-    if let Some(events_cfg) = ctx.db.ephemeral.cfg.campaign_events.clone() {
-        if events_cfg.enabled {
-            let player_count = ctx.connected.len();
-            let (messages, effects) =
-                commander::tick_events(&mut ctx.db, &cfg, &events_cfg, ts, &mut ctx.event_scheduler, player_count);
-            for msg in messages {
-                ctx.db.ephemeral.msgs().panel_to_all(15, false, msg);
-            }
-            ctx.event_scheduler.pending_effects.extend(effects);
-        }
-    }
+    economy::tick(&mut ctx.db, &cfg, ts, &ucids_by_side);
 }
 
 fn update_frontline(ctx: &mut Context, ts: DateTime<Utc>, force_update: bool) {
@@ -5623,9 +5608,10 @@ fn slow_phase_3(
     start_ts: DateTime<Utc>,
 ) -> Result<AdminResult> {
     step(lua, ctx, "periodic points", |ctx| award_periodic_points(ctx, start_ts));
-    step(lua, ctx, "commander", |ctx| tick_smart_commander(lua, ctx, start_ts));
-    // The theatre HQ plans and dispatches the war's missions and logistics
-    // (`smart_commander.hq`). Before the campaign events below so the
+    step(lua, ctx, "economy", |ctx| tick_economy(ctx, start_ts));
+    // The AI plans and buys the war's missions and logistics: the theatre
+    // HQ (`smart_commander.hq`), or without it the rules mode's one
+    // campaign event per check. Before the campaign events below so the
     // effects it queues are applied this tick, and before the ground war so
     // the ground AI follows this pass's main effort.
     step(lua, ctx, "hq", |ctx| hq::tick(lua, ctx, perf, start_ts));
@@ -5636,7 +5622,7 @@ fn slow_phase_3(
     // set: the commander and the HQ launch helo missions and ambushes either
     // way, and those must still be flown, paid off and cleaned up. Only new
     // events are gated on `enabled` (the reactive CAP in check_air_threats;
-    // other new event spawning is done by tick_smart_commander above).
+    // other new event spawning is the HQ's, above).
     let events_cfg = ctx.db.ephemeral.cfg.campaign_events.clone().unwrap_or_default();
     {
         step(lua, ctx, "campaign events", |ctx| {

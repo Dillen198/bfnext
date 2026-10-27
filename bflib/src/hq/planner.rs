@@ -167,7 +167,7 @@ fn allowed(cfg: &HqCfg, side: Side, name: &str) -> bool {
 }
 
 fn scaled(cfg: &HqCfg, cost: i64) -> i64 {
-    ((cost as f64) * cfg.cost_scale.max(0.)).round() as i64
+    super::treasury::scaled(cost, cfg.cost_scale)
 }
 
 /// The operations `side` has the means to run, and what each costs.

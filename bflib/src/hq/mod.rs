@@ -50,8 +50,10 @@ mod dispatch;
 mod picture;
 pub(crate) mod planner;
 mod requests;
+mod rules;
 mod strategy;
 mod support;
+pub(crate) mod treasury;
 mod view;
 
 pub(crate) use chat::{chat, run_chat};
@@ -317,6 +319,9 @@ pub(crate) struct Hq {
     /// The front line as segments, and the ownership it was traced from
     /// (`support::refresh_front`).
     pub(crate) front: Option<(u64, Vec<(Vector2, Vector2)>)>,
+    /// The rules mode's last pass (`rules::tick`), for
+    /// `smart_commander.tick_period_secs`.
+    pub(crate) rules_last: DateTime<Utc>,
 }
 
 impl Hq {
@@ -362,8 +367,13 @@ fn gap_factor(cfg: &HqCfg, humans: u32) -> f64 {
 
 /// The slow-tick entry point: track what is under way, expire stale orders
 /// and requests, and plan for each side whose turn it is.
+/// The AI's planning pass for both sides. With the theatre HQ on, the full
+/// planner (`think`); without it, the rules mode (`rules`), which buys one
+/// strategic campaign event per check the way the Smart Commander always
+/// has.
 pub(crate) fn tick(lua: MizLua, ctx: &mut Context, perf: &mut PerfInner, now: DateTime<Utc>) {
     let Some((sc, cfg)) = cfg(ctx) else {
+        rules::tick(ctx, now);
         return;
     };
     ctx.hq.night = crate::groundwar::daylight_now(lua) < 0.5;
@@ -947,7 +957,7 @@ pub(crate) fn cost_of(ctx: &Context, kind: OpKind) -> Option<i64> {
         OpKind::NavalStrike => c.naval_strike,
         OpKind::AirRepair => c.air_repair,
     };
-    Some(((raw as f64) * cfg.cost_scale.max(0.)).round() as i64)
+    Some(treasury::scaled(raw, cfg.cost_scale))
 }
 
 /// The scale the HQ prices things at on this server (1 without an HQ).

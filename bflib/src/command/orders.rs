@@ -112,15 +112,11 @@ fn meta(kind: &ActionKind) -> Option<(&'static str, OrderTarget, &'static str)> 
 }
 
 fn scaled(ctx: &Context, raw: i64) -> i64 {
-    ((raw as f64) * crate::hq::cost_scale(ctx)).round() as i64
+    crate::hq::treasury::scaled(raw, crate::hq::cost_scale(ctx))
 }
 
 fn why_not_cost(ctx: &Context, side: Side, cost: i64) -> String {
-    if ctx.db.persisted.treasury(side) < cost {
-        format!("the treasury has {} of {cost}", ctx.db.persisted.treasury(side))
-    } else {
-        String::new()
-    }
+    crate::hq::treasury::shortfall(&ctx.db, side, cost)
 }
 
 /// Everything `side` can order now, for the command map.
