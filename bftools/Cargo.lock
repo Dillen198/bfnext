@@ -212,6 +212,7 @@ dependencies = [
  "compact_str 0.8.1",
  "dcso3-core",
  "enumflags2",
+ "fowlbg",
  "fxhash",
  "immutable-chunkmap",
  "indexmap",
@@ -967,6 +968,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fowlbg"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "netidx",
+ "schemars",
+ "serde",
+ "serde_derive",
+ "serde_json",
 ]
 
 [[package]]
