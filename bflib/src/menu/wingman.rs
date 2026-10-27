@@ -28,7 +28,8 @@ use dcso3::{
 };
 
 fn queue(lua: MizLua, gid: GroupId, cmd: WingmanCmd) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         ctx.airlife.queue(cmd, gid, ucid);

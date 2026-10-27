@@ -26,7 +26,8 @@ use dcso3::{
 
 
 fn load_troops(lua: MizLua, arg: ArgTuple<GroupId, String>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let (side, slot) = slot_for_group(lua, ctx, &arg.fst).context("getting slot for group")?;
     match ctx.db.load_troops(lua, &slot, &arg.snd) {
         Ok((tr, oid)) => {
@@ -106,7 +107,8 @@ fn capture_hint(
 }
 
 fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.unload_troops(lua, &ctx.idx, &slot) {
         Ok((tr, tgid, oid)) => {
@@ -138,7 +140,8 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn extract_troops(lua: MizLua, gid: GroupId) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.extract_troops(lua, &ctx.jtac, &slot) {
         Ok((tr, _extracted_gid)) => {
@@ -169,7 +172,8 @@ fn extract_troops(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn return_troops(lua: MizLua, gid: GroupId) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let (side, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     match ctx.db.return_troops(lua, &slot) {
         Ok(tr) => {

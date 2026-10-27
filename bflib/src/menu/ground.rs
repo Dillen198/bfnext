@@ -47,14 +47,15 @@ fn dist(a: Vector2, b: Vector2) -> f64 {
     (a - b).norm()
 }
 
-fn queue(ucid: Ucid, group: GroupId, kind: CmdKind) {
+fn queue(ucid: Ucid, group: GroupId, kind: CmdKind) -> Result<()> {
     // no DCS calls here, so nothing to defer
-    let ctx = unsafe { Context::get_mut() };
+    let mut ctx = Context::borrow("ground forces menu")?;
     ctx.groundwar.queue(Cmd { ucid, group, kind });
+    Ok(())
 }
 
 fn status(_: MizLua, a: ArgTuple<Ucid, GroupId>) -> Result<()> {
-    queue(a.fst, a.snd, CmdKind::Status);
+    queue(a.fst, a.snd, CmdKind::Status)?;
     Ok(())
 }
 
@@ -67,32 +68,32 @@ fn open(lua: MizLua, a: ArgTuple<Ucid, GroupId>) -> Result<()> {
 }
 
 fn raise(_: MizLua, a: ArgTriple<Ucid, GroupId, ObjectiveId>) -> Result<()> {
-    queue(a.fst, a.snd, CmdKind::Raise(a.trd));
+    queue(a.fst, a.snd, CmdKind::Raise(a.trd))?;
     Ok(())
 }
 
 fn attack(_: MizLua, a: ArgQuad<Ucid, GroupId, u32, ObjectiveId>) -> Result<()> {
-    queue(a.fst, a.snd, CmdKind::Order(a.trd, Order::Attack(a.fth)));
+    queue(a.fst, a.snd, CmdKind::Order(a.trd, Order::Attack(a.fth)))?;
     Ok(())
 }
 
 fn defend(_: MizLua, a: ArgQuad<Ucid, GroupId, u32, ObjectiveId>) -> Result<()> {
-    queue(a.fst, a.snd, CmdKind::Order(a.trd, Order::Defend(a.fth)));
+    queue(a.fst, a.snd, CmdKind::Order(a.trd, Order::Defend(a.fth)))?;
     Ok(())
 }
 
 fn withdraw(_: MizLua, a: ArgQuad<Ucid, GroupId, u32, ObjectiveId>) -> Result<()> {
-    queue(a.fst, a.snd, CmdKind::Order(a.trd, Order::Withdraw(a.fth)));
+    queue(a.fst, a.snd, CmdKind::Order(a.trd, Order::Withdraw(a.fth)))?;
     Ok(())
 }
 
 fn hold(_: MizLua, a: ArgTriple<Ucid, GroupId, u32>) -> Result<()> {
-    queue(a.fst, a.snd, CmdKind::Order(a.trd, Order::Hold));
+    queue(a.fst, a.snd, CmdKind::Order(a.trd, Order::Hold))?;
     Ok(())
 }
 
 fn release(_: MizLua, a: ArgTriple<Ucid, GroupId, u32>) -> Result<()> {
-    queue(a.fst, a.snd, CmdKind::Release(a.trd));
+    queue(a.fst, a.snd, CmdKind::Release(a.trd))?;
     Ok(())
 }
 
@@ -105,7 +106,8 @@ pub(super) fn init_ground_menu_for_slot(mc: &MissionCommands, group: GroupId, uc
 }
 
 fn build(lua: MizLua, ucid: Ucid, group: GroupId) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let mc = MissionCommands::singleton(lua)?;
     mc.remove_command_for_group(group, GroupCommandItem::from(vec![ROOT_CMD.into()]))?;
     mc.remove_submenu_for_group(group, GroupSubMenu::from(vec![ROOT.into()]))?;

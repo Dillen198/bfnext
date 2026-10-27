@@ -81,7 +81,7 @@ use dcso3::{
     timer::Timer,
     trigger::Trigger,
     unit::{ClassUnit, Unit},
-    world::{HandlerId, MarkPanel, World},
+    world::MarkPanel,
     HooksLua, LuaEnv, LuaVec2, LuaVec3, MizLua, String, Vector2, Vector3,
 };
 use ewr::Ewr;
@@ -353,7 +353,7 @@ struct JtacSlotIfo {
 #[derive(Debug, Default)]
 struct Context {
     sortie: String,
-    event_handler_id: Option<HandlerId>,
+    event_handler_id: Option<mlua::RegistryKey>,
     miz_state_path: PathBuf,
     /// on-disk path of the currently loaded .miz, captured from
     /// DCS.getMissionFilename() in on_mission_load_end. Used to rewrite the
@@ -489,35 +489,89 @@ struct Context {
     last_bg_check: DateTime<Utc>,
 }
 
+thread_local! {
+    /// The campaign state, created on first use and never freed. Only ever
+    /// reached through a `CtxGuard`.
+    static CTX_SLOT: std::cell::Cell<*mut Context> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+    /// True while a `CtxGuard` is alive on this thread.
+    static CTX_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The one live `&mut Context`. All campaign state is in a single `Context`
+/// and DCS calls back into us synchronously from inside our own API calls
+/// (`coalition.addGroup` fires Birth before it returns, `destroy()` fires
+/// Dead, ...), so the state used to be a `static mut` handed out as
+/// `&'static mut` from every entry point -- and a callback that landed while
+/// a tick held it took a second one. Two live mutable references to the same
+/// data is undefined behaviour however carefully each side is written.
+///
+/// Now there is at most one: a guard sets a thread-local flag, and the state
+/// is only reachable through it. A second borrow while one is held is a bug:
+/// it panics in debug builds and tests, and in release it is refused
+/// (`Context::borrow` returns an error, `try_borrow` returns `None`). The
+/// callbacks DCS makes from inside our calls never ask: while the state is
+/// held, `on_event` queues the event and the holder handles it later
+/// (`drain_deferred_events`), with nothing else borrowed. See
+/// docs/plans/bflib-context-aliasing.md.
+pub(crate) struct CtxGuard {
+    // not Send: the flag and the slot are per thread
+    _not_send: std::marker::PhantomData<*mut ()>,
+}
+
+impl Drop for CtxGuard {
+    fn drop(&mut self) {
+        CTX_HELD.with(|h| h.set(false));
+    }
+}
+
+impl std::ops::Deref for CtxGuard {
+    type Target = Context;
+    fn deref(&self) -> &Context {
+        // SAFETY: the slot is set before a guard is handed out and never
+        // freed; the guard is the only way to reach it and at most one is
+        // alive per thread (`CTX_HELD`), so nothing else aliases it.
+        unsafe { &*CTX_SLOT.with(|s| s.get()) }
+    }
+}
+
+impl std::ops::DerefMut for CtxGuard {
+    fn deref_mut(&mut self) -> &mut Context {
+        // SAFETY: as for `deref`; `&mut self` makes the borrow unique.
+        unsafe { &mut *CTX_SLOT.with(|s| s.get()) }
+    }
+}
+
+
 impl Context {
-    // this must be used cautiously. Reasons why it's not totally nuts,
-    // - the dcs scripting api is single threaded
-    // - the event handlers can be triggerred by api calls, making refcells and mutexes error prone
-    // - as long as an event handler doesn't step on state in an api call it's ok, since concurrency never happens
-    //   that isn't so hard to guarantee
-    unsafe fn get_mut() -> &'static mut Self {
-        static mut SELF: Option<Context> = None;
-        #[allow(static_mut_refs)]
-        let t = unsafe { SELF.as_mut() };
-        match t {
-            Some(ctx) => ctx,
-            None => {
-                unsafe { SELF = Some(Context::default()) };
-                #[allow(static_mut_refs)]
-                unsafe {
-                    SELF.as_mut().unwrap()
-                }
-            }
+    /// The campaign state, or `None` when something on this thread already
+    /// holds it (a callback DCS made from inside one of our own calls).
+    pub(crate) fn try_borrow() -> Option<CtxGuard> {
+        if CTX_HELD.with(|h| h.replace(true)) {
+            return None;
         }
+        CTX_SLOT.with(|s| {
+            if s.get().is_null() {
+                s.set(Box::into_raw(Box::new(Context::default())));
+            }
+        });
+        Some(CtxGuard { _not_send: std::marker::PhantomData })
     }
 
-    unsafe fn _get() -> &'static Context {
-        unsafe { Context::get_mut() }
+    /// `borrow` for a timer callback, which can't return the error: logs it.
+    pub(crate) fn borrow_logged(what: &str) -> Option<CtxGuard> {
+        Self::borrow(what).map_err(|e| error!("{e:?}")).ok()
     }
 
-    unsafe fn reset() {
-        unsafe {
-            *Self::get_mut() = Self::default();
+    /// The campaign state for an entry point DCS calls directly. Asking while
+    /// it is already held is a bug (two `&mut Context`): debug builds and
+    /// tests panic, release refuses with an error naming `what`.
+    pub(crate) fn borrow(what: &str) -> Result<CtxGuard> {
+        match Self::try_borrow() {
+            Some(g) => Ok(g),
+            None => {
+                debug_assert!(false, "{what}: re-entrant borrow of the campaign state");
+                bail!("{what}: called while the engine holds the campaign state (re-entrant call), refused")
+            }
         }
     }
 
@@ -601,7 +655,8 @@ fn on_player_try_connect(
         "onPlayerTryConnect addr: {:?}, name: {:?}, ucid: {:?}, id: {:?}",
         addr, name, ucid, id
     );
-    let ctx = unsafe { Context::get_mut() };
+    let mut ctx_guard = Context::borrow("onPlayerTryConnect")?;
+    let ctx = &mut *ctx_guard;
     if let Some(msg) = ctx.load_state.login_ok() {
         return Ok(Some(msg));
     }
@@ -650,7 +705,8 @@ fn on_player_try_send_chat(
     all: bool,
 ) -> Result<Option<String>> {
     let start_ts = Utc::now();
-    let ctx = unsafe { Context::get_mut() };
+    let mut ctx_guard = Context::borrow("onPlayerTrySendChat")?;
+    let ctx = &mut *ctx_guard;
     let perf = &mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_hooks;
     // The cockpit overlay's key registration: a credential, so it is neither
     // logged nor shown in chat (Some("") swallows the line for everybody).
@@ -831,7 +887,8 @@ fn on_player_try_change_slot(
 ) -> Result<Option<bool>> {
     info!("onPlayerTryChangeSlot: {:?} {:?} {:?}", id, side, slot);
     let start_ts = Utc::now();
-    let ctx = unsafe { Context::get_mut() };
+    let mut ctx_guard = Context::borrow("onPlayerTryChangeSlot")?;
+    let ctx = &mut *ctx_guard;
     let res = match ctx.connected.get_or_lookup_player_info(lua, id) {
         Err(e) => {
             error!("failed to get player info for {:?} {:?}", id, e);
@@ -972,10 +1029,8 @@ fn unit_killed(
 }
 
 thread_local! {
-    /// Greater than zero while a timed-events tick (or the mission init) is
-    /// running with `&mut Context` in hand. See `DeferEvents`.
-    static DEFER_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    /// Events that arrived while `DEFER_DEPTH > 0`, in arrival order.
+    /// Events that arrived while the campaign state was held, in arrival
+    /// order. See `CtxGuard` and `drain_deferred_events`.
     static DEFERRED: std::cell::RefCell<Vec<DeferredEvent>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
@@ -1012,136 +1067,152 @@ impl DeathObj {
     }
 }
 
-/// A DCS event that arrived while events were deferred, in a form that
-/// outlives the callback (no Lua references).
-#[derive(Debug, Clone)]
+/// A DCS callback that arrived while the campaign state was held, in a form
+/// that outlives the callback.
+#[derive(Debug)]
 enum DeferredEvent {
     /// The unit still exists afterwards; re-resolved from its id.
     Birth(DcsOid<dcso3::object::ClassObject>),
-    /// Dead (`lost == false`) or UnitLost, with the object captured.
+    /// Dead (`lost == false`) or UnitLost, with the object captured: by the
+    /// end of the call that destroyed it, it no longer exists.
     Death { lost: bool, obj: DeathObj },
     /// Already nothing but an object id.
     PlayerLeaveUnit(dcso3::event::LeaveUnit),
+    /// Any other event: DCS's own event table, kept in the Lua registry and
+    /// parsed again when it is handled. For Hit and Kill, whether the target
+    /// was dead when the event fired (`on_hit` would otherwise ask an object
+    /// that may be gone by then).
+    Raw { ev: mlua::RegistryKey, dead: Option<bool> },
+    /// `onPlayerDisconnect`, if it ever lands inside one of our calls.
+    Disconnect(PlayerId),
+}
+
+/// Whether the target of a Hit or Kill is dead, asked while the event is
+/// still current. `None` when DCS can't say (the target is already gone).
+fn target_dead(e: &dcso3::event::WeaponUse) -> Option<bool> {
+    let target = e.target.as_ref()?;
+    if let Ok(unit) = target.as_unit() {
+        return unit.get_life().ok().map(|life| life < 1.);
+    }
+    if let Ok(st) = target.as_static() {
+        return st.get_life().ok().map(|life| life < 1);
+    }
+    None
 }
 
 impl DeferredEvent {
-    /// The deferrable form of `ev`, or `None` for an event that is handled
-    /// on the spot even while deferring (see `DeferEvents`).
-    fn capture(ev: &Event) -> Result<Option<Self>> {
+    /// The deferred form of `ev` (`raw` is the same event as DCS sent it), or
+    /// `None` for an event there is nothing to do with.
+    fn capture(lua: &Lua, raw: mlua::Value, ev: &Event) -> Result<Option<Self>> {
         Ok(match ev {
-            // No initiator means the object is already gone -- nothing to map.
-            Event::Birth(b) => match &b.initiator {
-                Some(initiator) => Some(Self::Birth(initiator.object_id()?)),
-                None => None,
-            },
+            // nothing to handle (see the same cases in handle_event); no
+            // initiator on a Birth means the object is already gone
+            Event::Birth(dcso3::event::Birth { initiator: None, .. })
+            | Event::MarkAdded(MarkPanel { initiator: None, .. })
+            | Event::MarkChange(MarkPanel { initiator: None, .. })
+            | Event::MarkRemoved(MarkPanel { initiator: None, .. })
+            | Event::Invalid
+            | Event::SimulationFreeze
+            | Event::SimulationUnfreeze
+            | Event::HumanAircraftRepairStart
+            | Event::HumanAircraftRepairFinish
+            | Event::GroupChangeOption
+            | Event::MacLmsRestart => None,
+            Event::Birth(dcso3::event::Birth { initiator: Some(initiator), .. }) => {
+                Some(Self::Birth(initiator.object_id()?))
+            }
             Event::Dead(e) => Some(Self::Death { lost: false, obj: DeathObj::capture(e.initiator.as_ref())? }),
             Event::UnitLost(e) => Some(Self::Death { lost: true, obj: DeathObj::capture(e.initiator.as_ref())? }),
             Event::PlayerLeaveUnit(e) => Some(Self::PlayerLeaveUnit(e.clone())),
-            _ => None,
+            Event::Hit(e) | Event::Kill(e) => {
+                debug!("deferring a Hit/Kill that fired inside one of our calls");
+                Some(Self::Raw { dead: target_dead(e), ev: lua.create_registry_value(raw)? })
+            }
+            ev => {
+                // Not expected from inside our own calls (these come from the
+                // simulation), but handled the same way if they do.
+                debug!("deferring an event that fired inside one of our calls: {ev:?}");
+                Some(Self::Raw { dead: None, ev: lua.create_registry_value(raw)? })
+            }
         })
     }
 }
 
-/// DCS fires some events synchronously *inside* the API call that caused
-/// them: `coalition.addGroup` fires Birth for every unit it creates, before
-/// it returns. Those land in `on_event`, which takes a second `&mut Context`
-/// while the tick that made the call is still holding the first one -- two
-/// live mutable references to the same state, which is undefined behaviour
-/// however carefully the code on either side is written (the compiler may
-/// assume the caller's view of the state didn't change across the call).
+/// The campaign state for an F10 menu handler (DCS calls them directly, from
+/// the simulation). Derefs to the `Context`. While it is held, events the
+/// handler's own DCS calls fire (the Birth of every crate or group it spawns)
+/// are queued, and they are handled when it is dropped.
 ///
-/// While one of these guards is alive, `on_event` queues the events our own
-/// calls fire instead of handling them, without touching `Context`, and the
-/// holder drains the queue (`drain_deferred_events`) between subsystems,
-/// where no borrow of the state is held:
-///
-/// - Birth, fired in bulk by every spawn. The unit still exists afterwards,
-///   so it is re-resolved from its object id.
-/// - Dead and UnitLost, fired by `destroy()`. Their handlers read the dying
-///   object (its name, its position for dismounts), and it no longer exists
-///   by the end of the call that destroyed it, so that is captured into a
-///   `DeathObj` while it does and the handler reads the capture.
-/// - PlayerLeaveUnit (forcing a player out of a slot, destroying their
-///   aircraft), which carries nothing but an object id anyway.
-///
-/// Anything else is still handled on the spot, as before: events a player
-/// causes (a hit, a shot, a takeoff, an F10 mark) come from the simulation,
-/// not from inside our calls. See docs/plans/bflib-context-aliasing.md for
-/// what is left.
-struct DeferEvents;
-
-impl DeferEvents {
-    fn begin() -> Self {
-        DEFER_DEPTH.with(|d| d.set(d.get().saturating_add(1)));
-        DeferEvents
-    }
-}
-
-impl Drop for DeferEvents {
-    fn drop(&mut self) {
-        DEFER_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-    }
-}
-
-/// The campaign state for code DCS calls directly, outside our own ticks: an
-/// F10 menu handler. While it is held, events the handler's own DCS calls
-/// fire (the Birth of every crate or group it spawns) are deferred, and they
-/// are handled when it is dropped -- otherwise each one re-entered `on_event`,
-/// which took a second `&mut Context` while the handler still had the first.
-///
-/// When something on this thread already holds the state (a menu handler run
-/// from inside a tick -- the menus are also built there), this changes
-/// nothing: that holder drains the events. See
-/// docs/plans/bflib-context-aliasing.md.
+/// Code that needs a handler's work from somewhere that already has the
+/// state calls the handler's `&mut Context` half instead: entering twice is
+/// refused (see `CtxGuard`).
 pub(crate) struct Entered<'lua> {
     lua: MizLua<'lua>,
-    outermost: bool,
-    _defer: DeferEvents,
+    ctx: CtxGuard,
 }
 
 impl<'lua> Entered<'lua> {
-    pub(crate) fn enter(lua: MizLua<'lua>) -> (Self, &'static mut Context) {
-        let outermost = DEFER_DEPTH.with(|d| d.get()) == 0;
-        let guard = Entered { lua, outermost, _defer: DeferEvents::begin() };
-        (guard, unsafe { Context::get_mut() })
+    pub(crate) fn enter(lua: MizLua<'lua>) -> Result<Self> {
+        Ok(Entered { lua, ctx: Context::borrow("F10 menu command")? })
+    }
+}
+
+impl std::ops::Deref for Entered<'_> {
+    type Target = Context;
+    fn deref(&self) -> &Context {
+        &self.ctx
+    }
+}
+
+impl std::ops::DerefMut for Entered<'_> {
+    fn deref_mut(&mut self) -> &mut Context {
+        &mut self.ctx
     }
 }
 
 impl Drop for Entered<'_> {
     fn drop(&mut self) {
-        if self.outermost {
-            // the handler that had the state has returned
-            let ctx = unsafe { Context::get_mut() };
-            if let Err(e) = catch_unwind(AssertUnwindSafe(|| drain_deferred_events(self.lua, ctx))) {
-                error!("handling deferred events after a menu command panicked: {}", bg::panic_msg(&e))
-            }
+        // the handler that had the state has returned
+        let (lua, ctx) = (self.lua, &mut *self.ctx);
+        if let Err(e) = catch_unwind(AssertUnwindSafe(|| drain_deferred_events(lua, ctx))) {
+            error!("handling deferred events after a menu command panicked: {}", bg::panic_msg(&e))
         }
     }
+}
+
+/// Run `f` with the campaign state from an entry point DCS calls directly (a
+/// timer, a scheduled function). Events our own DCS calls raise inside `f`
+/// are queued and handled before the state is let go. Asking while the state
+/// is held is a bug, see `Context::borrow`.
+pub(crate) fn with_ctx<R>(lua: MizLua, what: &str, f: impl FnOnce(&mut Context) -> R) -> Result<R> {
+    let mut ctx = Context::borrow(what)?;
+    let res = f(&mut ctx);
+    drain_deferred_events(lua, &mut ctx);
+    Ok(res)
 }
 
 /// Run `f` with the campaign state, from a callback DCS makes outside our own
 /// ticks -- a mission script calling the `vector_strike` API. Refused when
 /// something on this thread already holds the state (a tick, or an API call
-/// further up the stack): handing out a second `&mut Context` is undefined
-/// behaviour. Events our own DCS calls raise inside `f` are deferred and
-/// handled before returning, as in a tick.
+/// further up the stack). A mission script may well try that from its own
+/// event handler, so this is an error, not a bug. Events our own DCS calls
+/// raise inside `f` are deferred and handled before returning, as in a tick.
 pub(crate) fn with_context<R>(
     lua: MizLua,
     what: &str,
     f: impl FnOnce(&mut Context) -> Result<R>,
 ) -> Result<R> {
-    if DEFER_DEPTH.with(|d| d.get()) > 0 {
+    let Some(mut ctx) = Context::try_borrow() else {
         bail!("{what}: called while the engine holds the campaign state (re-entrant call), refused")
-    }
-    let _defer = DeferEvents::begin();
-    let ctx = unsafe { Context::get_mut() };
-    let res = f(ctx);
-    drain_deferred_events(lua, ctx);
+    };
+    let res = f(&mut ctx);
+    drain_deferred_events(lua, &mut ctx);
     res
 }
 
-/// Handle every event queued while events were deferred. Handlers can spawn
-/// and destroy in turn (queueing more), so keep going until the queue stays
+/// Handle every event queued while the state was held. Called by the holder,
+/// between subsystems, with nothing else borrowed. Handlers can spawn and
+/// destroy in turn (queueing more), so keep going until the queue stays
 /// empty -- bounded, in case something spawns on every birth.
 fn drain_deferred_events(lua: MizLua, ctx: &mut Context) {
     for _ in 0..16 {
@@ -1171,10 +1242,38 @@ fn drain_deferred_events(lua: MizLua, ctx: &mut Context) {
                         error!("deferred player leave failed {e:?}")
                     }
                 }
+                DeferredEvent::Raw { ev, dead } => {
+                    if let Err(e) = handle_raw_event(lua, ctx, ev, dead, now) {
+                        error!("deferred event failed {e:?}")
+                    }
+                }
+                DeferredEvent::Disconnect(id) => player_disconnected(ctx, id),
             }
         }
     }
     warn!("deferred events still arriving after 16 passes, leaving the rest for the next drain");
+}
+
+/// A `DeferredEvent::Raw`: parse DCS's event table again and handle it.
+fn handle_raw_event(
+    lua: MizLua,
+    ctx: &mut Context,
+    key: mlua::RegistryKey,
+    dead: Option<bool>,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let raw = lua.inner().registry_value::<mlua::Value>(&key);
+    let _ = lua.inner().remove_registry_value(key);
+    match Event::from_lua(raw?, lua.inner())? {
+        Event::Hit(e) => on_hit(lua, ctx, e, false, dead, now),
+        Event::Kill(e) => on_hit(lua, ctx, e, true, dead, now),
+        Event::MissionEnd => {
+            // nothing queued may run against the state that is about to go
+            DEFERRED.with(|q| q.borrow_mut().clear());
+            mission_end(lua, ctx)
+        }
+        ev => handle_event(lua, ctx, ev, now),
+    }
 }
 
 fn handle_birth(lua: MizLua, ctx: &mut Context, initiator: &dcso3::object::Object) -> Result<()> {
@@ -1201,12 +1300,12 @@ fn handle_birth(lua: MizLua, ctx: &mut Context, initiator: &dcso3::object::Objec
                 {
                     ctx.ewr.slot_airframe(&ucid, typ.as_str());
                 }
-                if let Err(e) = atis::schedule_atis(lua, slot.clone()) {
+                if let Err(e) = atis::schedule_atis(lua, ctx, slot.clone()) {
                     error!("could not schedule atis: {:?}", e);
                 }
                 // The auto-generated situational briefing, sequenced
                 // after the ATIS so they don't overwrite each other.
-                if let Err(e) = situation::schedule_slot_briefing(lua, slot) {
+                if let Err(e) = situation::schedule_slot_briefing(lua, ctx, slot) {
                     error!("could not schedule situation briefing: {:?}", e);
                 }
                 // Force EPLRS on for every player group so fixed-wing
@@ -1253,11 +1352,14 @@ fn on_hit(
     ctx: &mut Context,
     e: dcso3::event::WeaponUse,
     is_kill: bool,
+    // whether the target was dead when the event fired, for an event handled
+    // after the fact (`DeferredEvent::Raw`); asked of the target otherwise
+    dead_then: Option<bool>,
     start_ts: DateTime<Utc>,
 ) -> Result<()> {
     if let Some(target) = e.target.as_ref().and_then(|t| t.as_unit().ok()) {
-        let dead = match target.get_life() {
-            Ok(life) => life < 1.,
+        let dead = match dead_then.map(Ok).unwrap_or_else(|| target.get_life().map(|life| life < 1.)) {
+            Ok(dead) => dead,
             Err(_) => is_kill,
         };
         // A civil airliner is not in the campaign db: remember which player
@@ -1314,8 +1416,8 @@ fn on_hit(
             spawn_dismount(lua, ctx, dismount);
         }
     } else if let Some(target) = e.target.as_ref().and_then(|t| t.as_static().ok()) {
-        let dead = match target.get_life() {
-            Ok(life) => life < 1,
+        let dead = match dead_then.map(Ok).unwrap_or_else(|| target.get_life().map(|life| life < 1)) {
+            Ok(dead) => dead,
             Err(_) => is_kill,
         };
         if dead {
@@ -1400,43 +1502,72 @@ fn handle_death(
     Ok(())
 }
 
-fn on_event(lua: MizLua, ev: Event) -> Result<()> {
-    if DEFER_DEPTH.with(|d| d.get()) > 0 {
-        // Don't touch Context (or Perf) here at all -- whoever made the call
-        // that fired this event is holding them. See DeferEvents.
-        match &ev {
-            // nothing to handle (see the same cases in handle_event)
-            Event::Birth(dcso3::event::Birth { initiator: None, .. })
-            | Event::MarkAdded(MarkPanel { initiator: None, .. })
-            | Event::MarkChange(MarkPanel { initiator: None, .. })
-            | Event::MarkRemoved(MarkPanel { initiator: None, .. })
-            | Event::Invalid
-            | Event::SimulationFreeze
-            | Event::SimulationUnfreeze
-            | Event::HumanAircraftRepairStart
-            | Event::HumanAircraftRepairFinish
-            | Event::GroupChangeOption
-            | Event::MacLmsRestart => return Ok(()),
-            _ => (),
-        }
-        if let Some(deferred) = DeferredEvent::capture(&ev)? {
-            DEFERRED.with(|q| q.borrow_mut().push(deferred));
+/// DCS's `onEvent`. While something holds the campaign state -- the event
+/// fired inside one of our own calls (a spawn's Birth, a `destroy()`'s Dead)
+/// -- it is queued for the holder to handle (`DeferredEvent`); otherwise it
+/// is handled here, and whatever the handler's own calls fire after it.
+fn on_event_raw<'lua>(lua: MizLua<'lua>, raw: mlua::Value<'lua>) -> Result<()> {
+    let ev = match Event::from_lua(raw.clone(), lua.inner()) {
+        Ok(ev) => ev,
+        Err(e) => {
+            warn!("error translating event: {:?}", e);
             return Ok(());
         }
+    };
+    match Context::try_borrow() {
+        // Don't touch Context (or Perf) here at all: whoever made the call
+        // that fired this event is holding them.
+        None => {
+            if let Some(deferred) = DeferredEvent::capture(lua.inner(), raw, &ev)? {
+                DEFERRED.with(|q| q.borrow_mut().push(deferred));
+            }
+            Ok(())
+        }
+        Some(mut ctx) => on_event(lua, &mut ctx, ev),
     }
+}
+
+fn on_event(lua: MizLua, ctx: &mut Context, ev: Event) -> Result<()> {
     let start_ts = Utc::now();
-    let ctx = unsafe { Context::get_mut() };
-    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     if let Event::MissionEnd = ev {
-        return unsafe { mission_end(lua, ctx) };
+        DEFERRED.with(|q| q.borrow_mut().clear());
+        return mission_end(lua, ctx);
     }
-    handle_event(lua, ctx, ev, start_ts)?;
-    record_perf(&mut perf.dcs_events, start_ts);
+    let res = handle_event(lua, ctx, ev, start_ts);
+    drain_deferred_events(lua, ctx);
+    record_perf(&mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_events, start_ts);
+    res
+}
+
+/// Register `on_event_raw` as a DCS event handler. The handler table is kept
+/// in the Lua registry until `remove_event_handler`. (dcso3's
+/// `World::add_event_handler` hands the callback a parsed `Event` only, and a
+/// deferred event needs DCS's own table.)
+fn add_event_handler(lua: MizLua) -> Result<mlua::RegistryKey> {
+    let l = lua.inner();
+    let tbl = l.create_table()?;
+    tbl.set(
+        "onEvent",
+        l.create_function(|lua, (_, ev): (mlua::Value, mlua::Value)| {
+            dcso3::wrap_f("event handler", MizLua(lua), |lua| on_event_raw(lua, ev))
+        })?,
+    )?;
+    let world: mlua::Table = l.globals().raw_get("world")?;
+    world.get::<_, mlua::Function>("addEventHandler")?.call::<_, ()>(tbl.clone())?;
+    Ok(l.create_registry_value(tbl)?)
+}
+
+fn remove_event_handler(lua: MizLua, key: mlua::RegistryKey) -> Result<()> {
+    let l = lua.inner();
+    let tbl: mlua::Table = l.registry_value(&key)?;
+    let world: mlua::Table = l.globals().raw_get("world")?;
+    world.get::<_, mlua::Function>("removeEventHandler")?.call::<_, ()>(tbl)?;
+    l.remove_registry_value(key)?;
     Ok(())
 }
 
 /// The mission is ending: save, then reset the state for the next one.
-unsafe fn mission_end(lua: MizLua, ctx: &mut Context) -> Result<()> {
+fn mission_end(lua: MizLua, ctx: &mut Context) -> Result<()> {
     // The Db is about to be dropped. Everything since the last slow-tick
     // snapshot used to go with it, along with every open sortie. Not after a
     // shutdown (a campaign reset has deleted the save on purpose, and
@@ -1449,11 +1580,11 @@ unsafe fn mission_end(lua: MizLua, ctx: &mut Context) -> Result<()> {
         let snap = ctx.db.snapshot();
         ctx.do_bg_task(Task::SaveState(ctx.miz_state_path.clone(), snap));
     }
-    unsafe {
-        Context::reset();
-        Perf::reset();
-        Context::get_mut().init_async_bg(lua.inner())?;
-    }
+    *ctx = Context::default();
+    // SAFETY: no perf reference is alive here (on_event takes its own after
+    // handling the event, and this returns before that).
+    unsafe { Perf::reset() };
+    ctx.init_async_bg(lua.inner())?;
     // no perf record: the perf context was just reset
     Ok(())
 }
@@ -1595,8 +1726,8 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
                 debug!("PlayerLeaveUnit with no initiator (benign)")
             }
         }
-        Event::Hit(e) => on_hit(lua, ctx, e, false, start_ts)?,
-        Event::Kill(e) => on_hit(lua, ctx, e, true, start_ts)?,
+        Event::Hit(e) => on_hit(lua, ctx, e, false, None, start_ts)?,
+        Event::Kill(e) => on_hit(lua, ctx, e, true, None, start_ts)?,
         Event::Shot(e) => {
             if let Err(e) = ctx.shots_out.shot(&ctx.db, start_ts, &e) {
                 error!("error processing shot event {:?}", e)
@@ -4990,7 +5121,7 @@ fn maybe_reallocate_navaids(lua: MizLua, ctx: &mut Context) {
 }
 
 /// Run one subsystem of the timed events inside its own panic boundary, then
-/// handle the DCS events it caused (see `DeferEvents`).
+/// handle the DCS events it caused (see `CtxGuard`).
 ///
 /// The whole tick used to share one `catch_unwind`, so a panic in any
 /// subsystem -- or an early `?` -- skipped everything after it, including the
@@ -5760,7 +5891,7 @@ fn run_timed_events(
     });
     step(lua, ctx, "weather requests", |ctx| {
         for (id, slot) in std::mem::take(&mut ctx.weather_requests) {
-            if let Err(e) = atis::send_full_weather(lua, slot) {
+            if let Err(e) = atis::send_full_weather(lua, ctx, slot) {
                 error!("full weather report failed for {:?}: {:?}", id, e);
             }
         }
@@ -5789,9 +5920,11 @@ fn start_msgq_drain(lua: MizLua) -> Result<()> {
     let period = 1f64 / MSGQ_DRAIN_HZ as f64;
     timer.schedule_function(timer.get_time()? + period, mlua::Value::Nil, move |lua, _, now| {
         // Marks and messages can fire events (mark events with no
-        // initiator); they must not reach Context while this holds it.
-        let _defer = DeferEvents::begin();
-        let ctx = unsafe { Context::get_mut() };
+        // initiator); they are queued while this holds the state.
+        let Some(mut ctx_guard) = Context::borrow_logged("msgq drain") else {
+            return Ok(Some(now + period));
+        };
+        let ctx = &mut *ctx_guard;
         // Round up so a rate that does not divide evenly is never throttled
         // below its configured value.
         let per_pass = ctx
@@ -5841,23 +5974,24 @@ fn start_admin_drain(lua: MizLua) -> Result<()> {
     let timer = Timer::singleton(lua)?;
     let period = 1. / ADMIN_DRAIN_HZ;
     timer.schedule_function(timer.get_time()? + period, mlua::Value::Nil, move |lua, _, now| {
-        let ctx = unsafe { Context::get_mut() };
-        if ctx.exit_attempts.is_some() {
-            // shutting down: the 1 s tick owns the exit retries
-            return Ok(None);
-        }
-        let res = {
-            let _defer = DeferEvents::begin();
-            step(lua, ctx, "admin commands", |ctx| run_admin_commands(ctx, lua))
-        };
-        match res {
-            Some(Err(e)) => error!("failed to run admin commands {e:?}"),
-            Some(Ok(AdminResult::Continue)) | None => (),
-            Some(Ok(AdminResult::Shutdown)) => {
-                println!("initiating DCS shutdown");
-                ctx.exit_attempts = Some(0);
-                try_exit_dcs(lua, ctx);
+        {
+            let Some(mut ctx) = Context::borrow_logged("admin drain") else {
+                return Ok(Some(now + period));
+            };
+            if ctx.exit_attempts.is_some() {
+                // shutting down: the 1 s tick owns the exit retries
                 return Ok(None);
+            }
+            let res = step(lua, &mut ctx, "admin commands", |ctx| run_admin_commands(ctx, lua));
+            match res {
+                Some(Err(e)) => error!("failed to run admin commands {e:?}"),
+                Some(Ok(AdminResult::Continue)) | None => (),
+                Some(Ok(AdminResult::Shutdown)) => {
+                    println!("initiating DCS shutdown");
+                    ctx.exit_attempts = Some(0);
+                    try_exit_dcs(lua, &mut ctx);
+                    return Ok(None);
+                }
             }
         }
         // Last, with the state let go of: the handlers take it themselves.
@@ -5928,7 +6062,7 @@ fn try_exit_dcs(lua: MizLua, ctx: &mut Context) -> bool {
     const SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
     // Nothing should touch the state once it has been written out.
     if let Some(id) = ctx.event_handler_id.take() {
-        if let Err(e) = World::singleton(lua).and_then(|w| w.remove_event_handler(id)) {
+        if let Err(e) = remove_event_handler(lua, id) {
             error!("shutdown: could not remove the event handler {e:?}")
         }
     }
@@ -5978,7 +6112,11 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
     timer.schedule_function(timer.get_time()? + 1., mlua::Value::Nil, {
         let path = path.clone();
         move |lua, _, now| {
-            let ctx = unsafe { Context::get_mut() };
+            {
+            let Some(mut ctx_guard) = Context::borrow_logged("1 s tick") else {
+                return Ok(Some(now + 1.));
+            };
+            let ctx = &mut *ctx_guard;
             if ctx.exit_attempts.is_some() {
                 // already shutting down and the last exit call failed; don't
                 // run the campaign any further, just try to exit again
@@ -5992,14 +6130,10 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
                     );
                 }
             }
-            let res = {
-                let _defer = DeferEvents::begin();
-                let res = catch_unwind(AssertUnwindSafe(|| run_timed_events(ctx, lua, &path)));
-                if let Err(e) = catch_unwind(AssertUnwindSafe(|| drain_deferred_events(lua, ctx))) {
-                    error!("handling deferred events panicked: {}", bg::panic_msg(&e))
-                }
-                res
-            };
+            let res = catch_unwind(AssertUnwindSafe(|| run_timed_events(ctx, lua, &path)));
+            if let Err(e) = catch_unwind(AssertUnwindSafe(|| drain_deferred_events(lua, ctx))) {
+                error!("handling deferred events panicked: {}", bg::panic_msg(&e))
+            }
             match res {
                 Ok(Ok(AdminResult::Continue)) => (),
                 Ok(Err(e)) => error!("failed to run timed events {:?}", e),
@@ -6012,6 +6146,7 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
                 // this says which tick died, so the two can be paired up.
                 Err(e) => error!("run_timed_events panicked: {}", bg::panic_msg(&e)),
             }
+            }
             // The tick has let go of the state: the mission's on_event hook
             // may now call back into the vector_strike API.
             crate::api::flush_events(lua);
@@ -6021,21 +6156,16 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
     Ok(())
 }
 
-fn delayed_init_miz(lua: MizLua) -> Result<()> {
+fn delayed_init_miz(lua: MizLua, ctx: &mut Context) -> Result<()> {
     info!("init_miz: welcome to blue flag v3");
     if let Ok(wd) = Lfs::singleton(lua).and_then(|l| l.writedir()) {
         report_build(std::path::Path::new(wd.as_str()));
     }
-    let ctx = unsafe { Context::get_mut() };
     info!("indexing the miz");
     let miz = Miz::singleton(lua)?;
     ctx.idx = miz.index().context("indexing the mission")?;
     info!("adding event handlers");
-    ctx.event_handler_id = Some(
-        World::singleton(lua)?
-            .add_event_handler(on_event)
-            .context("adding event handlers")?,
-    );
+    ctx.event_handler_id = Some(add_event_handler(lua).context("adding event handlers")?);
     let sortie = miz.sortie().context("getting the sortie")?;
     let path = {
         let s = Env::singleton(lua)?.get_value_dict_by_key(sortie)?;
@@ -6138,9 +6268,8 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
     ctx.db_loaded = true;
     info!("spawning units");
     {
-        // every group spawned here fires Birth from inside addGroup; see
-        // DeferEvents
-        let _defer = DeferEvents::begin();
+        // every group spawned here fires Birth from inside addGroup, queued
+        // while we hold the state (see CtxGuard)
         let res = ctx.respawn_groups(lua, &miz);
         drain_deferred_events(lua, ctx);
         res.context("setting up the mission after load")?;
@@ -6199,7 +6328,8 @@ fn delayed_init_miz(lua: MizLua) -> Result<()> {
 }
 
 fn on_mission_load_end(lua: HooksLua) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+    let mut ctx_guard = Context::borrow("onMissionLoadEnd")?;
+    let ctx = &mut *ctx_guard;
     ctx.load_state = LoadState::MissionLoaded { time: Utc::now() };
     match Dcs::singleton(lua).and_then(|dcs| dcs.get_mission_filename()) {
         Ok(path) => ctx.mission_file_path = Some(PathBuf::from(path.as_str())),
@@ -6219,13 +6349,20 @@ fn on_mission_load_end(lua: HooksLua) -> Result<()> {
     Ok(())
 }
 
-fn on_player_disconnect(_: HooksLua, id: PlayerId) -> Result<()> {
-    info!("onPlayerDisconnect({id})");
-    let start_ts = Utc::now();
-    let ctx = unsafe { Context::get_mut() };
+fn player_disconnected(ctx: &mut Context, id: PlayerId) {
     if let Some(ifo) = ctx.connected.player_disconnected(id) {
         info!("deslotting disconnected player {}", ifo.ucid);
         ctx.db.player_disconnected(&ifo.ucid)
+    }
+}
+
+fn on_player_disconnect(_: HooksLua, id: PlayerId) -> Result<()> {
+    info!("onPlayerDisconnect({id})");
+    let start_ts = Utc::now();
+    match Context::try_borrow() {
+        Some(mut ctx) => player_disconnected(&mut ctx, id),
+        // a kick from inside one of our calls: the holder handles it
+        None => DEFERRED.with(|q| q.borrow_mut().push(DeferredEvent::Disconnect(id))),
     }
     record_perf(
         &mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_hooks,
@@ -6235,9 +6372,11 @@ fn on_player_disconnect(_: HooksLua, id: PlayerId) -> Result<()> {
 }
 
 fn on_simulation_frame(_: HooksLua) -> Result<()> {
+    // Never inside one of our calls, but if it were, a frame's time is not
+    // worth a second borrow.
+    let Some(mut ctx) = Context::try_borrow() else { return Ok(()) };
     let frame = Arc::make_mut(&mut unsafe { Perf::get_mut() }.frame);
     let now = Utc::now();
-    let ctx = unsafe { Context::get_mut() };
     match &mut ctx.last_frame {
         Some(last) => {
             if let Some(ns) = (now - *last).num_nanoseconds() {
@@ -6321,20 +6460,27 @@ fn init_miz(lua: MizLua) -> Result<()> {
     // delayed_init_miz that panicked part way through must not run twice.
     let init_tried = std::cell::Cell::new(false);
     timer.schedule_function(when, mlua::Value::Nil, move |lua, _, now| {
-        let ctx = unsafe { Context::get_mut() };
+        let Some(mut ctx_guard) = Context::borrow_logged("mission init") else {
+            return Ok(Some(now + 1.));
+        };
+        let ctx = &mut *ctx_guard;
         if init_tried.get() {
             return Ok(None);
         }
         if ctx.load_state.init_ok() {
             init_tried.set(true);
-            if let Err(e) = delayed_init_miz(lua) {
+            let res = delayed_init_miz(lua, ctx);
+            drain_deferred_events(lua, ctx);
+            if let Err(e) = res {
                 error!("THE MISSION CANNOT START: {:?}", e);
                 let timer = Timer::singleton(lua)?;
                 timer.schedule_function(
                     now + 1.,
                     mlua::Value::Nil,
                     move |lua, _, now| {
-                        let ctx = unsafe { Context::get_mut() };
+                        let Some(mut ctx) = Context::borrow_logged("mission init error") else {
+                            return Ok(Some(now + 10.));
+                        };
                         let _ = Trigger::singleton(lua)?.action()?.out_text(
                             format_compact!(
                                 "THE MISSION CANNOT START BECAUSE OF AN ERROR\n\n{:?}",
@@ -6368,8 +6514,51 @@ fn bflib(lua: &Lua) -> LuaResult<LuaTable<'_>> {
     // Must come after the env vars and before anything can panic: the hook is
     // the only thing that sees a panic's location.
     install_panic_hook();
-    unsafe { Context::get_mut() }.init_async_bg(lua.inner()).map_err(dcso3::lua_err)?;
+    Context::borrow("module load")
+        .and_then(|mut ctx| ctx.init_async_bg(lua.inner()))
+        .map_err(dcso3::lua_err)?;
     dcso3::create_root_module(lua, init_hooks, init_miz)
+}
+
+#[cfg(test)]
+mod ctx_guard_tests {
+    use super::*;
+
+    // Each test runs on its own thread, and the state is per thread.
+
+    #[test]
+    fn one_borrow_at_a_time() {
+        let g = Context::try_borrow().expect("nothing holds it yet");
+        assert!(Context::try_borrow().is_none());
+        drop(g);
+        let mut g = Context::try_borrow().expect("let go");
+        // the same state each time
+        g.sortie = "s".into();
+        drop(g);
+        assert_eq!(Context::try_borrow().unwrap().sortie.as_str(), "s");
+    }
+
+    #[test]
+    fn a_second_borrow_is_a_bug() {
+        let _outer = Context::borrow("outer").unwrap();
+        match catch_unwind(AssertUnwindSafe(|| Context::borrow("inner").is_err())) {
+            // debug builds and tests panic ...
+            Err(_) => assert!(cfg!(debug_assertions)),
+            // ... release refuses
+            Ok(refused) => assert!(refused && !cfg!(debug_assertions)),
+        }
+        assert!(Context::try_borrow().is_none(), "the outer borrow is still held");
+    }
+
+    #[test]
+    fn a_panic_lets_go() {
+        let r = catch_unwind(|| {
+            let _g = Context::try_borrow().unwrap();
+            panic!("handler died");
+        });
+        assert!(r.is_err());
+        assert!(Context::try_borrow().is_some());
+    }
 }
 
 #[cfg(test)]

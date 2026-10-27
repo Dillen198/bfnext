@@ -1158,8 +1158,7 @@ fn bot_layout_atis(
     m
 }
 
-fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<bool> {
-    let ctx = unsafe { Context::get_mut() };
+fn send_atis(lua: MizLua, ctx: &mut Context, slot: SlotId, full: bool) -> Result<bool> {
 
     let (oid, miz_gid) = match ctx.db.ephemeral.get_slot_info(&slot) {
         Some(s) => (s.objective, s.miz_gid),
@@ -1232,8 +1231,7 @@ fn send_atis(lua: MizLua, slot: SlotId, full: bool) -> Result<bool> {
 
 /// A general surface-weather brief at `pos`, for when there's no slot/field
 /// context (e.g. the F10 "Weather" item used from the map or a ground slot).
-pub fn send_weather_brief(lua: MizLua, gid: GroupId, pos: Vector2) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+pub fn send_weather_brief(lua: MizLua, ctx: &mut Context, gid: GroupId, pos: Vector2) -> Result<()> {
     let mut wx = fetch_weather(lua, pos.x, pos.y)?;
     wx.magvar_deg = magnetic_variation_deg(lua, &ctx.db.ephemeral.cfg);
     let mut msg = format_compact!(
@@ -1250,8 +1248,8 @@ pub fn send_weather_brief(lua: MizLua, gid: GroupId, pos: Vector2) -> Result<()>
 /// On-demand full weather report (surface + winds/temp aloft) for the
 /// player's current slot, triggered via the `-weather` chat command.
 /// `Ok(false)` when the player isn't in a slot at a known field.
-pub fn send_full_weather(lua: MizLua, slot: SlotId) -> Result<bool> {
-    send_atis(lua, slot, true)
+pub fn send_full_weather(lua: MizLua, ctx: &mut Context, slot: SlotId) -> Result<bool> {
+    send_atis(lua, ctx, slot, true)
 }
 
 pub fn publish_weather(lua: MizLua, ctx: &mut Context) -> Result<()> {
@@ -1469,15 +1467,14 @@ pub(crate) fn query_atc(
     AtcPicture { airfields, traffic }
 }
 
-pub fn schedule_atis(lua: MizLua, slot: SlotId) -> Result<()> {
-    let ctx = unsafe { Context::get_mut() };
+pub fn schedule_atis(lua: MizLua, ctx: &Context, slot: SlotId) -> Result<()> {
     if !is_aircraft_slot(&ctx.db, &slot) {
         return Ok(());
     }
     let timer = Timer::singleton(lua)?;
     let when = timer.get_time()? + 15.0;
     timer.schedule_once(when, slot, move |lua, slot, _| {
-        if let Err(e) = send_atis(lua, slot, false) {
+        if let Err(e) = crate::with_ctx(lua, "atis", |ctx| send_atis(lua, ctx, slot, false)).and_then(|r| r) {
             error!("atis send failed: {:?}", e);
         }
         Ok(())

@@ -24,7 +24,8 @@ use dcso3::{
 };
 
 fn start_recon(lua: MizLua, gid: GroupId) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         let msg = ctx.db.recon_start(&ucid, Utc::now());
@@ -34,7 +35,8 @@ fn start_recon(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn cancel_recon(lua: MizLua, gid: GroupId) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         let msg = ctx.db.recon_cancel(&ucid, Utc::now());
@@ -44,7 +46,8 @@ fn cancel_recon(lua: MizLua, gid: GroupId) -> Result<()> {
 }
 
 fn recon_status(lua: MizLua, gid: GroupId) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
         let msg = ctx.db.recon_status(&ucid, Utc::now());

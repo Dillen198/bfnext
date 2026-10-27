@@ -330,15 +330,15 @@ pub(crate) fn messages(ctx: &Context, ucid: &Ucid, since: u64) -> Result<Cockpit
 /// calls it, so this only borrows the state before and after it runs.
 pub(crate) fn invoke_and_report(lua: MizLua, ucid: &Ucid, path: &[String]) -> Result<Option<String>> {
     let (group, before) = {
-        let ctx = unsafe { Context::get_mut() };
-        (menu_group(ctx, ucid)?, ctx.db.ephemeral.msgs_ref().feed_seq())
+        let ctx = Context::borrow("cockpit menu click")?;
+        (menu_group(&ctx, ucid)?, ctx.db.ephemeral.msgs_ref().feed_seq())
     };
     if !invoke_mirrored_menu(lua, group, path)? {
         return Ok(None);
     }
-    // The handler took its own Context::get_mut() while it ran; re-borrow.
-    let ctx = unsafe { Context::get_mut() };
-    let said = messages(ctx, ucid, before)?
+    // The handler took the state itself while it ran; borrow it again.
+    let ctx = Context::borrow("cockpit menu click")?;
+    let said = messages(&ctx, ucid, before)?
         .messages
         .into_iter()
         .filter(|m| m.scope == "you")

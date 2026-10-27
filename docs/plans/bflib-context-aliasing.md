@@ -1,6 +1,8 @@
-# bflib: aliased `&mut Context` — what is fixed and what is left
+# bflib: aliased `&mut Context` -- done
 
-Audit finding f30. Status: partly fixed in code, the rest planned here.
+Audit finding f30. Status: **done** (branch `bflib-redesign-870271`). What
+follows is the problem, what the fix is, and the two things that are only
+best-effort.
 
 ## The problem
 
@@ -24,100 +26,76 @@ compiler may assume the caller's view didn't change across the call (cached
 loads, reordered stores). It has worked so far because the optimiser hasn't
 had a reason to exploit it, not because it is sound.
 
-## What is fixed (branch `audit-bflib-ab6e02`)
+## The fix
 
-1. **Event deferral covers what our calls fire.** While a `DeferEvents` guard
-   is alive (every 1 s tick, the 10 Hz admin drain, the 5 Hz message-queue
-   drain, the mission init, every `vector_strike` API call, every F10 menu
-   handler), `on_event` does not touch `Context`. It queues:
-   - `Birth` (re-resolved from its object id when handled);
-   - `Dead` / `UnitLost`, with the object's name and position captured into
-     a `DeathObj` while it still exists, handled by `handle_death` (the same
-     function the live path now uses, so there is one implementation);
-   - `PlayerLeaveUnit` (already just an object id);
+1. **One owner, one borrow flag.** The `static mut` and `Context::get_mut()`
+   are gone. The state lives in a per-thread slot that is only reachable
+   through a `CtxGuard` (`lib.rs`), which sets a thread-local flag while it
+   is alive. `Context::try_borrow()` returns `None` when the flag is set;
+   `Context::borrow(what)` panics in debug builds and tests
+   (`debug_assert!`) and returns an error in release. So a second
+   `&mut Context` is impossible, and a path that would have taken one is a
+   test failure in debug and a logged refusal in release, not silent UB.
+   Tests: `ctx_guard_tests` in `lib.rs`.
+2. **Holding the state is deferring events.** `DeferEvents` / `DEFER_DEPTH`
+   are gone: the borrow flag is the signal. `on_event` is now registered by
+   bflib itself (`add_event_handler`, so it gets DCS's raw event table) and,
+   when the state is held, queues *every* event kind:
+   - Birth, Dead/UnitLost, PlayerLeaveUnit as before (re-resolved by object
+     id; dying object captured into `DeathObj`);
+   - every other event as `DeferredEvent::Raw`: DCS's own table, kept in the
+     Lua registry and parsed again when handled. For Hit and Kill the
+     target's dead/alive state is captured at event time (`target_dead`), so
+     a deferred hit does not ask an object that may be gone;
+   - `onPlayerDisconnect` landing inside one of our calls (a kick) is queued
+     as `DeferredEvent::Disconnect`.
 
-   and ignores the no-op events (mark events without an initiator, sim
-   freeze, repair start/stop, ...) without touching `Context`. The holder
-   drains the queue (`drain_deferred_events`) between subsystems, with no
-   borrow held.
-2. **F10 menu handlers** take the state through `Entered::enter(lua)`, which
-   starts deferral and drains on drop when it is the outermost holder. A
-   handler that spawns crates no longer re-enters `on_event` with the state
-   held.
-3. **Cockpit menu clicks** (`AdminCommand::CockpitMenuInvoke`) used to run the
-   item's F10 handler from inside `run_admin_commands`, i.e. a second
-   `get_mut()` while the admin drain held the first. They are now queued
-   (`Context::pending_menu_invokes`) and run by `admin::run_menu_invokes`
-   after the drain has let go.
-4. **The `vector_strike` API** goes through `with_context`, which refuses a
-   re-entrant call (one made while this thread holds the state) and defers
-   events like a tick. Its `on_event` hook is no longer called from inside
-   the tick: events are queued and delivered after the tick returns.
+   The holder drains the queue (`drain_deferred_events`) between subsystems
+   and before it lets go. The live `on_event` path takes the guard too and
+   drains what its own handlers fire (a dismount's Birth used to re-enter).
+3. **Entry points.** Every DCS-called entry takes the guard exactly once:
+   the 1 s tick, the 5 Hz message drain, the 10 Hz admin drain, the mission
+   init (and its error timer), every hook (`onPlayerTryConnect`,
+   `TrySendChat`, `TryChangeSlot`, `MissionLoadEnd`, `Disconnect`,
+   `SimulationFrame`), F10 menu handlers (`Entered::enter`, now fallible),
+   scheduled one-shots (`with_ctx`: the ATIS and the slot briefing), the
+   `vector_strike` API (`with_context`, which refuses re-entry without the
+   debug panic: a mission script may legitimately try from its own event
+   handler). The 1 s tick and the admin drain let go before calling out to
+   code that takes the state itself (the API's `on_event` hook, cockpit menu
+   clicks).
+4. **Nested takers removed.** Code that fetched its own state while its
+   caller had it now takes `&mut Context`:
+   - chat `-jtac` commands ran the F10 JTAC handlers from inside the tick;
+     each handler they use is split into `x` (enters) and `x_in` (takes
+     `ctx`);
+   - `atis::schedule_atis`, `situation::schedule_slot_briefing` (called from
+     `handle_birth`), `atis::send_full_weather` / `send_weather_brief`
+     (called from the tick's weather requests and the Info menu);
+   - `menu::jtac::add_menu_for_jtac` (a menu builder run inside two other
+     handlers) takes the pinned flag as a parameter;
+   - `jtac_focus_my_mark` -> `jtac_set_focus_in`; `spawn_n_helo_crates`
+     reads its config under a short borrow before `spawn_n_crates` enters;
+   - `delayed_init_miz` takes the init timer's state.
 
-## What is left
+## Best effort, by design
 
-### A. Events still handled on the spot while deferring
+- **A deferred event that needs an object that is gone.** A Raw event is
+  parsed again when drained. If what it names was destroyed in the same tick,
+  handlers that call into DCS on it get an error (logged) -- the same as an
+  event that arrives for a destroyed object today. Only Birth, Dead/UnitLost
+  and Hit/Kill capture what they need up front, because those are the ones
+  our own calls fire. The other kinds are not expected from inside our calls
+  at all; each one that is deferred logs `deferring an event that fired
+  inside one of our calls` at debug, so a session log answers whether they
+  ever are (e.g. `trigger.action.explosion` applying damage synchronously).
+- **`PlayerLeaveUnit` replayed after `force_player_slot`**: unchanged from
+  before, the "landed in the last ten seconds" settlement re-reads the unit
+  and is skipped if it is gone by the time the queue drains.
+- **Hooks state.** A hook (the GUI Lua state) can't drain mission events:
+  events its calls fire are queued and handled by the next mission-side
+  holder, at most 100 ms later (the admin drain).
 
-`Hit`, `Kill`, `Shot`, `PilotDead`, `Ejection`, `Crash`, `Takeoff`, `Land`,
-`PlayerEnterUnit`, mark events *with* an initiator, `MissionEnd`. These come
-from the simulation, not from inside our calls, as far as we know. Two
-exceptions to check in DCS:
-
-- `trigger.action.explosion` (nukes, artillery effects): if DCS applies the
-  damage synchronously, `Hit` / `Kill` fire inside the call. Deferring them
-  needs the target's life captured at event time (`on_hit` reads
-  `target.get_life()`), the same way `DeathObj` captures name and position.
-- `PlayerLeaveUnit` replayed after `force_player_slot`: the handler re-reads
-  the unit for the "landed in the last ten seconds" settlement. If the
-  aircraft is gone by the time the queue drains, that settlement is skipped
-  (the slot change itself is still handled by the hooks path). Rare: it needs
-  a player forced to spectators within ten seconds of landing.
-
-To find out, log the event kind when a non-deferrable event arrives with
-`DEFER_DEPTH > 0` (a one-line `debug!` in `on_event`), run a session with a
-nuke and an era-rules kick, and read the log.
-
-### B. Menu builders and helpers that take their own state inside a tick
-
-`Entered::enter` called while a tick already holds the state is a no-op
-(nested), so it is still a second `&mut`. The menus are built from the tick
-(`menu_init_queue`), and some handlers call each other. Same for the
-`Context::get_mut()` calls left in `lib.rs` (17), `atis.rs`, `situation.rs`,
-`cockpit.rs`. These need the state passed in instead of fetched.
-
-### C. The real fix: one owner, scoped borrows
-
-Replace `static mut SELF: Option<Context>` with a thread-local
-`RefCell<Context>` (or an `UnsafeCell` with a borrow flag) and make every
-access a short scoped borrow:
-
-```rust
-thread_local! { static CTX: RefCell<Option<Context>> = RefCell::new(None); }
-
-fn with_ctx<R>(f: impl FnOnce(&mut Context) -> R) -> R {
-    CTX.with(|c| f(c.borrow_mut().as_mut().expect("context")))
-}
-```
-
-A re-entrant borrow then panics (in debug, or `try_borrow_mut` returns an
-error) instead of being silent UB, which turns every remaining aliasing path
-into a visible, fixable bug. Steps:
-
-1. Introduce `with_ctx` next to `get_mut`, with `try_borrow_mut` in
-   `on_event`: on failure, queue the event (generalising `DeferredEvent`) or
-   log it. Ship that alone first: it costs nothing and reports the paths.
-2. Convert the entry points one at a time (timers, hooks, menu handlers, API,
-   RPC drain), each taking the borrow for exactly the span where it does not
-   call into DCS in a way that can call back.
-3. Where a subsystem must call DCS mid-way (spawns, despawns), split it:
-   compute what to do under the borrow, release, make the DCS calls, re-borrow
-   to record the result. `Ephemeral::push_despawn` / the spawn queue already
-   have this shape; the despawn processing would run its `destroy()` calls
-   outside the borrow.
-4. Remove `get_mut`.
-
-Size: roughly 130 call sites, most mechanical (`let ctx = unsafe {
-Context::get_mut() };` becomes a `with_ctx(|ctx| { ... })` block or a
-parameter). The hard part is step 3 for the handful of subsystems that spawn
-or destroy in the middle of a loop over state. Estimate: several days, best
-done in small PRs, each tested on a live server.
+Not part of f30: `Perf::get_mut` (dcso3-core's per-thread singleton) is
+still `unsafe fn` with the same "don't hold it across a re-entrant call"
+contract. `on_event` no longer holds it across the handler.

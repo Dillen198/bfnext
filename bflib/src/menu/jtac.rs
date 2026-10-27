@@ -157,7 +157,12 @@ pub(crate) fn flush_jtac_notices(ctx: &mut Context) {
 }
 
 pub(crate) fn jtac_nine_line(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_nine_line_in(lua, &mut entered, arg)
+}
+
+/// `jtac_nine_line` for a caller that already holds the campaign state.
+pub(crate) fn jtac_nine_line_in(lua: MizLua, ctx: &mut Context, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let jtac = ctx
         .jtac
         .get(&arg.snd)
@@ -196,7 +201,12 @@ fn jtac_radio(lua: MizLua, ctx: &Context, gid: &DbGid) -> Option<compact_str::Co
 }
 
 pub fn jtac_status(lua: MizLua, arg: ArgTuple<Option<Ucid>, JtId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_status_in(lua, &mut entered, arg)
+}
+
+/// `jtac_status` for a caller that already holds the campaign state.
+pub(crate) fn jtac_status_in(lua: MizLua, ctx: &mut Context, arg: ArgTuple<Option<Ucid>, JtId>) -> Result<()> {
     let jtac = ctx
         .jtac
         .get(&arg.snd)
@@ -247,7 +257,8 @@ Radio: {radio} (comms menu for coordinates)"));
 /// The lone entry of an empty Artillery / ALCM submenu. These used to run
 /// `jtac_status`, so clicking the "nothing here" line dropped a status pin.
 fn jtac_no_fire_support(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     tell(ctx, 10,
         &arg.fst,
         format_compact!(
@@ -294,7 +305,12 @@ fn jtac_msg_auto_shift(db: &Db, jtid: JtId, jtac: &Jtac, ucid: &Ucid) -> String 
 }
 
 pub fn jtac_toggle_auto_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_toggle_auto_shift_in(lua, &mut entered, arg)
+}
+
+/// `jtac_toggle_auto_shift` for a caller that already holds the campaign state.
+pub(crate) fn jtac_toggle_auto_shift_in(lua: MizLua, ctx: &mut Context, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.toggle_auto_shift(&mut ctx.db, lua)
         .with_context(|| format_compact!("toggle auto shift {}", arg.snd))?;
@@ -308,7 +324,12 @@ pub fn jtac_toggle_auto_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<
 }
 
 pub fn jtac_toggle_ir_pointer(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_toggle_ir_pointer_in(lua, &mut entered, arg)
+}
+
+/// `jtac_toggle_ir_pointer` for a caller that already holds the campaign state.
+pub(crate) fn jtac_toggle_ir_pointer_in(lua: MizLua, ctx: &mut Context, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.toggle_ir_pointer(&mut ctx.db, lua)
         .context("toggling ir pointer")?;
@@ -325,7 +346,12 @@ pub fn jtac_toggle_ir_pointer(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<
 }
 
 pub fn jtac_smoke_target(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_smoke_target_in(lua, &mut entered, arg)
+}
+
+/// `jtac_smoke_target` for a caller that already holds the campaign state.
+pub(crate) fn jtac_smoke_target_in(lua: MizLua, ctx: &mut Context, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     let (near, name) = change_info(jtac, &ctx.db, &arg.fst);
     match jtac.smoke_target(lua).context("smoking jtac target") {
@@ -368,7 +394,12 @@ fn jtac_msg_shift(db: &Db, jtid: JtId, jtac: &Jtac, ucid: &Ucid) -> String {
 }
 
 pub fn jtac_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_shift_in(lua, &mut entered, arg)
+}
+
+/// `jtac_shift` for a caller that already holds the campaign state.
+pub(crate) fn jtac_shift_in(lua: MizLua, ctx: &mut Context, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.shift(&mut ctx.db, lua).context("shifting jtac target")?;
     // Nothing in laser range to shift to. This used to announce "JTAC
@@ -387,7 +418,12 @@ pub fn jtac_shift(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
 }
 
 pub fn jtac_designate_building(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_designate_building_in(lua, &mut entered, arg)
+}
+
+/// `jtac_designate_building` for a caller that already holds the campaign state.
+pub(crate) fn jtac_designate_building_in(lua: MizLua, ctx: &mut Context, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     let side = jtac.side();
     let oid = jtac.location().oid;
@@ -438,13 +474,17 @@ pub(crate) fn latest_player_mark(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Res
 }
 
 /// Point a JTAC at `pos` (or release it with `None`) and tell the side.
-pub fn jtac_set_focus(
-    lua: MizLua,
-    ucid: &Ucid,
+pub fn jtac_set_focus(lua: MizLua, ucid: &Ucid,
     jtid: JtId,
-    pos: Option<Vector2>,
-) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    pos: Option<Vector2>) -> Result<()> {
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_set_focus_in(lua, &mut entered, ucid, jtid, pos)
+}
+
+/// `jtac_set_focus` for a caller that already holds the campaign state.
+pub(crate) fn jtac_set_focus_in(lua: MizLua, ctx: &mut Context, ucid: &Ucid,
+    jtid: JtId,
+    pos: Option<Vector2>) -> Result<()> {
     let jtac = get_jtac_mut(&mut ctx.jtac, &jtid)?;
     let n = jtac.set_focus(&mut ctx.db, lua, pos).context("setting jtac focus")?;
     let (near, name) = change_info(jtac, &ctx.db, ucid);
@@ -474,9 +514,10 @@ pub fn jtac_set_focus(
 }
 
 fn jtac_focus_my_mark(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     match latest_player_mark(ctx, lua, &arg.fst)? {
-        Some(pos) => jtac_set_focus(lua, &arg.fst, arg.snd, Some(pos)),
+        Some(pos) => jtac_set_focus_in(lua, ctx, &arg.fst, arg.snd, Some(pos)),
         None => {
             // the requester's mistake -- this went to the whole coalition
             tell(ctx, 10,
@@ -493,7 +534,12 @@ fn jtac_clear_focus(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
 }
 
 pub fn jtac_artillery_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, u8, Ucid>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_artillery_mission_in(lua, &mut entered, arg)
+}
+
+/// `jtac_artillery_mission` for a caller that already holds the campaign state.
+pub(crate) fn jtac_artillery_mission_in(lua: MizLua, ctx: &mut Context, arg: ArgQuad<JtId, DbGid, u8, Ucid>) -> Result<()> {
     match ctx
         .jtac
         .artillery_mission(&ctx.db, lua, &arg.fst, &arg.snd, arg.trd)
@@ -519,7 +565,8 @@ pub fn jtac_artillery_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, u8, Ucid>) 
 }
 
 pub fn jtac_artillery_fire_all(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     match ctx
         .jtac
         .artillery_fire_all(&ctx.db, lua, &arg.fst, &arg.snd)
@@ -569,7 +616,8 @@ fn group_fire(
     ucid: Ucid,
     at: Option<ObjectiveId>,
 ) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     match ctx
         .jtac
         .fire_all_artillery_together(&ctx.db, lua, &jtid, n, at)
@@ -610,7 +658,8 @@ fn group_fire(
 }
 
 pub fn jtac_get_artillery_ammo(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     match ctx
         .jtac
         .get_artillery_ammo(&ctx.db, lua, &arg.snd)
@@ -627,7 +676,8 @@ pub fn jtac_get_artillery_ammo(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -
 }
 
 pub fn jtac_artillery_combo_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u8>, Ucid>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let mut params = arg.trd;
     let num_targets = params.pop().ok_or_else(|| anyhow!("missing combo target count"))?;
     let rounds_per_target = params.pop().ok_or_else(|| anyhow!("missing combo round count"))?;
@@ -652,7 +702,8 @@ pub fn jtac_artillery_combo_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u
 }
 
 pub fn jtac_alcm_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u8>, Ucid>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     match ctx
         .jtac
         .alcm_mission(&ctx.db, lua, &arg.fst, &arg.snd, arg.trd)
@@ -678,7 +729,8 @@ pub fn jtac_alcm_mission(lua: MizLua, arg: ArgQuad<JtId, DbGid, Vec<u8>, Ucid>) 
 }
 
 fn jtac_relay_target(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.fst)?;
     match jtac.relay_target(&ctx.db, lua, &arg.snd) {
         Ok(()) => {
@@ -701,7 +753,12 @@ fn jtac_relay_target(lua: MizLua, arg: ArgTriple<JtId, DbGid, Ucid>) -> Result<(
 }
 
 pub(crate) fn jtac_clear_filter(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_clear_filter_in(lua, &mut entered, arg)
+}
+
+/// `jtac_clear_filter` for a caller that already holds the campaign state.
+pub(crate) fn jtac_clear_filter_in(lua: MizLua, ctx: &mut Context, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     jtac.clear_filter(&mut ctx.db, lua)
         .context("clearing jtac target filter")?;
@@ -717,7 +774,12 @@ pub(crate) fn jtac_clear_filter(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Resul
 }
 
 pub(crate) fn jtac_filter(lua: MizLua, arg: ArgTriple<JtId, u64, Ucid>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_filter_in(lua, &mut entered, arg)
+}
+
+/// `jtac_filter` for a caller that already holds the campaign state.
+pub(crate) fn jtac_filter_in(lua: MizLua, ctx: &mut Context, arg: ArgTriple<JtId, u64, Ucid>) -> Result<()> {
     let filter =
         BitFlags::<UnitTag>::from_bits(arg.snd).map_err(|_| anyhow!("invalid filter bits"))?;
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.fst)?;
@@ -736,7 +798,12 @@ pub(crate) fn jtac_filter(lua: MizLua, arg: ArgTriple<JtId, u64, Ucid>) -> Resul
 }
 
 pub fn jtac_set_code(lua: MizLua, arg: ArgTriple<JtId, u16, Ucid>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    jtac_set_code_in(lua, &mut entered, arg)
+}
+
+/// `jtac_set_code` for a caller that already holds the campaign state.
+pub(crate) fn jtac_set_code_in(lua: MizLua, ctx: &mut Context, arg: ArgTriple<JtId, u16, Ucid>) -> Result<()> {
     if let Err(e) = ctx.jtac.set_code_part(&mut ctx.db, lua, &arg.fst, arg.snd) {
         // a bad code is the requester's to fix, and should say why
         tell(ctx, 10,
@@ -1026,7 +1093,12 @@ fn add_alcm_menu_for_jtac(
 }
 
 pub fn call_bomber(lua: MizLua, arg: ArgTriple<JtId, Ucid, String>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    call_bomber_in(lua, &mut entered, arg)
+}
+
+/// `call_bomber` for a caller that already holds the campaign state.
+pub(crate) fn call_bomber_in(lua: MizLua, ctx: &mut Context, arg: ArgTriple<JtId, Ucid, String>) -> Result<()> {
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     let spctx = SpawnCtx::new(lua)?;
     let jtac = get_jtac(&ctx.jtac, &arg.fst)?;
@@ -1078,7 +1150,8 @@ pub fn call_bomber(lua: MizLua, arg: ArgTriple<JtId, Ucid, String>) -> Result<()
 }
 
 fn toggle_pin_jtac(lua: MizLua, arg: ArgTuple<SlotId, JtId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let subd = ctx.subscribed_jtac_menus.entry(arg.fst).or_default();
     if subd.pinned.contains(&arg.snd) {
         subd.pinned.remove(&arg.snd);
@@ -1086,6 +1159,10 @@ fn toggle_pin_jtac(lua: MizLua, arg: ArgTuple<SlotId, JtId>) -> Result<()> {
         subd.pinned.insert(arg.snd);
     }
     init_jtac_menu_for_slot(ctx, lua, &arg.fst)
+}
+
+fn is_pinned(subscribed: &fxhash::FxHashMap<SlotId, crate::JtacSlotIfo>, slot: SlotId, jtac: &Jtac) -> bool {
+    subscribed.get(&slot).map(|subd| subd.pinned.contains(&jtac.gid())).unwrap_or(false)
 }
 
 pub(super) fn add_menu_for_jtac(
@@ -1097,14 +1174,10 @@ pub(super) fn add_menu_for_jtac(
     jtac: &Jtac,
     ucid: &Ucid,
     slot: SlotId,
+    // whether the player pinned this JTAC (`Context::subscribed_jtac_menus`)
+    pinned: bool,
 ) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
     let mc = MissionCommands::singleton(lua)?;
-    let pinned = ctx
-        .subscribed_jtac_menus
-        .get(&slot)
-        .map(|subd| subd.pinned.contains(&jtac.gid()))
-        .unwrap_or(false);
     // The group id rides along with a configured callsign: callsigns come
     // from the unit spec, so every JTAC of one type shares it, and DCS menus
     // are addressed by label -- two "Reaper" submenus under one parent
@@ -1411,7 +1484,8 @@ fn add_jtacs_by_location(
     lua: MizLua,
     arg: ArgPent<Ucid, GroupId, ObjectiveId, GroupSubMenu, String>,
 ) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let player = ctx
         .db
         .player(&arg.fst)
@@ -1443,6 +1517,7 @@ fn add_jtacs_by_location(
                     jtac,
                     &arg.fst,
                     slot,
+                    is_pinned(&ctx.subscribed_jtac_menus, slot, jtac),
                 )?;
                 n += 1;
             }
@@ -1458,7 +1533,8 @@ fn add_jtacs_by_location(
 }
 
 fn jtac_refresh_locations(lua: MizLua, arg: Ucid) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let player = ctx
         .db
         .player(&arg)
@@ -1471,7 +1547,8 @@ fn jtac_refresh_locations(lua: MizLua, arg: Ucid) -> Result<()> {
 }
 
 fn add_jtac_locations(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result<()> {
-    let (_entered, ctx) = crate::Entered::enter(lua);
+    let mut entered = crate::Entered::enter(lua)?;
+    let ctx = &mut *entered;
     let slot = arg.trd;
     let mc = MissionCommands::singleton(lua)?;
     let player = ctx
@@ -1545,6 +1622,7 @@ fn add_jtac_locations(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Res
                 jte.jtac,
                 &arg.fst,
                 slot,
+                jte.pinned,
             )?;
         } else if !roots.contains(&jte.near) {
             roots.push(jte.near.clone());

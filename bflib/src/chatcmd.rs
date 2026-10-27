@@ -1020,13 +1020,13 @@ fn run_jtac_command(
             fst: ucid,
             snd: jtid,
         };
-        menu::jtac::jtac_toggle_auto_shift(lua, arg)?;
+        menu::jtac::jtac_toggle_auto_shift_in(lua, ctx, arg)?;
     } else if let Some(_) = cmd.strip_prefix("shift") {
         let arg = ArgTuple {
             fst: ucid,
             snd: jtid,
         };
-        menu::jtac::jtac_shift(lua, arg)?;
+        menu::jtac::jtac_shift_in(lua, ctx, arg)?;
     } else if let Some(_) = cmd.strip_prefix("status") {
         // Always answered to the one who asked. A Combined Arms commander
         // (no aircraft) used to get it as a panel to their whole side.
@@ -1034,22 +1034,23 @@ fn run_jtac_command(
             fst: Some(ucid),
             snd: jtid,
         };
-        menu::jtac::jtac_status(lua, arg)?
+        menu::jtac::jtac_status_in(lua, ctx, arg)?
     } else if let Some(_) = cmd.strip_prefix("building") {
-        menu::jtac::jtac_designate_building(lua, ArgTuple { fst: ucid, snd: jtid })?
+        menu::jtac::jtac_designate_building_in(lua, ctx, ArgTuple { fst: ucid, snd: jtid })?
     } else if cmd.starts_with("9line") || cmd.starts_with("9-line") || cmd.starts_with("nineline") {
-        menu::jtac::jtac_nine_line(lua, ArgTuple { fst: ucid, snd: jtid })?
+        menu::jtac::jtac_nine_line_in(lua, ctx, ArgTuple { fst: ucid, snd: jtid })?
     } else if let Some(f) = cmd.strip_prefix("filter") {
         let f = f.trim();
         if f.eq_ignore_ascii_case("clear") {
-            menu::jtac::jtac_clear_filter(lua, ArgTuple { fst: ucid, snd: jtid })?
+            menu::jtac::jtac_clear_filter_in(lua, ctx, ArgTuple { fst: ucid, snd: jtid })?
         } else {
             let tag = UnitTag::all()
                 .iter()
                 .find(|t| format_compact!("{t:?}").eq_ignore_ascii_case(f));
             match tag {
-                Some(tag) => menu::jtac::jtac_filter(
+                Some(tag) => menu::jtac::jtac_filter_in(
                     lua,
+                    ctx,
                     ArgTriple {
                         fst: jtid,
                         snd: BitFlags::from(tag).bits(),
@@ -1089,13 +1090,13 @@ fn run_jtac_command(
             fst: ucid,
             snd: jtid,
         };
-        menu::jtac::jtac_smoke_target(lua, arg)?
+        menu::jtac::jtac_smoke_target_in(lua, ctx, arg)?
     } else if let Some(_) = cmd.strip_prefix("pointer") {
         let arg = ArgTuple {
             fst: ucid,
             snd: jtid,
         };
-        menu::jtac::jtac_toggle_ir_pointer(lua, arg)?
+        menu::jtac::jtac_toggle_ir_pointer_in(lua, ctx, arg)?
     } else if let Some(s) = cmd.strip_prefix("bomber") {
         let name = s.trim();
         let name = if name != "" {
@@ -1117,7 +1118,7 @@ fn run_jtac_command(
                     snd: ucid,
                     trd: name,
                 };
-                menu::jtac::call_bomber(lua, arg)?
+                menu::jtac::call_bomber_in(lua, ctx, arg)?
             }
         }
     } else if let Some(s) = cmd.strip_prefix("focus") {
@@ -1145,7 +1146,7 @@ fn run_jtac_command(
                 n => error!("{n} map marks say {key}, make it unique"),
             }
         };
-        menu::jtac::jtac_set_focus(lua, &ucid, jtid, pos)?;
+        menu::jtac::jtac_set_focus_in(lua, ctx, &ucid, jtid, pos)?;
     } else if let Some(s) = cmd.strip_prefix("code ") {
         let s = s.trim();
         let code = match s.parse::<u16>() {
@@ -1159,7 +1160,7 @@ fn run_jtac_command(
             snd: code,
             trd: ucid,
         };
-        menu::jtac::jtac_set_code(lua, arg)?
+        menu::jtac::jtac_set_code_in(lua, ctx, arg)?
     } else if let Some(arty) = cmd.strip_prefix("arty ") {
         if let Some((aid, n)) = arty.trim().split_once(" ") {
             let aids: SmallVec<[GroupId; 8]> = match aid.parse::<GroupId>() {
@@ -1183,7 +1184,7 @@ fn run_jtac_command(
                     trd: n,
                     fth: ucid,
                 };
-                menu::jtac::jtac_artillery_mission(lua, arg)?
+                menu::jtac::jtac_artillery_mission_in(lua, ctx, arg)?
             }
         } else {
             error!("arty expected <id> and <n>")

@@ -51,7 +51,7 @@ use dcso3::{
     world::World,
 };
 use enumflags2::BitFlags;
-use log::{info, warn};
+use log::{error, info, warn};
 use mlua::Value;
 use netidx::publisher::Value as NetIdxValue;
 use parking_lot::{Condvar, Mutex};
@@ -3363,7 +3363,10 @@ pub(super) fn run_admin_commands(ctx: &mut Context, lua: MizLua) -> Result<Admin
 /// the player, so the panel shows the answer ("Need 3 crates", "you must
 /// land first") rather than a bare "ok".
 pub(super) fn run_menu_invokes(lua: MizLua) {
-    let pending = std::mem::take(&mut unsafe { Context::get_mut() }.pending_menu_invokes);
+    let pending = match Context::borrow("cockpit menu clicks") {
+        Ok(mut ctx) => std::mem::take(&mut ctx.pending_menu_invokes),
+        Err(e) => return error!("{e:?}"),
+    };
     for (caller, ucid, path) in pending {
         let reply = match crate::cockpit::invoke_and_report(lua, &ucid, &path) {
             Ok(Some(said)) => NetIdxValue::from(said),

@@ -1750,9 +1750,8 @@ NEW PILOT: this is a safer task to start with. F10 > Info > Help > Getting Start
     Some(line)
 }
 
-pub(crate) fn schedule_slot_briefing(lua: MizLua, slot: dcso3::net::SlotId) -> anyhow::Result<()> {
+pub(crate) fn schedule_slot_briefing(lua: MizLua, ctx: &Context, slot: dcso3::net::SlotId) -> anyhow::Result<()> {
     use dcso3::timer::Timer;
-    let ctx = unsafe { Context::get_mut() };
     let Some(cfg) = ctx.db.ephemeral.cfg.situation_briefing.clone() else {
         return Ok(());
     };
@@ -1762,36 +1761,39 @@ pub(crate) fn schedule_slot_briefing(lua: MizLua, slot: dcso3::net::SlotId) -> a
     let timer = Timer::singleton(lua)?;
     let when = timer.get_time()? + cfg.delay_secs as f64;
     timer.schedule_once(when, slot, move |lua, slot, _| {
-        let ctx = unsafe { Context::get_mut() };
-        // The player may have jumped back to spectator in the meantime.
-        let Some(si) = ctx.db.ephemeral.get_slot_info(&slot) else {
-            return Ok(());
-        };
-        let (miz_gid, side, typ) = (si.miz_gid, si.side, si.typ.clone());
-        let from = crate::menu::player_world_pos(ctx, &slot);
-        let rep = build(ctx, lua, side, Opts { include_map: false, from });
-        let task_line = assign_paid_task(ctx, lua, &slot, miz_gid, &typ, &rep);
-        let cfg = match ctx.db.ephemeral.cfg.situation_briefing.as_ref() {
-            Some(c) => c.clone(),
-            None => return Ok(()),
-        };
-        let mut text = render_panel(
-            &rep,
-            cfg.panel_tasks,
-            cfg.note.as_ref().map(|n| n.as_str()),
-        );
-        if let Some(line) = task_line {
-            text.push('\n');
-            text.push_str(&line);
-        }
-        text.push('\n');
-        text.push_str(ctx.db.persisted.war_effort.briefing_line(side).as_str());
-        ctx.db
-            .ephemeral
-            .msgs()
-            .panel_to_group(cfg.display_secs, false, miz_gid, text);
-        Ok(())
+        crate::with_ctx(lua, "slot briefing", |ctx| slot_briefing(lua, ctx, slot))?
     })?;
+    Ok(())
+}
+
+fn slot_briefing(lua: MizLua, ctx: &mut Context, slot: dcso3::net::SlotId) -> anyhow::Result<()> {
+    // The player may have jumped back to spectator in the meantime.
+    let Some(si) = ctx.db.ephemeral.get_slot_info(&slot) else {
+        return Ok(());
+    };
+    let (miz_gid, side, typ) = (si.miz_gid, si.side, si.typ.clone());
+    let from = crate::menu::player_world_pos(ctx, &slot);
+    let rep = build(ctx, lua, side, Opts { include_map: false, from });
+    let task_line = assign_paid_task(ctx, lua, &slot, miz_gid, &typ, &rep);
+    let cfg = match ctx.db.ephemeral.cfg.situation_briefing.as_ref() {
+        Some(c) => c.clone(),
+        None => return Ok(()),
+    };
+    let mut text = render_panel(
+        &rep,
+        cfg.panel_tasks,
+        cfg.note.as_ref().map(|n| n.as_str()),
+    );
+    if let Some(line) = task_line {
+        text.push('\n');
+        text.push_str(&line);
+    }
+    text.push('\n');
+    text.push_str(ctx.db.persisted.war_effort.briefing_line(side).as_str());
+    ctx.db
+        .ephemeral
+        .msgs()
+        .panel_to_group(cfg.display_secs, false, miz_gid, text);
     Ok(())
 }
 
