@@ -297,6 +297,9 @@ export interface State {
   gs: number
   /** vertical speed */
   vs: number
+  /** climb angle and track of the flight path, smoothed across samples
+   *  (absent when standing still) */
+  path?: { pitch: number; trk: number }
   ias?: number
   mach?: number
   aoa?: number
@@ -328,6 +331,19 @@ export function bearingDeg(lon1: number, lat1: number, lon2: number, lat2: numbe
   const y = Math.sin((lon2 - lon1) * p) * Math.cos(lat2 * p)
   const x = Math.cos(lat1 * p) * Math.sin(lat2 * p) - Math.sin(lat1 * p) * Math.cos(lat2 * p) * Math.cos((lon2 - lon1) * p)
   return (Math.atan2(y, x) / p + 360) % 360
+}
+
+const DEG_PER_RAD = 180 / Math.PI
+/** Velocity at sample `k`, m/s east, north, up, from its neighbours. */
+function velAt(s: Seg, k: number): [number, number, number] {
+  const n = s.t.length
+  const a = Math.max(k - 1, 0), b = Math.min(k + 1, n - 1)
+  const dt = (s.t[b] - s.t[a]) / 1000
+  if (!(dt > 0)) return [0, 0, 0]
+  const p = Math.PI / 180
+  const e = (s.lon[b] - s.lon[a]) * p * Math.cos(((s.lat[a] + s.lat[b]) / 2) * p) * R
+  const no = (s.lat[b] - s.lat[a]) * p * R
+  return [e / dt, no / dt, (s.alt[b] - s.alt[a]) / dt]
 }
 
 /** Index of the last sample at or before `t` (-1 if none). */
@@ -370,6 +386,14 @@ export function sampleSeg(s: Seg, t: number): State | null {
     hdg,
     gs,
     vs,
+  }
+  // The velocity at each sample (central difference), blended between the
+  // two around `t` so the path angle turns smoothly instead of stepping.
+  const vi = velAt(s, i), vj = j === i ? vi : velAt(s, j)
+  const ve = lerp(vi[0], vj[0], f), vn = lerp(vi[1], vj[1], f), vu = lerp(vi[2], vj[2], f)
+  const flat = Math.hypot(ve, vn)
+  if (flat + Math.abs(vu) > 1) {
+    st.path = { pitch: Math.atan2(vu, flat) * DEG_PER_RAD, trk: (Math.atan2(ve, vn) * DEG_PER_RAD + 360) % 360 }
   }
   if (s.ias) st.ias = lerp(s.ias[i], s.ias[j], f)
   if (s.mach) st.mach = lerp(s.mach[i], s.mach[j], f)

@@ -11,7 +11,7 @@
 
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import type { Kind, State } from './data'
+import { isWeapon, type Kind, type State } from './data'
 import { familyOf, modelOf, realOf, realModel, realLength, LENGTH, MIN_PX, type Family, type Real } from './models'
 import { SHIP_FIT, waterlineZ } from '../../../shared/models/catalog'
 import { drawHud, type HudData, type Vec3 } from './hud'
@@ -62,6 +62,14 @@ const R_EARTH = 6_371_000
 const EARTH_C = 40_075_016.686
 const DEG = Math.PI / 180
 const FOCUS_HEX = '#b6f04a'
+
+/** The attitude to draw. DCS writes a bomb's attitude once, at release, and
+ *  many missiles' only now and then, so a weapon in flight points along its
+ *  path instead. */
+function drawnState(kind: Kind, st: State): State {
+  const p = isWeapon(kind) && st.gs + Math.abs(st.vs) > 30 ? st.path : undefined
+  return p ? { ...st, pitch: p.pitch, hdg: p.trk } : st
+}
 // Elevation: Mapterhorn (Copernicus GLO-30 worldwide, lidar where open data
 // has it; 512 px Terrarium WebP), falling back to the AWS/Mapzen Terrarium set.
 const MAPTERHORN = (z: number, x: number, y: number) => `https://tiles.mapterhorn.com/${z}/${x}/${y}.webp`
@@ -646,7 +654,7 @@ export class Theater {
       if (o.idx === frame.focus) focusPos = p
       if (o.idx === frame.measure) measurePos = p
     }
-    this.placeCamera(frame, focusPos, focusObj?.st ?? null, measurePos)
+    this.placeCamera(frame, focusPos, focusObj ? drawnState(focusObj.kind, focusObj.st) : null, measurePos)
     this.camera.updateMatrixWorld()
     const target = focusPos ?? this.controls.target
     this.updateTerrain(target)
@@ -689,7 +697,8 @@ export class Theater {
         // In the cockpit, the own aircraft is not drawn over the view.
         if (frame.cam === 'cockpit' && o.focus) continue
         const scale = Math.max(1, (MIN_PX[f] * frame.scale * d) / pxPerRad / length) * Math.max(1, frame.scale / 2)
-        this.tmpE.set(o.st.pitch * DEG, o.st.roll * DEG, -o.st.hdg * DEG, 'ZXY')
+        const st = drawnState(o.kind, o.st)
+        this.tmpE.set(st.pitch * DEG, st.roll * DEG, -st.hdg * DEG, 'ZXY')
         this.tmpQ.setFromEuler(this.tmpE)
         s3.set(scale, scale, scale)
         // Models are centred on their middle: stand ground units on their

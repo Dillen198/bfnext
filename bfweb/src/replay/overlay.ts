@@ -5,7 +5,7 @@
 // sources re-tiles every source on a worker per frame). In both views it
 // draws the Tacview-style labels, decluttered so they never pile up.
 
-import type { Kind, State } from './data'
+import { isWeapon, type Kind, type State } from './data'
 
 export type SideKey = 'blue' | 'red' | 'other'
 
@@ -335,7 +335,8 @@ export class Overlay {
     const img = sprite(shape, color, this.dpr * this.scale)
     const s = img.width / this.dpr
     if (ROTATES[it.kind]) {
-      const a = it.st.hdg * (Math.PI / 180)
+      // A weapon points along its track (its recorded heading can be stale).
+      const a = (isWeapon(it.kind) && it.st.gs > 30 && it.st.path ? it.st.path.trk : it.st.hdg) * (Math.PI / 180)
       ctx.setTransform(this.dpr * Math.cos(a), this.dpr * Math.sin(a), -this.dpr * Math.sin(a), this.dpr * Math.cos(a), x * this.dpr, y * this.dpr)
       ctx.drawImage(img, -s / 2, -s / 2, s, s)
       ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
