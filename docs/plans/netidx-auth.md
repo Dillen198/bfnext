@@ -1,7 +1,49 @@
 # Plan: authenticated netidx (TLS, or Kerberos)
 
-Status: **plan only.** No production config changed. Audit finding f3,
-infrastructure part.
+Status: **TLS implemented, opt-in, off by default** (wave 2). No production
+config changed. Audit finding f3, infrastructure part. Operator guide:
+`deploy/netidx-tls.md`.
+
+## What was built
+
+* `fowlbg::netidx` (MIT crate shared by the engines): a `netidx_tls` block
+  (`trusted`, `certificate`, `private_key`, `resolver_name`, optional
+  `domain`, `askpass`) and `load_config(path, tls)`. With no block it is
+  `Config::load` / `load_default`, byte for byte today's behaviour. With
+  one, the `client.json` is kept as the address book and switched to TLS in
+  memory: one identity filed under `domain` (default: the last label of the
+  resolver name), `default_auth: Tls`, every resolver address
+  `Tls(resolver_name)`. So one `client.json` serves every account on a box
+  and each process names its own certificate in its own config, instead of
+  one client config per process.
+* Engines: `netidx_tls` in the campaign `Cfg` (bflib) and in `RangeCfg`
+  (bfrange), checked by `validate()`.
+* bfdb: `--netidx-tls <file>` for the default client config, and an
+  instance's `netidx_tls` for its own `netidx_config` (instances sharing a
+  config must agree). Subscriber setup moved to `bfdb/src/netidx_client.rs`.
+* procman: `bfdb.netidx_tls` (`dir`, `identity`, optional `resolver`,
+  `grant`, `domain`, `trusted`, `perms`, `askpass`) writes
+  `netidx-resolver.tls.json` (the Anonymous file is kept for rollback) and
+  `netidx-tls.bfdb.json`; an instance's `netidx_tls_resolver` gets that
+  instance a block for a TLS range resolver. Leaving out `resolver` keeps
+  the campaign resolver Anonymous, which is the range-first rollout below.
+* Checked on loopback with the doc's openssl recipe and netidx 0.27's
+  in-process resolver: TLS engine publishes, TLS bfdb reads, Anonymous is
+  `Denied`, a CA-signed certificate missing from `perms` can neither publish
+  nor read. The unit tests need no resolver: they cover parsing, the
+  overlay and the "off = Anonymous" load.
+
+Facts from netidx 0.27's source that the plan below had open: a
+certificate must hold exactly one DNS subjectAltName and the `perms` entity
+is its CN; keys are PKCS#8 PEM; the certificate file holds one certificate
+(no chain); a TLS client cannot use an Anonymous resolver and vice versa,
+so a resolver and all its clients switch together; grant strings are
+`!swlpd`.
+
+Not done: `-TlsDir` for `setup-range-pc.ps1` / `setup-main-pc.ps1` (the
+range resolver's config is a hand edit that re-running the script undoes),
+a certificate script, and per-base `perms` narrowing tested against the
+stats archive.
 
 ## Where things stand
 

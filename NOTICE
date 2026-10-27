@@ -95,6 +95,13 @@ file before using, copying, modifying, or redistributing any part of it.
   of bflib/src/bg/live_weather.rs so both can link it, and is MIT licensed
   (see livewx/LICENSE).
 
+  fowlbg/ (the background-thread plumbing shared by bflib and bfrange:
+  logger, rotation, JSONL feeds, supervised runtime, netidx publisher and
+  TLS config) was written by Dillen Weerasinghe, starting from bfrange's
+  background module, and is MIT licensed (see fowlbg/LICENSE). The
+  features bflib had and bfrange lacked were written anew in it rather
+  than copied from bflib.
+
 
 4. Contact
 ------------------------------------------------------------------------

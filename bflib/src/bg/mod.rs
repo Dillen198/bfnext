@@ -28,103 +28,53 @@ use bfprotocols::{
 };
 use bytes::{BufMut, Bytes, BytesMut};
 use chrono::prelude::*;
-use compact_str::{CompactString, format_compact};
+use compact_str::format_compact;
 use crossbeam::queue::SegQueue;
 use dcso3::perf::{Perf as ApiPerf, PerfStat as ApiPerfStat};
-use futures::FutureExt;
+use fowlbg::jsonl::JsonlSink;
 use fxhash::FxHashMap;
-use log::{debug, error, info, Level, Log, Metadata, Record};
+use log::{debug, error, info};
 use logpub::LogPublisher;
 use netidx::{
     chars::Chars,
     config::Config,
     path::Path as NetIdxPath,
-    publisher::{Publisher, PublisherBuilder, Value},
+    publisher::{Publisher, Value},
 };
-use once_cell::sync::OnceCell;
 use parking_lot::{Condvar, Mutex};
 use perf::PubPerf;
 use rpcs::Rpcs;
 use serde::Serialize;
-use simplelog::{LevelFilter, WriteLogger};
 use statspub::Statspub;
 use std::{
     cell::RefCell,
-    env,
-    ffi::OsStr,
     fs, io,
-    panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicI64, AtomicUsize, Ordering},
-    },
-    thread,
+    sync::Arc,
 };
 use tokio::{
     fs::File,
     io::AsyncWriteExt,
-    runtime::Builder,
-    sync::{
-        mpsc::{self, UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    sync::{mpsc::UnboundedSender, oneshot},
     task,
 };
 
-thread_local! {
-    static LOGBUF: RefCell<BytesMut> = RefCell::new(BytesMut::new());
-}
+// The thread, the logger, the fallback log and the supervisor are fowlbg's
+// (shared with bfrange); bflib turns all of its options on (see `init`).
+pub(crate) use fowlbg::{panic_msg, panic_payload_msg};
 
-/// Where log lines go when the background thread can't take them.
-static FALLBACK_LOG: OnceCell<PathBuf> = OnceCell::new();
-
-/// Unix seconds of the last task the background loop finished. The main
-/// thread pings it every minute (`Task::Ping`), so a value that stops moving
-/// means the loop is wedged even though its channel is still open.
-static BG_HEARTBEAT: AtomicI64 = AtomicI64::new(0);
-
-/// The message out of a panic payload. The payload of a normal `panic!` is
-/// a `&str` or a `String`; its `Debug` is a useless `Any { .. }`.
-pub(crate) fn panic_payload_msg(p: &(dyn std::any::Any + Send)) -> &str {
-    p.downcast_ref::<&'static str>()
-        .copied()
-        .or_else(|| p.downcast_ref::<std::string::String>().map(|s| s.as_str()))
-        .unwrap_or("<panic payload was not a string>")
-}
-
-/// The message out of the payload `catch_unwind` hands back.
-pub(crate) fn panic_msg(e: &Box<dyn std::any::Any + Send>) -> &str {
-    // `&**e`, not `&e`: a `&Box<dyn Any>` coerces to a `&dyn Any` whose
-    // concrete type is the Box itself, and every downcast would miss.
-    panic_payload_msg(&**e)
-}
-
-/// Last-resort log sink that doesn't depend on the background thread.
-///
-/// Every log line, every stat and every save goes through that one thread,
-/// so when it died the logger kept handing lines to a closed channel and the
-/// only record of *why* it died -- the panic hook's message -- went with them.
-/// This appends straight to `Logs/bfnext-fallback.txt` (and stderr) from
-/// whatever thread is logging. It opens the file per call, which is slow, but
-/// it only runs when the normal path is already broken.
-pub(super) fn fallback_log(buf: &[u8]) {
-    use std::io::Write;
-    let _ = io::stderr().write_all(buf);
-    if let Some(path) = FALLBACK_LOG.get() {
-        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = f.write_all(buf);
-        }
-    }
-}
+/// Last-resort log sink that doesn't depend on the background thread:
+/// stderr plus `Logs/bfnext-fallback.txt`, appended from whatever thread is
+/// logging. Every log line, every stat and every save goes through that one
+/// thread, so when it dies this is the only record of why.
+pub(super) use fowlbg::fallback_log;
 
 /// Seconds since the background loop last finished a task, `None` before the
-/// first one.
+/// first one. The main thread pings it every minute (`Task::Ping`), so a value
+/// that stops moving means the loop is wedged even though its channel is still
+/// open.
 pub(super) fn heartbeat_age(now: DateTime<Utc>) -> Option<i64> {
-    match BG_HEARTBEAT.load(Ordering::Relaxed) {
-        0 => None,
-        ts => Some(now.timestamp().saturating_sub(ts)),
-    }
+    fowlbg::heartbeat_age(now.timestamp())
 }
 
 /// The most log lines waiting for the background thread. Logs share its
@@ -132,53 +82,6 @@ pub(super) fn heartbeat_age(now: DateTime<Utc>) -> Option<i64> {
 /// slow disk) used to grow that queue without limit. Past this, lines are
 /// dropped and counted; the next line that gets through says how many.
 const MAX_QUEUED_LOG_LINES: usize = 20_000;
-/// Log lines queued and not yet written.
-static LOG_QUEUED: AtomicUsize = AtomicUsize::new(0);
-/// Log lines dropped because the queue was full, not yet reported.
-static LOG_DROPPED: AtomicUsize = AtomicUsize::new(0);
-
-struct LogHandle(UnboundedSender<Task>);
-
-impl io::Write for LogHandle {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        LOGBUF.with_borrow_mut(|lbuf| {
-            lbuf.extend_from_slice(buf);
-            if lbuf.len() > 0 && lbuf[lbuf.len() - 1] == 0xA {
-                let mut line = lbuf.split().freeze();
-                if LOG_QUEUED.load(Ordering::Relaxed) >= MAX_QUEUED_LOG_LINES {
-                    LOG_DROPPED.fetch_add(1, Ordering::Relaxed);
-                    return Ok(buf.len());
-                }
-                let dropped = LOG_DROPPED.swap(0, Ordering::Relaxed);
-                if dropped > 0 {
-                    let mut b = BytesMut::from(
-                        format!(
-                            "WARN [bflib] log queue full: {dropped} log line(s) dropped\n"
-                        )
-                        .as_bytes(),
-                    );
-                    b.extend_from_slice(&line);
-                    line = b.freeze();
-                }
-                LOG_QUEUED.fetch_add(1, Ordering::Relaxed);
-                if let Err(e) = self.0.send(Task::WriteLog(line)) {
-                    LOG_QUEUED.fetch_sub(1, Ordering::Relaxed);
-                    // The background thread is gone. Don't return an error --
-                    // the logger would just drop the line -- write it where it
-                    // can still be read.
-                    if let Task::WriteLog(line) = e.0 {
-                        fallback_log(&line)
-                    }
-                }
-            }
-            Ok(buf.len())
-        })
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
 
 fn encode<T: Serialize>(db: &T) -> Result<BytesMut> {
     thread_local! {
@@ -488,32 +391,11 @@ fn reset_state(path: &Path) -> Result<()> {
     }
 }
 
+/// Move last session's log aside as `<name><UTC timestamp>.<ext>`.
 fn rotate_log(path: &Path) {
-    if path.exists() {
-        let ext = path
-            .extension()
-            .unwrap_or(&OsStr::new("ext"))
-            .to_str()
-            .unwrap_or("inv");
-        let mut rotate_path = path.to_path_buf();
-        rotate_path.set_extension("");
-        let name = rotate_path
-            .file_name()
-            .unwrap_or(&OsStr::new("nameless"))
-            .to_str()
-            .unwrap_or("invalid");
-        let ts = Utc::now()
-            .to_rfc3339_opts(SecondsFormat::Secs, true)
-            .chars()
-            .filter(|c| c != &'-' && c != &':')
-            .collect::<CompactString>();
-        rotate_path.set_file_name(format_compact!("{name}{ts}.{ext}"));
-        if let Err(e) = fs::rename(&path, &rotate_path) {
-            println!(
-                "could not rotate log file {:?} to {:?} {:?}",
-                path, rotate_path, e
-            )
-        }
+    if let Err(e) = fowlbg::rotate::rotate(path) {
+        let to = fowlbg::rotate::rotated_path(path, Utc::now());
+        println!("could not rotate log file {:?} to {:?} {:?}", path, to, e)
     }
 }
 
@@ -617,6 +499,31 @@ impl Task {
     }
 }
 
+impl fowlbg::Task for Task {
+    fn log_line(line: Bytes) -> Self {
+        Task::WriteLog(line)
+    }
+
+    fn into_log_line(self) -> Option<Bytes> {
+        match self {
+            Task::WriteLog(line) => Some(line),
+            _ => None,
+        }
+    }
+
+    fn is_log_line(&self) -> bool {
+        matches!(self, Task::WriteLog(_))
+    }
+
+    fn kind(&self) -> &'static str {
+        Task::kind(self)
+    }
+
+    fn is_final(&self) -> bool {
+        matches!(self, Task::Shutdown(_))
+    }
+}
+
 /// The last `Task::CfgLoaded`, kept so a restarted background loop can bring
 /// netidx (stats publisher, log publisher, engine RPCs) back up by itself --
 /// the mission only sends it once, at load.
@@ -633,13 +540,13 @@ enum Logs {
         perf: PubPerf,
         stats: Statspub,
         log: LogPublisher,
-        stats_jsonl: Option<std::fs::File>,
+        stats_jsonl: Option<JsonlSink>,
     },
     Files {
         log_path: PathBuf,
         log_file: Option<File>,
         stats_path: PathBuf,
-        stats_jsonl: Option<std::fs::File>,
+        stats_jsonl: Option<JsonlSink>,
     },
 }
 
@@ -655,7 +562,7 @@ impl Logs {
                 *log_file = Some(
                     File::options()
                         .create(true)
-                        .write(true)
+                        .append(true)
                         .open(&log_path)
                         .await?,
                 );
@@ -673,14 +580,10 @@ impl Logs {
         let jsonl_path = write_dir.join("Logs").join("stats.jsonl");
         rotate_log(&log_path);
         maybe_rotate_stats_jsonl(&jsonl_path);
-        let stats_jsonl = match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&jsonl_path)
-        {
+        let stats_jsonl = match fowlbg::jsonl::open_append(&jsonl_path) {
             Ok(f) => {
                 info!("stats JSONL file opened at {jsonl_path:?}");
-                Some(f)
+                Some(JsonlSink::new(jsonl_path, Some(f)))
             }
             Err(e) => {
                 error!("could not open stats JSONL file at {jsonl_path:?}: {e:?}");
@@ -732,12 +635,7 @@ impl Logs {
             Self::Netidx { stats_jsonl, .. } => stats_jsonl,
         };
         if let Some(f) = jsonl {
-            use std::io::Write;
-            let ts = Utc::now();
-            // One write per record: `writeln!` on an unbuffered File issues
-            // several, so bfdb could read a record half-written.
-            let line = format!("{}\n", serde_json::json!({"ts": ts.to_rfc3339(), "stat": stat}));
-            if let Err(e) = f.write_all(line.as_bytes()) {
+            if let Err(e) = f.append_stamped("stat", stat) {
                 error!("failed to write stat to JSONL: {e:?}");
             }
         }
@@ -851,9 +749,11 @@ impl Logs {
     }
 }
 
-struct Background<'a> {
-    write_dir: &'a Path,
+struct Background {
+    write_dir: PathBuf,
     saver: Arc<Saver>,
+    /// The save worker for this run of the loop (see `Saver::run`).
+    worker: task::JoinHandle<()>,
     logs: Logs,
     rpcs: Option<Rpcs>,
     // The netidx publisher's lifetime has to outlive the CfgLoaded arm and
@@ -864,17 +764,49 @@ struct Background<'a> {
     // at the end of the arm, taking every engine query RPC with it and leaving
     // the dashboard dark. Holding a clone here keeps the RPCs up regardless.
     publisher: Option<Publisher>,
-    last_cfg: &'a mut Option<CfgReplay>,
+    /// Outlives a restart of the loop (see `CfgReplay`).
+    last_cfg: Arc<Mutex<Option<CfgReplay>>>,
+    /// Set by `Task::Shutdown`, signalled in `stop` -- after the shutdown
+    /// task, even if it panicked: the mission thread waits on it before it
+    /// exits DCS.
+    shutdown: Option<Arc<(Mutex<bool>, Condvar)>>,
 }
 
-impl<'a> Background<'a> {
+impl Background {
+    /// One run of the loop: a fresh start, or a restart after a panic (the
+    /// supervisor's), when `last_cfg` and any pending save carry over.
+    async fn start(write_dir: PathBuf, saver: Arc<Saver>, last_cfg: Arc<Mutex<Option<CfgReplay>>>) -> Self {
+        let replay = last_cfg.lock().clone();
+        let worker = task::spawn(Arc::clone(&saver).run());
+        // a snapshot left pending by a loop that died gets written now
+        saver.wake.notify_one();
+        let logs = Logs::new(&write_dir).await;
+        let mut bg = Background {
+            write_dir,
+            saver,
+            worker,
+            logs,
+            rpcs: None,
+            publisher: None,
+            last_cfg,
+            shutdown: None,
+        };
+        if let Some(replay) = replay {
+            // restarted after a panic: bring netidx back up for the mission that
+            // is still running. Never a new round -- the round didn't change.
+            error!("background loop restarted, restoring netidx for sortie {:?}", replay.sortie);
+            bg.cfg_loaded(replay, false).await;
+        }
+        bg
+    }
+
     async fn cfg_loaded(&mut self, replay: CfgReplay, fresh: bool) {
         let CfgReplay {
             sortie,
             cfg,
             admin_channel,
         } = replay.clone();
-        *self.last_cfg = Some(replay);
+        *self.last_cfg.lock() = Some(replay);
         // A second CfgLoaded is a new mission in the same DCS process
         // (MissionEnd -> load). The old code kept the first mission's stats
         // publisher and sortie base, because switch_to_netidx is a no-op in
@@ -885,7 +817,7 @@ impl<'a> Background<'a> {
             self.logs.shutdown().await;
             self.rpcs = None;
             self.publisher = None;
-            self.logs = Logs::new(self.write_dir).await;
+            self.logs = Logs::new(&self.write_dir).await;
         }
         if let Some(base) = cfg.netidx_base.as_ref() {
             let base = base.append(&sortie);
@@ -895,14 +827,19 @@ impl<'a> Background<'a> {
                 cfg.netidx_base.as_ref().unwrap(),
                 cfg.netidx_base.as_ref().unwrap(),
             );
-            let cfg = match Config::load_default() {
+            let tls = cfg.netidx_tls.as_ref();
+            let cfg = match fowlbg::netidx::load_config(None, tls) {
                 Ok(c) => c,
                 Err(e) => {
                     error!("failed to load netidx config {e:?}");
                     return;
                 }
             };
-            let publisher = match PublisherBuilder::new(cfg.clone()).build().await {
+            if let Some(tls) = tls {
+                info!("netidx: TLS to resolver {} as {}", tls.resolver_name, tls.certificate);
+            }
+            // one try, on the config's default bind
+            let publisher = match fowlbg::netidx::start_publisher(&cfg, None, &[]).await {
                 Ok(p) => p,
                 Err(e) => {
                     error!("failed to init netidx publisher {e:?}");
@@ -979,6 +916,15 @@ impl<'a> Background<'a> {
             Logs::Netidx { .. } => log::info!("log is in netidx mode"),
         }
     }
+}
+
+/// Each task runs inside fowlbg's panic boundary (`Options::supervise`).
+/// This one thread does the saves, the log, the stats and every netidx RPC,
+/// and a single panic in any of them used to end the loop for good: the
+/// mission carried on with nothing saved and nothing logged, and no way to
+/// tell from the outside.
+impl fowlbg::Handler for Background {
+    type Task = Task;
 
     async fn handle(&mut self, msg: Task) {
         match msg {
@@ -1046,7 +992,8 @@ impl<'a> Background<'a> {
                     .log_perf(players, &perf.stat(), &api_perf.stat())
                     .await;
             }
-            Task::Shutdown(_) => {
+            Task::Shutdown(a) => {
+                self.shutdown = Some(a);
                 // the final save has to be on disk before the mission exits
                 self.saver.flush().await;
                 println!("starting netidx shutdown");
@@ -1061,191 +1008,50 @@ impl<'a> Background<'a> {
             Task::Ping => (),
         }
     }
-}
 
-/// Runs until the channel closes or a `Task::Shutdown` is processed.
-///
-/// Each task is handled inside its own panic boundary. This one thread does
-/// the saves, the log, the stats and every netidx RPC, and a single panic in
-/// any of them used to end the loop for good: the mission carried on with
-/// nothing saved and nothing logged, and no way to tell from the outside.
-async fn background_loop(
-    write_dir: &Path,
-    rx: &mut UnboundedReceiver<Task>,
-    last_cfg: &mut Option<CfgReplay>,
-    saver: &Arc<Saver>,
-) {
-    let replay = last_cfg.clone();
-    let worker = task::spawn(Arc::clone(saver).run());
-    // a snapshot left pending by a loop that died gets written now
-    saver.wake.notify_one();
-    let mut bg = Background {
-        write_dir,
-        saver: Arc::clone(saver),
-        logs: Logs::new(write_dir).await,
-        rpcs: None,
-        publisher: None,
-        last_cfg,
-    };
-    if let Some(replay) = replay {
-        // restarted after a panic: bring netidx back up for the mission that
-        // is still running. Never a new round -- the round didn't change.
-        error!("background loop restarted, restoring netidx for sortie {:?}", replay.sortie);
-        bg.cfg_loaded(replay, false).await;
-    }
-    while let Some(msg) = rx.recv().await {
-        let shutdown = match &msg {
-            Task::Shutdown(a) => Some(Arc::clone(a)),
-            _ => None,
-        };
-        let kind = msg.kind();
-        if let Task::WriteLog(_) = &msg {
-            LOG_QUEUED.fetch_sub(1, Ordering::Relaxed);
-        }
-        if let Err(e) = AssertUnwindSafe(bg.handle(msg)).catch_unwind().await {
-            let m = panic_msg(&e);
-            fallback_log(format!("bflib: background task {kind} panicked: {m}\n").as_bytes());
-            error!("background task {kind} panicked: {m}")
-        }
-        BG_HEARTBEAT.store(Utc::now().timestamp(), Ordering::Relaxed);
-        if let Some(a) = shutdown {
-            // signalled even if the shutdown itself panicked -- the mission
-            // thread polls this flag before it exits DCS
+    /// The loop has ended: the channel closed, or `Task::Shutdown` (the final
+    /// task) was handled.
+    async fn stop(&mut self) {
+        if let Some(a) = self.shutdown.take() {
             let &(ref lock, ref cvar) = &*a;
             let mut synced = lock.lock();
             *synced = true;
             cvar.notify_all();
             println!("condvar signaled, exiting background loop");
-            *bg.last_cfg = None;
-            break;
+            *self.last_cfg.lock() = None;
         }
-    }
-    worker.abort();
-}
-
-static TXCOM: OnceCell<mpsc::UnboundedSender<Task>> = OnceCell::new();
-
-fn setup_logger(tx: UnboundedSender<Task>) {
-    // Default to Info -- Debug emits a few tens of thousands of lines an hour
-    // on a populated server (per-crate C-130 cargo polling, per-tick carrier
-    // position dumps, unknown-event chatter), which is real disk/IO load over
-    // a long campaign. Set RUST_LOG=debug to get it back.
-    let level = match env::var("RUST_LOG").ok().map(|s| s.to_ascii_lowercase()) {
-        None => LevelFilter::Info,
-        Some(s) if &s == "trace" => LevelFilter::Trace,
-        Some(s) if &s == "debug" => LevelFilter::Debug,
-        Some(s) if &s == "info" => LevelFilter::Info,
-        Some(s) if &s == "error" => LevelFilter::Error,
-        Some(s) if &s == "warn" => LevelFilter::Warn,
-        Some(s) if &s == "off" => LevelFilter::Off,
-        Some(_) => LevelFilter::Info,
-    };
-    let logger = WriteLogger::new(level, simplelog::Config::default(), LogHandle(tx));
-    log::set_boxed_logger(Box::new(QuietNetidx(*logger))).expect("could not init logger");
-    log::set_max_level(level);
-}
-
-/// Wraps the real logger to drop netidx's subscriber chatter below Error.
-///
-/// netidx-archive joins a "cluster" even when this server is its only member,
-/// and the subscriber then retries the peer path forever, logging a WARN per
-/// attempt: a 20 minute log carried ~310 copies of `resubscription error
-/// /local/fowl/campaign/<x>/stats/cluster/publish/<uuid>: no such value`, which
-/// is every warning that actually mattered buried under one benign retry loop.
-/// bfdb already filters the same module the same way (env_logger
-/// `filter_module("netidx::subscriber", Error)` in its main). simplelog has no
-/// per-module level, and `ConfigBuilder::add_filter_ignore_str` would throw
-/// away genuine netidx errors along with the noise, so filter here instead.
-struct QuietNetidx<L>(L);
-
-impl<L: Log> Log for QuietNetidx<L> {
-    fn enabled(&self, m: &Metadata) -> bool {
-        if m.level() > Level::Error && m.target().starts_with("netidx::subscriber") {
-            return false;
-        }
-        // Routine at INFO, every minute, forever: the resolver write
-        // connection's heartbeat connect/drop (5 lines a minute) and the stats
-        // archive's per-minute "rotating log file". Warnings still get through.
-        if m.level() > Level::Warn
-            && (m.target().starts_with("netidx::resolver_client")
-                || m.target().starts_with("netidx::channel")
-                || m.target().starts_with("netidx_archive::logfile_collection"))
-        {
-            return false;
-        }
-        self.0.enabled(m)
-    }
-
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            self.0.log(record)
-        }
-    }
-
-    fn flush(&self) {
-        self.0.flush()
+        self.worker.abort();
     }
 }
 
 pub(super) fn init(write_dir: PathBuf) -> UnboundedSender<Task> {
-    match TXCOM.get() {
-        Some(tx) => tx.clone(),
-        None => {
-            let (tx, mut rx) = mpsc::unbounded_channel();
-            TXCOM.set(tx.clone()).expect("txcom is already set");
-            let _ = FALLBACK_LOG.set(write_dir.join("Logs").join("bfnext-fallback.txt"));
-            setup_logger(tx.clone());
-            thread::spawn(move || {
-                // Supervisor. `background_loop` already survives a panic in
-                // any one task; this catches whatever gets past that (the
-                // runtime itself, the loop's own setup) and starts it again on
-                // a fresh runtime instead of leaving the mission with no saves,
-                // no log and no stats for the rest of the session.
-                let mut last_cfg: Option<CfgReplay> = None;
-                // outlives a restart of the loop, with any save still pending
-                let saver = Arc::new(Saver::default());
-                let mut restarts: u32 = 0;
-                loop {
-                    let rt = match Builder::new_multi_thread().enable_all().build() {
-                        Ok(rt) => rt,
-                        Err(e) => {
-                            fallback_log(
-                                format!("bflib: could not start the async runtime {e:?}\n")
-                                    .as_bytes(),
-                            );
-                            thread::sleep(std::time::Duration::from_secs(5));
-                            continue;
-                        }
-                    };
-                    let res = catch_unwind(AssertUnwindSafe(|| {
-                        rt.block_on(background_loop(&write_dir, &mut rx, &mut last_cfg, &saver))
-                    }));
-                    match res {
-                        Ok(()) => break,
-                        Err(e) => {
-                            restarts = restarts.saturating_add(1);
-                            let m = panic_msg(&e);
-                            fallback_log(
-                                format!(
-                                    "bflib: background loop died ({m}), restart #{restarts}\n"
-                                )
-                                .as_bytes(),
-                            );
-                            drop(rt);
-                            thread::sleep(std::time::Duration::from_secs(1));
-                        }
-                    }
-                }
-                println!("background thread exiting")
-            });
-            tx
-        }
-    }
+    let opts = fowlbg::Options {
+        fallback_log: Some(write_dir.join("Logs").join("bfnext-fallback.txt")),
+        // netidx-archive joins a "cluster" even when this server is its only
+        // member, and its subscriber then retries the peer path forever, a
+        // WARN per attempt (~310 in a 20 minute log). bfdb filters the same
+        // module (env_logger `filter_module("netidx::subscriber", Error)`).
+        quiet_netidx: true,
+        max_queued_log_lines: Some(MAX_QUEUED_LOG_LINES),
+        // a panicked task is reported and the loop goes on; a dead loop is
+        // started again on a fresh runtime instead of leaving the mission with
+        // no saves, no log and no stats for the rest of the session
+        supervise: true,
+        ..fowlbg::Options::new("bflib")
+    };
+    // outlive a restart of the loop, with any save still pending
+    let last_cfg: Arc<Mutex<Option<CfgReplay>>> = Arc::default();
+    let saver = Arc::new(Saver::default());
+    fowlbg::init(opts, move |_restart| {
+        Background::start(write_dir.clone(), Arc::clone(&saver), Arc::clone(&last_cfg))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use tokio::runtime::Builder;
 
     fn scratch(name: &str) -> PathBuf {
         let dir = env::temp_dir().join(format!("bflib-save-test-{name}-{}", std::process::id()));
@@ -1294,6 +1100,37 @@ mod tests {
             saver.flush().await;
             assert!(!live.exists());
         });
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The mission thread waits on the shutdown condvar before it exits DCS:
+    /// it must be signalled once the final task is done, and a supervisor
+    /// restart after that must not bring the old mission's netidx back.
+    #[test]
+    fn shutdown_signals_and_clears_the_replay() {
+        use fowlbg::{Handler, Task as _};
+        let dir = scratch("shutdown");
+        fs::create_dir_all(dir.join("Logs")).unwrap();
+        let rt = Builder::new_multi_thread().enable_all().build().unwrap();
+        rt.block_on(async {
+            let last_cfg: Arc<Mutex<Option<CfgReplay>>> = Arc::default();
+            let mut bg = Background::start(dir.clone(), Arc::default(), Arc::clone(&last_cfg)).await;
+            *last_cfg.lock() = Some(CfgReplay {
+                sortie: "s".into(),
+                cfg: Arc::new(Cfg::default()),
+                admin_channel: Arc::default(),
+            });
+            let sig = Arc::new((Mutex::new(false), Condvar::new()));
+            let task = Task::Shutdown(Arc::clone(&sig));
+            assert!(task.is_final());
+            assert_eq!(fowlbg::Task::kind(&task), "Shutdown");
+            bg.handle(task).await;
+            assert!(!*sig.0.lock(), "signalled by stop, after the task");
+            bg.stop().await;
+            assert!(*sig.0.lock());
+            assert!(last_cfg.lock().is_none());
+        });
+        drop(rt);
         let _ = fs::remove_dir_all(&dir);
     }
 

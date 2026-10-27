@@ -168,6 +168,12 @@ pub struct Cfg {
     #[serde(default)]
     #[schemars(with = "Option<std::string::String>")]
     pub netidx_base: Option<NetIdxPath>,
+    /// Mutual TLS for the engine's netidx publisher (deploy/netidx-tls.md):
+    /// this engine's certificate and the resolver's name, applied over the
+    /// netidx client config. Unset, the client config is used as written
+    /// (normally Anonymous).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub netidx_tls: Option<fowlbg::netidx::Tls>,
     /// if specified, automatically reset the server state and record
     /// a victory in the stats when the condition is met.
     #[serde(default)]
@@ -1073,6 +1079,9 @@ impl Cfg {
     /// logged as warnings so an existing server still starts.
     pub fn validate(&self) -> Result<()> {
         let cfg = self;
+        if let Some(t) = &cfg.netidx_tls {
+            t.validate()?;
+        }
         if let Some(points) = &cfg.points {
             // player.rs divides the team-kill age by it: 0 panics on the first TK
             if points.tk_window == 0 {

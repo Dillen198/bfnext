@@ -1,6 +1,38 @@
 # Plan: one shared crate for the mission-DLL plumbing
 
-Audit finding f124. Plan only: nothing here is implemented yet.
+Audit finding f124. **Steps 2 to 4 done** (wave 2): `fowlbg` exists and both
+DLLs run on it. Steps 5 and 6 (build info, hooks loader) are not done.
+
+## What was done
+
+* `fowlbg/` (MIT, `fowlbg/LICENSE`, NOTICE updated) was seeded from
+  bfrange's `bg.rs`. The bflib-only pieces (supervisor, per-task panic
+  boundary, fallback log, netidx noise filter, log queue cap, heartbeat)
+  were written anew in it as `Options`, not copied from bflib.
+* Layout: `runtime.rs` (thread, `Task` and `Handler` traits, `Options`,
+  `init`, `sender`, `heartbeat_age`), `log.rs`, `rotate.rs`, `jsonl.rs`,
+  `netidx.rs` (client config with opt-in TLS, `start_publisher`,
+  `BIND_BACKOFF`, `retry`). The handler is built by a factory that runs on
+  the background thread each time the loop (re)starts, so the supervisor
+  can rebuild it; `stop()` runs after the final task even if it panicked.
+  `default-features = false` gives only the netidx config type.
+* bfrange: options as before fowlbg (no supervisor, no fallback log, no
+  filter, 2 worker threads), so its behaviour is unchanged; turning each on
+  is one field in `bfrange/src/bg.rs`'s `init`.
+* bflib: every option on (what it had). Saves, stats, the netidx archive and
+  RPCs stay in `bflib/src/bg/`. `Background` owns its state instead of
+  borrowing it; the Shutdown condvar is signalled from `Handler::stop`.
+* Deliberate differences, all outside normal operation: `RUST_LOG=off` now
+  silences bfrange too (it used to read as info); bflib's live log is opened
+  for append (the same for the fresh file a rotation leaves); a rotation in
+  the same second as the previous one keeps the first rotated file in both
+  DLLs (bflib used to overwrite it).
+* Not done: step 5 (`fowl-build-info`; bftools has its own lock and is being
+  moved to mlua 0.10 separately) and step 6 (the hooks loaders are Lua, also
+  in that session's area). bflib's `stats.jsonl` rotation keeps its own
+  naming (`stats-<ms timestamp>.jsonl`, `FOWL_STATS_JSONL_ROTATE_MB`) rather
+  than fowlbg's `<stem><ts>.<ext>` that bfrange's feeds use, since bfdb
+  looks for each by name.
 
 ## The duplication
 

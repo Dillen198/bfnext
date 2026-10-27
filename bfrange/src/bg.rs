@@ -7,42 +7,38 @@
 //! DCS's Lua runs on one thread and must never block, so everything that
 //! touches a file or the network happens here, fed by an unbounded channel.
 //! RPC calls come the other way through a lock-free queue the engine drains
-//! on its fast tick.
+//! on its fast tick. The thread, the logger, the feeds and the publisher
+//! setup are fowlbg's; what is here is the range's own tasks and RPCs.
 
 use anyhow::Result;
+use arcstr::ArcStr;
 use bfprotocols::{range::RangeRecord, stats::Stat};
-use chrono::prelude::*;
+use bytes::Bytes;
 use crossbeam::queue::SegQueue;
+use fowlbg::{
+    jsonl::{JsonlSink, open_append},
+    netidx::{BIND_BACKOFF, Tls, load_config, start_publisher},
+};
 use futures::{channel::mpsc as fmpsc, StreamExt};
-use log::{error, info, LevelFilter};
+use log::{error, info};
 use netidx::{
     chars::Chars,
-    config::Config,
     path::Path as NetidxPath,
-    publisher::{BindCfg, Publisher, PublisherBuilder, Value},
+    publisher::{BindCfg, Publisher, Value},
 };
-use arcstr::ArcStr;
 use netidx_protocols::{
     define_rpc,
     rpc::server::{ArgSpec, Proc, RpcCall},
     rpc_err,
 };
-use once_cell::sync::OnceCell;
-use simplelog::WriteLogger;
 use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, Write},
+    fs::{self, File},
+    io::Write,
     path::{Path, PathBuf},
     sync::Arc,
-    thread,
-    time::Duration,
 };
 use tokio::{
-    runtime::Builder,
-    sync::{
-        mpsc::{self, UnboundedReceiver, UnboundedSender},
-        oneshot,
-    },
+    sync::{mpsc::UnboundedSender, oneshot},
     task,
 };
 
@@ -71,11 +67,14 @@ pub struct NetCfg {
     pub config: Option<String>,
     /// A netidx bind spec overriding the client config's default.
     pub bind: Option<String>,
+    /// Mutual TLS to the resolver and bfdb (`netidx_tls`); `None` is the
+    /// client config as written, normally Anonymous.
+    pub tls: Option<Tls>,
 }
 
 #[derive(Debug)]
 pub enum Task {
-    WriteLog(Vec<u8>),
+    WriteLog(Bytes),
     Stat(Stat),
     Record(Box<RangeRecord>),
     Start { sortie: String, net: NetCfg, q: CmdQueue },
@@ -83,35 +82,25 @@ pub enum Task {
     RotateJsonl { range_max: Option<u64>, stats_max: Option<u64> },
 }
 
-thread_local! {
-    /// Partial log line; the logger writes a record in pieces and only a
-    /// complete line is sent to the background thread.
-    static LOGBUF: std::cell::RefCell<Vec<u8>> = std::cell::RefCell::new(Vec::new());
-}
-
-struct LogHandle(UnboundedSender<Task>);
-
-impl io::Write for LogHandle {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        LOGBUF.with_borrow_mut(|b| {
-            b.extend_from_slice(buf);
-            if b.last() == Some(&b'\n') {
-                let line = std::mem::take(b);
-                self.0
-                    .send(Task::WriteLog(line))
-                    .map_err(|_| io::Error::new(io::ErrorKind::Other, "background thread gone"))?;
-            }
-            Ok(buf.len())
-        })
+impl fowlbg::Task for Task {
+    fn log_line(line: Bytes) -> Self {
+        Task::WriteLog(line)
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+    fn into_log_line(self) -> Option<Bytes> {
+        match self {
+            Task::WriteLog(line) => Some(line),
+            _ => None,
+        }
+    }
+
+    fn is_log_line(&self) -> bool {
+        matches!(self, Task::WriteLog(_))
     }
 }
 
-fn open_append(p: &Path) -> Option<File> {
-    match OpenOptions::new().create(true).append(true).open(p) {
+fn open(p: &Path) -> Option<File> {
+    match open_append(p) {
         Ok(f) => Some(f),
         Err(e) => {
             eprintln!("bfrange: could not open {p:?}: {e:?}");
@@ -120,50 +109,16 @@ fn open_append(p: &Path) -> Option<File> {
     }
 }
 
-/// Rename `p` to `<stem><UTC timestamp>.<ext>` beside it, the name bfdb's
-/// range ingest looks for when it finishes a rotated `range.jsonl`.
-fn rotate(p: &Path) -> io::Result<Option<PathBuf>> {
-    if !p.exists() {
-        return Ok(None);
+fn rotate_jsonl(sink: &mut JsonlSink, max: u64) {
+    if let Err(e) = sink.rotate_if_over(max) {
+        eprintln!("bfrange: could not open {:?}: {e:?}", sink.path());
     }
-    let ts = Utc::now().format("%Y%m%dT%H%M%SZ");
-    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("bfrange");
-    let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("txt");
-    let to = p.with_file_name(format!("{stem}{ts}.{ext}"));
-    if to.exists() {
-        // two rotations within a second: keep the first
-        return Ok(None);
-    }
-    fs::rename(p, &to)?;
-    Ok(Some(to))
-}
-
-/// Rotate a JSONL feed once it is over `max` bytes. The handle is closed
-/// first (Windows won't rename a file this process holds open for writing
-/// without delete sharing), and the feed is reopened either way.
-fn rotate_jsonl(f: &mut Option<File>, p: &Path, max: u64) {
-    let len = match fs::metadata(p) {
-        Ok(m) => m.len(),
-        Err(_) => return,
-    };
-    if len <= max {
-        return;
-    }
-    *f = None;
-    match rotate(p) {
-        Ok(Some(to)) => info!("rotated {p:?} ({len} bytes) to {to:?}"),
-        Ok(None) => (),
-        Err(e) => error!("could not rotate {p:?}: {e:?}"),
-    }
-    *f = open_append(p);
 }
 
 struct Sinks {
     log: Option<File>,
-    stats: Option<File>,
-    range: Option<File>,
-    stats_path: PathBuf,
-    range_path: PathBuf,
+    stats: JsonlSink,
+    range: JsonlSink,
 }
 
 impl Sinks {
@@ -171,50 +126,43 @@ impl Sinks {
         let logs = write_dir.join("Logs");
         let _ = fs::create_dir_all(&logs);
         let log_path = logs.join("bfrange.txt");
-        let _ = rotate(&log_path);
+        let _ = fowlbg::rotate::rotate(&log_path);
         let stats_path = logs.join("stats.jsonl");
         let range_path = logs.join("range.jsonl");
         Self {
-            log: open_append(&log_path),
-            stats: open_append(&stats_path),
-            range: open_append(&range_path),
-            stats_path,
-            range_path,
+            log: open(&log_path),
+            stats: JsonlSink::new(stats_path.clone(), open(&stats_path)),
+            range: JsonlSink::new(range_path.clone(), open(&range_path)),
         }
     }
 
     fn rotate_jsonl(&mut self, range_max: Option<u64>, stats_max: Option<u64>) {
         if let Some(max) = range_max {
-            rotate_jsonl(&mut self.range, &self.range_path, max);
+            rotate_jsonl(&mut self.range, max);
         }
         if let Some(max) = stats_max {
-            rotate_jsonl(&mut self.stats, &self.stats_path, max);
+            rotate_jsonl(&mut self.stats, max);
         }
     }
 
     fn stat(&mut self, st: &Stat) {
-        if let Some(f) = &mut self.stats {
-            // One write per record: `writeln!` on an unbuffered File issues
-            // several, so bfdb could read a record half-written.
-            let line = format!("{}\n", serde_json::json!({"ts": Utc::now().to_rfc3339(), "stat": st}));
-            if let Err(e) = f.write_all(line.as_bytes()) {
-                error!("could not write stat: {e:?}")
-            }
+        if let Err(e) = self.stats.append_stamped("stat", st) {
+            error!("could not write stat: {e:?}")
         }
     }
 
     fn record(&mut self, r: &RangeRecord) {
-        if let Some(f) = &mut self.range {
-            match serde_json::to_string(r) {
-                Ok(mut s) => {
-                    s.push('\n');
-                    if let Err(e) = f.write_all(s.as_bytes()) {
-                        error!("could not write range record: {e:?}")
-                    }
-                    let _ = f.flush();
+        if !self.range.is_open() {
+            return;
+        }
+        match serde_json::to_vec(r) {
+            Ok(s) => {
+                if let Err(e) = self.range.append_line(s) {
+                    error!("could not write range record: {e:?}")
                 }
-                Err(e) => error!("could not encode range record {}: {e:?}", r.id),
+                let _ = self.range.flush();
             }
+            Err(e) => error!("could not encode range record {}: {e:?}", r.id),
         }
     }
 }
@@ -386,206 +334,88 @@ impl Rpcs {
     }
 }
 
-/// The waits between attempts to start the publisher. A mission restart drops
-/// the old publisher just before binding the new one, and its listener lets go
-/// of the port a moment later; with an exact `netidx_bind` port (deploy/
-/// range-pc/setup-range-pc.ps1 -PublisherPort) the first bind can lose that
-/// race. About 15 s in all before giving up.
-const BIND_BACKOFF: &[Duration] = &[
-    Duration::from_millis(250),
-    Duration::from_millis(500),
-    Duration::from_secs(1),
-    Duration::from_secs(2),
-    Duration::from_secs(4),
-    Duration::from_secs(8),
-];
+struct Background {
+    sinks: Sinks,
+    rpcs: Option<Rpcs>,
+    publisher: Option<Publisher>,
+}
 
-/// `attempt` until it succeeds, sleeping `backoff[i]` after failure `i`; the
-/// last failure once `backoff` is used up.
-async fn retry<T, E: std::fmt::Display, Fut>(
-    what: &str,
-    backoff: &[Duration],
-    mut attempt: impl FnMut() -> Fut,
-) -> std::result::Result<T, E>
-where
-    Fut: std::future::Future<Output = std::result::Result<T, E>>,
-{
-    let mut waits = backoff.iter();
-    loop {
-        match attempt().await {
-            Ok(v) => return Ok(v),
-            Err(e) => match waits.next() {
-                Some(wait) => {
-                    info!("{what} failed ({e}), trying again in {wait:?}");
-                    tokio::time::sleep(*wait).await;
-                }
-                None => return Err(e),
-            },
+impl Background {
+    async fn start(&mut self, sortie: String, net: NetCfg, q: CmdQueue) {
+        let Some(base) = net.base else {
+            info!("no netidx_base in the range config: RPCs disabled, JSONL only");
+            return;
+        };
+        let base = base.append(&sortie);
+        // a mission restart starts again: retire the old RPCs first so
+        // the resolver never lists two publishers for one path
+        self.rpcs = None;
+        self.publisher = None;
+        let cfg = match load_config(net.config.as_deref().map(Path::new), net.tls.as_ref()) {
+            Ok(c) => c,
+            Err(e) => {
+                let from = net.config.as_deref().unwrap_or("the default location");
+                error!("failed to load the netidx config from {from}: {e:?}");
+                return;
+            }
+        };
+        if let Some(tls) = &net.tls {
+            info!("netidx: TLS to resolver {} as {}", tls.resolver_name, tls.certificate);
         }
+        let bind = match net.bind.as_deref().map(str::parse::<BindCfg>).transpose() {
+            Ok(b) => b,
+            Err(e) => {
+                error!("netidx_bind in the range config is not a bind address: {e:?}");
+                return;
+            }
+        };
+        let publisher = match start_publisher(&cfg, bind, BIND_BACKOFF).await {
+            Ok(p) => p,
+            Err(e) => {
+                error!("failed to start the netidx publisher: {e:?}");
+                return;
+            }
+        };
+        info!("netidx: publishing on {}", publisher.addr());
+        info!("netidx: range RPCs under {base}/api (bfdb's instance base must be the parent)");
+        match Rpcs::new(&publisher, &q, &base) {
+            Ok(r) => self.rpcs = Some(r),
+            Err(e) => error!("failed to publish range RPCs: {e:?}"),
+        }
+        self.publisher = Some(publisher);
     }
 }
 
-async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
-    let mut sinks = Sinks::new(&write_dir);
-    let mut _rpcs: Option<Rpcs> = None;
-    let mut _publisher: Option<Publisher> = None;
-    while let Some(t) = rx.recv().await {
+impl fowlbg::Handler for Background {
+    type Task = Task;
+
+    async fn handle(&mut self, t: Task) {
         match t {
             Task::WriteLog(line) => {
-                if let Some(f) = &mut sinks.log {
+                if let Some(f) = &mut self.sinks.log {
                     let _ = f.write_all(&line);
                 }
             }
-            Task::Stat(st) => sinks.stat(&st),
-            Task::Record(r) => sinks.record(&r),
-            Task::RotateJsonl { range_max, stats_max } => sinks.rotate_jsonl(range_max, stats_max),
-            Task::Start { sortie, net, q } => {
-                let Some(base) = net.base else {
-                    info!("no netidx_base in the range config: RPCs disabled, JSONL only");
-                    continue;
-                };
-                let base = base.append(&sortie);
-                // a mission restart starts again: retire the old RPCs first so
-                // the resolver never lists two publishers for one path
-                _rpcs = None;
-                _publisher = None;
-                let cfg = match &net.config {
-                    Some(path) => Config::load(path),
-                    None => Config::load_default(),
-                };
-                let cfg = match cfg {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let from = net.config.as_deref().unwrap_or("the default location");
-                        error!("failed to load the netidx config from {from}: {e:?}");
-                        continue;
-                    }
-                };
-                let bind = match net.bind.as_deref().map(str::parse::<BindCfg>).transpose() {
-                    Ok(b) => b,
-                    Err(e) => {
-                        error!("netidx_bind in the range config is not a bind address: {e:?}");
-                        continue;
-                    }
-                };
-                let publisher = retry("starting the netidx publisher", BIND_BACKOFF, || {
-                    let cfg = cfg.clone();
-                    async move { PublisherBuilder::new(cfg).bind_cfg(bind).build().await }
-                })
-                .await;
-                let publisher = match publisher {
-                    Ok(p) => p,
-                    Err(e) => {
-                        error!("failed to start the netidx publisher: {e:?}");
-                        continue;
-                    }
-                };
-                info!("netidx: publishing on {}", publisher.addr());
-                info!("netidx: range RPCs under {base}/api (bfdb's instance base must be the parent)");
-                match Rpcs::new(&publisher, &q, &base) {
-                    Ok(r) => _rpcs = Some(r),
-                    Err(e) => error!("failed to publish range RPCs: {e:?}"),
-                }
-                _publisher = Some(publisher);
-            }
+            Task::Stat(st) => self.sinks.stat(&st),
+            Task::Record(r) => self.sinks.record(&r),
+            Task::RotateJsonl { range_max, stats_max } => self.sinks.rotate_jsonl(range_max, stats_max),
+            Task::Start { sortie, net, q } => self.start(sortie, net, q).await,
         }
     }
 }
 
-static TX: OnceCell<UnboundedSender<Task>> = OnceCell::new();
-
 pub fn init(write_dir: PathBuf) -> UnboundedSender<Task> {
-    TX.get_or_init(|| {
-        let (tx, rx) = mpsc::unbounded_channel();
-        let level = match std::env::var("RUST_LOG").ok().map(|s| s.to_ascii_lowercase()).as_deref() {
-            Some("trace") => LevelFilter::Trace,
-            Some("debug") => LevelFilter::Debug,
-            Some("warn") => LevelFilter::Warn,
-            Some("error") => LevelFilter::Error,
-            _ => LevelFilter::Info,
-        };
-        let logger = WriteLogger::new(level, simplelog::Config::default(), LogHandle(tx.clone()));
-        let _ = log::set_boxed_logger(logger).map(|()| log::set_max_level(level));
-        thread::spawn(move || {
-            let rt = Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-                .expect("could not start the async runtime");
-            rt.block_on(background_loop(write_dir, rx));
-        });
-        tx
+    // Unsupervised, no fallback log and no netidx filter: the range as it
+    // was before fowlbg. Each is one option away.
+    let opts = fowlbg::Options { worker_threads: Some(2), ..fowlbg::Options::new("bfrange") };
+    fowlbg::init(opts, move |_restart| {
+        let write_dir = write_dir.clone();
+        async move { Background { sinks: Sinks::new(&write_dir), rpcs: None, publisher: None } }
     })
-    .clone()
 }
 
 pub fn send(t: Task) {
-    if let Some(tx) = TX.get() {
+    if let Some(tx) = fowlbg::sender::<Task>() {
         let _ = tx.send(t);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn rt() -> tokio::runtime::Runtime {
-        Builder::new_current_thread().enable_all().build().unwrap()
-    }
-
-    const FAST: &[Duration] = &[Duration::from_millis(1); 3];
-
-    #[test]
-    fn retry_stops_at_the_first_success() {
-        let calls = AtomicUsize::new(0);
-        let r: std::result::Result<usize, String> = rt().block_on(retry("t", FAST, || {
-            let n = calls.fetch_add(1, Ordering::SeqCst);
-            async move { if n < 2 { Err(format!("fail {n}")) } else { Ok(n) } }
-        }));
-        assert_eq!(r, Ok(2));
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
-    }
-
-    #[test]
-    fn retry_gives_up_with_the_last_error() {
-        let calls = AtomicUsize::new(0);
-        let r: std::result::Result<(), String> = rt().block_on(retry("t", FAST, || {
-            let n = calls.fetch_add(1, Ordering::SeqCst);
-            async move { Err(format!("fail {n}")) }
-        }));
-        assert_eq!(r, Err("fail 3".to_string()), "one try plus one per backoff step");
-        assert_eq!(calls.load(Ordering::SeqCst), 4);
-    }
-
-    /// What a pinned port looks like across a mission restart: the old
-    /// listener lets go of the port only after the first bind was tried.
-    #[test]
-    fn retry_rides_out_a_port_still_held() {
-        rt().block_on(async {
-            let old = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = old.local_addr().unwrap();
-            let release = tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                drop(old);
-            });
-            let tries = AtomicUsize::new(0);
-            let backoff = [Duration::from_millis(50); 10];
-            let new = retry("binding", &backoff, || {
-                tries.fetch_add(1, Ordering::SeqCst);
-                tokio::net::TcpListener::bind(addr)
-            })
-            .await
-            .expect("bound once the old listener let go");
-            assert_eq!(new.local_addr().unwrap(), addr);
-            assert!(tries.load(Ordering::SeqCst) > 1, "the first bind should have hit the held port");
-            release.await.unwrap();
-        });
-    }
-
-    #[test]
-    fn bind_backoff_is_bounded() {
-        let total: Duration = BIND_BACKOFF.iter().sum();
-        assert!(total >= Duration::from_secs(5) && total <= Duration::from_secs(30), "{total:?}");
     }
 }

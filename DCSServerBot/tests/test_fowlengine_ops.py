@@ -1969,6 +1969,109 @@ def test_client_config_only_when_none_exists(tmp_path, monkeypatch):
     assert (appdata / "netidx" / "client.json").read_text() == "{}"  # never overwritten
 
 
+# ---- netidx TLS: opt-in, off means exactly today's files and flags ----------
+
+_TLS = {"dir": "C:/fowl/tls", "resolver": "resolver.campaign.fowl", "identity": "bfdb.fowl",
+        "grant": ["engine.campaign.fowl"]}
+
+_RANGE_INST = {"id": "range", "kind": "range", "netidx_base": "/local/fowl/range",
+               "stats_jsonl": "C:/r/Logs/stats.jsonl", "netidx_resolver": "192.168.1.60:4564"}
+
+
+def test_netidx_tls_off_changes_nothing(tmp_path):
+    pm, _ = _bare_pm(tmp_path, instances=[dict(_RANGE_INST, netidx_tls_resolver="resolver.range.fowl")])
+    assert pm.netidx_tls() is None
+    assert "--netidx-tls" not in pm._build_args("pw", False)
+    path = pm._resolver_config()
+    assert path == str(tmp_path / "netidx-resolver.json")
+    member = json.loads(Path(path).read_text())["member_servers"][0]
+    assert member["auth"] == "Anonymous"
+    entry = json.loads(Path(pm._render_instances()).read_text())["instances"][0]
+    # a netidx_tls_resolver without the bfdb block is ignored (and said)
+    assert "netidx_tls" not in entry
+    assert entry["netidx_config"] == str(tmp_path / "netidx.range.json")
+    client = json.loads((tmp_path / "netidx.range.json").read_text())
+    assert client["addrs"] == [["192.168.1.60:4564", "Anonymous"]]
+    assert not (tmp_path / "netidx-resolver.tls.json").exists()
+    assert not (tmp_path / "netidx-tls.bfdb.json").exists()
+
+
+def test_netidx_tls_on_writes_resolver_bfdb_and_instance_blocks(tmp_path):
+    pm, _ = _bare_pm(tmp_path, netidx_tls=dict(_TLS),
+                     instances=[dict(_RANGE_INST, netidx_tls_resolver="resolver.range.fowl"),
+                                {"id": "vs1", "netidx_base": "/local/fowl/vs1"}])
+    tls = pm.netidx_tls()
+    assert tls["trusted"] == os.path.join("C:/fowl/tls", "ca.pem")
+    # the resolver: a TLS config beside the Anonymous one, which is not made
+    path = pm._resolver_config()
+    assert path == str(tmp_path / "netidx-resolver.tls.json")
+    rcfg = json.loads(Path(path).read_text())
+    auth = rcfg["member_servers"][0]["auth"]["Tls"]
+    assert auth["name"] == "resolver.campaign.fowl"
+    assert auth["certificate"] == os.path.join("C:/fowl/tls", "resolver.campaign.fowl.crt")
+    assert auth["private_key"] == os.path.join("C:/fowl/tls", "resolver.campaign.fowl.key")
+    assert rcfg["member_servers"][0]["addr"] == "127.0.0.1:4564"
+    assert rcfg["perms"] == {"/": {"bfdb.fowl": "swlpd", "engine.campaign.fowl": "swlpd"}}
+    assert pm._resolver_port_of(path) == 4564
+    assert not (tmp_path / "netidx-resolver.json").exists()
+    # bfdb: --netidx-tls for the shared resolver
+    args = pm._build_args("pw", False)
+    f = args[args.index("--netidx-tls") + 1]
+    block = json.loads(Path(f).read_text())
+    assert block == {"trusted": os.path.join("C:/fowl/tls", "ca.pem"),
+                     "certificate": os.path.join("C:/fowl/tls", "bfdb.fowl.crt"),
+                     "private_key": os.path.join("C:/fowl/tls", "bfdb.fowl.key"),
+                     "resolver_name": "resolver.campaign.fowl"}
+    # the range PC's resolver: the same identity, that resolver's name
+    entries = json.loads(Path(pm._render_instances()).read_text())["instances"]
+    assert entries[0]["netidx_tls"] == dict(block, resolver_name="resolver.range.fowl")
+    assert "netidx_tls" not in entries[1]  # on the shared resolver: --netidx-tls covers it
+
+
+def test_netidx_tls_explicit_perms_and_own_resolver_config(tmp_path):
+    perms = {"/local/fowl": {"engine.campaign.fowl": "pd", "bfdb.fowl": "swl"}}
+    pm, _ = _bare_pm(tmp_path, netidx_tls=dict(_TLS, perms=perms, domain="campaign.fowl"))
+    rcfg = json.loads(Path(pm._resolver_config()).read_text())
+    assert rcfg["perms"] == perms
+    args = pm._build_args("pw", False)
+    assert json.loads(Path(args[args.index("--netidx-tls") + 1]).read_text())["domain"] == "campaign.fowl"
+    # an operator's own resolver config is never rewritten, TLS or not
+    mine = tmp_path / "mine.json"
+    pm2, _ = _bare_pm(tmp_path, netidx_tls=dict(_TLS), netidx_resolver_config=str(mine))
+    assert pm2._resolver_config() == str(mine)
+
+
+def test_netidx_tls_range_first_keeps_the_shared_resolver_anonymous(tmp_path):
+    """No `resolver`: only the range PC's resolver is TLS."""
+    pm, _ = _bare_pm(tmp_path, netidx_tls={"dir": "C:/fowl/tls", "identity": "bfdb.fowl"},
+                     instances=[dict(_RANGE_INST, netidx_tls_resolver="resolver.range.fowl")])
+    assert "--netidx-tls" not in pm._build_args("pw", False)
+    path = pm._resolver_config()
+    assert path == str(tmp_path / "netidx-resolver.json")
+    assert json.loads(Path(path).read_text())["member_servers"][0]["auth"] == "Anonymous"
+    entry = json.loads(Path(pm._render_instances()).read_text())["instances"][0]
+    assert entry["netidx_tls"]["resolver_name"] == "resolver.range.fowl"
+    assert entry["netidx_tls"]["certificate"] == os.path.join("C:/fowl/tls", "bfdb.fowl.crt")
+    # a resolver name outside an explicit domain is refused for that instance
+    pm2, _ = _bare_pm(tmp_path, netidx_tls={"dir": "C:/fowl/tls", "identity": "bfdb.fowl", "domain": "campaign.fowl"},
+                      instances=[dict(_RANGE_INST, netidx_tls_resolver="resolver.range.fowl")])
+    entry = json.loads(Path(pm2._render_instances()).read_text())["instances"][0]
+    assert "netidx_tls" not in entry
+
+
+@pytest.mark.parametrize("bad", [
+    "yes",
+    {"dir": "C:/fowl/tls", "resolver": "resolver.campaign.fowl"},          # no identity
+    {"resolver": "resolver.campaign.fowl", "identity": "bfdb.fowl"},        # no dir
+    dict(_TLS, domain="example.com"),                                       # resolver not under it
+])
+def test_netidx_tls_unusable_block_stays_anonymous(tmp_path, bad):
+    pm, _ = _bare_pm(tmp_path, netidx_tls=bad)
+    assert pm.netidx_tls() is None
+    assert "--netidx-tls" not in pm._build_args("pw", False)
+    assert pm._resolver_config() == str(tmp_path / "netidx-resolver.json")
+
+
 def test_missing_bfdb_exe_is_said_once(tmp_path):
     pm, notes = _bare_pm(tmp_path, health_failures=1, restart_cooldown=0)
 
