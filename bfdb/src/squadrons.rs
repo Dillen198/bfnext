@@ -11,7 +11,7 @@ use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 use dcso3::net::Ucid;
 use serde::{Deserialize, Serialize};
-use sled::Db;
+use yats::Db;
 use yats::Tree;
 
 pub(crate) const MAX_MEMBERS: usize = 50;
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn xp_counts_only_after_joining_and_resets() {
-        let db = sled::Config::new().temporary(true).open().unwrap();
+        let db = yats::Db::temporary_sled().unwrap();
         let sq = Squadrons::new(&db).unwrap();
         let owner: Ucid = "0123456789abcdef0123456789abcdef".parse().unwrap();
         let s = sq.create(owner, "VS1", "Vector").unwrap();

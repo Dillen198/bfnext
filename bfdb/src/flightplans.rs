@@ -11,7 +11,7 @@
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sled::{Db, Tree};
+use yats::{Db, RawTree as Tree};
 use uuid::Uuid;
 
 /// The F/A-18C holds 59 waypoints and DCS-DTC's F-16 page 699; 99 is plenty
@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn plans_are_per_instance_and_side() {
-        let db = sled::Config::new().temporary(true).open().unwrap();
+        let db = yats::Db::temporary_sled().unwrap();
         let fp = FlightPlans::new(&db).unwrap();
         let now = Utc::now();
         let mk = |side: &str, by: &str| Stored {

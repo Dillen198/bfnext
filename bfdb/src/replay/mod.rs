@@ -31,7 +31,7 @@ use anyhow::{anyhow, Context, Result};
 use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sled::Tree;
+use yats::RawTree as Tree;
 use std::{
     fs,
     path::{Path, PathBuf},

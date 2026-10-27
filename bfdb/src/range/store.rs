@@ -33,7 +33,7 @@ use bfprotocols::range::RangeRecord;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
-use sled::{Db, Tree};
+use yats::{Db, RawTree as Tree};
 
 pub(crate) struct RangeStore {
     records: Tree,
@@ -450,7 +450,7 @@ mod tests {
     use super::*;
 
     fn tmp_store() -> (RangeStore, Db) {
-        let db = sled::Config::new().temporary(true).open().unwrap();
+        let db = yats::Db::temporary_sled().unwrap();
         (RangeStore::open(&db).unwrap(), db)
     }
 

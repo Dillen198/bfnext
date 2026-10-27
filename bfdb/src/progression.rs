@@ -18,7 +18,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use dcso3::net::Ucid;
 use serde::{Deserialize, Serialize};
-use sled::Db;
+use yats::Db;
 use yats::Tree;
 
 use crate::db::Aggregates;

@@ -30,7 +30,7 @@ use netidx_archive::{
 };
 
 use serde::{Deserialize, Serialize};
-use sled::Db;
+use yats::Db;
 use smallvec::SmallVec;
 use std::{
     collections::{Bound, HashMap, HashSet, VecDeque},
@@ -1737,12 +1737,94 @@ impl StatsDb {
     /// multiplexes any number of paths, and they are kept apart by their
     /// distinct `base` paths. It is empty in offline mode (no instance has a
     /// `base`).
+    ///
+    /// The storage engine is the one `--storage` picked (`crate::storage`),
+    /// sled unless an operator chose otherwise.
     pub(crate) fn new<P: AsRef<Path>>(
         subscribers: &HashMap<Option<PathBuf>, Subscriber>,
         db: P,
         instances: Registry,
     ) -> Result<Self> {
-        let db = sled::open(db.as_ref())?;
+        Self::new_on(subscribers, db, instances, crate::storage::selected())
+    }
+
+    /// `new` on a given storage engine.
+    pub(crate) fn new_on<P: AsRef<Path>>(
+        subscribers: &HashMap<Option<PathBuf>, Subscriber>,
+        db: P,
+        instances: Registry,
+        backend: crate::storage::Backend,
+    ) -> Result<Self> {
+        let db = crate::storage::open(db.as_ref(), backend)?;
+        for cfg in instances.all() {
+            log::info!(
+                "instance {:?} ({}): base={} sortie={} jsonl={} archive={} export_port={}",
+                cfg.id,
+                cfg.label(),
+                cfg.base.as_ref().map(|b| format!("{b}")).unwrap_or_else(|| "-".into()),
+                cfg.sortie.clone().unwrap_or_else(|| "auto".into()),
+                cfg.stats_jsonl.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "-".into()),
+                cfg.stats_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "-".into()),
+                cfg.export_port.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
+            );
+        }
+        let t = Self::open_trees(subscribers, db, instances)?;
+        t.check_schema_version()?;
+        t.migrate_legacy_cursors()?;
+        t.migrate_legacy_sessions()?;
+        t.migrate_session_keys()?;
+        t.seed_wiki_if_empty()?;
+        t.seed_wiki_images_if_empty()?;
+        t.close_stale_open_rounds()?;
+        for st in t.0.states.values() {
+            let _t = t.clone();
+            let _st = st.clone();
+            task::spawn(async move {
+                if let Err(e) = _t.background_loop(_st.clone()).await {
+                    error!("[{}] background task failed {e:?}", _st.id)
+                }
+            });
+            if st.base.is_some() {
+                let _t = t.clone();
+                let _st = st.clone();
+                task::spawn(async move {
+                    if let Err(e) = _t.sortie_discovery_loop(_st.clone()).await {
+                        error!("[{}] sortie discovery failed {e:?}", _st.id)
+                    }
+                });
+                let _t = t.clone();
+                let _st = st.clone();
+                task::spawn(async move {
+                    if let Err(e) = _t.engine_log_loop(_st.clone()).await {
+                        error!("[{}] engine log subscription failed {e:?}", _st.id)
+                    }
+                });
+            }
+        }
+        if t.0.states.values().all(|s| s.base.is_none()) {
+            info!("running in offline mode (no instance has a netidx base)");
+        }
+        Ok(t)
+    }
+
+    /// Re-encode every typed tree of `db` into its engine's value codec (see
+    /// `yats::Tree::reencode`), or with `check_only` just decode every row,
+    /// for `--migrate-storage`. Opens the trees with their types and nothing
+    /// else: no migrations, no seeding, no background tasks.
+    pub(crate) fn reencode_store(db: &Db, check_only: bool) -> Result<Vec<(std::string::String, yats::ReencodeStats)>> {
+        let cfg: InstanceCfg = serde_json::from_value(serde_json::json!({
+            "id": crate::instance::DEFAULT_INSTANCE,
+        }))?;
+        let _trees = Self::open_trees(&HashMap::new(), db.clone(), Registry::single(cfg))?;
+        db.reencode_all(check_only)
+    }
+
+    /// Open every tree, and nothing more.
+    fn open_trees(
+        subscribers: &HashMap<Option<PathBuf>, Subscriber>,
+        db: Db,
+        instances: Registry,
+    ) -> Result<Self> {
         let states: HashMap<InstanceId, Arc<InstanceState>> = instances
             .all()
             .iter()
@@ -1758,19 +1840,7 @@ impl StatsDb {
                 (st.id.clone(), st)
             })
             .collect();
-        for cfg in instances.all() {
-            log::info!(
-                "instance {:?} ({}): base={} sortie={} jsonl={} archive={} export_port={}",
-                cfg.id,
-                cfg.label(),
-                cfg.base.as_ref().map(|b| format!("{b}")).unwrap_or_else(|| "-".into()),
-                cfg.sortie.clone().unwrap_or_else(|| "auto".into()),
-                cfg.stats_jsonl.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "-".into()),
-                cfg.stats_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "-".into()),
-                cfg.export_port.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
-            );
-        }
-        let t = Self(Arc::new(StatsDbInner {
+        Ok(Self(Arc::new(StatsDbInner {
             instances: instances.clone(),
             states: Arc::new(states),
             db: db.clone(),
@@ -1829,43 +1899,7 @@ impl StatsDb {
             unit_db: Tree::open(&db, "unit_db")?,
             unit_db_latest: Tree::open(&db, "unit_db_latest")?,
             meta: Tree::open(&db, "meta")?,
-        }));
-        t.check_schema_version()?;
-        t.migrate_legacy_cursors()?;
-        t.migrate_legacy_sessions()?;
-        t.migrate_session_keys()?;
-        t.seed_wiki_if_empty()?;
-        t.seed_wiki_images_if_empty()?;
-        t.close_stale_open_rounds()?;
-        for st in t.0.states.values() {
-            let _t = t.clone();
-            let _st = st.clone();
-            task::spawn(async move {
-                if let Err(e) = _t.background_loop(_st.clone()).await {
-                    error!("[{}] background task failed {e:?}", _st.id)
-                }
-            });
-            if st.base.is_some() {
-                let _t = t.clone();
-                let _st = st.clone();
-                task::spawn(async move {
-                    if let Err(e) = _t.sortie_discovery_loop(_st.clone()).await {
-                        error!("[{}] sortie discovery failed {e:?}", _st.id)
-                    }
-                });
-                let _t = t.clone();
-                let _st = st.clone();
-                task::spawn(async move {
-                    if let Err(e) = _t.engine_log_loop(_st.clone()).await {
-                        error!("[{}] engine log subscription failed {e:?}", _st.id)
-                    }
-                });
-            }
-        }
-        if t.0.states.values().all(|s| s.base.is_none()) {
-            info!("running in offline mode (no instance has a netidx base)");
-        }
-        Ok(t)
+        })))
     }
 
     /// Move the pre-multi-instance single-entry cursors into the per-instance
@@ -2037,8 +2071,10 @@ impl StatsDb {
         &self.0.instances
     }
 
-    /// The underlying sled database, for modules that keep their own raw
-    /// trees beside the typed ones here (the training range, `range/`).
+    /// The underlying database (sled or redb, see `crate::storage`), for
+    /// modules that keep their own raw trees beside the typed ones here (the
+    /// training range, `range/`). Named for what it used to be: callers here
+    /// and in main.rs still say `db.sled()`.
     pub(crate) fn sled(&self) -> &Db {
         &self.0.db
     }
@@ -6649,6 +6685,10 @@ where
 }
 
 #[cfg(test)]
+#[path = "storage/db_tests.rs"]
+mod storage_tests;
+
+#[cfg(test)]
 impl StatsDb {
     /// A single default instance with no engine, no ingestion source -- what
     /// the unit tests below need. (They referred to this before it existed,
@@ -6658,6 +6698,14 @@ impl StatsDb {
             "id": crate::instance::DEFAULT_INSTANCE,
         }))?;
         Self::new(&HashMap::new(), path, Registry::single(cfg))
+    }
+
+    /// `new_offline` on a given storage engine.
+    pub(crate) fn new_offline_on<P: AsRef<Path>>(path: P, backend: crate::storage::Backend) -> Result<Self> {
+        let cfg: InstanceCfg = serde_json::from_value(serde_json::json!({
+            "id": crate::instance::DEFAULT_INSTANCE,
+        }))?;
+        Self::new_on(&HashMap::new(), path, Registry::single(cfg), backend)
     }
 }
 

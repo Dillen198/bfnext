@@ -73,6 +73,7 @@ mod range;
 mod replay;
 mod websec;
 mod maint;
+mod storage;
 mod admin;
 mod botlink;
 mod engine;
@@ -599,6 +600,10 @@ struct Args {
     /// The public snapshot the front ends fall back on (`--snapshot-*`).
     #[command(flatten)]
     snapshot: snapshot::SnapshotArgs,
+    /// The storage engine, and converting between them (`--storage`,
+    /// `--migrate-storage`; see storage/mod.rs).
+    #[command(flatten)]
+    storage: storage::StorageArgs,
 }
 
 /// A secret from, in order: its command-line flag, its `--...-file` flag, or
@@ -825,6 +830,16 @@ async fn main() -> Result<()> {
         .backup_dir
         .clone()
         .unwrap_or_else(|| maint::default_backup_dir(&args.db));
+
+    // sled unless --storage / $BFDB_STORAGE say redb; --migrate-storage
+    // converts the database and exits.
+    if let Err(e) = storage::select(&args.storage) {
+        eprintln!("{e:#}");
+        std::process::exit(2);
+    }
+    if args.storage.migrate_storage.is_some() {
+        std::process::exit(storage::migrate_cli(&args.storage, &args.db));
+    }
 
     // Before anything opens the database -- the maintenance modes included.
     if args.restore_latest_backup {

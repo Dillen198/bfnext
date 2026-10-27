@@ -95,7 +95,23 @@ impl<T: Versioned> Serialize for Envelope<T> {
 }
 
 impl<'de, T: Versioned> Deserialize<'de> for Envelope<T> {
-    fn deserialize<D: Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // In a MessagePack row (see `codec`) the envelope is an ordinary
+        // tuple, and the payload is self-describing: an older version's
+        // fields decode by name, so `upgrade` is not needed.
+        if SELF_DESCRIBING.with(|s| s.get()) {
+            let (magic, version, t): ([u8; 6], u16, T) = Deserialize::deserialize(d)?;
+            if magic != MAGIC {
+                return Err(de::Error::custom("not a yats::Envelope"));
+            }
+            if version > T::VERSION {
+                return Err(de::Error::custom(format!(
+                    "row is version {version}, newer than this build understands ({})",
+                    T::VERSION
+                )));
+            }
+            return Ok(Envelope(t));
+        }
         // The deserializer cannot back up after reading a header that turns
         // out not to be one, so the row is decoded from its raw bytes instead.
         let row = ROW.with(|r| r.take()).ok_or_else(|| {
@@ -139,6 +155,27 @@ thread_local! {
     static ROW: Cell<Option<(*const u8, usize)>> = const { Cell::new(None) };
 }
 
+thread_local! {
+    /// A MessagePack row is being decoded right now.
+    static SELF_DESCRIBING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Run `f` (a MessagePack decode) with `Envelope` decoding as a plain tuple.
+pub(crate) fn self_describing<R>(f: impl FnOnce() -> R) -> R {
+    struct Restore(bool, Option<(*const u8, usize)>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SELF_DESCRIBING.with(|s| s.set(self.0));
+            ROW.with(|r| r.set(self.1));
+        }
+    }
+    let _restore = Restore(
+        SELF_DESCRIBING.with(|s| s.replace(true)),
+        ROW.with(|r| r.replace(None)),
+    );
+    f()
+}
+
 /// Run `f` (a decode of `bytes`) with `bytes` available to `Envelope`.
 pub(crate) fn with_row<R>(bytes: &[u8], f: impl FnOnce() -> R) -> R {
     struct Restore(Option<(*const u8, usize)>);
@@ -148,7 +185,11 @@ pub(crate) fn with_row<R>(bytes: &[u8], f: impl FnOnce() -> R) -> R {
         }
     }
     let _restore = Restore(ROW.with(|r| r.replace(Some((bytes.as_ptr(), bytes.len())))));
-    f()
+    // a bincode row inside a MessagePack decode (it cannot nest, but be sure)
+    let was = SELF_DESCRIBING.with(|s| s.replace(false));
+    let r = f();
+    SELF_DESCRIBING.with(|s| s.set(was));
+    r
 }
 
 #[cfg(test)]
@@ -256,6 +297,22 @@ mod tests {
             .map_err(|e| anyhow::anyhow!("{e:?}"))
             .unwrap();
         assert_eq!(got.map(|e| e.0), Some(g));
+    }
+
+    #[test]
+    fn enveloped_rows_on_redb_are_messagepack() {
+        let db = crate::Db::temporary_redb().unwrap();
+        let t1 = Tree::<u32, Envelope<GroupV1>>::open(&db, "groups").unwrap();
+        t1.insert(&1, &Envelope(GroupV1 { owner: 1, units: vec![5] })).unwrap();
+        // the payload is self-describing, so the v2 type reads a v1 row by
+        // field names
+        let t2 = Tree::<u32, Envelope<Group>>::open(&db, "groups").unwrap();
+        assert_eq!(t2.get(&1).unwrap().unwrap().0, Group { owner: 1, units: vec![5], kind: None });
+        let c = Group { owner: 3, units: vec![], kind: Some("x".into()) };
+        t2.insert(&2, &Envelope(c.clone())).unwrap();
+        assert_eq!(t2.get(&2).unwrap().unwrap().0, c);
+        // a build that predates the row's version still refuses it
+        assert!(t1.get(&2).is_err());
     }
 
     #[test]

@@ -4,7 +4,8 @@
 //!
 //! ## Shutdown interface (for whatever supervises bfdb)
 //!
-//! bfdb flushes sled and exits 0 on any of:
+//! bfdb flushes the database (sled or redb, see `crate::storage`) and exits
+//! 0 on any of:
 //!
 //! * **Ctrl+C / SIGINT**, and on Unix **SIGTERM**.
 //! * **Windows console control events**: `CTRL_BREAK_EVENT`, `CTRL_C_EVENT`,
@@ -18,7 +19,7 @@
 //!   `--shutdown-token` / `$BFDB_SHUTDOWN_TOKEN`. Answers
 //!   `202 {"ok":true,"message":...}` and exits ~0.5 s later.
 //!
-//! In every case: the listener stops being served, `sled::Db::flush()` runs
+//! In every case: the listener stops being served, the database is flushed
 //! (so every write acknowledged so far is on disk), and the process exits.
 //! Give it ~10 s before a hard kill; a flush of a busy DB can take a few
 //! seconds. bfdb holds no other state that needs closing -- rounds and
@@ -108,7 +109,8 @@ pub(crate) fn spawn_signal_handlers(sd: Shutdown) {
     }
 }
 
-/// Flush everything sled has acknowledged to disk. Called on the way out.
+/// Flush everything the database has acknowledged to disk. Called on the way
+/// out.
 pub(crate) fn flush_db(db: &StatsDb) {
     let started = std::time::Instant::now();
     match db.sled().flush() {
@@ -136,10 +138,27 @@ pub(crate) fn default_backup_dir(db_path: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// Snapshot the live database into `<dir>/<UTC timestamp>` as a complete sled
-/// database of its own.
+/// The file a redb backup holds the database in, inside `<dir>/<timestamp>/`.
+pub(crate) const REDB_BACKUP_FILE: &str = "store.redb";
+
+/// Which engine a backup in `dir` was taken from: a redb backup holds
+/// `REDB_BACKUP_FILE`, a sled one is a sled directory.
+pub(crate) fn backup_engine(backup: &Path) -> crate::storage::Backend {
+    if backup.join(REDB_BACKUP_FILE).is_file() {
+        crate::storage::Backend::Redb
+    } else {
+        crate::storage::Backend::Sled
+    }
+}
+
+/// Snapshot the live database into `<dir>/<UTC timestamp>`: for sled, as a
+/// complete sled database of its own; for redb, as `<timestamp>/store.redb`.
 ///
-/// sled keeps writing while this runs, so its files cannot simply be copied --
+/// **redb** has real snapshots: every tree is copied from one read
+/// transaction, so the backup is the whole database at one instant, while
+/// writes go on.
+///
+/// **sled** keeps writing while this runs, so its files cannot simply be copied --
 /// a copy taken mid-write is exactly the torn page that already cost this
 /// server a cold `--rebuild-stats`. `export`/`import` walks every tree through
 /// sled itself and writes a fresh, consistent DB, which can be opened (or
@@ -158,7 +177,7 @@ pub(crate) fn default_backup_dir(db_path: &Path) -> PathBuf {
 /// photos never change, so keeping seven backups of them costs one copy --
 /// falling back to a copy where links are not possible (another volume, a
 /// network share).
-pub(crate) fn backup_now(db: &sled::Db, dir: &Path, keep: usize, files: &[(String, PathBuf)]) -> Result<PathBuf> {
+pub(crate) fn backup_now(db: &yats::Db, dir: &Path, keep: usize, files: &[(String, PathBuf)]) -> Result<PathBuf> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     let previous = list_backups(dir).pop();
     db.flush().context("flushing before backup")?;
@@ -166,7 +185,12 @@ pub(crate) fn backup_now(db: &sled::Db, dir: &Path, keep: usize, files: &[(Strin
     let target = dir.join(&stamp);
     let partial = dir.join(format!("{stamp}.partial"));
     let _ = std::fs::remove_dir_all(&partial);
-    {
+    if db.engine() == yats::Engine::Redb {
+        // Live credentials stay out of it (see BACKUP_EXCLUDED_TREES).
+        db.snapshot_redb(&partial.join(REDB_BACKUP_FILE), crate::db::BACKUP_EXCLUDED_TREES)
+            .context("writing the redb snapshot")?;
+    } else {
+        let db = db.as_sled().expect("a sled database");
         let out = sled::open(&partial).with_context(|| format!("creating {}", partial.display()))?;
         // sled::import panics on IO trouble rather than returning it; keep a
         // failed backup from taking the whole process down with it.
@@ -298,11 +322,41 @@ pub(crate) fn spawn_backups(db: StatsDb, cfg: BackupCfg) {
 }
 
 /// `--restore-latest-backup`: move the current DB aside (never deleted) and
-/// put the newest backup in its place. Runs before the DB is opened.
+/// put the newest backup in its place. Runs before the DB is opened, and only
+/// considers backups of the engine bfdb is about to run on (`--storage`): a
+/// sled backup taken before a cutover is not a redb database.
 pub(crate) fn restore_latest(db_path: &Path, dir: &Path) -> Result<PathBuf> {
-    let latest = list_backups(dir)
-        .pop()
-        .ok_or_else(|| anyhow::anyhow!("no backups found in {}", dir.display()))?;
+    restore_latest_on(db_path, dir, crate::storage::selected())
+}
+
+pub(crate) fn restore_latest_on(db_path: &Path, dir: &Path, engine: crate::storage::Backend) -> Result<PathBuf> {
+    let all = list_backups(dir);
+    let latest = all.iter().rev().find(|b| backup_engine(b) == engine).cloned().ok_or_else(|| {
+        let other = all.iter().filter(|b| backup_engine(b) != engine).count();
+        if other > 0 {
+            anyhow::anyhow!(
+                "no {engine} backups in {} ({other} from the other engine: start with the --storage                  they were taken on to restore one)",
+                dir.display()
+            )
+        } else {
+            anyhow::anyhow!("no backups found in {}", dir.display())
+        }
+    })?;
+    if engine == crate::storage::Backend::Redb {
+        let live = crate::storage::location(db_path, engine);
+        if live.exists() {
+            let mut aside = live.as_os_str().to_os_string();
+            aside.push(format!(".damaged-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ")));
+            let aside = PathBuf::from(aside);
+            std::fs::rename(&live, &aside)
+                .with_context(|| format!("moving {} aside to {}", live.display(), aside.display()))?;
+            log::warn!("moved the current database aside to {}", aside.display());
+        }
+        let from = latest.join(REDB_BACKUP_FILE);
+        std::fs::copy(&from, &live).with_context(|| format!("copying {} -> {}", from.display(), live.display()))?;
+        log::warn!("restored {} from backup {}", live.display(), latest.display());
+        return Ok(latest);
+    }
     if db_path.exists() {
         let mut aside = db_path.as_os_str().to_os_string();
         aside.push(format!(".damaged-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ")));
@@ -492,7 +546,7 @@ mod tests {
         let cfg = base.join("ODF_CFG");
         std::fs::write(&cfg, b"{}").unwrap();
         let files = vec![("intel".to_string(), photos.clone()), ("engine-cfg/default".to_string(), cfg)];
-        let db = sled::open(base.join("db")).unwrap();
+        let db = yats::Db::open_sled(base.join("db")).unwrap();
         let first = backup_now(&db, &dir, 5, &files).unwrap();
         assert_eq!(std::fs::read(first.join("files/intel/sub/b.png")).unwrap(), b"bb");
         assert_eq!(std::fs::read(first.join("files/engine-cfg/default")).unwrap(), b"{}");
@@ -516,10 +570,11 @@ mod tests {
         let db_path = base.join("db");
         let dir = base.join("backups");
         {
-            let db = sled::open(&db_path).unwrap();
+            let db = yats::Db::open_sled(&db_path).unwrap();
             db.open_tree("t").unwrap().insert(b"k", b"v").unwrap();
             db.open_tree("auth_sessions_h").unwrap().insert(b"k", b"secret").unwrap();
             let b = backup_now(&db, &dir, 2, &[]).unwrap();
+            assert_eq!(backup_engine(&b), crate::storage::Backend::Sled);
             let restored = sled::open(&b).unwrap();
             assert_eq!(restored.open_tree("t").unwrap().get(b"k").unwrap().as_deref(), Some(&b"v"[..]));
             // live logins are not copied into backups
@@ -532,6 +587,47 @@ mod tests {
         }
         prune_backups(&dir, 2);
         assert_eq!(list_backups(&dir).len(), 2);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn redb_backup_is_a_snapshot_and_restores() {
+        use crate::storage::{location, Backend};
+        let base = std::env::temp_dir().join(format!("bfdb-backup-redb-{}", uuid::Uuid::new_v4()));
+        let db_path = base.join("db");
+        let dir = base.join("backups");
+        let photos = base.join("db.intel");
+        std::fs::create_dir_all(&photos).unwrap();
+        std::fs::write(photos.join("a.png"), b"aaaa").unwrap();
+        let b = {
+            let db = yats::Db::open_redb(location(&db_path, Backend::Redb)).unwrap();
+            db.open_tree("t").unwrap().insert(b"k", b"v").unwrap();
+            db.open_tree("auth_sessions_h").unwrap().insert(b"k", b"secret").unwrap();
+            db.ensure_next_id(500).unwrap();
+            let b = backup_now(&db, &dir, 2, &[("intel".into(), photos.clone())]).unwrap();
+            // written after the backup: must not be in it
+            db.open_tree("t").unwrap().insert(b"later", b"x").unwrap();
+            b
+        };
+        assert_eq!(backup_engine(&b), Backend::Redb);
+        assert_eq!(std::fs::read(b.join("files/intel/a.png")).unwrap(), b"aaaa");
+        {
+            let snap = yats::Db::open_redb(b.join(REDB_BACKUP_FILE)).unwrap();
+            assert_eq!(snap.open_tree("t").unwrap().get(b"k").unwrap().as_deref(), Some(&b"v"[..]));
+            assert!(snap.open_tree("t").unwrap().get(b"later").unwrap().is_none());
+            assert!(!snap.tree_names().unwrap().iter().any(|n| n == b"auth_sessions_h"));
+            assert!(snap.generate_id().unwrap() >= 500);
+        }
+        // a sled restore ignores redb backups; a redb restore takes it and
+        // keeps the damaged file aside
+        assert!(restore_latest_on(&db_path, &dir, Backend::Sled).is_err());
+        assert_eq!(restore_latest_on(&db_path, &dir, Backend::Redb).unwrap(), b);
+        let restored = yats::Db::open_redb(location(&db_path, Backend::Redb)).unwrap();
+        assert!(restored.open_tree("t").unwrap().get(b"later").unwrap().is_none());
+        drop(restored);
+        assert!(std::fs::read_dir(&base)
+            .unwrap()
+            .any(|e| e.unwrap().file_name().to_string_lossy().starts_with("db.redb.damaged-")));
         let _ = std::fs::remove_dir_all(&base);
     }
 }
