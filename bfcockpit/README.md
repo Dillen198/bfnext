@@ -224,7 +224,19 @@ from your own DCS. The server swallows that line — nobody sees it, and it is
 not logged — and from then on only requests carrying that key act as you.
 Your player number alone is not enough, so nobody else can drive your F10
 menu. The key is never written to `dcs.log`, and a new one is made every time
-you connect.
+you connect. It comes from Windows' own secure random generator, and travels
+in a request header (`X-Cockpit-Key`), not in the address.
+
+The chat line only goes to a server the campaign knows: before sending it the
+plugin asks the campaign API whether this server's name is one of its
+servers. On anybody else's server the panel says so and stays off, and the
+key is never typed into their chat. A pinned `instance` skips that question
+(you are saying which server this is), so take the pin out before you play
+elsewhere.
+
+If `dcs.log` says `bfcockpit_net.dll is from version ...` or `is older than
+this script`, the DLL and the script come from different builds (a copy made
+by hand, or an update that stopped halfway): re-run the installer.
 
 ## If it doesn't work
 
