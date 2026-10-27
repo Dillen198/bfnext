@@ -80,13 +80,13 @@ impl Obj {
             ObjectiveKind::CommandCenter => 1.2,
             ObjectiveKind::Fob | ObjectiveKind::Farp { .. } => 1.0,
             ObjectiveKind::NavalBase => 0.9,
-            ObjectiveKind::SpecialSamSite { .. } => 0.6,
+            ObjectiveKind::SpecialSamSite => 0.6,
             ObjectiveKind::CarrierGroup { .. } => 0.,
         }
     }
 
     pub(crate) fn sam_site(&self) -> bool {
-        matches!(self.kind, ObjectiveKind::SpecialSamSite { .. })
+        matches!(self.kind, ObjectiveKind::SpecialSamSite)
     }
 
     pub(crate) fn at_sea(&self) -> bool {
@@ -102,7 +102,7 @@ impl Obj {
             ObjectiveKind::Factory { .. } => "factory",
             ObjectiveKind::CommandCenter => "command_center",
             ObjectiveKind::NavalBase => "naval_base",
-            ObjectiveKind::SpecialSamSite { .. } => "sam_site",
+            ObjectiveKind::SpecialSamSite => "sam_site",
             ObjectiveKind::CarrierGroup { .. } => "carrier_group",
         }
     }
@@ -206,7 +206,7 @@ impl Picture {
         for o in self.own().filter(|o| !o.at_sea()) {
             for e in self.enemy().filter(|e| !e.at_sea()) {
                 let d = dist(o.pos, e.pos);
-                if best.map_or(true, |(b, _)| d < b) {
+                if best.is_none_or(|(b, _)| d < b) {
                     best = Some((d, (o.pos + e.pos) * 0.5));
                 }
             }
@@ -409,7 +409,7 @@ impl SupportFlight {
     /// Time to launch its relief: its time is nearly up, or its fuel is.
     pub(crate) fn relief_due(&self, now: DateTime<Utc>, lead_secs: u32) -> bool {
         self.low_fuel
-            || self.expires.map_or(false, |e| (e - now).num_seconds() <= lead_secs as i64)
+            || self.expires.is_some_and(|e| (e - now).num_seconds() <= lead_secs as i64)
     }
 
     /// Airborne and orbiting the station it was given.
@@ -460,7 +460,7 @@ pub(crate) fn support_flights(ctx: &Context, side: Side) -> Vec<SupportFlight> {
                     .map(|h| *time + chrono::Duration::hours(h as i64)),
                 player: player.is_some(),
                 airborne: lead.airborne_velocity.is_some(),
-                low_fuel: low.map_or(false, |l| l.contains(&g.id)),
+                low_fuel: low.is_some_and(|l| l.contains(&g.id)),
             })
         })
         .collect()
@@ -468,16 +468,16 @@ pub(crate) fn support_flights(ctx: &Context, side: Side) -> Vec<SupportFlight> {
 
 fn has_fire_groups(ctx: &Context, side: Side, oid: &ObjectiveId) -> bool {
     let Some(obj) = ctx.db.persisted.objectives.get(oid) else { return false };
-    obj.groups().get(&side).map_or(false, |gids| {
+    obj.groups().get(&side).is_some_and(|gids| {
         gids.into_iter().any(|gid| {
-            ctx.db.persisted.groups.get(gid).map_or(false, |g| {
+            ctx.db.persisted.groups.get(gid).is_some_and(|g| {
                 matches!(
                     g.class,
                     ObjGroupClass::Armor | ObjGroupClass::Mr | ObjGroupClass::Lr
                 ) && g
                     .units
                     .into_iter()
-                    .any(|uid| ctx.db.persisted.units.get(uid).map_or(false, |u| !u.dead))
+                    .any(|uid| ctx.db.persisted.units.get(uid).is_some_and(|u| !u.dead))
             })
         })
     })
@@ -557,7 +557,7 @@ pub(crate) fn build(
         .info_by_player_id
         .values()
         .filter(|ifo| {
-            ctx.db.persisted.players.get(&ifo.ucid).map_or(false, |p| p.side == side)
+            ctx.db.persisted.players.get(&ifo.ucid).is_some_and(|p| p.side == side)
         })
         .count() as u32;
     humans = humans.max(connected);
@@ -592,7 +592,7 @@ pub(crate) fn build(
         .filter(|b| {
             b.formations
                 .iter()
-                .any(|id| ctx.db.formation(*id).map_or(false, |f| f.side == side))
+                .any(|id| ctx.db.formation(*id).is_some_and(|f| f.side == side))
         })
         .map(|b| b.pos)
         .collect();

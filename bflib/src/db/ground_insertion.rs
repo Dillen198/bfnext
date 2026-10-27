@@ -720,7 +720,7 @@ impl Db {
             return;
         }
         let refund =
-            self.ephemeral.cfg.helo_insertion.as_ref().map_or(true, |h| h.refund_on_loss);
+            self.ephemeral.cfg.helo_insertion.as_ref().is_none_or(|h| h.refund_on_loss);
         for leg in &legs {
             self.end_ground_leg(leg);
             if refund && leg.cost > 0 {
@@ -745,13 +745,10 @@ impl Db {
     /// Drop a leg and its vehicle, if the vehicle is still on the books.
     fn end_ground_leg(&mut self, leg: &GroundInsertion) {
         self.persisted.ground_insertions.remove_cow(&leg.id);
-        if self.persisted.groups.get(&leg.group_id).is_some() {
-            if let Err(e) = self.delete_group(&leg.group_id) {
-                warn!(
-                    "[HELO_GROUND] {} could not remove its vehicle group: {e:?}",
-                    leg.id
-                );
-            }
+        if self.persisted.groups.get(&leg.group_id).is_some()
+            && let Err(e) = self.delete_group(&leg.group_id)
+        {
+            warn!("[HELO_GROUND] {} could not remove its vehicle group: {e:?}", leg.id);
         }
         self.ephemeral.dirty();
     }

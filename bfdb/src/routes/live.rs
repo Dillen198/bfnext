@@ -183,7 +183,7 @@ pub(crate) async fn udp_export_listener(
         };
 
         if let Some(want) = &listen.secret {
-            if !msg.k.as_deref().map_or(false, |k| websec::ct_eq(k, want)) {
+            if !msg.k.as_deref().is_some_and(|k| websec::ct_eq(k, want)) {
                 continue;
             }
         }
@@ -215,7 +215,7 @@ pub(crate) async fn udp_export_listener(
             // `now % 10 == 0` test wrote every tick that landed in that second
             // (four at 4 Hz) and none at all when a stall skipped it.
             let now_secs = chrono::Utc::now().timestamp();
-            if last_trail.map_or(true, |t| t.elapsed() >= TRAIL_EVERY) {
+            if last_trail.is_none_or(|t| t.elapsed() >= TRAIL_EVERY) {
                 last_trail = Some(std::time::Instant::now());
                 let db2 = db.clone();
                 let inst2 = inst.clone();
@@ -594,7 +594,7 @@ pub(crate) async fn tacmap_view(
         Some(id) => match task::block_in_place(|| db.get_session(id)).ok().flatten() {
             None => TacView::Denied("login"),
             Some(session) => {
-                let ucid = resolve_ucid_via_bot(&bot_cfg, &session.discord_id).await;
+                let ucid = resolve_ucid_via_bot(bot_cfg, &session.discord_id).await;
                 let own = match &ucid {
                     Some(u) => {
                         task::block_in_place(|| db.pilot_current_side(&inst.id, u))
@@ -663,7 +663,7 @@ pub(crate) async fn ws_tacmap(
                 if last_heard.elapsed() > IDLE {
                     break;
                 }
-                if ticks % 30 == 0 && sink.send(Message::ping(Vec::new())).await.is_err() {
+                if ticks.is_multiple_of(30) && sink.send(Message::ping(Vec::new())).await.is_err() {
                     break;
                 }
                 if last_check.elapsed() >= RECHECK {

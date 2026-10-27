@@ -178,7 +178,7 @@ impl Atc {
 fn name_parallels(ends: &mut [End]) {
     let idx: Vec<usize> = (0..ends.len()).collect();
     for &i in &idx {
-        if ends[i].name.chars().last().map_or(false, |c| c.is_alphabetic()) {
+        if ends[i].name.chars().last().is_some_and(|c| c.is_alphabetic()) {
             continue;
         }
         let same: Vec<usize> =
@@ -228,8 +228,8 @@ impl Clouds {
             let precip = clouds
                 .as_ref()
                 .and_then(|c| c.get::<f64>("iprecptns").ok())
-                .map_or(false, |p| p > 0.)
-                || preset.as_deref().map_or(false, |p| p.starts_with("Rainy"));
+                .is_some_and(|p| p > 0.)
+                || preset.as_deref().is_some_and(|p| p.starts_with("Rainy"));
             let cover = if preset.is_some() {
                 Some("clouds".to_string())
             } else {
@@ -250,10 +250,10 @@ impl Clouds {
                 let weather: LuaTable = world.raw_get("weather")?;
                 weather.call_function("getFogVisibilityDistance", ())
             })();
-            if let Ok(f) = fog {
-                if f > 0. {
-                    vis = vis.min(f);
-                }
+            if let Ok(f) = fog
+                && f > 0.
+            {
+                vis = vis.min(f);
             }
             Ok(Clouds { base_m: cover.as_ref().and(base), cover, vis_m: vis, precip })
         })();

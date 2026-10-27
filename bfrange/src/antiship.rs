@@ -176,12 +176,11 @@ impl AntiShip {
     /// Refresh the life table so a hit's damage can be computed.
     pub fn slow_tick(&mut self, lua: MizLua, ag: &AirToGround) {
         for u in self.ship_units(ag) {
-            if let Ok(unit) = Unit::get_by_name(lua, &u) {
-                if let (Ok(l), Ok(l0)) = (unit.get_life(), unit.get_life0()) {
-                    if l0 > 0. {
-                        self.life.entry(u).or_insert(l / l0);
-                    }
-                }
+            if let Ok(unit) = Unit::get_by_name(lua, &u)
+                && let (Ok(l), Ok(l0)) = (unit.get_life(), unit.get_life0())
+                && l0 > 0.
+            {
+                self.life.entry(u).or_insert(l / l0);
             }
         }
     }
@@ -253,27 +252,27 @@ impl AntiShip {
             ship_pos: util::geo(lua, ship_pos),
         };
         let sh = &imp.w.shooter;
-        if cfg.in_game_results {
-            if let Some(g) = sh.group_id {
-                records::to_group(
-                    lua,
-                    g,
-                    &format!(
-                        "ANTI-SHIP {} on {}: {} - launched {:.1} nm, {:.0} s flight{}",
-                        imp.w.display,
-                        typ,
-                        if hit { "HIT" } else { "MISS" },
-                        res.launch_range_m / util::NM,
-                        imp.tof,
-                        if hit {
-                            format!(", {:.0}% damage", damage * 100.)
-                        } else {
-                            String::new()
-                        }
-                    ),
-                    cfg.message_s,
-                );
-            }
+        if cfg.in_game_results
+            && let Some(g) = sh.group_id
+        {
+            records::to_group(
+                lua,
+                g,
+                &format!(
+                    "ANTI-SHIP {} on {}: {} - launched {:.1} nm, {:.0} s flight{}",
+                    imp.w.display,
+                    typ,
+                    if hit { "HIT" } else { "MISS" },
+                    res.launch_range_m / util::NM,
+                    imp.tof,
+                    if hit {
+                        format!(", {:.0}% damage", damage * 100.)
+                    } else {
+                        String::new()
+                    }
+                ),
+                cfg.message_s,
+            );
         }
         rec.emit(
             lua,

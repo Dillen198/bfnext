@@ -252,7 +252,7 @@ async fn session(
     }
     {
         let mut g = link.current.lock().unwrap();
-        if g.as_ref().map_or(false, |p| Arc::ptr_eq(p, &peer)) {
+        if g.as_ref().is_some_and(|p| Arc::ptr_eq(p, &peer)) {
             *g = None;
         }
     }

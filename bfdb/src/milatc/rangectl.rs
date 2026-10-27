@@ -231,7 +231,7 @@ impl RangeControl {
             if kind_words(s.kind).iter().any(|k| stt::mentions(&t, k)) {
                 score += 1;
             }
-            if score > 0 && best.map_or(true, |(b, _)| score > b) {
+            if score > 0 && best.is_none_or(|(b, _)| score > b) {
                 best = Some((score, s));
             }
         }
@@ -498,10 +498,10 @@ impl Facility for RangeControl {
                 else {
                     continue;
                 };
-                if self.book.of(a.id).map_or(false, |(sid, _)| sid == s.id) {
+                if self.book.of(a.id).is_some_and(|(sid, _)| sid == s.id) {
                     continue;
                 }
-                if self.nagged.get(&a.id).map_or(false, |t| now - t < 300.) {
+                if self.nagged.get(&a.id).is_some_and(|t| now - t < 300.) {
                     continue;
                 }
                 self.nagged.insert(a.id, now);
@@ -537,16 +537,17 @@ impl Facility for RangeControl {
         }
 
         // AI flights on a range sortie talk to us like anyone else.
-        let ai: Vec<Air> =
-            self.air
-                .iter()
-                .filter(|a| {
-                    a.ai && a.ai_plan.as_deref().map_or(false, |p| {
-                        p.starts_with("range:") && !p.ends_with(":home")
-                    })
-                })
-                .cloned()
-                .collect();
+        let ai: Vec<Air> = self
+            .air
+            .iter()
+            .filter(|a| {
+                a.ai && a
+                    .ai_plan
+                    .as_deref()
+                    .is_some_and(|p| p.starts_with("range:") && !p.ends_with(":home"))
+            })
+            .cloned()
+            .collect();
         self.ai.retain(|u, _| ai.iter().any(|a| a.id == *u));
         for a in ai {
             let sid = a
@@ -577,7 +578,7 @@ impl Facility for RangeControl {
                     let mine = self
                         .book
                         .of(a.id)
-                        .map_or(false, |(id, b)| id == s.id && b.start <= now + 30.);
+                        .is_some_and(|(id, b)| id == s.id && b.start <= now + 30.);
                     if mine && self.book.hot_other(&s.id, a.id).is_none() {
                         let t = format!("{me}, {call}, IP inbound.");
                         self.mouth.pilot(Pos::Range, &a, &call, t, now, &mut out);
@@ -614,9 +615,10 @@ impl Facility for RangeControl {
             super::facility::locate(&self.air, who, parsed.as_ref(), &self.calls.0)
                 .cloned()
         else {
-            if parsed.as_ref().map_or(false, |p| {
-                p.intent != Intent::None && p.intent != Intent::Readback
-            }) {
+            if parsed
+                .as_ref()
+                .is_some_and(|p| p.intent != Intent::None && p.intent != Intent::Readback)
+            {
                 self.mouth.broadcast(
                     pos,
                     None,

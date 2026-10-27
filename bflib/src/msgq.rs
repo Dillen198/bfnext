@@ -335,10 +335,10 @@ impl MsgQ {
             let Some(id) = e.cmd.mark_id() else {
                 return Some(e.cmd);
             };
-            if let Some(kind) = e.cmd.mut_kind() {
-                if self.pending_mut.get(&(id, kind)) == Some(&(qseq, e.seq)) {
-                    self.pending_mut.remove(&(id, kind));
-                }
+            if let Some(kind) = e.cmd.mut_kind()
+                && self.pending_mut.get(&(id, kind)) == Some(&(qseq, e.seq))
+            {
+                self.pending_mut.remove(&(id, kind));
             }
             if self.is_dead(&e) {
                 self.dead = self.dead.saturating_sub(1);
@@ -389,11 +389,11 @@ impl MsgQ {
             let cancelled = self.deleted.get(&id).map(|d| seq < *d).unwrap_or(false);
             if !cancelled && qseq >= self.popped[2] {
                 let i = (qseq - self.popped[2]) as usize;
-                if let Some(e) = self.q[2].get_mut(i) {
-                    if e.seq == seq {
-                        e.cmd = cmd;
-                        return;
-                    }
+                if let Some(e) = self.q[2].get_mut(i)
+                    && e.seq == seq
+                {
+                    e.cmd = cmd;
+                    return;
                 }
             }
         }

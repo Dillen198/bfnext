@@ -145,11 +145,11 @@ impl Db {
         gids.into_iter()
             .copied()
             .filter(|gid| {
-                self.persisted.groups.get(gid).map_or(false, |g| {
+                self.persisted.groups.get(gid).is_some_and(|g| {
                     matches!(g.class, ObjGroupClass::Armor | ObjGroupClass::Infantry)
                         && g.kind == Some(GroupCategory::Ground)
                         && g.units.into_iter().any(|u| {
-                            self.persisted.units.get(u).map_or(false, |u| !u.dead)
+                            self.persisted.units.get(u).is_some_and(|u| !u.dead)
                                 && self.ephemeral.object_id_by_uid.contains_key(u)
                         })
                 })
@@ -179,7 +179,7 @@ impl Db {
                 self.persisted
                     .groups
                     .get(&u.group)
-                    .map_or(false, |g| g.kind == Some(GroupCategory::Ground))
+                    .is_some_and(|g| g.kind == Some(GroupCategory::Ground))
             })
             .filter(|(uid, u)| match self.persisted.objectives_by_group.get(&u.group) {
                 None => true,
@@ -206,8 +206,8 @@ impl Db {
         if dist(pos, o.zone.pos()) <= o.zone.radius() + STRAY_M {
             return false;
         }
-        let sent = grt.bases.get(&home).map_or(false, |b| {
-            b.first_seen.is_some() || b.home_until.map_or(false, |t| now < t)
+        let sent = grt.bases.get(&home).is_some_and(|b| {
+            b.first_seen.is_some() || b.home_until.is_some_and(|t| now < t)
         });
         if !sent {
             return true;
@@ -320,14 +320,14 @@ impl Db {
             .persisted
             .groups
             .get(&su.group)
-            .map_or(false, |g| g.kind == Some(GroupCategory::Ground));
+            .is_some_and(|g| g.kind == Some(GroupCategory::Ground));
         if !ground {
             return;
         }
         let Some(oid) = self.persisted.objectives_by_group.get(&tu.group).copied() else {
             return;
         };
-        if self.persisted.objectives.get(&oid).map_or(true, |o| o.owner != tu.side) {
+        if self.persisted.objectives.get(&oid).is_none_or(|o| o.owner != tu.side) {
             return;
         }
         grt.shooters.insert(suid, now);
@@ -335,7 +335,7 @@ impl Db {
         let due = grt
             .alerted
             .get(&(oid, suid))
-            .map_or(true, |t| now - *t >= Duration::seconds(ALERT_SECS));
+            .is_none_or(|t| now - *t >= Duration::seconds(ALERT_SECS));
         if !due {
             return;
         }
@@ -408,7 +408,7 @@ impl Db {
         gids.into_iter()
             .copied()
             .filter(|gid| {
-                self.persisted.groups.get(gid).map_or(false, |g| {
+                self.persisted.groups.get(gid).is_some_and(|g| {
                     matches!(
                         g.class,
                         ObjGroupClass::Lr | ObjGroupClass::Mr | ObjGroupClass::Sr
@@ -441,15 +441,15 @@ impl Db {
         for gid in self.mobile_sams(&oid) {
             let shot = grt.sam_shot.get(&gid).copied();
             let moved = grt.sam_moved.get(&gid).copied();
-            let scoot = shot.map_or(false, |s| {
+            let scoot = shot.is_some_and(|s| {
                 now - s >= Duration::seconds(cfg.sam_scoot_secs as i64)
                     && now - s < Duration::minutes(15)
-                    && moved.map_or(true, |m| m < s)
+                    && moved.is_none_or(|m| m < s)
             });
             let next = *grt.sam_next.entry(gid).or_insert_with(|| {
                 now + Duration::seconds(rng.gen_range(avg * 0.5..avg * 1.5) as i64)
             });
-            let firing = shot.map_or(false, |s| now - s < Duration::minutes(10));
+            let firing = shot.is_some_and(|s| now - s < Duration::minutes(10));
             let redeploy = now >= next && !firing;
             if !(scoot || redeploy) {
                 continue;
@@ -504,7 +504,7 @@ impl Db {
             .filter(|u| !u.dead)
             .map(|u| u.spawn_pos)
             .collect();
-        (!pts.is_empty()).then(|| dcso3::centroid2d(pts.into_iter()))
+        (!pts.is_empty()).then(|| dcso3::centroid2d(pts))
     }
 
     /// Bring a formation to defend `oid`: the nearest idle AI one in reach,
@@ -553,7 +553,7 @@ impl Db {
                 for (b, _) in bases.into_iter().take(4) {
                     let spare = self
                         .formation_candidates(&gw, &b, side)
-                        .map_or(false, |g| !g.is_empty());
+                        .is_ok_and(|g| !g.is_empty());
                     if !spare {
                         continue;
                     }
@@ -591,7 +591,7 @@ impl Db {
             return;
         }
         if !grt.urgent
-            && grt.last_tick.map_or(false, |t| now - t < Duration::seconds(TICK_SECS))
+            && grt.last_tick.is_some_and(|t| now - t < Duration::seconds(TICK_SECS))
         {
             return;
         }
@@ -628,7 +628,7 @@ impl Db {
             grt.bases
                 .values()
                 .filter_map(|b| b.qrf)
-                .filter(|id| db.formation(*id).map_or(false, |f| f.side == side))
+                .filter(|id| db.formation(*id).is_some_and(|f| f.side == side))
                 .count()
         };
         let mut rng = rand::thread_rng();
@@ -654,7 +654,7 @@ impl Db {
                 .filter(|uid| {
                     grt.alerted
                         .get(&(oid, *uid))
-                        .map_or(true, |t| now - *t >= Duration::seconds(ALERT_SECS))
+                        .is_none_or(|t| now - *t >= Duration::seconds(ALERT_SECS))
                 })
                 .collect();
             if !due.is_empty() {
@@ -688,10 +688,10 @@ impl Db {
                     if away > 1. { (t - center) / away } else { Vector2::new(1., 0.) };
                 let reach = (away - STANDOFF_M).clamp(0., radius + cfg.leash_m);
                 let aim = center + dir * reach;
-                let due = st.aim.map_or(true, |a| dist(a, aim) > REAIM_M)
+                let due = st.aim.is_none_or(|a| dist(a, aim) > REAIM_M)
                     || st
                         .routed_at
-                        .map_or(true, |r| now - r >= Duration::seconds(REROUTE_SECS));
+                        .is_none_or(|r| now - r >= Duration::seconds(REROUTE_SECS));
                 if due {
                     st.aim = Some(aim);
                     st.routed_at = Some(now);
@@ -705,7 +705,7 @@ impl Db {
                             .copied()
                             .filter(|g| {
                                 close
-                                    || self.persisted.groups.get(g).map_or(false, |g| {
+                                    || self.persisted.groups.get(g).is_some_and(|g| {
                                         g.class != ObjGroupClass::Infantry
                                     })
                             })
@@ -753,12 +753,12 @@ impl Db {
                     }
                 }
                 let st = grt.bases.get_mut(&oid).unwrap();
-                let lingered = st.first_seen.map_or(false, |f| {
+                let lingered = st.first_seen.is_some_and(|f| {
                     now - f >= Duration::seconds(cfg.qrf_delay_secs as i64)
                 });
                 let may_call = st
                     .qrf_at
-                    .map_or(true, |t| now - t >= Duration::seconds(QRF_RETRY_SECS));
+                    .is_none_or(|t| now - t >= Duration::seconds(QRF_RETRY_SECS));
                 if cfg.qrf
                     && lingered
                     && may_call
@@ -798,7 +798,7 @@ impl Db {
             // Quiet.
             let clear = st
                 .last_seen
-                .map_or(true, |t| now - t >= Duration::seconds(cfg.clear_secs as i64));
+                .is_none_or(|t| now - t >= Duration::seconds(cfg.clear_secs as i64));
             if !clear {
                 continue;
             }
@@ -859,7 +859,7 @@ impl Db {
                     self.persisted
                         .groups
                         .get(g)
-                        .map_or(false, |g| g.class == ObjGroupClass::Armor)
+                        .is_some_and(|g| g.class == ObjGroupClass::Armor)
                 })
                 .filter(|_| rng.gen_bool(0.5))
                 .collect();
@@ -881,7 +881,7 @@ impl Db {
         }
         // A QRF that has gone (dissolved, wiped out) or finished: forget it.
         for st in grt.bases.values_mut() {
-            if st.qrf.map_or(false, |id| self.formation(id).is_none()) {
+            if st.qrf.is_some_and(|id| self.formation(id).is_none()) {
                 st.qrf = None;
             }
         }

@@ -173,12 +173,12 @@ impl Db {
                     out.push((mid, *live || *l2, *jd));
                 }
             }
-            if let Order::Attack(oid) = order {
-                if let Some(o) = self.persisted.objectives.get(oid) {
-                    let op = o.zone.pos();
-                    if o.owner != *side && dist(*pos, op) <= ENGAGED_M {
-                        out.push((pos * 0.4 + op * 0.6, *live, *id));
-                    }
+            if let Order::Attack(oid) = order
+                && let Some(o) = self.persisted.objectives.get(oid)
+            {
+                let op = o.zone.pos();
+                if o.owner != *side && dist(*pos, op) <= ENGAGED_M {
+                    out.push((pos * 0.4 + op * 0.6, *live, *id));
                 }
             }
         }
@@ -329,10 +329,10 @@ impl Db {
                 b.formations.clear();
                 b.heat *= 0.9;
             }
-            if !b.live {
-                if let Some(name) = b.smoke.take() {
-                    Self::stop_smoke(lua, &name);
-                }
+            if !b.live
+                && let Some(name) = b.smoke.take()
+            {
+                Self::stop_smoke(lua, &name);
             }
             if now - b.last_seen > linger {
                 info!("ground war: battle {} near {:?} over", b.id, b.near);
@@ -340,10 +340,8 @@ impl Db {
                 continue;
             }
             if cfg.battle_marks {
-                let stale = b
-                    .marks
-                    .as_ref()
-                    .map_or(true, |(_, _, at)| dist(*at, b.pos) > REMARK_M);
+                let stale =
+                    b.marks.as_ref().is_none_or(|(_, _, at)| dist(*at, b.pos) > REMARK_M);
                 if stale {
                     self.mark_battle(&mut b);
                 }
@@ -385,11 +383,11 @@ impl Db {
                 for uid in &g.units {
                     let Some(u) = self.persisted.units.get(uid) else { continue };
                     if u.dead {
-                        if rt.battle.alive.contains(uid) {
-                            if let Some(p) = rt.battle.last_pos.get(uid) {
-                                died.push(*p);
-                                lost.push((*fid, *side, *p));
-                            }
+                        if rt.battle.alive.contains(uid)
+                            && let Some(p) = rt.battle.last_pos.get(uid)
+                        {
+                            died.push(*p);
+                            lost.push((*fid, *side, *p));
                         }
                     } else {
                         alive.insert(*uid);

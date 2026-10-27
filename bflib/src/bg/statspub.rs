@@ -45,7 +45,7 @@ impl Statspub {
             .publish(
                 PublishConfigBuilder::default()
                     .base(base)
-                    .bind_from_cfg(&cfg)
+                    .bind_from_cfg(cfg)
                     .build()
                     .context("publish config builder")?,
             )

@@ -921,7 +921,7 @@ impl EventScheduler {
             .active_convoys
             .values()
             .filter(|c| c.side == target_side)
-            .filter(|c| near.map_or(true, |p| (p - c.last_pos).norm() <= NEAR_M))
+            .filter(|c| near.is_none_or(|p| (p - c.last_pos).norm() <= NEAR_M))
             .collect();
         for (i, convoy) in convoys.iter().enumerate() {
             let Some(dest) =

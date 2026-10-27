@@ -353,19 +353,20 @@ impl Aar {
                     }
                 }
                 TankerState::Dead => {
-                    if let Some(r) = t.respawn_at {
-                        if now >= r && t.recovery_for.is_none() {
-                            t.respawn_at = None;
-                            match crate::ag::resolve(lua, &t.cfg.loc).and_then(|p| {
-                                spawn_tanker(lua, &t.cfg, p, spawns, None, now)
-                            }) {
-                                Ok(g) => {
-                                    t.group = g;
-                                    t.state = TankerState::Spawning;
-                                }
-                                Err(e) => {
-                                    warn!("tanker {} respawn failed: {e:?}", t.cfg.id)
-                                }
+                    if let Some(r) = t.respawn_at
+                        && now >= r
+                        && t.recovery_for.is_none()
+                    {
+                        t.respawn_at = None;
+                        match crate::ag::resolve(lua, &t.cfg.loc)
+                            .and_then(|p| spawn_tanker(lua, &t.cfg, p, spawns, None, now))
+                        {
+                            Ok(g) => {
+                                t.group = g;
+                                t.state = TankerState::Spawning;
+                            }
+                            Err(e) => {
+                                warn!("tanker {} respawn failed: {e:?}", t.cfg.id)
                             }
                         }
                     }
@@ -417,15 +418,15 @@ impl Aar {
     ) {
         let mut frames: Vec<(String, String, Frame, V3)> = vec![];
         for t in self.tankers.iter().filter(|t| t.state == TankerState::OnStation) {
-            if let Ok(u) = Unit::get_by_name(lua, &t.unit_name()) {
-                if let (Ok(p), Ok(v)) = (u.get_position(), u.get_velocity()) {
-                    frames.push((
-                        t.cfg.id.clone(),
-                        format!("{}{}", t.cfg.callsign, t.cfg.callsign_number),
-                        Frame::from_pos(&p),
-                        v.0,
-                    ));
-                }
+            if let Ok(u) = Unit::get_by_name(lua, &t.unit_name())
+                && let (Ok(p), Ok(v)) = (u.get_position(), u.get_velocity())
+            {
+                frames.push((
+                    t.cfg.id.clone(),
+                    format!("{}{}", t.cfg.callsign, t.cfg.callsign_number),
+                    Frame::from_pos(&p),
+                    v.0,
+                ));
             }
         }
         // start sessions
@@ -505,10 +506,10 @@ impl Aar {
                 (Some(a), Some(b)) if dt > 0. => (b - a) / dt > 0.2,
                 _ => false,
             };
-            if let (Some(a), Some(b)) = (s.fuel_last, fuel_kg) {
-                if b > a {
-                    s.fuel_gained += b - a;
-                }
+            if let (Some(a), Some(b)) = (s.fuel_last, fuel_kg)
+                && b > a
+            {
+                s.fuel_gained += b - a;
             }
             s.fuel_last = fuel_kg;
             let connected = s.event_open || rising;

@@ -53,9 +53,9 @@ impl TryFrom<&str> for NameFilter {
     }
 }
 
-impl Into<String> for NameFilter {
-    fn into(self) -> String {
-        self.0.as_str().into()
+impl From<NameFilter> for String {
+    fn from(val: NameFilter) -> Self {
+        val.0.as_str().into()
     }
 }
 

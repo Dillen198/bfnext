@@ -517,11 +517,11 @@ impl FromStr for AdminCommand {
                     Ok(Self::TransferSupply { from: from.into(), to: to.into() })
                 }
             }
-        } else if let Some(_) = s.strip_prefix("logistics") {
+        } else if s.strip_prefix("logistics").is_some() {
             Ok(Self::LogLogistics)
-        } else if let Some(_) = s.strip_prefix("tick") {
+        } else if s.strip_prefix("tick").is_some() {
             Ok(Self::LogisticsTickNow)
-        } else if let Some(_) = s.strip_prefix("deliver") {
+        } else if s.strip_prefix("deliver").is_some() {
             Ok(Self::LogisticsDeliverNow)
         } else if let Some(s) = s.strip_prefix("repair ") {
             Ok(Self::Repair { airbase: s.into() })
@@ -607,9 +607,9 @@ impl FromStr for AdminCommand {
             Ok(Self::Unban { player: s.into() })
         } else if let Some(s) = s.strip_prefix("kick ") {
             Ok(Self::Kick { player: s.into() })
-        } else if let Some(_) = s.strip_prefix("connected") {
+        } else if s.strip_prefix("connected").is_some() {
             Ok(Self::Connected)
-        } else if let Some(_) = s.strip_prefix("banned") {
+        } else if s.strip_prefix("banned").is_some() {
             Ok(Self::Banned)
         } else if let Some(s) = s.strip_prefix("search ") {
             Ok(Self::Search {
@@ -623,13 +623,13 @@ impl FromStr for AdminCommand {
                     airbase: String::from(airbase),
                 }),
             }
-        } else if let Some(_) = s.strip_prefix("log-desc") {
+        } else if s.strip_prefix("log-desc").is_some() {
             Ok(Self::Logdesc)
-        } else if let Some(_) = s.strip_prefix("reset-lives-all") {
+        } else if s.strip_prefix("reset-lives-all").is_some() {
             Ok(Self::ResetLivesAll)
         } else if let Some(s) = s.strip_prefix("reset-lives ") {
             Ok(Self::ResetLives { player: s.into() })
-        } else if let Some(_) = s.strip_prefix("shutdown") {
+        } else if s.strip_prefix("shutdown").is_some() {
             Ok(Self::Shutdown)
         } else if let Some(s) = s.strip_prefix("add-admin ") {
             Ok(Self::AddAdmin { player: s.into() })
@@ -967,7 +967,7 @@ fn admin_spawn_one(
                             &ctx.idx,
                             side,
                             loc,
-                            &template,
+                            template,
                             origin,
                             BitFlags::empty(),
                             None,
@@ -980,16 +980,16 @@ fn admin_spawn_one(
     Ok(())
 }
 
-pub(super) fn get_player_ucid<'a>(ctx: &'a Context, key: &str) -> Result<Ucid> {
-    if let Ok(id) = key.parse::<PlayerId>() {
-        if let Some(ifo) = ctx.connected.get(&id) {
-            return Ok(ifo.ucid.clone());
-        }
+pub(super) fn get_player_ucid(ctx: &Context, key: &str) -> Result<Ucid> {
+    if let Ok(id) = key.parse::<PlayerId>()
+        && let Some(ifo) = ctx.connected.get(&id)
+    {
+        return Ok(ifo.ucid);
     }
-    if let Ok(ucid) = key.parse::<Ucid>() {
-        if ctx.db.player(&ucid).is_some() {
-            return Ok(ucid);
-        }
+    if let Ok(ucid) = key.parse::<Ucid>()
+        && ctx.db.player(&ucid).is_some()
+    {
+        return Ok(ucid);
     }
     enum Matcher<'a> {
         Re(Regex),
@@ -1019,7 +1019,7 @@ pub(super) fn get_player_ucid<'a>(ctx: &'a Context, key: &str) -> Result<Ucid> {
             .collect()
     };
     if candidates.len() == 1 {
-        return Ok(candidates.pop().ok_or_else(|| anyhow!("no candidates"))?.0.clone());
+        return Ok(*candidates.pop().ok_or_else(|| anyhow!("no candidates"))?.0);
     } else if candidates.len() > 1 {
         bail!("multiple matching candidates {:?}", candidates)
     }
@@ -1035,10 +1035,10 @@ pub(super) fn find_player_by_name(ctx: &Context, key: &str) -> Result<Ucid> {
     if key.is_empty() {
         bail!("no player name given")
     }
-    if let Ok(id) = key.parse::<PlayerId>() {
-        if let Some(ifo) = ctx.connected.get(&id) {
-            return Ok(ifo.ucid);
-        }
+    if let Ok(id) = key.parse::<PlayerId>()
+        && let Some(ifo) = ctx.connected.get(&id)
+    {
+        return Ok(ifo.ucid);
     }
     let lkey = key.to_lowercase();
     let mut exact: SmallVec<[(&Ucid, &String); 4]> = smallvec![];
@@ -1089,7 +1089,7 @@ pub fn get_airbase(db: &Db, name: &str) -> Result<ObjectiveId> {
             candidates.push((*oid, obj.name.clone()));
         }
     }
-    if candidates.len() == 0 {
+    if candidates.is_empty() {
         bail!("no objective name matches {name}")
     } else if candidates.len() == 1 {
         Ok(candidates[0].0)
@@ -1134,7 +1134,7 @@ fn admin_ban(
     let name =
         ctx.db.player(&ucid).map(|p| p.name.clone()).unwrap_or_else(|| name.clone());
     with_mut_cfg(ctx, |cfg| {
-        cfg.banned.insert(ucid.clone(), (until, name));
+        cfg.banned.insert(ucid, (until, name));
         Ok(())
     })?;
     if let Some(id) = ctx.connected.id_by_ucid.get(&ucid) {
@@ -1173,7 +1173,7 @@ fn admin_list_banned(
         .cfg
         .banned
         .iter()
-        .map(|(ucid, (until, name))| (ucid.clone(), name.clone(), *until))
+        .map(|(ucid, (until, name))| (*ucid, name.clone(), *until))
         .collect()
 }
 
@@ -1181,7 +1181,7 @@ fn admin_list_connected(ctx: &Context) -> SmallVec<[(PlayerId, Ucid, String); 64
     ctx.connected
         .info_by_player_id
         .iter()
-        .map(|(id, ifo)| (*id, ifo.ucid.clone(), ifo.name.clone()))
+        .map(|(id, ifo)| (*id, ifo.ucid, ifo.name.clone()))
         .collect()
 }
 
@@ -1196,8 +1196,8 @@ fn admin_search(
         .filter_map(|(ucid, player)| {
             if player.alts.into_iter().any(|name| expr.is_match(name.as_str())) {
                 Some((
-                    ctx.connected.id_by_ucid.get(ucid).map(|id| *id),
-                    ucid.clone(),
+                    ctx.connected.id_by_ucid.get(ucid).copied(),
+                    *ucid,
                     player.alts.clone(),
                 ))
             } else {
@@ -1219,9 +1219,9 @@ fn admin_log_desc(ctx: &Context, lua: MizLua, ucid: &Ucid) -> Result<()> {
     let id = ctx
         .db
         .ephemeral
-        .get_object_id_by_slot(&slot)
+        .get_object_id_by_slot(slot)
         .ok_or_else(|| anyhow!("player {ucid} unit not found"))?;
-    let unit = Unit::get_instance(lua, &id).context("getting unit")?;
+    let unit = Unit::get_instance(lua, id).context("getting unit")?;
     let desc = Value::Table(unit.get_desc().context("getting desc")?);
     let desc = value_to_json(&desc);
     let ammo = Value::Table(unit.get_ammo().context("getting ammo")?.into_inner());
@@ -1339,9 +1339,9 @@ fn set_rule(ctx: &mut Context, rule: &str, player: &String, allow: bool) -> Resu
             _ => bail!("unknown rule {rule}, expected: actions|cargo|troops|jtac|ca"),
         };
         if allow {
-            target.whitelist(ucid, name.into())
+            target.whitelist(ucid, name)
         } else {
-            target.blacklist(ucid, name.into())
+            target.blacklist(ucid, name)
         }
         Ok(())
     })
@@ -1548,7 +1548,7 @@ pub(crate) fn query_players(ctx: &Context) -> Vec<PlayerInfo> {
                 };
 
             PlayerInfo {
-                ucid: ucid.clone(),
+                ucid: *ucid,
                 name: player.name.to_string(),
                 side: player.side,
                 points: player.points,
@@ -1600,12 +1600,12 @@ pub(crate) fn query_groups(ctx: &Context, side_filter: Option<Side>) -> Vec<Grou
         .persisted
         .groups
         .into_iter()
-        .filter(|(_, group)| side_filter.map_or(true, |s| group.side == s))
+        .filter(|(_, group)| side_filter.is_none_or(|s| group.side == s))
         .map(|(_, group)| {
             let alive_count = group
                 .units
                 .into_iter()
-                .filter(|uid| ctx.db.persisted.units.get(uid).map_or(false, |u| !u.dead))
+                .filter(|uid| ctx.db.persisted.units.get(uid).is_some_and(|u| !u.dead))
                 .count();
 
             let center = ctx.db.group_center(&group.id).ok().map(|c| (c.x, c.y));
@@ -1615,19 +1615,13 @@ pub(crate) fn query_groups(ctx: &Context, side_filter: Option<Side>) -> Vec<Grou
                     ("Objective".to_string(), None)
                 }
                 DeployKind::Deployed { player, .. } => {
-                    ("Deployed".to_string(), Some(player.clone()))
+                    ("Deployed".to_string(), Some(*player))
                 }
-                DeployKind::Troop { player, .. } => {
-                    ("Troop".to_string(), Some(player.clone()))
-                }
-                DeployKind::Crate { player, .. } => {
-                    ("Crate".to_string(), Some(player.clone()))
-                }
-                DeployKind::Action { player, .. } => {
-                    ("Action".to_string(), player.clone())
-                }
+                DeployKind::Troop { player, .. } => ("Troop".to_string(), Some(*player)),
+                DeployKind::Crate { player, .. } => ("Crate".to_string(), Some(*player)),
+                DeployKind::Action { player, .. } => ("Action".to_string(), *player),
                 DeployKind::DownedPilot { ucid, .. } => {
-                    ("DownedPilot".to_string(), Some(ucid.clone()))
+                    ("DownedPilot".to_string(), Some(*ucid))
                 }
                 DeployKind::Dismount { .. } => ("Dismount".to_string(), None),
             };
@@ -1653,7 +1647,7 @@ pub(crate) fn query_group_details(ctx: &Context, id: &GroupId) -> Result<GroupIn
     let alive_count = group
         .units
         .into_iter()
-        .filter(|uid| ctx.db.persisted.units.get(uid).map_or(false, |u| !u.dead))
+        .filter(|uid| ctx.db.persisted.units.get(uid).is_some_and(|u| !u.dead))
         .count();
 
     let center = ctx.db.group_center(&group.id).ok().map(|c| (c.x, c.y));
@@ -1662,15 +1656,11 @@ pub(crate) fn query_group_details(ctx: &Context, id: &GroupId) -> Result<GroupIn
         DeployKind::Objective { .. } | DeployKind::ObjectiveDeprecated => {
             ("Objective".to_string(), None)
         }
-        DeployKind::Deployed { player, .. } => {
-            ("Deployed".to_string(), Some(player.clone()))
-        }
-        DeployKind::Troop { player, .. } => ("Troop".to_string(), Some(player.clone())),
-        DeployKind::Crate { player, .. } => ("Crate".to_string(), Some(player.clone())),
-        DeployKind::Action { player, .. } => ("Action".to_string(), player.clone()),
-        DeployKind::DownedPilot { ucid, .. } => {
-            ("DownedPilot".to_string(), Some(ucid.clone()))
-        }
+        DeployKind::Deployed { player, .. } => ("Deployed".to_string(), Some(*player)),
+        DeployKind::Troop { player, .. } => ("Troop".to_string(), Some(*player)),
+        DeployKind::Crate { player, .. } => ("Crate".to_string(), Some(*player)),
+        DeployKind::Action { player, .. } => ("Action".to_string(), *player),
+        DeployKind::DownedPilot { ucid, .. } => ("DownedPilot".to_string(), Some(*ucid)),
         DeployKind::Dismount { .. } => ("Dismount".to_string(), None),
     };
 
@@ -1715,10 +1705,10 @@ pub(crate) fn query_units(ctx: &Context, group_id: &GroupId) -> Result<Vec<UnitI
 /// UI passing a name through, where "FOB Alpha (1)" is a regex error and an
 /// ambiguous prefix silently picks the wrong base.
 pub(crate) fn resolve_objective(db: &Db, key: &str) -> Result<ObjectiveId> {
-    if let Ok(id) = key.parse::<ObjectiveId>() {
-        if db.persisted.objectives.get(&id).is_some() {
-            return Ok(id);
-        }
+    if let Ok(id) = key.parse::<ObjectiveId>()
+        && db.persisted.objectives.get(&id).is_some()
+    {
+        return Ok(id);
     }
     for (oid, obj) in db.objectives() {
         if obj.name.as_str() == key {
@@ -1792,7 +1782,7 @@ pub(crate) fn query_warehouse(
         .get(&oid)
         .ok_or_else(|| anyhow!("no such objective {oid}"))?;
 
-    let own = for_side.map_or(true, |s| s == obj.owner());
+    let own = for_side.is_none_or(|s| s == obj.owner());
     let pos = obj.pos();
     let intel_as_of = if own {
         None
@@ -2083,7 +2073,7 @@ pub(crate) fn query_briefing(ctx: &Context, lua: MizLua, side: Side) -> Briefing
                 .deployed
                 .into_iter()
                 .filter(|gid| {
-                    db.persisted.groups.get(gid).map_or(false, |g| {
+                    db.persisted.groups.get(gid).is_some_and(|g| {
                         matches!(&g.origin, DeployKind::Deployed { spec, .. } if spec.path == d.path)
                     })
                 })
@@ -2775,7 +2765,7 @@ pub(crate) fn query_cas(
                     }
                     let up = Vector2::new(unit.position.p.x, unit.position.p.z);
                     let d = (up - tp).magnitude();
-                    if best.map_or(true, |(bd, _)| d < bd) {
+                    if best.is_none_or(|(bd, _)| d < bd) {
                         let (brg, _) = bearing_range(tp, up);
                         best = Some((d, brg));
                     }
@@ -2847,7 +2837,7 @@ pub(crate) fn query_cas(
         let mut nearest: Option<(u32, u16, String)> = None;
         for jt in ctx.jtac.jtacs().filter(|j| j.side() == side) {
             let (brg, rng) = bearing_range(fp, jt.location().pos);
-            if nearest.as_ref().map_or(true, |(r, _, _)| rng < *r) {
+            if nearest.as_ref().is_none_or(|(r, _, _)| rng < *r) {
                 nearest = Some((rng, brg, format_compact!("{}", jt.gid()).to_string()));
             }
         }

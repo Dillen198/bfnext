@@ -202,7 +202,7 @@ pub(crate) async fn news_generator(
                                             .unwrap_or(0)
                                             + 1;
                                         let wait = std::time::Duration::from_secs(
-                                            (20 * 60u64 << (fails - 1).min(5))
+                                            ((20 * 60u64) << (fails - 1).min(5))
                                                 .min(12 * 3600),
                                         );
                                         day_backoff

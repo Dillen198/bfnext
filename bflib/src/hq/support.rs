@@ -71,7 +71,7 @@ pub(super) fn refresh_front(ctx: &mut Context) {
         (x.to_bits(), y.to_bits(), s.to_bits()).hash(&mut h);
     }
     let hash = h.finish();
-    if ctx.hq.front.as_ref().map_or(false, |(old, _)| *old == hash) {
+    if ctx.hq.front.as_ref().is_some_and(|(old, _)| *old == hash) {
         return;
     }
     let fl = bfprotocols::frontline::compute(
@@ -339,7 +339,7 @@ pub(super) fn manage(
                 .side(side)
                 .restationed
                 .get(&f.gid)
-                .map_or(false, |t| (now - *t).num_seconds() < RESTATION_SECS);
+                .is_some_and(|t| (now - *t).num_seconds() < RESTATION_SECS);
             if recent {
                 continue;
             }
@@ -463,8 +463,7 @@ pub(super) fn fuel_watch(
     }
     {
         let rt = ctx.hq.side(side);
-        if rt.last_fuel_check.map_or(false, |t| (now - t).num_seconds() < FUEL_CHECK_SECS)
-        {
+        if rt.last_fuel_check.is_some_and(|t| (now - t).num_seconds() < FUEL_CHECK_SECS) {
             return;
         }
         rt.last_fuel_check = Some(now);
@@ -538,7 +537,7 @@ pub(super) fn fuel_watch(
         if rt
             .refuel_sent
             .get(&f.gid)
-            .map_or(false, |t| (now - *t).num_seconds() < REFUEL_RETRY_SECS)
+            .is_some_and(|t| (now - *t).num_seconds() < REFUEL_RETRY_SECS)
         {
             continue;
         }
@@ -555,7 +554,7 @@ pub(super) fn fuel_watch(
             let said = rt
                 .refuel_none
                 .get(&f.gid)
-                .map_or(false, |t| (now - *t).num_seconds() < REFUEL_RETRY_SECS);
+                .is_some_and(|t| (now - *t).num_seconds() < REFUEL_RETRY_SECS);
             if !said {
                 rt.refuel_none.insert(f.gid, now);
                 info!(

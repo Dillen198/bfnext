@@ -184,7 +184,7 @@ pub(crate) async fn api_admin_shutdown(
         (Some(want), Some(h)) => h
             .strip_prefix("Bearer ")
             .or_else(|| h.strip_prefix("bearer "))
-            .map_or(false, |got| websec::ct_eq(got.trim(), want)),
+            .is_some_and(|got| websec::ct_eq(got.trim(), want)),
         _ => false,
     };
     if !bearer_ok {

@@ -174,7 +174,7 @@ fn plan_frequencies(cfg: &AtcConfig, fields: &[&AtcAirfield]) -> Vec<FieldFreqs>
             })
         };
         // Only an automatically-assigned field consumes a slot.
-        if over.map_or(true, |o| o.tower.is_none() && o.atis.is_none()) {
+        if over.is_none_or(|o| o.tower.is_none() && o.atis.is_none()) {
             auto_slot += 1;
         }
         out.push(FieldFreqs { name: name.to_string(), tower, atis });
@@ -602,8 +602,8 @@ fn atis_calls(
         let due = entry
             .as_ref()
             .and_then(|s| s.last_broadcast)
-            .map_or(true, |t| t.elapsed().as_secs() >= cfg.atis_interval_secs);
-        let changed = entry.as_ref().map_or(true, |s| s.letter != letter);
+            .is_none_or(|t| t.elapsed().as_secs() >= cfg.atis_interval_secs);
+        let changed = entry.as_ref().is_none_or(|s| s.letter != letter);
         state.atis.insert(
             a.name.clone(),
             AtisState {
@@ -834,7 +834,7 @@ pub(crate) fn answer(
         .traffic
         .iter()
         .filter(|t| t.field.as_deref() == Some(a.id.as_str()))
-        .filter(|t| flight.map_or(true, |f| f.ucid != t.ucid))
+        .filter(|t| flight.is_none_or(|f| f.ucid != t.ucid))
         .collect();
 
     Some((vec![field.tower.clone()], tower_reply(cfg, a, &req, &who, &traffic)))

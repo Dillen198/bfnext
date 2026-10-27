@@ -520,10 +520,10 @@ pub(super) fn order(
                         AIR_REACH_M / 1000.
                     ));
                 }
-                if matches!(action.kind, ActionKind::Deployable(_)) {
-                    if let Some(b) = in_enemy_base(ctx, side, pos) {
-                        return Err(format_compact!("that is inside {b}"));
-                    }
+                if matches!(action.kind, ActionKind::Deployable(_))
+                    && let Some(b) = in_enemy_base(ctx, side, pos)
+                {
+                    return Err(format_compact!("that is inside {b}"));
                 }
                 let args = match &action.kind {
                     ActionKind::Tanker(c) => {
@@ -1071,7 +1071,7 @@ fn lead_pos(lua: MizLua, name: &str) -> Option<Vector2> {
 
 /// Keep the hunter groups honest: forget the sunk, bring the old home.
 pub(crate) fn tick_hunters(lua: MizLua, ctx: &mut Context, now: DateTime<Utc>) {
-    if ctx.hunters.last_tick.map_or(false, |t| now - t < Duration::seconds(20)) {
+    if ctx.hunters.last_tick.is_some_and(|t| now - t < Duration::seconds(20)) {
         return;
     }
     ctx.hunters.last_tick = Some(now);

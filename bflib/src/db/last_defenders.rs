@@ -83,7 +83,7 @@ impl Db {
                 .ephemeral
                 .last_defender_marks
                 .get(&oid)
-                .map_or(false, |(_, t)| now - *t < Duration::seconds(REFRESH_SECS));
+                .is_some_and(|(_, t)| now - *t < Duration::seconds(REFRESH_SECS));
             if fresh {
                 continue;
             }

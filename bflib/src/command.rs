@@ -415,8 +415,8 @@ pub(crate) fn picture(
             if let bfprotocols::db::objective::ObjectiveKind::CarrierGroup { .. } =
                 o.kind()
             {
-                if let Some(gid) = groups.into_iter().next() {
-                    if let Some(mut a) = asset_of(
+                if let Some(gid) = groups.into_iter().next()
+                    && let Some(mut a) = asset_of(
                         ctx,
                         lua,
                         coord,
@@ -425,11 +425,11 @@ pub(crate) fn picture(
                         "Carrier group",
                         vec![Verb::Sail],
                         true,
-                    ) {
-                        a.name = o.name.to_string();
-                        a.base = Some(o.name.to_string());
-                        assets.push(a);
-                    }
+                    )
+                {
+                    a.name = o.name.to_string();
+                    a.base = Some(o.name.to_string());
+                    assets.push(a);
                 }
                 continue;
             }
@@ -488,13 +488,13 @@ fn rate_limited(
     now: DateTime<Utc>,
 ) -> Result<(), CompactString> {
     let q = ctx.command_orders.entry(who).or_default();
-    while q.front().map_or(false, |t| now - *t > Duration::seconds(60)) {
+    while q.front().is_some_and(|t| now - *t > Duration::seconds(60)) {
         q.pop_front();
     }
-    if let Some(last) = q.back() {
-        if now - *last < Duration::milliseconds(ORDER_GAP_MS) {
-            return Err("one order at a time".into());
-        }
+    if let Some(last) = q.back()
+        && now - *last < Duration::milliseconds(ORDER_GAP_MS)
+    {
+        return Err("one order at a time".into());
     }
     if q.len() >= ORDERS_PER_MIN {
         return Err(format_compact!(
@@ -788,7 +788,7 @@ fn order_inner(
                     .groundwar
                     .last_order
                     .get(u)
-                    .map_or(false, |t| now - *t < Duration::seconds(cool as i64))
+                    .is_some_and(|t| now - *t < Duration::seconds(cool as i64))
                 {
                     return Err("wait a moment before your next ground order".into());
                 }
@@ -1021,7 +1021,7 @@ fn order_inner(
                     .groundwar
                     .last_order
                     .get(u)
-                    .map_or(false, |t| now - *t < Duration::seconds(cool as i64))
+                    .is_some_and(|t| now - *t < Duration::seconds(cool as i64))
                 {
                     return Err("wait a moment before your next ground order".into());
                 }

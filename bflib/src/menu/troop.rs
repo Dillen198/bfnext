@@ -120,7 +120,7 @@ fn unload_troops(lua: MizLua, gid: GroupId) -> Result<()> {
     match ctx.db.unload_troops(lua, &ctx.idx, &slot) {
         Ok((tr, tgid, oid)) => {
             let player = player_name(&ctx.db, &slot);
-            let sub = ctx.subscribed_jtac_menus.entry(slot.clone()).or_default();
+            let sub = ctx.subscribed_jtac_menus.entry(slot).or_default();
             sub.pinned.insert(JtId::Group(tgid));
             if let Some(oid) = oid {
                 sub.subscribed_objectives.insert(oid);

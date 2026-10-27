@@ -223,7 +223,7 @@ impl Opus {
         if dec.is_null() || err != 0 {
             anyhow::bail!("opus_decoder_create failed ({err})");
         }
-        let result = (|| -> Result<Vec<i16>> {
+        let result = {
             let mut pcm: Vec<i16> = Vec::with_capacity(frames.len() * FRAME_SAMPLES);
             let mut out = [0i16; FRAME_SAMPLES * 6]; // room for up to 240 ms
             for f in frames {
@@ -242,7 +242,7 @@ impl Opus {
                 }
             }
             Ok(pcm)
-        })();
+        };
         unsafe { (self.dec_destroy)(dec) };
         result
     }
@@ -677,7 +677,7 @@ fn udp_rx_loop(c: Arc<Inner>) {
         let audio_len = u16::from_le_bytes([pkt[2], pkt[3]]) as usize;
         let freq_len = u16::from_le_bytes([pkt[4], pkt[5]]) as usize;
         let fo = 6 + audio_len;
-        if fo + freq_len > n || freq_len % 10 != 0 || fo + freq_len + 12 > n {
+        if fo + freq_len > n || !freq_len.is_multiple_of(10) || fo + freq_len + 12 > n {
             continue;
         }
         if pkt[n - GUID_LEN..n] == c.guid() {
@@ -688,7 +688,7 @@ fn udp_rx_loop(c: Arc<Inner>) {
         let mut hit: Option<(f64, String)> = None;
         {
             let radios = c.radios.lock().unwrap();
-            'outer: for f in pkt[fo..fo + freq_len].chunks_exact(10) {
+            'outer: for f in pkt[fo..fo + freq_len].as_chunks::<10>().0 {
                 let hz = f64::from_le_bytes(f[0..8].try_into().unwrap_or([0; 8]));
                 for r in radios.iter() {
                     if r.matches(hz, f[8]) {
@@ -1059,7 +1059,7 @@ fn manager_loop(c: Arc<Inner>) {
             last_warn = None;
         } else {
             failures = failures.saturating_add(1);
-            let due = last_warn.map_or(true, |t| t.elapsed() >= REMIND_EVERY);
+            let due = last_warn.is_none_or(|t| t.elapsed() >= REMIND_EVERY);
             if failures == 1 {
                 log::warn!("voice srs[{}]: {msg}", c.name);
                 last_warn = Some(Instant::now());

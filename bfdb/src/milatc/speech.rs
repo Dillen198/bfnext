@@ -66,7 +66,7 @@ fn cardinal(n: u32) -> String {
         0..=19 => ONES[n as usize].to_string(),
         20..=99 => {
             let t = TENS[(n / 10) as usize];
-            if n % 10 == 0 {
+            if n.is_multiple_of(10) {
                 t.to_string()
             } else {
                 format!("{t} {}", ONES[(n % 10) as usize])

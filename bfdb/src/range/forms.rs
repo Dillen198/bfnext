@@ -935,7 +935,7 @@ pub(crate) fn trap_form(rec: &RangeRecord, t: &TrapResult) -> String {
             let vals: Vec<f64> = groove
                 .iter()
                 .filter(|q| q.x_m <= *from && q.x_m > *to)
-                .map(|q| f(q))
+                .map(f)
                 .filter(|v| v.is_finite())
                 .collect();
             let x = 24. + col0 + j as f64 * colw + colw / 2.;

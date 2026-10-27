@@ -119,7 +119,7 @@ pub(crate) async fn api_hq(
     if let Some(o) = v.as_object_mut() {
         let engine_says = o.get("can_command").and_then(|b| b.as_bool()).unwrap_or(false);
         let commander = !c.god_mode
-            && c.ucid().map_or(false, |u| {
+            && c.ucid().is_some_and(|u| {
                 task::block_in_place(|| command::is_commander(&db, &inst, u, c.side))
                     .unwrap_or(false)
             });

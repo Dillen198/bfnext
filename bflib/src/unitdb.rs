@@ -182,10 +182,10 @@ fn attributes(t: &LuaTable) -> Vec<String> {
     let mut out = vec![];
     if let Ok(attrs) = t.raw_get::<LuaTable>("attribute") {
         for v in attrs.sequence_values::<LuaValue>().flatten() {
-            if let LuaValue::String(s) = v {
-                if let Ok(s) = s.to_str() {
-                    out.push(s.to_string());
-                }
+            if let LuaValue::String(s) = v
+                && let Ok(s) = s.to_str()
+            {
+                out.push(s.to_string());
             }
         }
     }
@@ -209,10 +209,10 @@ fn max_target_detection(
     seen.push(ptr);
     let mut best = opt_f64(t, "maxTargetDetectionRange");
     for pair in t.clone().pairs::<LuaValue, LuaValue>().flatten() {
-        if let (_, LuaValue::Table(child)) = pair {
-            if let Some(v) = max_target_detection(&child, depth - 1, seen) {
-                best = Some(best.map_or(v, |b: f64| b.max(v)));
-            }
+        if let (_, LuaValue::Table(child)) = pair
+            && let Some(v) = max_target_detection(&child, depth - 1, seen)
+        {
+            best = Some(best.map_or(v, |b: f64| b.max(v)));
         }
     }
     best
@@ -368,10 +368,10 @@ pub fn artillery_range(cfg: Option<&ArtilleryCfg>, typ: &str) -> (f64, f64) {
     if let Some(r) = cfg.and_then(|c| c.units.get(typ)) {
         return (r.max_range_m, r.min_range_m);
     }
-    if let Some(info) = get().get(typ) {
-        if let Some(max) = info.threat_range_m {
-            return (max, info.threat_range_min_m.unwrap_or(0.0));
-        }
+    if let Some(info) = get().get(typ)
+        && let Some(max) = info.threat_range_m
+    {
+        return (max, info.threat_range_min_m.unwrap_or(0.0));
     }
     (default_max, default_min)
 }
@@ -423,7 +423,7 @@ pub fn can_drive(typ: &str) -> bool {
     }
     match get().get(typ) {
         Some(u) => {
-            let fixed_category = u.category.as_deref().map_or(false, |c| {
+            let fixed_category = u.category.as_deref().is_some_and(|c| {
                 c.starts_with("Fortifications")
                     || c.starts_with("Warehouses")
                     || c.starts_with("Cargos")

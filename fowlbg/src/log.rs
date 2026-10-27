@@ -87,10 +87,10 @@ pub(crate) fn set_fallback(path: PathBuf) {
 /// one is broken. Does nothing to a file if none was configured.
 pub fn fallback_log(buf: &[u8]) {
     let _ = io::stderr().write_all(buf);
-    if let Some(path) = FALLBACK.get() {
-        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = f.write_all(buf);
-        }
+    if let Some(path) = FALLBACK.get()
+        && let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path)
+    {
+        let _ = f.write_all(buf);
     }
 }
 

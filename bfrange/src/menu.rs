@@ -57,7 +57,7 @@ impl Pager {
 
     fn sub(&mut self, mc: &MissionCommands, label: &str) -> Result<GroupSubMenu> {
         let parent = self.page(mc)?;
-        Ok(mc.add_submenu_for_group(self.group, label.into(), Some(parent))?)
+        mc.add_submenu_for_group(self.group, label.into(), Some(parent))
     }
 }
 
@@ -107,7 +107,7 @@ pub fn build(lua: MizLua, gid: GroupId, d: &MenuData) -> Result<()> {
         cmd(&mc, gid, parent.clone(), label, action.to_string())
     };
     let sub = |parent: &GroupSubMenu, label: &str| -> Result<GroupSubMenu> {
-        Ok(mc.add_submenu_for_group(gid, label.into(), Some(parent.clone()))?)
+        mc.add_submenu_for_group(gid, label.into(), Some(parent.clone()))
     };
 
     // 1. status, and what is where

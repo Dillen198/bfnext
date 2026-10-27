@@ -275,7 +275,7 @@ impl RangeCtx {
             m.entry((inst.id.clone(), proc_name)).or_default().clone()
         };
         let mut g = slot.lock().await;
-        let fresh = g.fetched.map_or(false, |t| t.elapsed() < ttl);
+        let fresh = g.fetched.is_some_and(|t| t.elapsed() < ttl);
         if !fresh {
             match self.rpc_json(inst, proc_name, vec![], timeout).await {
                 Ok(v) => {

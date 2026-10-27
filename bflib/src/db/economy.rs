@@ -132,7 +132,7 @@ impl Db {
         }
         balances.sort_unstable();
         let mid = balances.len() / 2;
-        let median = if balances.len() % 2 == 0 {
+        let median = if balances.len().is_multiple_of(2) {
             (balances[mid - 1] + balances[mid]) / 2
         } else {
             balances[mid]

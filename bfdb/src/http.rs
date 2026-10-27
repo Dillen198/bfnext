@@ -244,7 +244,7 @@ pub(crate) fn bearer_or_query_token(
             .and_then(|h| h.strip_prefix("Bearer ").or_else(|| h.strip_prefix("bearer ")))
             .map(|s| s.trim().to_string())
     });
-    provided.as_deref().map_or(false, |p| {
+    provided.as_deref().is_some_and(|p| {
         // every candidate is compared, so which one matched takes no less time
         accepted.iter().fold(false, |ok, want| websec::ct_eq(p, want) | ok)
     })
@@ -449,7 +449,7 @@ pub(crate) fn admin_ws_gate(
 ) -> std::result::Result<websec::WsSlot, Response> {
     let ops = session_id
         .and_then(|id| task::block_in_place(|| db.get_session(id)).ok().flatten())
-        .map_or(false, |s| admin::has_role(&s, admin::Role::OPS));
+        .is_some_and(|s| admin::has_role(&s, admin::Role::OPS));
     if !ops {
         return Err(websec::ws_refused(warp::http::StatusCode::FORBIDDEN, "admin only"));
     }
@@ -616,7 +616,7 @@ pub(crate) fn bad_instance_guard(
                     let locked = db
                         .instances()
                         .get(&implicit)
-                        .map_or(false, |c| !c.public && !c.is_range())
+                        .is_some_and(|c| !c.public && !c.is_range())
                         && !instance_agnostic(path)
                         && !ip.is_loopback()
                         && !session_is_admin(&db, session_id);

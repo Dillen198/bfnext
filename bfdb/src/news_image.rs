@@ -1030,8 +1030,7 @@ fn mentions(hay: &str, pat: &str) -> bool {
     while let Some(off) = hay[from..].find(pat) {
         let i = from + off;
         let j = i + pat.len();
-        let before_ok =
-            hay[..i].chars().next_back().map_or(true, |c| !c.is_alphanumeric());
+        let before_ok = hay[..i].chars().next_back().is_none_or(|c| !c.is_alphanumeric());
         let after = hay[j..].chars().next();
         let after_ok = match after {
             None => true,
@@ -1477,8 +1476,8 @@ fn has_words(hay: &str, cue: &str) -> bool {
     while let Some(off) = hay[from..].find(cue) {
         let i = from + off;
         let j = i + cue.len();
-        let before = hay[..i].chars().next_back().map_or(true, |c| !c.is_alphanumeric());
-        let after = hay[j..].chars().next().map_or(true, |c| !c.is_alphanumeric());
+        let before = hay[..i].chars().next_back().is_none_or(|c| !c.is_alphanumeric());
+        let after = hay[j..].chars().next().is_none_or(|c| !c.is_alphanumeric());
         if before && after {
             return true;
         }
@@ -1520,9 +1519,8 @@ fn fix_articles(s: &str) -> String {
             return false;
         }
         let spelled = c0.is_ascii_uppercase()
-            && c1.map_or(true, |c| {
-                c == '-' || c.is_ascii_digit() || c.is_ascii_uppercase()
-            });
+            && c1
+                .is_none_or(|c| c == '-' || c.is_ascii_digit() || c.is_ascii_uppercase());
         if spelled {
             return "AEFHILMNORSX".contains(c0);
         }
@@ -1575,8 +1573,8 @@ fn fill_scene(
             None => desc.to_string(),
         };
         let text = match key {
-            "town" => with_place(*dice.pick(land.towns)),
-            "airfield" => with_place(*dice.pick(land.airfields)),
+            "town" => with_place(dice.pick(land.towns)),
+            "airfield" => with_place(dice.pick(land.airfields)),
             "road" => dice.pick(land.roads).to_string(),
             "open" => dice.pick(land.open).to_string(),
             "coast" => dice.pick(land.coast).to_string(),
@@ -1648,8 +1646,7 @@ pub fn plan_scene(d: &NewsDigest, instance: &str, setting: &Setting) -> ScenePla
     // The kind: the headline if it says, else the lead angle, else the day's
     // losses.
     let lead = d.items.iter().find(|it| angle_scene(&it.angle).is_some());
-    let top_is_tally =
-        d.items.first().map_or(true, |it| angle_scene(&it.angle).is_none());
+    let top_is_tally = d.items.first().is_none_or(|it| angle_scene(&it.angle).is_none());
     let from_headline = HEADLINE_CUES
         .iter()
         .find(|(cue, _)| has_words(&headline_cues, cue))
@@ -1670,7 +1667,7 @@ pub fn plan_scene(d: &NewsDigest, instance: &str, setting: &Setting) -> ScenePla
         .items
         .iter()
         .find(|it| {
-            angle_scene(&it.angle).map_or(false, |k| {
+            angle_scene(&it.angle).is_some_and(|k| {
                 k == kind
                     || (kind == SceneKind::CaptureAirfield && k == SceneKind::Capture)
             })
@@ -1688,7 +1685,7 @@ pub fn plan_scene(d: &NewsDigest, instance: &str, setting: &Setting) -> ScenePla
             )
         })
         .and_then(|it| nameable_place(&sanitise(&it.subject, &names)));
-    if kind == SceneKind::Capture && place.as_deref().map_or(false, looks_like_airfield) {
+    if kind == SceneKind::Capture && place.as_deref().is_some_and(looks_like_airfield) {
         kind = SceneKind::CaptureAirfield;
     }
     // A carrier is a present-day story; anywhere else it is a sea story.
@@ -1705,7 +1702,7 @@ pub fn plan_scene(d: &NewsDigest, instance: &str, setting: &Setting) -> ScenePla
         (Some(s), _) => s,
         (None, Some((_, loser))) => other(loser),
         (None, None) => {
-            if dice.next() % 2 == 0 {
+            if dice.next().is_multiple_of(2) {
                 "Blue"
             } else {
                 "Red"
@@ -1912,7 +1909,7 @@ pub fn build_prompt(
         ]);
     for p in proper {
         let p = p.trim();
-        if p.chars().count() >= 3 && p.chars().next().map_or(false, char::is_uppercase) {
+        if p.chars().count() >= 3 && p.chars().next().is_some_and(char::is_uppercase) {
             headline = replace_ci(&headline, p, p);
         }
     }

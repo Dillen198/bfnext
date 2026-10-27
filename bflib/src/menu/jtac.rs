@@ -60,10 +60,10 @@ fn jtac_audience(
 ) -> SmallVec<[GroupId; 8]> {
     let mut groups: SmallVec<[GroupId; 8]> = smallvec![];
     let mut add = |slot: &SlotId| {
-        if let Some(ifo) = ctx.db.ephemeral.get_slot_info(slot) {
-            if !groups.contains(&ifo.miz_gid) {
-                groups.push(ifo.miz_gid)
-            }
+        if let Some(ifo) = ctx.db.ephemeral.get_slot_info(slot)
+            && !groups.contains(&ifo.miz_gid)
+        {
+            groups.push(ifo.miz_gid)
         }
     };
     if let Some((slot, _)) = requester
@@ -509,7 +509,7 @@ pub(crate) fn latest_player_mark(
         if ctx.db.player_in_unit(false, &id).as_ref() != Some(ucid) {
             continue;
         }
-        if best.map_or(true, |(t, _)| mk.time.0 >= t) {
+        if best.is_none_or(|(t, _)| mk.time.0 >= t) {
             best = Some((mk.time.0, Vector2::new(mk.pos.0.x, mk.pos.0.z)));
         }
     }
@@ -1060,18 +1060,18 @@ fn add_artillery_menu_for_jtac(
         let mut gp = Pager::new(mizgid, obj_root);
         // Fire just this battery -- the common case once guns are spread over
         // several objectives and only the ones nearby can reach the target.
-        if let Some(oid) = oid {
-            if guns.len() >= 2 {
-                let battery_fire = gp.submenu(&mc, "Fire Battery Together".into())?;
-                for (label, n) in SALVO {
-                    mc.add_command_for_group(
-                        mizgid,
-                        label.into(),
-                        Some(battery_fire.clone()),
-                        jtac_fire_battery_together,
-                        ArgQuad { fst: jtac, snd: n, trd: ucid, fth: oid },
-                    )?;
-                }
+        if let Some(oid) = oid
+            && guns.len() >= 2
+        {
+            let battery_fire = gp.submenu(&mc, "Fire Battery Together".into())?;
+            for (label, n) in SALVO {
+                mc.add_command_for_group(
+                    mizgid,
+                    label.into(),
+                    Some(battery_fire.clone()),
+                    jtac_fire_battery_together,
+                    ArgQuad { fst: jtac, snd: n, trd: ucid, fth: oid },
+                )?;
             }
         }
         for gid in guns {
@@ -1105,7 +1105,7 @@ fn add_alcm_menu_for_jtac(
         let all =
             mc.add_submenu_for_group(mizgid, "Fire All".into(), Some(root.clone()))?;
 
-        for (submenu, n) in vec![(quarter, 1), (half, 2), (all, 4)] {
+        for (submenu, n) in [(quarter, 1), (half, 2), (all, 4)] {
             mc.add_command_for_group(
                 mizgid,
                 "Fire One per target".into(),
@@ -1168,7 +1168,7 @@ pub(crate) fn call_bomber_in(
         &ctx.idx,
         &ctx.jtac,
         jtac.side(),
-        Some(arg.snd.clone()),
+        Some(arg.snd),
         ActionCmd {
             name: arg.trd,
             action: action.clone(),

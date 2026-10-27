@@ -218,7 +218,7 @@ impl ActionArgs {
                     found.push((mk.id, pos));
                 }
             }
-            if found.len() == 0 {
+            if found.is_empty() {
                 Err(anyhow!("key {key} was not found"))
             } else if found.len() > 1 {
                 Err(anyhow!(
@@ -244,7 +244,7 @@ impl ActionArgs {
                     found.push((mk.id, pos));
                 }
             }
-            if found.len() == 0 {
+            if found.is_empty() {
                 Err(anyhow!("key {key} was not found"))
             } else if found.len() > 1 {
                 Err(anyhow!(
@@ -505,7 +505,7 @@ impl ActionCmd {
                     && s[name.len()..]
                         .chars()
                         .next()
-                        .map_or(true, |c| c.is_whitespace() || c == ':' || c == '"')
+                        .is_none_or(|c| c.is_whitespace() || c == ':' || c == '"')
             })
             .max_by_key(|(name, _)| name.len());
         match found {
@@ -897,47 +897,30 @@ impl Db {
         let spawns_group = action_spawns_group(&cmd.action.kind);
         let gid = match cmd.args {
             ActionArgs::Awacs(args) => self
-                .awacs(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .awacs(perf, spctx, idx, side, ucid, name, cmd.action, args)
                 .context("calling awacs")?,
-            ActionArgs::AwacsWaypoint(args) => self
-                .move_awacs(spctx, side, ucid.clone(), args)
-                .context("moving awacs")?,
+            ActionArgs::AwacsWaypoint(args) => {
+                self.move_awacs(spctx, side, ucid, args).context("moving awacs")?
+            }
             ActionArgs::Strike(args) => self
-                .strike(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .strike(perf, spctx, idx, side, ucid, name, cmd.action, args)
                 .context("calling strike")?,
             ActionArgs::Bomber(args) => self
                 .bomber_strike(
-                    perf,
-                    jtacs,
-                    spctx,
-                    idx,
-                    side,
-                    ucid.clone(),
-                    name,
-                    cmd.action,
-                    args,
+                    perf, jtacs, spctx, idx, side, ucid, name, cmd.action, args,
                 )
                 .context("calling bomber strike")?,
             ActionArgs::CruiseMissileWaypoint(args) => self
-                .move_cruise_missile(spctx, side, ucid.clone(), args)
+                .move_cruise_missile(spctx, side, ucid, args)
                 .context("moving tanker")?,
             ActionArgs::CruiseMissileSpawn(args) => self
-                .cruise_missile(
-                    perf,
-                    spctx,
-                    idx,
-                    side,
-                    ucid.clone(),
-                    name,
-                    cmd.action,
-                    args,
-                )
+                .cruise_missile(perf, spctx, idx, side, ucid, name, cmd.action, args)
                 .context("calling cruise missile bomber")?,
             ActionArgs::FatCow(args) => {
                 self.call_ai_fat_cow(
                     lua,
                     side,
-                    ucid.clone(),
+                    ucid,
                     &name,
                     cost,
                     &args.cfg,
@@ -954,7 +937,7 @@ impl Db {
                     spctx,
                     idx,
                     side,
-                    ucid.clone(),
+                    ucid,
                     name,
                     cmd.action,
                     args,
@@ -962,36 +945,22 @@ impl Db {
                 )
                 .context("calling ai deployment")?,
             ActionArgs::Fighters(args) => self
-                .ai_fighters(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .ai_fighters(perf, spctx, idx, side, ucid, name, cmd.action, args)
                 .context("calling ai fighters")?,
             ActionArgs::FightersWaypoint(args) => self
-                .move_ai_fighters(spctx, side, ucid.clone(), args)
+                .move_ai_fighters(spctx, side, ucid, args)
                 .context("moving ai fighters")?,
-            ActionArgs::Attackers(args) => self.ai_attackers(
-                perf,
-                spctx,
-                idx,
-                side,
-                ucid.clone(),
-                name,
-                cmd.action,
-                args,
-            )?,
-            ActionArgs::AttackersWaypoint(args) => {
-                self.move_ai_attackers(spctx, side, ucid.clone(), args)?
+            ActionArgs::Attackers(args) => {
+                self.ai_attackers(perf, spctx, idx, side, ucid, name, cmd.action, args)?
             }
-            ActionArgs::Sead(args) => self.ai_sead(
-                perf,
-                spctx,
-                idx,
-                side,
-                ucid.clone(),
-                name,
-                cmd.action,
-                args,
-            )?,
+            ActionArgs::AttackersWaypoint(args) => {
+                self.move_ai_attackers(spctx, side, ucid, args)?
+            }
+            ActionArgs::Sead(args) => {
+                self.ai_sead(perf, spctx, idx, side, ucid, name, cmd.action, args)?
+            }
             ActionArgs::SeadWaypoint(args) => {
-                self.move_ai_sead(spctx, side, ucid.clone(), args)?
+                self.move_ai_sead(spctx, side, ucid, args)?
             }
             ActionArgs::Rtb(args) => {
                 self.rtb(spctx, side, args).context("rtbing unit")?
@@ -1009,48 +978,32 @@ impl Db {
                 .naval_cruise_missile_strike(lua, side, args)
                 .context("naval cruise missile strike")?,
             ActionArgs::Drone(args) => self
-                .drone(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .drone(perf, spctx, idx, side, ucid, name, cmd.action, args)
                 .context("calling drone")?,
-            ActionArgs::DroneWaypoint(args) => self
-                .move_drone(spctx, side, ucid.clone(), args)
-                .context("moving drone")?,
+            ActionArgs::DroneWaypoint(args) => {
+                self.move_drone(spctx, side, ucid, args).context("moving drone")?
+            }
             ActionArgs::LogisticsRepair(args) => self
-                .ai_logistics_repair(
-                    perf,
-                    spctx,
-                    idx,
-                    side,
-                    ucid.clone(),
-                    name,
-                    cmd.action,
-                    args,
-                )
+                .ai_logistics_repair(perf, spctx, idx, side, ucid, name, cmd.action, args)
                 .context("calling ai logi repair")?,
             ActionArgs::LogisticsTransfer(args) => self
                 .ai_logistics_transfer(
-                    perf,
-                    spctx,
-                    idx,
-                    side,
-                    ucid.clone(),
-                    name,
-                    cmd.action,
-                    args,
+                    perf, spctx, idx, side, ucid, name, cmd.action, args,
                 )
                 .context("calling ai log transfer")?,
             ActionArgs::Reinforce(args) => self
-                .reinforce(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .reinforce(perf, spctx, idx, side, ucid, name, cmd.action, args)
                 .context("calling reinforcements")?,
             ActionArgs::Nuke(args) => self.nuke(spctx, args).context("calling nuke")?,
             ActionArgs::Paratrooper(args) => self
-                .paratroops(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .paratroops(perf, spctx, idx, side, ucid, name, cmd.action, args)
                 .context("calling paratroops")?,
             ActionArgs::Tanker(args) => self
-                .tanker(perf, spctx, idx, side, ucid.clone(), name, cmd.action, args)
+                .tanker(perf, spctx, idx, side, ucid, name, cmd.action, args)
                 .context("calling tanker")?,
-            ActionArgs::TankerWaypoint(args) => self
-                .move_tanker(spctx, side, ucid.clone(), args)
-                .context("moving tanker")?,
+            ActionArgs::TankerWaypoint(args) => {
+                self.move_tanker(spctx, side, ucid, args).context("moving tanker")?
+            }
             ActionArgs::Move(args) => match &ucid {
                 None => bail!("ucid is required for move"),
                 Some(ucid) => self
@@ -1058,19 +1011,10 @@ impl Db {
                     .context("moving unit")?,
             },
             ActionArgs::Artillery(args) => self
-                .artillery_strike(lua, side, ucid.clone(), args)
+                .artillery_strike(lua, side, ucid, args)
                 .context("calling artillery fire support")?,
             ActionArgs::Recon(args) => self
-                .recon_flight(
-                    perf,
-                    spctx,
-                    idx,
-                    side,
-                    ucid.clone(),
-                    name,
-                    cmd.action,
-                    args,
-                )
+                .recon_flight(perf, spctx, idx, side, ucid, name, cmd.action, args)
                 .context("calling recon flight")?,
             ActionArgs::AddTask(args) => {
                 match args.at {
@@ -1078,7 +1022,7 @@ impl Db {
                         .add_task(
                             &args.cfg,
                             side,
-                            ucid.clone(),
+                            ucid,
                             args.kind.as_str(),
                             pos,
                             self.ephemeral.now(),
@@ -1088,7 +1032,7 @@ impl Db {
                         .add_objective_task(
                             &args.cfg,
                             side,
-                            ucid.clone(),
+                            ucid,
                             args.kind.as_str(),
                             oid,
                             self.ephemeral.now(),
@@ -1098,7 +1042,7 @@ impl Db {
                 None
             }
             ActionArgs::RemoveTask(args) => {
-                self.remove_task(&args.cfg, side, ucid.clone(), &args.task)
+                self.remove_task(&args.cfg, side, ucid, &args.task)
                     .context("removing task")?;
                 None
             }
@@ -1204,138 +1148,138 @@ impl Db {
         let spawn_pos = self.group_center(&gid)?;
         let group = group!(self, gid)?;
         let side = group.side;
-        if let DeployKind::Action { loc, player, spec, time, .. } = &group.origin {
-            if let SpawnLoc::InAir { pos, .. } = loc {
-                let args = WithPosAndGroup { pos: *pos, group: gid, cfg: () };
-                macro_rules! delete_expired {
-                    ($ai:expr) => {
-                        if let Some(d) = $ai.duration {
-                            if now - *time > Duration::hours(d as i64) {
-                                self.delete_group(&gid)?;
-                                return Ok(());
-                            }
+        if let DeployKind::Action { loc, player, spec, time, .. } = &group.origin
+            && let SpawnLoc::InAir { pos, .. } = loc
+        {
+            let args = WithPosAndGroup { pos: *pos, group: gid, cfg: () };
+            macro_rules! delete_expired {
+                ($ai:expr) => {
+                    if let Some(d) = $ai.duration {
+                        if now - *time > Duration::hours(d as i64) {
+                            self.delete_group(&gid)?;
+                            return Ok(());
                         }
-                    };
-                }
-                if let ActionKind::Awacs(ai) = &spec.kind {
-                    delete_expired!(ai.plane);
-                    let player = *player;
-                    let mission = self
-                        .awacs_mission(side, player, spawn_pos, args)
-                        .context("generating awacs mission")?;
-                    let group = group!(self, gid)?;
-                    self.ephemeral.spawn_group(
-                        perf,
-                        &self.persisted,
-                        idx,
-                        spctx,
-                        group,
-                        mission,
-                    )?;
-                    return Ok(());
-                }
-                if let ActionKind::Tanker(ai) = &spec.kind {
-                    delete_expired!(ai);
-                    let player = *player;
-                    let mission = self
-                        .tanker_mission(side, player, spawn_pos, args)
-                        .context("generate tanker mission")?;
-                    let group = group!(self, gid)?;
-                    self.ephemeral.spawn_group(
-                        perf,
-                        &self.persisted,
-                        idx,
-                        spctx,
-                        group,
-                        mission,
-                    )?;
-                    return Ok(());
-                }
-                if let ActionKind::CruiseMissileSpawn(ai) = &spec.kind {
-                    delete_expired!(ai);
-                    let player = *player;
-                    let mission = self
-                        .cruise_missile_mission(side, player, spawn_pos, args)
-                        .context("generate alcm mission")?;
-                    let group = group!(self, gid)?;
-                    self.ephemeral.spawn_group(
-                        perf,
-                        &self.persisted,
-                        idx,
-                        spctx,
-                        group,
-                        mission,
-                    )?;
-                    return Ok(());
-                }
-                if let ActionKind::Drone(ai) = &spec.kind {
-                    delete_expired!(ai.plane);
-                    let player = *player;
-                    let mission = self
-                        .drone_mission(side, player, spawn_pos, args)
-                        .context("generate drone mission")?;
-                    let group = group!(self, gid)?;
-                    self.ephemeral.spawn_group(
-                        perf,
-                        &self.persisted,
-                        idx,
-                        spctx,
-                        group,
-                        mission,
-                    )?;
-                    return Ok(());
-                }
-                if let ActionKind::Fighters(ai) = &spec.kind {
-                    delete_expired!(ai);
-                    let player = *player;
-                    let mission = self
-                        .ai_fighters_mission(side, player, spawn_pos, args)
-                        .context("generate fighters mission")?;
-                    let group = group!(self, gid)?;
-                    self.ephemeral.spawn_group(
-                        perf,
-                        &self.persisted,
-                        idx,
-                        spctx,
-                        group,
-                        mission,
-                    )?;
-                    return Ok(());
-                }
-                if let ActionKind::Attackers(ai) = &spec.kind {
-                    delete_expired!(ai);
-                    let player = *player;
-                    let mission = self
-                        .ai_attackers_mission(side, player, spawn_pos, args)
-                        .context("generate ai attackers mission")?;
-                    let group = group!(self, gid)?;
-                    self.ephemeral.spawn_group(
-                        perf,
-                        &self.persisted,
-                        idx,
-                        spctx,
-                        group,
-                        mission,
-                    )?;
-                    return Ok(());
-                }
-                if let ActionKind::Sead(ai) = &spec.kind {
-                    delete_expired!(ai);
-                    let player = *player;
-                    let mission = self
-                        .ai_sead_mission(side, player, spawn_pos, args)
-                        .context("generate ai sead mission")?;
-                    let group = group!(self, gid)?;
-                    self.ephemeral.spawn_group(
-                        perf,
-                        &self.persisted,
-                        idx,
-                        spctx,
-                        group,
-                        mission,
-                    )?;
-                    return Ok(());
-                }
+                    }
+                };
+            }
+            if let ActionKind::Awacs(ai) = &spec.kind {
+                delete_expired!(ai.plane);
+                let player = *player;
+                let mission = self
+                    .awacs_mission(side, player, spawn_pos, args)
+                    .context("generating awacs mission")?;
+                let group = group!(self, gid)?;
+                self.ephemeral.spawn_group(
+                    perf,
+                    &self.persisted,
+                    idx,
+                    spctx,
+                    group,
+                    mission,
+                )?;
+                return Ok(());
+            }
+            if let ActionKind::Tanker(ai) = &spec.kind {
+                delete_expired!(ai);
+                let player = *player;
+                let mission = self
+                    .tanker_mission(side, player, spawn_pos, args)
+                    .context("generate tanker mission")?;
+                let group = group!(self, gid)?;
+                self.ephemeral.spawn_group(
+                    perf,
+                    &self.persisted,
+                    idx,
+                    spctx,
+                    group,
+                    mission,
+                )?;
+                return Ok(());
+            }
+            if let ActionKind::CruiseMissileSpawn(ai) = &spec.kind {
+                delete_expired!(ai);
+                let player = *player;
+                let mission = self
+                    .cruise_missile_mission(side, player, spawn_pos, args)
+                    .context("generate alcm mission")?;
+                let group = group!(self, gid)?;
+                self.ephemeral.spawn_group(
+                    perf,
+                    &self.persisted,
+                    idx,
+                    spctx,
+                    group,
+                    mission,
+                )?;
+                return Ok(());
+            }
+            if let ActionKind::Drone(ai) = &spec.kind {
+                delete_expired!(ai.plane);
+                let player = *player;
+                let mission = self
+                    .drone_mission(side, player, spawn_pos, args)
+                    .context("generate drone mission")?;
+                let group = group!(self, gid)?;
+                self.ephemeral.spawn_group(
+                    perf,
+                    &self.persisted,
+                    idx,
+                    spctx,
+                    group,
+                    mission,
+                )?;
+                return Ok(());
+            }
+            if let ActionKind::Fighters(ai) = &spec.kind {
+                delete_expired!(ai);
+                let player = *player;
+                let mission = self
+                    .ai_fighters_mission(side, player, spawn_pos, args)
+                    .context("generate fighters mission")?;
+                let group = group!(self, gid)?;
+                self.ephemeral.spawn_group(
+                    perf,
+                    &self.persisted,
+                    idx,
+                    spctx,
+                    group,
+                    mission,
+                )?;
+                return Ok(());
+            }
+            if let ActionKind::Attackers(ai) = &spec.kind {
+                delete_expired!(ai);
+                let player = *player;
+                let mission = self
+                    .ai_attackers_mission(side, player, spawn_pos, args)
+                    .context("generate ai attackers mission")?;
+                let group = group!(self, gid)?;
+                self.ephemeral.spawn_group(
+                    perf,
+                    &self.persisted,
+                    idx,
+                    spctx,
+                    group,
+                    mission,
+                )?;
+                return Ok(());
+            }
+            if let ActionKind::Sead(ai) = &spec.kind {
+                delete_expired!(ai);
+                let player = *player;
+                let mission = self
+                    .ai_sead_mission(side, player, spawn_pos, args)
+                    .context("generate ai sead mission")?;
+                let group = group!(self, gid)?;
+                self.ephemeral.spawn_group(
+                    perf,
+                    &self.persisted,
+                    idx,
+                    spctx,
+                    group,
+                    mission,
+                )?;
+                return Ok(());
             }
         }
         // A reinforcement convoy still on the road picks the trip back up
@@ -1419,7 +1363,7 @@ impl Db {
                 _ => false,
             },
             || Task::ComboTask(vec![]),
-            || vec![],
+            std::vec::Vec::new,
         )
     }
 
@@ -1490,7 +1434,7 @@ impl Db {
         use crate::db::intel::IntelSource;
         let target_pos = args.pos;
         let scan_radius = args.cfg.scan_radius_m;
-        let ucid_for_report = ucid.clone();
+        let ucid_for_report = ucid;
         let gid = self.add_and_spawn_ai_air(
             perf,
             spctx,
@@ -1549,7 +1493,7 @@ impl Db {
             spawn_point,
             |k| matches!(k, ActionKind::Recon(_)),
             || Task::ComboTask(vec![]),
-            || vec![],
+            std::vec::Vec::new,
         )
     }
 
@@ -1944,7 +1888,7 @@ impl Db {
                 | DeployKind::Troop { player, moved_by, .. }
                     if ucid != player =>
                 {
-                    *moved_by = Some((ucid.clone(), penalty))
+                    *moved_by = Some((*ucid, penalty))
                 }
                 DeployKind::Action { .. }
                 | DeployKind::Crate { .. }
@@ -2113,17 +2057,17 @@ impl Db {
                     "[CARRIER_WAYPOINT] Objective owner: {:?}, all groups: {:?}",
                     obj.owner, obj.groups
                 );
-                if !template.is_empty() {
-                    if let Some(groups) = obj.groups.get(&obj.owner) {
-                        info!("[CARRIER_WAYPOINT] Carrier has groups: {:?}", groups);
-                        if groups.contains(&args.group) {
-                            info!(
-                                "[CARRIER_WAYPOINT] MATCH! Found carrier group for {:?}",
-                                args.group
-                            );
-                            carrier_info = Some((*id, template.clone()));
-                            break;
-                        }
+                if !template.is_empty()
+                    && let Some(groups) = obj.groups.get(&obj.owner)
+                {
+                    info!("[CARRIER_WAYPOINT] Carrier has groups: {:?}", groups);
+                    if groups.contains(&args.group) {
+                        info!(
+                            "[CARRIER_WAYPOINT] MATCH! Found carrier group for {:?}",
+                            args.group
+                        );
+                        carrier_info = Some((*id, template.clone()));
+                        break;
                     }
                 }
             }
@@ -2135,10 +2079,10 @@ impl Db {
                 template
             );
             // Update waypoint in database
-            if let Some(obj) = self.persisted.objectives.get_mut_cow(&obj_id) {
-                if let ObjectiveKind::CarrierGroup { waypoint, .. } = &mut obj.kind {
-                    *waypoint = Some(args.pos);
-                }
+            if let Some(obj) = self.persisted.objectives.get_mut_cow(&obj_id)
+                && let ObjectiveKind::CarrierGroup { waypoint, .. } = &mut obj.kind
+            {
+                *waypoint = Some(args.pos);
             }
 
             // Command carrier group to move
@@ -2189,34 +2133,29 @@ impl Db {
                                                 }
                                             })
                                         });
-                                    if let Some((uid, unit)) = uid_match {
-                                        match dcs_unit.object_id() {
-                                            Result::Ok(unit_oid) => {
-                                                if !self
-                                                    .ephemeral
-                                                    .object_id_by_uid
-                                                    .contains_key(&uid)
-                                                {
-                                                    info!(
-                                                        "[CARRIER_WAYPOINT] Registering carrier unit '{}' (uid={:?}) with object_id {:?}",
-                                                        unit.name, uid, unit_oid
-                                                    );
-                                                    self.ephemeral
-                                                        .uid_by_object_id
-                                                        .insert(unit_oid.clone(), uid);
-                                                    self.ephemeral
-                                                        .object_id_by_uid
-                                                        .insert(uid, unit_oid);
-                                                }
-                                                self.ephemeral
-                                                    .units_able_to_move
-                                                    .insert(uid);
-                                                self.ephemeral
-                                                    .units_potentially_close_to_enemies
-                                                    .insert(uid);
-                                            }
-                                            Result::Err(_) => {}
+                                    if let Some((uid, unit)) = uid_match
+                                        && let Result::Ok(unit_oid) = dcs_unit.object_id()
+                                    {
+                                        if !self
+                                            .ephemeral
+                                            .object_id_by_uid
+                                            .contains_key(&uid)
+                                        {
+                                            info!(
+                                                "[CARRIER_WAYPOINT] Registering carrier unit '{}' (uid={:?}) with object_id {:?}",
+                                                unit.name, uid, unit_oid
+                                            );
+                                            self.ephemeral
+                                                .uid_by_object_id
+                                                .insert(unit_oid.clone(), uid);
+                                            self.ephemeral
+                                                .object_id_by_uid
+                                                .insert(uid, unit_oid);
                                         }
+                                        self.ephemeral.units_able_to_move.insert(uid);
+                                        self.ephemeral
+                                            .units_potentially_close_to_enemies
+                                            .insert(uid);
                                     }
                                 }
                             }
@@ -2416,10 +2355,10 @@ impl Db {
 
         if available >= repair_cost {
             // Now mutate
-            if let Some(nb_mut) = self.persisted.objectives.get_mut_cow(&nb_id) {
-                if let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow(MATERIEL_ITEM) {
-                    inv.stored -= repair_cost;
-                }
+            if let Some(nb_mut) = self.persisted.objectives.get_mut_cow(&nb_id)
+                && let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow(MATERIEL_ITEM)
+            {
+                inv.stored -= repair_cost;
             }
             if let Some(cg_mut) = self.persisted.objectives.get_mut_cow(&args.oid) {
                 cg_mut.warehouse.damaged = false;
@@ -2479,10 +2418,10 @@ impl Db {
 
         if available >= respawn_cost {
             // Now mutate
-            if let Some(nb_mut) = self.persisted.objectives.get_mut_cow(&nb_id) {
-                if let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow(MATERIEL_ITEM) {
-                    inv.stored -= respawn_cost;
-                }
+            if let Some(nb_mut) = self.persisted.objectives.get_mut_cow(&nb_id)
+                && let Some(inv) = nb_mut.warehouse.equipment.get_mut_cow(MATERIEL_ITEM)
+            {
+                inv.stored -= respawn_cost;
             }
             if let Some(cg_mut) = self.persisted.objectives.get_mut_cow(&args.oid) {
                 cg_mut.health = 100;
@@ -2558,10 +2497,10 @@ impl Db {
                     .filter_map(|gid| self.persisted.groups.get(gid))
                     .map(|g| g.name.clone())
                     .collect();
-                if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &cg.kind {
-                    if !names.iter().any(|n| n == carrier_template) {
-                        names.push(carrier_template.clone());
-                    }
+                if let ObjectiveKind::CarrierGroup { carrier_template, .. } = &cg.kind
+                    && !names.iter().any(|n| n == carrier_template)
+                {
+                    names.push(carrier_template.clone());
                 }
                 names
             };
@@ -2591,15 +2530,15 @@ impl Db {
                 let now = self.ephemeral.now();
                 if let Some((before, at)) =
                     self.ephemeral.naval_strike_fired.get(&name).copied()
+                    && cruise >= before
+                    && now - at >= chrono::Duration::minutes(3)
                 {
-                    if cruise >= before && now - at >= chrono::Duration::minutes(3) {
-                        warn!(
-                            "Naval cruise missile strike: {name} was told to fire {} min ago and still has {cruise} cruise missiles -- its missiles don't engage land targets, leaving it out of naval strikes",
-                            (now - at).num_minutes()
-                        );
-                        self.ephemeral.naval_strike_fired.remove(&name);
-                        self.ephemeral.naval_no_land_attack.insert(name.clone());
-                    }
+                    warn!(
+                        "Naval cruise missile strike: {name} was told to fire {} min ago and still has {cruise} cruise missiles -- its missiles don't engage land targets, leaving it out of naval strikes",
+                        (now - at).num_minutes()
+                    );
+                    self.ephemeral.naval_strike_fired.remove(&name);
+                    self.ephemeral.naval_no_land_attack.insert(name.clone());
                 }
                 if self.ephemeral.naval_no_land_attack.contains(&name) {
                     continue;
@@ -3124,7 +3063,7 @@ impl Db {
         match &mut group.origin {
             DeployKind::Action { marks, rtb, spec, .. } => {
                 *rtb = Some(rtb_pos);
-                (*spec).kind = ActionKind::Rtb;
+                spec.kind = ActionKind::Rtb;
                 for id in marks.iter() {
                     self.ephemeral.msgs().delete_mark(*id);
                 }
@@ -3345,7 +3284,7 @@ impl Db {
                     let alive = g
                         .units
                         .into_iter()
-                        .any(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead));
+                        .any(|u| self.persisted.units.get(u).is_some_and(|u| !u.dead));
                     if !alive {
                         continue;
                     }
@@ -3353,7 +3292,7 @@ impl Db {
                         continue;
                     };
                     let d = (c - pos).norm();
-                    if d <= RADIUS && best.as_ref().map_or(true, |(bd, _, _)| d < *bd) {
+                    if d <= RADIUS && best.as_ref().is_none_or(|(bd, _, _)| d < *bd) {
                         best = Some((d, g.name.to_string(), c));
                     }
                 }
@@ -3624,7 +3563,7 @@ impl Db {
         let origin = DeployKind::Action {
             marks: FxHashSet::default(),
             loc: sloc.clone(),
-            player: ucid.clone(),
+            player: *ucid,
             name,
             spec: action,
             time: self.ephemeral.now(),
@@ -3875,7 +3814,7 @@ impl Db {
                                         enemy,
                                     );
                                     if old_dist < dist && dist - old_dist >= 500. {
-                                        *player = ucid.clone();
+                                        *player = ucid;
                                     }
                                 }
                                 *oldpos = args.pos;
@@ -4090,7 +4029,7 @@ impl Db {
                 _ => false,
             },
             move || init_task.clone(),
-            || vec![],
+            std::vec::Vec::new,
         )
     }
 
@@ -4327,7 +4266,7 @@ impl Db {
             .get(dep.as_str())
             .ok_or_else(|| anyhow!("no such deployable {dep} for {side}"))?
             .clone();
-        let (n, oldest) = self.number_deployed(side, &**dep)?;
+        let (n, oldest) = self.number_deployed(side, &dep)?;
         if n >= spec.limit as usize {
             match spec.limit_enforce {
                 LimitEnforceTyp::DenyCrate => {
@@ -4425,7 +4364,7 @@ impl Db {
             group_heading: 0.,
         };
         let dk = DeployKind::Troop {
-            player: ucid.clone(),
+            player: ucid,
             moved_by: None,
             spec: troop_cfg.clone(),
             origin: Some(origin),
@@ -4455,7 +4394,7 @@ impl Db {
             idx,
             side,
             spawnpos,
-            &*troop_cfg.template,
+            &troop_cfg.template,
             dk,
             BitFlags::empty(),
             None,
@@ -4532,151 +4471,147 @@ impl Db {
                     | ActionKind::Drone(DroneCfg { plane: ai, .. })
                     | ActionKind::Recon(ReconCfg { plane: ai, .. })
                     | ActionKind::Tanker(ai) => {
-                        if let Some(d) = ai.duration {
-                            if now - *time > Duration::hours(d as i64) {
-                                to_delete.push(*gid);
-                            }
+                        if let Some(d) = ai.duration
+                            && now - *time > Duration::hours(d as i64)
+                        {
+                            to_delete.push(*gid);
                         }
                     }
                     ActionKind::Sead(ai) => {
                         // Check duration first
-                        if let Some(d) = ai.duration {
-                            if now - *time > Duration::hours(d as i64) {
-                                to_delete.push(*gid);
-                                continue;
-                            }
+                        if let Some(d) = ai.duration
+                            && now - *time > Duration::hours(d as i64)
+                        {
+                            to_delete.push(*gid);
+                            continue;
                         }
                         // SEAD groups now require manual RTB - no automatic RTB based on ammunition
                     }
                     // DCS does a strike's damage; the flight only has to
                     // get there and come home.
                     ActionKind::Strike(_) => {
-                        if let Some(target) = *destination {
-                            if at_dest!(group, target, 10_000.) {
-                                destination.take();
-                            }
+                        if let Some(target) = *destination
+                            && at_dest!(group, target, 10_000.)
+                        {
+                            destination.take();
                         }
-                        if destination.is_none() {
-                            if let Some(target) = *rtb {
-                                if at_dest!(group, target, 10_000.) {
-                                    to_delete.push(*gid);
-                                }
-                            }
+                        if destination.is_none()
+                            && let Some(target) = *rtb
+                            && at_dest!(group, target, 10_000.)
+                        {
+                            to_delete.push(*gid);
                         }
                     }
                     ActionKind::Bomber(b) => {
-                        if let Some(target) = *destination {
-                            if at_dest!(group, target, 10_000.) {
-                                destination.take();
-                                to_bomb.push((b.clone(), target, group.side));
-                            }
+                        if let Some(target) = *destination
+                            && at_dest!(group, target, 10_000.)
+                        {
+                            destination.take();
+                            to_bomb.push((b.clone(), target, group.side));
                         }
-                        if destination.is_none() {
-                            if let Some(target) = *rtb {
-                                if at_dest!(group, target, 10_000.) {
-                                    to_delete.push(*gid);
-                                }
-                            }
+                        if destination.is_none()
+                            && let Some(target) = *rtb
+                            && at_dest!(group, target, 10_000.)
+                        {
+                            to_delete.push(*gid);
                         }
                     }
                     ActionKind::Rtb => {
-                        if let Some(target) = *rtb {
-                            if at_dest!(group, target, 10_000.) {
-                                to_delete.push(*gid);
-                                // Back to whoever paid for the flight. `player`
-                                // is the responsible party, which is whoever
-                                // last gave it a waypoint -- the refund used to
-                                // go to them, and straight into their points
-                                // without a stat or a reason.
-                                let refund = (spec.cost as f64 * 0.25).ceil() as i32;
-                                // paid_by with 0 paid: the treasury bought it
-                                let payer = match *paid_by {
-                                    Some((u, paid)) => (paid > 0).then_some(u),
-                                    None => *player,
-                                };
-                                if let Some(ucid) = payer
-                                    && refund > 0
-                                {
-                                    to_refund.push((ucid, refund, group.name.clone()));
-                                }
+                        if let Some(target) = *rtb
+                            && at_dest!(group, target, 10_000.)
+                        {
+                            to_delete.push(*gid);
+                            // Back to whoever paid for the flight. `player`
+                            // is the responsible party, which is whoever
+                            // last gave it a waypoint -- the refund used to
+                            // go to them, and straight into their points
+                            // without a stat or a reason.
+                            let refund = (spec.cost as f64 * 0.25).ceil() as i32;
+                            // paid_by with 0 paid: the treasury bought it
+                            let payer = match *paid_by {
+                                Some((u, paid)) => (paid > 0).then_some(u),
+                                None => *player,
+                            };
+                            if let Some(ucid) = payer
+                                && refund > 0
+                            {
+                                to_refund.push((ucid, refund, group.name.clone()));
                             }
                         }
                     }
                     ActionKind::LogisticsRepair(_) => {
-                        if let Some(target) = *destination {
-                            if at_dest!(group, target, 800.) {
-                                destination.take();
-                                to_repair.push((target, *player, group.side));
+                        if let Some(target) = *destination
+                            && at_dest!(group, target, 800.)
+                        {
+                            destination.take();
+                            to_repair.push((target, *player, group.side));
+                            to_delete.push(group.id);
+                        }
+                    }
+                    ActionKind::LogisticsTransfer(_) => {
+                        if let Some(target) = *destination
+                            && at_dest!(group, target, 800.)
+                        {
+                            destination.take();
+                            if let Some(rtb) = *rtb {
+                                to_transfer.push((rtb, target, *player, group.side));
                                 to_delete.push(group.id);
                             }
                         }
                     }
-                    ActionKind::LogisticsTransfer(_) => {
-                        if let Some(target) = *destination {
-                            if at_dest!(group, target, 800.) {
-                                destination.take();
-                                if let Some(rtb) = *rtb {
-                                    to_transfer.push((rtb, target, *player, group.side));
-                                    to_delete.push(group.id);
-                                }
-                            }
-                        }
-                    }
                     ActionKind::Paratrooper(t) => {
-                        if let Some(target) = *destination {
-                            if at_dest!(group, target, 800.) {
-                                destination.take();
-                                match (*player, *origin) {
-                                    (Some(ucid), Some(origin)) => to_paratroop.push((
-                                        target,
-                                        t.name.clone(),
-                                        group.side,
-                                        ucid,
-                                        origin,
-                                        cost_fraction,
-                                    )),
-                                    // Nothing can deploy these troops. Say so
-                                    // once and let the flight go home, instead
-                                    // of failing the whole pass every tick.
-                                    (ucid, origin) => error!(
-                                        "advance_actions: paratroop group {gid:?} can't drop, \
+                        if let Some(target) = *destination
+                            && at_dest!(group, target, 800.)
+                        {
+                            destination.take();
+                            match (*player, *origin) {
+                                (Some(ucid), Some(origin)) => to_paratroop.push((
+                                    target,
+                                    t.name.clone(),
+                                    group.side,
+                                    ucid,
+                                    origin,
+                                    cost_fraction,
+                                )),
+                                // Nothing can deploy these troops. Say so
+                                // once and let the flight go home, instead
+                                // of failing the whole pass every tick.
+                                (ucid, origin) => error!(
+                                    "advance_actions: paratroop group {gid:?} can't drop, \
                                          needs a ucid ({ucid:?}) and an origin ({origin:?})"
-                                    ),
-                                }
+                                ),
                             }
                         }
-                        if destination.is_none() {
-                            if let Some(target) = *rtb {
-                                if at_dest!(group, target, 800.) {
-                                    to_delete.push(*gid);
-                                }
-                            }
+                        if destination.is_none()
+                            && let Some(target) = *rtb
+                            && at_dest!(group, target, 800.)
+                        {
+                            to_delete.push(*gid);
                         }
                     }
                     ActionKind::Deployable(d) => {
-                        if let Some(target) = *destination {
-                            if at_dest!(group, target, 800.) {
-                                destination.take();
-                                match *player {
-                                    Some(ucid) => to_deploy.push((
-                                        target,
-                                        d.name.clone(),
-                                        group.side,
-                                        ucid,
-                                        cost_fraction,
-                                    )),
-                                    None => error!(
-                                        "advance_actions: deployable group {gid:?} can't deploy without a ucid"
-                                    ),
-                                }
+                        if let Some(target) = *destination
+                            && at_dest!(group, target, 800.)
+                        {
+                            destination.take();
+                            match *player {
+                                Some(ucid) => to_deploy.push((
+                                    target,
+                                    d.name.clone(),
+                                    group.side,
+                                    ucid,
+                                    cost_fraction,
+                                )),
+                                None => error!(
+                                    "advance_actions: deployable group {gid:?} can't deploy without a ucid"
+                                ),
                             }
                         }
-                        if destination.is_none() {
-                            if let Some(target) = *rtb {
-                                if at_dest!(group, target, 800.) {
-                                    to_delete.push(*gid);
-                                }
-                            }
+                        if destination.is_none()
+                            && let Some(target) = *rtb
+                            && at_dest!(group, target, 800.)
+                        {
+                            to_delete.push(*gid);
                         }
                     }
                     ActionKind::Reinforce(_) => reinforcements.push(*gid),
@@ -4798,7 +4733,7 @@ impl Db {
                 dst,
                 troop,
                 side,
-                ucid.clone(),
+                ucid,
                 origin,
                 cost_fraction,
             ) {
@@ -4811,15 +4746,9 @@ impl Db {
             }
         }
         for (dst, dep, side, ucid, cost_fraction) in to_deploy {
-            if let Err(e) = self.deployable_to_point(
-                lua,
-                idx,
-                dst,
-                dep,
-                side,
-                ucid.clone(),
-                cost_fraction,
-            ) {
+            if let Err(e) =
+                self.deployable_to_point(lua, idx, dst, dep, side, ucid, cost_fraction)
+            {
                 self.ephemeral.panel_to_player(
                     &self.persisted,
                     10,
@@ -4880,7 +4809,7 @@ impl Db {
         }
         let owner = match &group.origin {
             DeployKind::Deployed { player, .. } | DeployKind::Troop { player, .. } => {
-                player.clone()
+                *player
             }
             _ => bail!("only deployed units and troops can be moved"),
         };
@@ -4910,7 +4839,7 @@ impl Db {
                             .cfg
                             .artillery
                             .as_ref()
-                            .map_or(false, |c| c.units.contains_key(u.typ.0.as_str())),
+                            .is_some_and(|c| c.units.contains_key(u.typ.0.as_str())),
                     )
             })
             // (max, min): the reach is the first.
@@ -4959,13 +4888,13 @@ impl Db {
         }
         let now = self.ephemeral.now();
         let cooldown = Duration::seconds(cfg.cooldown_secs as i64);
-        if let Some(t) = self.ephemeral.arty_last_fired.get(&gid) {
-            if now - *t < cooldown {
-                bail!(
-                    "{name} is reloading: ready in {} s",
-                    (cooldown - (now - *t)).num_seconds().max(1)
-                )
-            }
+        if let Some(t) = self.ephemeral.arty_last_fired.get(&gid)
+            && now - *t < cooldown
+        {
+            bail!(
+                "{name} is reloading: ready in {} s",
+                (cooldown - (now - *t)).num_seconds().max(1)
+            )
         }
         let land = Land::singleton(lua)?;
         let alt = land.get_height(LuaVec2(target)).unwrap_or(0.);

@@ -58,7 +58,7 @@ pub(crate) fn view(
         return v;
     }
     v.enabled = true;
-    v.can_command = viewer.map_or(false, |u| super::may_command(ctx, &hq, Some(u)));
+    v.can_command = viewer.is_some_and(|u| super::may_command(ctx, &hq, Some(u)));
     let pic = picture::build(ctx, &hq, side, now);
     let objref = |id: &ObjectiveId| {
         pic.get(id).map(|o| ObjRef {

@@ -391,7 +391,7 @@ pub(crate) fn prune_cfg_backups(cfg: &std::path::Path, keep: usize) {
             p.file_name()
                 .and_then(|n| n.to_str())
                 .and_then(|n| n.strip_prefix(&prefix))
-                .map_or(false, |ts| {
+                .is_some_and(|ts| {
                     ts.len() == 14 && ts.bytes().all(|b| b.is_ascii_digit())
                 })
         })

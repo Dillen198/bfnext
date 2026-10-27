@@ -348,7 +348,7 @@ impl Db {
         self.persisted
             .deployed
             .into_iter()
-            .chain(self.persisted.troops.into_iter())
+            .chain(&self.persisted.troops)
             .filter_map(|gid| self.persisted.groups.get(gid))
     }
 
@@ -356,7 +356,7 @@ impl Db {
         self.persisted
             .actions
             .into_iter()
-            .chain(self.persisted.troops.into_iter())
+            .chain(&self.persisted.troops)
             .filter_map(|gid| self.persisted.groups.get(gid))
     }
 
@@ -426,8 +426,7 @@ impl Db {
             DeployKind::Objective { .. } => None,
             DeployKind::Deployed { .. } if in_formation => None,
             DeployKind::Action { name, spec: _, destination, player, marks, .. } => {
-                let pname =
-                    player.as_ref().map(|p| pname(p)).unwrap_or(String::from("Server"));
+                let pname = player.as_ref().map(pname).unwrap_or(String::from("Server"));
                 let pos_msg = format_compact!("{name} {gid} deployed by {pname}");
                 let pos_mark = self.ephemeral.msgs.mark_to_side(
                     group.side,
@@ -489,14 +488,7 @@ impl Db {
                     msg,
                 ))
             }
-            DeployKind::Troop {
-                player,
-                spec,
-                moved_by,
-                origin: _,
-                cost_fraction: _,
-                ..
-            } => {
+            DeployKind::Troop { player, spec, moved_by, .. } => {
                 let name = pname(player);
                 let resp = moved_by
                     .as_ref()
@@ -960,7 +952,7 @@ impl Db {
                     let offset_magnitude = 20.
                         - distance(pos, f64::min, positions.iter().map(|p| &p.position));
                     for p in positions.iter_mut() {
-                        p.position = p.position + offset_magnitude * offset_direction;
+                        p.position += offset_magnitude * offset_direction;
                         p.heading = change_heading(p.heading, group_heading);
                         p.altitude = None;
                     }
@@ -1075,7 +1067,7 @@ impl Db {
         let template =
             spctx.get_template_ref(idx, GroupKind::Any, side, template_name.as_str())?;
         let mut gpos =
-            compute_unit_positions(&spctx, idx, location.clone(), &template.group)?;
+            compute_unit_positions(spctx, idx, location.clone(), &template.group)?;
         let kind = GroupCategory::from_kind(template.category);
         let gid = GroupId::new();
         // naval spawn points need to be pre created in the miz, so they must be
@@ -1128,7 +1120,7 @@ impl Db {
                 .flatten()
                 .any(|tmpl| tmpl == &template_name);
                 if is_crate_template {
-                    () // it's ok to spawn crates on ships
+                    // it's ok to spawn crates on ships
                 } else if spawned.tags.contains(UnitTag::Boat) {
                     check_land(&land, &gpos.positions, &gpos.by_type)
                         .with_context(|| format_compact!("placing group {group_name}"))?
@@ -1347,7 +1339,7 @@ impl Db {
         delay: Option<DateTime<Utc>>,
     ) -> Result<GroupId> {
         let gid = self.add_group(
-            &spctx,
+            spctx,
             idx,
             side,
             location,
@@ -2044,82 +2036,75 @@ impl Db {
                 if let Some(oid) = self.persisted.objectives_by_group.get(&gid).copied() {
                     self.update_objective_status(&oid, now)?;
                     self.ephemeral.units_potentially_close_to_enemies.remove(&uid);
-                    if health == 0 {
-                        if let Some((id, _)) = self.ephemeral.group_marks.remove(&gid) {
-                            self.ephemeral.msgs.delete_mark(id);
-                        }
+                    if health == 0
+                        && let Some((id, _)) = self.ephemeral.group_marks.remove(&gid)
+                    {
+                        self.ephemeral.msgs.delete_mark(id);
                     }
                 }
-                if self.is_player_deployed(&gid)
+                if (self.is_player_deployed(&gid)
                     || self.persisted.troops.contains(&gid)
                     || self.persisted.crates.contains(&gid)
-                    || self.persisted.dismounts.contains(&gid)
+                    || self.persisted.dismounts.contains(&gid))
+                    && health == 0
                 {
-                    if health == 0 {
-                        match &group!(self, gid)?.origin {
-                            DeployKind::Troop {
-                                player,
-                                moved_by: Some((ucid, p)),
-                                ..
-                            }
-                            | DeployKind::Deployed {
-                                player,
-                                moved_by: Some((ucid, p)),
-                                ..
-                            } => {
-                                let owner = self
-                                    .persisted
-                                    .players
-                                    .get(player)
-                                    .map(|p| p.name.clone())
-                                    .unwrap_or_else(|| String::from("unknown"));
-                                let ucid = ucid.clone();
-                                let p = -(*p as i32);
-                                let msg = format_compact!(
-                                    "for the death of {gid} which was deployed by {owner} and moved by you"
-                                );
-                                self.adjust_points(&ucid, p, &msg)
-                            }
-                            DeployKind::Troop { .. }
-                            | DeployKind::Deployed { .. }
-                            | DeployKind::Action { .. }
-                            | DeployKind::Crate { .. }
-                            | DeployKind::Objective { .. }
-                            | DeployKind::ObjectiveDeprecated
-                            | DeployKind::DownedPilot { .. }
-                            | DeployKind::Dismount { .. } => (),
+                    match &group!(self, gid)?.origin {
+                        DeployKind::Troop {
+                            player, moved_by: Some((ucid, p)), ..
                         }
-                        self.delete_group(&gid)?
+                        | DeployKind::Deployed {
+                            player,
+                            moved_by: Some((ucid, p)),
+                            ..
+                        } => {
+                            let owner = self
+                                .persisted
+                                .players
+                                .get(player)
+                                .map(|p| p.name.clone())
+                                .unwrap_or_else(|| String::from("unknown"));
+                            let ucid = *ucid;
+                            let p = -(*p as i32);
+                            let msg = format_compact!(
+                                "for the death of {gid} which was deployed by {owner} and moved by you"
+                            );
+                            self.adjust_points(&ucid, p, &msg)
+                        }
+                        DeployKind::Troop { .. }
+                        | DeployKind::Deployed { .. }
+                        | DeployKind::Action { .. }
+                        | DeployKind::Crate { .. }
+                        | DeployKind::Objective { .. }
+                        | DeployKind::ObjectiveDeprecated
+                        | DeployKind::DownedPilot { .. }
+                        | DeployKind::Dismount { .. } => (),
                     }
+                    self.delete_group(&gid)?
                 }
                 if self.persisted.downed_pilots.contains(&gid) && health == 0 {
                     self.delete_group(&gid)?
                 }
-                if self.persisted.actions.contains(&gid) {
-                    if let DeployKind::Action { player, spec, .. } =
+                if self.persisted.actions.contains(&gid)
+                    && let DeployKind::Action { player, spec, .. } =
                         &group!(self, gid)?.origin
+                {
+                    if self.group_health(&gid)?.0 == 0
+                        && matches!(spec.kind, ActionKind::Reinforce(_))
                     {
-                        if self.group_health(&gid)?.0 == 0
-                            && matches!(spec.kind, ActionKind::Reinforce(_))
+                        // Says so to both sides and charges its own
+                        // penalty (reinforce.rs).
+                        self.reinforcements_lost(gid, now);
+                    } else if self.group_health(&gid)?.0 == 0 {
+                        if let Some((penalty, ucid)) =
+                            spec.penalty.and_then(|p| player.as_ref().map(|pl| (p, *pl)))
                         {
-                            // Says so to both sides and charges its own
-                            // penalty (reinforce.rs).
-                            self.reinforcements_lost(gid, now);
-                        } else if self.group_health(&gid)?.0 == 0 {
-                            if let Some((penalty, ucid)) = spec
-                                .penalty
-                                .and_then(|p| player.as_ref().map(|pl| (p, pl.clone())))
-                            {
-                                self.adjust_points(
-                                    &ucid,
-                                    -(penalty as i32),
-                                    &format_compact!(
-                                        "for the loss of action group {gid}"
-                                    ),
-                                )
-                            }
-                            self.delete_group(&gid)?
+                            self.adjust_points(
+                                &ucid,
+                                -(penalty as i32),
+                                &format_compact!("for the loss of action group {gid}"),
+                            )
                         }
+                        self.delete_group(&gid)?
                     }
                 }
             }
@@ -2144,13 +2129,12 @@ impl Db {
                     {
                         self.update_objective_status(&oid, now)?;
                     }
-                    if self.is_player_deployed(&gid)
+                    if (self.is_player_deployed(&gid)
                         || self.persisted.troops.contains(&gid)
-                        || self.persisted.crates.contains(&gid)
+                        || self.persisted.crates.contains(&gid))
+                        && self.group_health(&gid)?.0 == 0
                     {
-                        if self.group_health(&gid)?.0 == 0 {
-                            self.delete_group(&gid)?
-                        }
+                        self.delete_group(&gid)?
                     }
                 }
             }
@@ -2201,8 +2185,8 @@ impl Db {
         pos: Vector2,
     ) -> SmallVec<[GroupId; 8]> {
         let range2 = (self.ephemeral.cfg.artillery_mission_range as f64).powi(2);
-        let artillery = self
-            .deployed()
+
+        self.deployed()
             .filter_map(|group| {
                 // Tube/rocket artillery is tagged Artillery; ballistic/cruise TELs
                 // (Scud, Iskander, Silkworm, ...) are tagged Launcher. Accept both,
@@ -2221,8 +2205,7 @@ impl Db {
                     None
                 }
             })
-            .collect::<SmallVec<[GroupId; 8]>>();
-        artillery
+            .collect::<SmallVec<[GroupId; 8]>>()
     }
 
     pub fn alcm_near_point(
@@ -2232,8 +2215,8 @@ impl Db {
         pos: Vector2,
     ) -> SmallVec<[(GroupId, i32); 8]> {
         let range2 = (self.ephemeral.cfg.alcm_mission_range as f64).powi(2);
-        let alcm = self
-            .actions()
+
+        self.actions()
             .filter_map(|group| {
                 if group.tags.contains(UnitTag::ALCM) && group.side == side {
                     let center = self.group_center(&group.id).ok()?;
@@ -2244,18 +2227,18 @@ impl Db {
                     {
                         let mut unit: Option<Unit> = None;
                         let mut ammo = 0;
-                        if let Some(uid) = group.units.into_iter().next() {
-                            if let Some(id) = self.ephemeral.object_id_by_uid.get(&uid) {
-                                let instance = match unit.take() {
-                                    Some(unit) => unit.change_instance(id),
-                                    None => Unit::get_instance(lua, id),
-                                };
-                                ammo = (|| -> anyhow::Result<i32> {
-                                    Ok(instance?.get_ammo()?.first()?.count()? as i32)
-                                })()
-                                .unwrap_or(0);
+                        if let Some(uid) = group.units.into_iter().next()
+                            && let Some(id) = self.ephemeral.object_id_by_uid.get(uid)
+                        {
+                            let instance = match unit.take() {
+                                Some(unit) => unit.change_instance(id),
+                                None => Unit::get_instance(lua, id),
                             };
-                        }
+                            ammo = (|| -> anyhow::Result<i32> {
+                                Ok(instance?.get_ammo()?.first()?.count()? as i32)
+                            })()
+                            .unwrap_or(0);
+                        };
 
                         Some((group.id, ammo))
                     } else {
@@ -2265,8 +2248,7 @@ impl Db {
                     None
                 }
             })
-            .collect::<SmallVec<[(GroupId, i32); 8]>>();
-        alcm
+            .collect::<SmallVec<[(GroupId, i32); 8]>>()
     }
 
     pub fn update_unit_positions_incremental(
@@ -2305,7 +2287,7 @@ impl Db {
         let mut dead: Vec<DcsOid<ClassUnit>> = vec![];
         let mut unknown: SmallVec<[UnitId; 8]> = smallvec![];
         for uid in units {
-            let id = match self.ephemeral.object_id_by_uid.get(&uid) {
+            let id = match self.ephemeral.object_id_by_uid.get(uid) {
                 Some(id) => id,
                 None => {
                     // Not in DCS right now (despawned with its base, or not

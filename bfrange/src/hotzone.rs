@@ -549,13 +549,13 @@ impl HotZones {
                             );
                         }
                     }
-                } else if let Some(v) = v {
-                    if v.zone == zi && d > radius * 1.1 {
-                        let since = *v.outside_since.get_or_insert(now);
-                        if now - since > 60. {
-                            finished
-                                .push((f.unit_name.clone(), HotZoneOutcome::Egressed));
-                        }
+                } else if let Some(v) = v
+                    && v.zone == zi
+                    && d > radius * 1.1
+                {
+                    let since = *v.outside_since.get_or_insert(now);
+                    if now - since > 60. {
+                        finished.push((f.unit_name.clone(), HotZoneOutcome::Egressed));
                     }
                 }
             }
@@ -727,18 +727,19 @@ impl HotZones {
             v.shots += 1;
             return;
         }
-        if missile && self.is_zone_unit(shooter_unit) {
-            if let Some(v) = target.and_then(|t| self.visits.get_mut(t)) {
-                v.missiles_at += 1;
-            }
+        if missile
+            && self.is_zone_unit(shooter_unit)
+            && let Some(v) = target.and_then(|t| self.visits.get_mut(t))
+        {
+            v.missiles_at += 1;
         }
     }
 
     pub fn trainer_kill(&mut self, k: &TrainerKill) {
-        if self.is_zone_unit(&k.shooter_unit) {
-            if let Some(v) = self.visits.get_mut(&k.target_unit) {
-                v.trainer_deaths += 1;
-            }
+        if self.is_zone_unit(&k.shooter_unit)
+            && let Some(v) = self.visits.get_mut(&k.target_unit)
+        {
+            v.trainer_deaths += 1;
         }
     }
 
@@ -797,11 +798,11 @@ impl HotZones {
                 let mut n = 0;
                 let mut lead: Option<(V3, V3)> = None;
                 for i in 1..=4 {
-                    if let Ok(u) = Unit::get_by_name(lua, &format!("{}-{i}", fl.group)) {
-                        if let (Ok(p), Ok(v)) = (u.get_point(), u.get_velocity()) {
-                            n += 1;
-                            lead.get_or_insert((p.0, v.0));
-                        }
+                    if let Ok(u) = Unit::get_by_name(lua, &format!("{}-{i}", fl.group))
+                        && let (Ok(p), Ok(v)) = (u.get_point(), u.get_velocity())
+                    {
+                        n += 1;
+                        lead.get_or_insert((p.0, v.0));
                     }
                 }
                 if let Some((p, v)) = lead {

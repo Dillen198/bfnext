@@ -124,9 +124,9 @@ pub(crate) fn apply(
     }
     let cooldown = Duration::seconds(cfg.player_order_cooldown_secs as i64);
     let cooling =
-        ctx.groundwar.last_order.get(&ucid).map_or(false, |t| now - *t < cooldown);
+        ctx.groundwar.last_order.get(&ucid).is_some_and(|t| now - *t < cooldown);
     let mine = |ctx: &Context, id: FormationId| {
-        ctx.db.formation(id).map_or(false, |f| f.side == side)
+        ctx.db.formation(id).is_some_and(|f| f.side == side)
     };
     match kind {
         CmdKind::Status => Err("status is not an order".into()),
@@ -306,7 +306,7 @@ fn frontline(ctx: &mut Context, cfg: &GroundWarCfg, now: DateTime<Utc>) {
     let gw = &mut ctx.groundwar;
     let due = gw
         .frontline_drawn
-        .map_or(true, |t| now - t >= Duration::seconds(cfg.frontline_redraw_secs as i64));
+        .is_none_or(|t| now - t >= Duration::seconds(cfg.frontline_redraw_secs as i64));
     if hash == gw.frontline_hash || !due {
         return;
     }
@@ -347,7 +347,7 @@ pub(crate) fn tick(
     }
     if let Some(ai_cfg) = cfg.ai.as_ref() {
         let every = Duration::seconds(ai_cfg.think_secs.max(30) as i64);
-        if ctx.groundwar.last_think.map_or(true, |t| now - t >= every) {
+        if ctx.groundwar.last_think.is_none_or(|t| now - t >= every) {
             ctx.groundwar.last_think = Some(now);
             ai::think(lua, ctx, &cfg, ai_cfg, now);
         }

@@ -113,9 +113,8 @@ impl Db {
         }
         let we = &mut self.persisted.war_effort;
         let before = (we.tier(Side::Blue), we.tier(Side::Red));
-        let stalemate = we
-            .last_capture
-            .map_or(false, |t| now - t >= Duration::hours(STALEMATE_HOURS));
+        let stalemate =
+            we.last_capture.is_some_and(|t| now - t >= Duration::hours(STALEMATE_HOURS));
         let step = CAPTURE_STEP * if stalemate { 2. } else { 1. };
         we.value = match captor {
             Side::Blue => we.value + step,

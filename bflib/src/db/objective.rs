@@ -202,7 +202,7 @@ pub fn is_logi_family_template(name: &str) -> bool {
     if matches!(ObjGroupClass::from(name), ObjGroupClass::Logi) {
         return true;
     }
-    let stem = name.trim_start_matches(|c| c == 'B' || c == 'R' || c == 'N');
+    let stem = name.trim_start_matches(['B', 'R', 'N']);
     stem.starts_with("DEPOT") || stem.starts_with("FUEL")
 }
 
@@ -587,7 +587,7 @@ impl Objective {
             | ObjectiveKind::NavalBase
             | ObjectiveKind::CarrierGroup { .. }
             | ObjectiveKind::Factory { .. }
-            | ObjectiveKind::SpecialSamSite { .. }
+            | ObjectiveKind::SpecialSamSite
             | ObjectiveKind::CommandCenter => false,
         }
     }
@@ -612,17 +612,17 @@ impl Objective {
             | ObjectiveKind::NavalBase
             | ObjectiveKind::CarrierGroup { .. }
             | ObjectiveKind::Factory { .. }
-            | ObjectiveKind::SpecialSamSite { .. }
+            | ObjectiveKind::SpecialSamSite
             | ObjectiveKind::CommandCenter => false,
         }
     }
 
     pub fn get_equipment(&self, name: &str) -> Inventory {
-        self.warehouse.equipment.get(name).map(|i| *i).unwrap_or_default()
+        self.warehouse.equipment.get(name).copied().unwrap_or_default()
     }
 
     pub fn get_liquids(&self, name: &LiquidType) -> Inventory {
-        self.warehouse.liquids.get(name).map(|i| *i).unwrap_or_default()
+        self.warehouse.liquids.get(name).copied().unwrap_or_default()
     }
 
     pub fn pos(&self) -> Vector2 {
@@ -825,14 +825,13 @@ impl Db {
                         let unit = unit!(self, uid)?;
 
                         // Check if this is a supply ship (for carrier groups)
-                        if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
-                            if group.name.contains("SUPPLY")
-                                || unit.name.contains("SUPPLY")
-                            {
-                                has_supply_ship = true;
-                                if !unit.dead {
-                                    supply_ship_alive = true;
-                                }
+                        if let ObjectiveKind::CarrierGroup { .. } = &obj.kind
+                            && (group.name.contains("SUPPLY")
+                                || unit.name.contains("SUPPLY"))
+                        {
+                            has_supply_ship = true;
+                            if !unit.dead {
+                                supply_ship_alive = true;
                             }
                         }
 
@@ -890,10 +889,11 @@ impl Db {
                 };
 
                 // For carrier groups with supply ships, logi becomes 0 if supply ship is dead
-                if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
-                    if has_supply_ship && !supply_ship_alive {
-                        logi = 0;
-                    }
+                if let ObjectiveKind::CarrierGroup { .. } = &obj.kind
+                    && has_supply_ship
+                    && !supply_ship_alive
+                {
+                    logi = 0;
                 }
 
                 Ok((health, logi, infantry, total))
@@ -1096,7 +1096,7 @@ impl Db {
                             .group
                             .units()?
                             .into_iter()
-                            .map(|u| Ok(u?.pos()?))
+                            .map(|u| u?.pos())
                             .collect::<Result<SmallVec<[Vector2; 8]>>>()?,
                     );
                     let at = SpawnLoc::AtPosExact {
@@ -1196,7 +1196,7 @@ impl Db {
             }
         };
         let threat_pos3 = {
-            let alt = land.get_height(LuaVec2(pos)).unwrap_or_else(|_| 0.);
+            let alt = land.get_height(LuaVec2(pos)).unwrap_or(0.);
             Vector3::new(pos.x, alt, pos.y)
         };
         let obj = Objective {
@@ -1320,14 +1320,15 @@ impl Db {
             }
 
             // For carrier groups, mark warehouse as damaged if supply ship is destroyed (logi drops to 0)
-            if let ObjectiveKind::CarrierGroup { .. } = &obj.kind {
-                if prev_logi > 0 && logi == 0 {
-                    obj.warehouse.damaged = true;
-                    info!(
-                        "[CARRIER_SUPPLY] {} warehouse disabled - supply ship destroyed",
-                        obj.name
-                    );
-                }
+            if let ObjectiveKind::CarrierGroup { .. } = &obj.kind
+                && prev_logi > 0
+                && logi == 0
+            {
+                obj.warehouse.damaged = true;
+                info!(
+                    "[CARRIER_SUPPLY] {} warehouse disabled - supply ship destroyed",
+                    obj.name
+                );
             }
 
             let new_eligible = obj.captureable() || obj.kind.is_special_sam_site();
@@ -1371,10 +1372,10 @@ impl Db {
             health,
             logi,
         });
-        if let ObjectiveKind::Farp { .. } = &kind {
-            if logi == 0 {
-                self.delete_objective(oid)?;
-            }
+        if let ObjectiveKind::Farp { .. } = &kind
+            && logi == 0
+        {
+            self.delete_objective(oid)?;
         }
         self.ephemeral.dirty();
         debug!("objective {oid} health: {}, logi: {}", health, logi);
@@ -1808,10 +1809,10 @@ impl Db {
                                 ));
                             }
                         }
-                        if dist <= threat_dist {
-                            if landcache.is_visible(&land, dist.sqrt(), pos3, pos.0)? {
-                                *threat = true;
-                            }
+                        if dist <= threat_dist
+                            && landcache.is_visible(&land, dist.sqrt(), pos3, pos.0)?
+                        {
+                            *threat = true;
                         }
                     }
                 }
@@ -1833,8 +1834,8 @@ impl Db {
             .persisted
             .deployed
             .into_iter()
-            .chain(self.persisted.troops.into_iter())
-            .chain(self.persisted.dismounts.into_iter())
+            .chain(&self.persisted.troops)
+            .chain(&self.persisted.dismounts)
         {
             let group = match self.persisted.groups.get(gid) {
                 Some(g) => g,
@@ -1842,10 +1843,10 @@ impl Db {
             };
             let side = group.side;
             for uid in &group.units {
-                if let Some(unit) = self.persisted.units.get(uid) {
-                    if !unit.dead {
-                        deployed_positions.push((unit.pos, side));
-                    }
+                if let Some(unit) = self.persisted.units.get(uid)
+                    && !unit.dead
+                {
+                    deployed_positions.push((unit.pos, side));
                 }
             }
         }
@@ -1913,13 +1914,13 @@ impl Db {
             }
             // If enemy artillery has recently targeted this objective, force it to
             // spawn (or stay spawned) so units are present to absorb the incoming fire.
-            if let Some(t) = self.ephemeral.artillery_targeted.get(oid) {
-                if now - *t <= Duration::seconds(ARTY_WAKE_SECS) {
-                    spawn = true;
-                    why.get_or_insert_with(|| {
-                        CompactString::from("enemy artillery targeting it")
-                    });
-                }
+            if let Some(t) = self.ephemeral.artillery_targeted.get(oid)
+                && now - *t <= Duration::seconds(ARTY_WAKE_SECS)
+            {
+                spawn = true;
+                why.get_or_insert_with(|| {
+                    CompactString::from("enemy artillery targeting it")
+                });
             }
             // If any enemy-side player-deployed unit (troop, vehicle, or dismount) is
             // within 10 km of this objective, keep it spawned.  Unlike the main
@@ -2286,13 +2287,11 @@ impl Db {
         for side in [Side::Neutral, side.opposite()] {
             if let Some(groups) = obj.groups.get(&side) {
                 for gid in groups {
-                    if let Some(group) = self.persisted.groups.get(gid) {
-                        if group.class.is_services() {
-                            if let Some(oid) = self.ephemeral.object_id_by_gid.get(gid) {
-                                self.ephemeral
-                                    .push_despawn(*gid, Despawn::Group(oid.clone()))
-                            }
-                        }
+                    if let Some(group) = self.persisted.groups.get(gid)
+                        && group.class.is_services()
+                        && let Some(oid) = self.ephemeral.object_id_by_gid.get(gid)
+                    {
+                        self.ephemeral.push_despawn(*gid, Despawn::Group(oid.clone()))
                     }
                 }
             }
@@ -2601,13 +2600,13 @@ impl Db {
                 wall
             }
         };
-        if let Some(days) = self.ephemeral.cfg.max_round_days.filter(|d| *d > 0) {
-            if wall - started >= Duration::days(days as i64) {
-                info!("round has run {days} day(s): ending it in a draw");
-                self.ephemeral.victory = Some((now, Side::Neutral));
-                self.ephemeral.victory_countdown_last = None;
-                return None;
-            }
+        if let Some(days) = self.ephemeral.cfg.max_round_days.filter(|d| *d > 0)
+            && wall - started >= Duration::days(days as i64)
+        {
+            info!("round has run {days} day(s): ending it in a draw");
+            self.ephemeral.victory = Some((now, Side::Neutral));
+            self.ephemeral.victory_countdown_last = None;
+            return None;
         }
         // Check MapOwned condition if auto_reset is configured.
         if let Some(vc) = self.ephemeral.cfg.auto_reset {
@@ -2827,14 +2826,9 @@ impl Db {
                 for gid in &self.persisted.troops {
                     let group = group!(self, gid)?;
                     match &group.origin {
-                        DeployKind::Troop {
-                            spec,
-                            player,
-                            origin,
-                            moved_by: _,
-                            cost_fraction: _,
-                            ..
-                        } if spec.can_capture && group.side != obj.owner => {
+                        DeployKind::Troop { spec, player, origin, .. }
+                            if spec.can_capture && group.side != obj.owner =>
+                        {
                             let in_range = group
                                 .units
                                 .into_iter()
@@ -2861,19 +2855,20 @@ impl Db {
                 }
                 for gid in &self.persisted.dismounts {
                     let group = group!(self, gid)?;
-                    if let DeployKind::Dismount { can_capture, .. } = &group.origin {
-                        if *can_capture && group.side != obj.owner {
-                            let in_range = group
-                                .units
-                                .into_iter()
-                                .filter_map(|uid| self.persisted.units.get(uid))
-                                .any(|u| !u.dead && obj.zone.contains(u.pos));
-                            if in_range {
-                                captured
-                                    .entry(*oid)
-                                    .or_default()
-                                    .push((group.side, None, None, *gid));
-                            }
+                    if let DeployKind::Dismount { can_capture, .. } = &group.origin
+                        && *can_capture
+                        && group.side != obj.owner
+                    {
+                        let in_range = group
+                            .units
+                            .into_iter()
+                            .filter_map(|uid| self.persisted.units.get(uid))
+                            .any(|u| !u.dead && obj.zone.contains(u.pos));
+                        if in_range {
+                            captured
+                                .entry(*oid)
+                                .or_default()
+                                .push((group.side, None, None, *gid));
                         }
                     }
                 }
@@ -2935,19 +2930,18 @@ impl Db {
                         ));
                         };
                     for gid in &self.persisted.troops {
-                        if let Ok(group) = group!(self, gid) {
-                            if let DeployKind::Troop { spec, .. } = &group.origin {
-                                scan_dbg(group, spec.can_capture, "troop", gid);
-                            }
+                        if let Ok(group) = group!(self, gid)
+                            && let DeployKind::Troop { spec, .. } = &group.origin
+                        {
+                            scan_dbg(group, spec.can_capture, "troop", gid);
                         }
                     }
                     for gid in &self.persisted.dismounts {
-                        if let Ok(group) = group!(self, gid) {
-                            if let DeployKind::Dismount { can_capture, .. } =
+                        if let Ok(group) = group!(self, gid)
+                            && let DeployKind::Dismount { can_capture, .. } =
                                 &group.origin
-                            {
-                                scan_dbg(group, *can_capture, "dismount", gid);
-                            }
+                        {
+                            scan_dbg(group, *can_capture, "dismount", gid);
                         }
                     }
                     if engaged && !lines.is_empty() {
@@ -2966,10 +2960,10 @@ impl Db {
                 Some((_, said)) if *said == text => 1800,
                 _ => 120,
             };
-            if let Some((t, _)) = self.ephemeral.last_capture_debug.get(&oid) {
-                if (now - *t).num_seconds() < quiet_secs {
-                    continue;
-                }
+            if let Some((t, _)) = self.ephemeral.last_capture_debug.get(&oid)
+                && (now - *t).num_seconds() < quiet_secs
+            {
+                continue;
             }
             info!(
                 "[CAPTURE_DIAG] {name} is captureable but registered no capturing group. candidates:\n  {text}"
@@ -3286,12 +3280,11 @@ impl Db {
                 let mut hold_gids: Vec<GroupId> = vec![];
                 for (_, ucid, troop_origin, gid) in gids {
                     hold_gids.push(gid);
-                    if let Some(ucid) = ucid {
-                        if previous_owner != new_owner || troop_origin != Some(oid) {
-                            if !ucids.contains(&ucid) {
-                                ucids.push(ucid);
-                            }
-                        }
+                    if let Some(ucid) = ucid
+                        && (previous_owner != new_owner || troop_origin != Some(oid))
+                        && !ucids.contains(&ucid)
+                    {
+                        ucids.push(ucid);
                     }
                 }
                 // Keep the assault troops holding the base through the
@@ -3316,13 +3309,11 @@ impl Db {
                 self.war_effort_capture(new_owner, now);
                 if let Some(capture) =
                     self.ephemeral.cfg.points.as_ref().map(|p| p.capture)
+                    && !ucids.is_empty()
                 {
-                    if !ucids.is_empty() {
-                        let shares =
-                            split_by_weight(capture as i32, &vec![1.; ucids.len()]);
-                        for (ucid, ppp) in ucids.iter().zip(shares) {
-                            self.earn_points(ucid, ppp, &format!("for capturing {name}"));
-                        }
+                    let shares = split_by_weight(capture as i32, &vec![1.; ucids.len()]);
+                    for (ucid, ppp) in ucids.iter().zip(shares) {
+                        self.earn_points(ucid, ppp, &format!("for capturing {name}"));
                     }
                 }
                 let obj = objective!(self, oid)?;
@@ -3339,7 +3330,7 @@ impl Db {
         });
         let running = &self.ephemeral.capture_progress;
         self.ephemeral.capture_total_secs.retain(|oid, _| running.contains_key(oid));
-        if actually_captured.len() > 0 {
+        if !actually_captured.is_empty() {
             self.ephemeral.logistics_stage = LogiStage::SyncToWarehouses {
                 objectives: self
                     .persisted
@@ -3571,12 +3562,11 @@ impl Db {
         self.settle_captured_fund(oid);
         self.ephemeral.capture_progress.remove(&oid);
 
-        if !is_sam {
-            if let Some(abid) = self.ephemeral.airbase_by_oid.get(&oid) {
-                if let Ok(airbase) = Airbase::get_instance(lua, abid) {
-                    let _ = airbase.set_coalition(new_owner);
-                }
-            }
+        if !is_sam
+            && let Some(abid) = self.ephemeral.airbase_by_oid.get(&oid)
+            && let Ok(airbase) = Airbase::get_instance(lua, abid)
+        {
+            let _ = airbase.set_coalition(new_owner);
         }
 
         self.overrun_previous_occupants(oid, new_owner)
@@ -4054,48 +4044,43 @@ impl Db {
         let mut completed_repairs: Vec<(ObjectiveId, String)> = Vec::new();
 
         for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
-            if let ObjectiveKind::CarrierGroup { repair_start_time, .. } = &mut obj.kind {
-                if let Some(start_time) = repair_start_time {
-                    let elapsed = (now - *start_time).num_seconds();
-                    // Each delivered repair crate divides the timer; floor at
-                    // 60s so a pile of crates can't make it instant.
-                    let crates = self
-                        .ephemeral
-                        .carrier_repair_crates
-                        .get(oid)
-                        .copied()
-                        .unwrap_or(1);
-                    let repair_time_secs =
-                        (base_repair_secs / crates.max(1) as i64).max(60);
+            if let ObjectiveKind::CarrierGroup { repair_start_time, .. } = &mut obj.kind
+                && let Some(start_time) = repair_start_time
+            {
+                let elapsed = (now - *start_time).num_seconds();
+                // Each delivered repair crate divides the timer; floor at
+                // 60s so a pile of crates can't make it instant.
+                let crates =
+                    self.ephemeral.carrier_repair_crates.get(oid).copied().unwrap_or(1);
+                let repair_time_secs = (base_repair_secs / crates.max(1) as i64).max(60);
 
-                    if elapsed >= repair_time_secs {
-                        // Repair complete! Resurrect all dead units and respawn groups
-                        obj.health = 100;
-                        obj.logi = 100;
-                        obj.warehouse.damaged = false;
-                        *repair_start_time = None;
-                        self.ephemeral.carrier_repair_crates.remove(oid);
+                if elapsed >= repair_time_secs {
+                    // Repair complete! Resurrect all dead units and respawn groups
+                    obj.health = 100;
+                    obj.logi = 100;
+                    obj.warehouse.damaged = false;
+                    *repair_start_time = None;
+                    self.ephemeral.carrier_repair_crates.remove(oid);
 
-                        completed_repairs.push((*oid, obj.name.clone().into()));
-                        info!(
-                            "[CARRIER_REPAIR] {} fully repaired - resurrecting units",
-                            obj.name
+                    completed_repairs.push((*oid, obj.name.clone()));
+                    info!(
+                        "[CARRIER_REPAIR] {} fully repaired - resurrecting units",
+                        obj.name
+                    );
+                    self.ephemeral.dirty();
+                } else {
+                    // Log progress at certain intervals
+                    let progress_pct =
+                        (elapsed as f64 / repair_time_secs as f64 * 100.0) as u8;
+                    if elapsed % 300 == 0 && elapsed > 0 {
+                        // Every 5 minutes
+                        let remaining = repair_time_secs - elapsed;
+                        debug!(
+                            "[CARRIER_REPAIR] {} repair progress: {}% ({} minutes remaining)",
+                            obj.name,
+                            progress_pct,
+                            remaining / 60
                         );
-                        self.ephemeral.dirty();
-                    } else {
-                        // Log progress at certain intervals
-                        let progress_pct =
-                            (elapsed as f64 / repair_time_secs as f64 * 100.0) as u8;
-                        if elapsed % 300 == 0 && elapsed > 0 {
-                            // Every 5 minutes
-                            let remaining = repair_time_secs - elapsed;
-                            debug!(
-                                "[CARRIER_REPAIR] {} repair progress: {}% ({} minutes remaining)",
-                                obj.name,
-                                progress_pct,
-                                remaining / 60
-                            );
-                        }
                     }
                 }
             }
@@ -4138,7 +4123,7 @@ impl Db {
                             obj.owner,
                             obj.health,
                             obj.name.clone(),
-                            parent_naval_base.clone(),
+                            *parent_naval_base,
                         ))
                     } else {
                         None
@@ -4167,18 +4152,18 @@ impl Db {
                     .unwrap_or(0);
                 if base_supplies >= repair_cost {
                     // Auto-initiate repair
-                    if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
-                        if let ObjectiveKind::CarrierGroup { repair_start_time, .. } =
+                    if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid)
+                        && let ObjectiveKind::CarrierGroup { repair_start_time, .. } =
                             &mut obj.kind
-                        {
-                            *repair_start_time = Some(now);
-                            self.ephemeral.carrier_repair_crates.remove(&oid); // auto-repair runs at base speed
-                            self.ephemeral.dirty();
-                            info!(
-                                "[CARRIER_AUTO_REPAIR] {} auto-repair initiated (health: {}%)",
-                                name, health
-                            );
-                            messages.push((
+                    {
+                        *repair_start_time = Some(now);
+                        self.ephemeral.carrier_repair_crates.remove(&oid); // auto-repair runs at base speed
+                        self.ephemeral.dirty();
+                        info!(
+                            "[CARRIER_AUTO_REPAIR] {} auto-repair initiated (health: {}%)",
+                            name, health
+                        );
+                        messages.push((
                                 owner,
                                 compact_str::format_compact!(
                                     "NAVAL: {} auto-repair initiated ({}% health). Supplies deducted from naval base.",
@@ -4186,7 +4171,6 @@ impl Db {
                                     health,
                                 ),
                             ));
-                        }
                     }
                 } else if health <= 25 {
                     messages.push((
@@ -4341,7 +4325,7 @@ impl Db {
         bases
             .into_iter()
             .take(3)
-            .find_map(|(_, _, p, name)| sea_spot(p, offsets, &water).map(|s| (s, name)))
+            .find_map(|(_, _, p, name)| sea_spot(p, offsets, water).map(|s| (s, name)))
     }
 
     /// Ensure carrier objective `oid` has a ship group set for `owner`,
@@ -4675,20 +4659,20 @@ impl Db {
             let mut ucids: SmallVec<[dcso3::net::Ucid; 1]> = smallvec![];
             for (_, ucid, gid) in &groups {
                 self.delete_group(gid).context("deleting boarding troops")?;
-                if let Some(u) = ucid {
-                    if !ucids.contains(u) {
-                        ucids.push(*u);
-                    }
+                if let Some(u) = ucid
+                    && !ucids.contains(u)
+                {
+                    ucids.push(*u);
                 }
             }
 
             // Award capture points
-            if let Some(capture) = self.ephemeral.cfg.points.as_ref().map(|p| p.capture) {
-                if !ucids.is_empty() {
-                    let shares = split_by_weight(capture as i32, &vec![1.; ucids.len()]);
-                    for (ucid, ppp) in ucids.iter().zip(shares) {
-                        self.earn_points(ucid, ppp, &format!("for capturing {obj_name}"));
-                    }
+            if let Some(capture) = self.ephemeral.cfg.points.as_ref().map(|p| p.capture)
+                && !ucids.is_empty()
+            {
+                let shares = split_by_weight(capture as i32, &vec![1.; ucids.len()]);
+                for (ucid, ppp) in ucids.iter().zip(shares) {
+                    self.earn_points(ucid, ppp, &format!("for capturing {obj_name}"));
                 }
             }
 

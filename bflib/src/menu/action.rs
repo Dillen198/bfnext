@@ -878,11 +878,7 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
             Box::new(ctx.db.persisted.actions.into_iter())
         } else {
             Box::new(
-                ctx.db
-                    .persisted
-                    .deployed
-                    .into_iter()
-                    .chain(ctx.db.persisted.troops.into_iter()),
+                ctx.db.persisted.deployed.into_iter().chain(&ctx.db.persisted.troops),
             )
         };
         // Every friendly deployed group and troop is listed here, not just the
@@ -1275,23 +1271,16 @@ fn add_action_menu(lua: MizLua, arg: ArgTriple<Ucid, GroupId, SlotId>) -> Result
     }
     // Global artillery system: auto-append "Request Fires" if cfg.artillery is set
     // and the player's side has alive artillery groups — no per-unit action config needed.
-    if ctx.db.ephemeral.cfg.artillery.is_some() {
-        if side_has_artillery(ctx, player.side) {
-            let arty_root = p.submenu(&mc, String::from("Request Fires"))?;
-            let mut ap = Pager::new(arg.snd, arty_root);
-            for mk in &marks {
-                ap.command(
-                    &mc,
-                    mk.label.clone(),
-                    run_global_artillery,
-                    ArgQuad {
-                        fst: arg.fst,
-                        snd: arg.trd,
-                        trd: LuaVec3(mk.pos),
-                        fth: mk.id,
-                    },
-                )?;
-            }
+    if ctx.db.ephemeral.cfg.artillery.is_some() && side_has_artillery(ctx, player.side) {
+        let arty_root = p.submenu(&mc, String::from("Request Fires"))?;
+        let mut ap = Pager::new(arg.snd, arty_root);
+        for mk in &marks {
+            ap.command(
+                &mc,
+                mk.label.clone(),
+                run_global_artillery,
+                ArgQuad { fst: arg.fst, snd: arg.trd, trd: LuaVec3(mk.pos), fth: mk.id },
+            )?;
         }
     }
     // AI helo missions are player-triggered dispatches like every other action,

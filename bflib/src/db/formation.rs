@@ -287,7 +287,7 @@ fn full() -> f64 {
 
 impl Formation {
     pub fn ai_controlled(&self, now: DateTime<Utc>) -> bool {
-        self.locked_until.map_or(true, |t| now >= t)
+        self.locked_until.is_none_or(|t| now >= t)
     }
 
     /// The ROE its DCS groups get: a commander's, or the doctrine's.
@@ -481,7 +481,7 @@ impl FormationRt {
     /// Whether `id` got stuck for good on `order` recently enough that
     /// giving it the same order again would only stall it again.
     pub fn gave_up_on(&self, id: FormationId, order: &Order, now: DateTime<Utc>) -> bool {
-        self.gave_up.get(&id).map_or(false, |(o, t)| {
+        self.gave_up.get(&id).is_some_and(|(o, t)| {
             o == order && now - *t < Duration::seconds(GAVE_UP_SECS)
         })
     }
@@ -603,7 +603,7 @@ fn back_along(
 /// facing `heading`: one rank for a company, two for anything bigger, ~70 m
 /// between vehicles and 120 m between ranks.
 fn line_slot(center: Vector2, heading: f64, i: usize, n: usize) -> Vector2 {
-    let per_rank = if n <= 8 { n.max(1) } else { (n + 1) / 2 };
+    let per_rank = if n <= 8 { n.max(1) } else { n.div_ceil(2) };
     let rank = (i / per_rank) as f64;
     let file = (i % per_rank) as f64 - (per_rank as f64 - 1.) / 2.;
     let fwd = Vector2::new(heading.cos(), heading.sin());
@@ -781,7 +781,7 @@ pub fn strength_in(persisted: &Persisted, f: &Formation) -> (u32, u32) {
     for gid in &f.groups {
         if let Some(g) = persisted.groups.get(gid) {
             for uid in &g.units {
-                if persisted.units.get(uid).map_or(false, |u| !u.dead) {
+                if persisted.units.get(uid).is_some_and(|u| !u.dead) {
                     alive += 1;
                 }
             }
@@ -988,7 +988,7 @@ impl Db {
             .warehouse
             .as_ref()
             .and_then(|w| w.materiel.as_ref())
-            .map_or(false, |m| m.enabled);
+            .is_some_and(|m| m.enabled);
         let production = self
             .persisted
             .objectives
@@ -1034,11 +1034,11 @@ impl Db {
 
     fn infantry_group(&self, f: &Formation) -> Option<GroupId> {
         f.groups.iter().copied().find(|gid| {
-            self.persisted.groups.get(gid).map_or(false, |g| {
+            self.persisted.groups.get(gid).is_some_and(|g| {
                 g.class.is_infantry()
                     && g.units
                         .into_iter()
-                        .any(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
+                        .any(|u| self.persisted.units.get(u).is_some_and(|u| !u.dead))
             })
         })
     }
@@ -1116,7 +1116,7 @@ impl Db {
             (o, Some(t)) => format_compact!("{} {t}", o.verb()),
             (o, None) => CompactString::new(o.verb()),
         };
-        let quarter = if total == 0 { 0 } else { (alive * 4 + total - 1) / total * 25 };
+        let quarter = if total == 0 { 0 } else { (alive * 4).div_ceil(total) * 25 };
         format_compact!("{}\n{order} | ~{quarter}% strength", f.name)
     }
 
@@ -1182,11 +1182,12 @@ impl Db {
         let take = |pool: &mut Vec<GroupId>,
                     out: &mut Vec<GroupId>,
                     combat_taken: &mut usize| {
-            if out.len() < max && *combat_taken < spare_combat {
-                if let Some(g) = pool.pop() {
-                    out.push(g);
-                    *combat_taken += 1;
-                }
+            if out.len() < max
+                && *combat_taken < spare_combat
+                && let Some(g) = pool.pop()
+            {
+                out.push(g);
+                *combat_taken += 1;
             }
         };
         take(&mut inf, &mut out, &mut combat_taken);
@@ -1275,11 +1276,11 @@ impl Db {
             armor |= g.class == ObjGroupClass::Armor;
             inf |= g.class.is_infantry();
             for uid in &g.units {
-                if let Some(u) = self.persisted.units.get(uid) {
-                    if !u.dead {
-                        strength0 += 1;
-                        pts.push(u.pos);
-                    }
+                if let Some(u) = self.persisted.units.get(uid)
+                    && !u.dead
+                {
+                    strength0 += 1;
+                    pts.push(u.pos);
                 }
             }
         }
@@ -1293,7 +1294,7 @@ impl Db {
             }),
         };
         let name = String::from(format_compact!("{} {kind} ({oname})", ordinal(id)));
-        let pos = centroid2d(pts.into_iter());
+        let pos = centroid2d(pts);
         let f = Formation {
             id,
             name: name.clone(),
@@ -1457,7 +1458,7 @@ impl Db {
             .iter()
             .filter_map(|g| self.persisted.groups.get(g))
             .flat_map(|g| g.units.into_iter())
-            .filter(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
+            .filter(|u| self.persisted.units.get(u).is_some_and(|u| !u.dead))
             .count() as u32;
         let id = self.formations().map(|f| f.id).max().unwrap_or(0) + 1;
         let name = String::from(format_compact!("{} {label} Coy ({oname})", ordinal(id)));
@@ -1746,16 +1747,13 @@ impl Db {
                 "{name} has broken and is falling back; it can only be ordered to withdraw"
             )
         }
-        if let (Some(b), Some(c)) = (by.as_ref(), f.commander.as_ref()) {
-            if b != c && !f.ai_controlled(now) {
-                let who = self
-                    .persisted
-                    .players
-                    .get(c)
-                    .map(|p| p.name.clone())
-                    .unwrap_or_default();
-                bail!("{name} is carrying out {who}'s order")
-            }
+        if let (Some(b), Some(c)) = (by.as_ref(), f.commander.as_ref())
+            && b != c
+            && !f.ai_controlled(now)
+        {
+            let who =
+                self.persisted.players.get(c).map(|p| p.name.clone()).unwrap_or_default();
+            bail!("{name} is carrying out {who}'s order")
         }
         if via.len() > 12 {
             bail!("at most 12 waypoints")
@@ -1850,16 +1848,13 @@ impl Db {
             .formations
             .get(&id)
             .ok_or_else(|| anyhow!("no such formation {id}"))?;
-        if let (Some(b), Some(c)) = (by.as_ref(), f.commander.as_ref()) {
-            if b != c && !f.ai_controlled(now) {
-                let who = self
-                    .persisted
-                    .players
-                    .get(c)
-                    .map(|p| p.name.clone())
-                    .unwrap_or_default();
-                bail!("{} is carrying out {who}'s order", f.name)
-            }
+        if let (Some(b), Some(c)) = (by.as_ref(), f.commander.as_ref())
+            && b != c
+            && !f.ai_controlled(now)
+        {
+            let who =
+                self.persisted.players.get(c).map(|p| p.name.clone()).unwrap_or_default();
+            bail!("{} is carrying out {who}'s order", f.name)
         }
         let live = rt.is_live(f);
         let f = self
@@ -1925,7 +1920,7 @@ impl Db {
             .iter()
             .filter_map(|g| self.persisted.groups.get(g))
             .flat_map(|g| g.units.into_iter().copied())
-            .filter(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
+            .filter(|u| self.persisted.units.get(u).is_some_and(|u| !u.dead))
             .collect();
         let n = uids.len();
         for (i, uid) in uids.iter().enumerate() {
@@ -1974,7 +1969,7 @@ impl Db {
             .iter()
             .filter_map(|g| self.persisted.groups.get(g))
             .flat_map(|g| g.units.into_iter().copied())
-            .filter(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
+            .filter(|u| self.persisted.units.get(u).is_some_and(|u| !u.dead))
             .collect();
         if uids.is_empty() {
             return Ok(false);
@@ -2099,7 +2094,7 @@ impl Db {
             .filter_map(|g| self.persisted.groups.get(g))
             .flat_map(|g| g.units.into_iter().copied())
             .filter(|u| {
-                self.persisted.units.get(u).map_or(false, |u| !u.dead)
+                self.persisted.units.get(u).is_some_and(|u| !u.dead)
                     && self.ephemeral.object_id_by_uid.contains_key(u)
             })
             .collect();
@@ -2134,7 +2129,7 @@ impl Db {
             if pts.is_empty() {
                 continue;
             }
-            let c = centroid2d(pts.into_iter());
+            let c = centroid2d(pts);
             let per_100km = self
                 .ephemeral
                 .cfg
@@ -2213,7 +2208,7 @@ impl Db {
                 .persisted
                 .units
                 .get(&uid)
-                .map_or(false, |u| u.tags.contains(UnitTag::Driveable))
+                .is_some_and(|u| u.tags.contains(UnitTag::Driveable))
             {
                 self.ephemeral.units_able_to_move.insert(uid);
             }
@@ -2242,7 +2237,7 @@ impl Db {
             let alive = g
                 .units
                 .into_iter()
-                .filter(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
+                .filter(|u| self.persisted.units.get(u).is_some_and(|u| !u.dead))
                 .count();
             let _ = write!(out, "[{}: {tracked}/{alive} tracked", g.name);
             match Group::get_by_name(lua, g.name.as_str()) {
@@ -2326,7 +2321,7 @@ impl Db {
     /// close is shooting at it, and DCS halts ground units to fire.
     fn enemy_live_ground_near(&self, side: Side, pos: Vector2, r: f64) -> bool {
         self.ephemeral.object_id_by_uid.keys().any(|uid| {
-            self.persisted.units.get(uid).map_or(false, |u| {
+            self.persisted.units.get(uid).is_some_and(|u| {
                 !u.dead
                     && u.side != side
                     && u.side != Side::Neutral
@@ -2335,7 +2330,7 @@ impl Db {
                         .persisted
                         .groups
                         .get(&u.group)
-                        .map_or(false, |g| g.kind == Some(GroupCategory::Ground))
+                        .is_some_and(|g| g.kind == Some(GroupCategory::Ground))
             })
         })
     }
@@ -2355,7 +2350,7 @@ impl Db {
                 .persisted
                 .objectives
                 .get(&oid)
-                .map_or(false, |o| dist(o.zone.pos(), f.pos) <= ENGAGED_M),
+                .is_some_and(|o| dist(o.zone.pos(), f.pos) <= ENGAGED_M),
             _ => false,
         }
     }
@@ -2450,11 +2445,9 @@ impl Db {
         // An attack has arrived only once it is inside the objective's zone:
         // that is where its infantry has to get out.
         let inside_target = |f: &Formation| match f.order {
-            Order::Attack(oid) => self
-                .persisted
-                .objectives
-                .get(&oid)
-                .map_or(true, |o| o.zone.contains(f.pos)),
+            Order::Attack(oid) => {
+                self.persisted.objectives.get(&oid).is_none_or(|o| o.zone.contains(f.pos))
+            }
             _ => true,
         };
         let ids: SmallVec<[FormationId; 16]> = self
@@ -2589,7 +2582,7 @@ impl Db {
             let cooling = rt
                 .assault_ts
                 .get(&oid)
-                .map_or(false, |t| now - *t < Duration::seconds(ASSAULT_COOLDOWN_SECS));
+                .is_some_and(|t| now - *t < Duration::seconds(ASSAULT_COOLDOWN_SECS));
             // A formation the server isn't simulating can go in too: the
             // squad is a real DCS group either way, and the capture is the
             // ordinary capture. Waiting for a live slot used to leave an
@@ -2833,7 +2826,7 @@ impl Db {
         let was_live = rt.live.remove(&gid);
         let Some(g) = self.persisted.groups.get(&gid) else { return Ok(()) };
         let uids: SmallVec<[UnitId; 16]> = g.units.into_iter().copied().collect();
-        if !uids.iter().any(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead)) {
+        if !uids.iter().any(|u| self.persisted.units.get(u).is_some_and(|u| !u.dead)) {
             return self.delete_group(&gid);
         }
         // A restart puts it back where it stood down.
@@ -2891,7 +2884,7 @@ impl Db {
             .persisted
             .objectives
             .get(&at)
-            .map_or(false, |o| o.owner == side && o.spawned);
+            .is_some_and(|o| o.owner == side && o.spawned);
         if alive && spawn_now {
             // After the despawn above has gone through, or DCS keeps the old
             // group where it stood.
@@ -2903,7 +2896,7 @@ impl Db {
 
     /// Every unit in `gid` can drive (`crate::unitdb::can_drive`).
     pub(super) fn group_can_drive(&self, gid: &GroupId) -> bool {
-        self.persisted.groups.get(gid).map_or(true, |g| {
+        self.persisted.groups.get(gid).is_none_or(|g| {
             g.units
                 .into_iter()
                 .filter_map(|u| self.persisted.units.get(u))
@@ -3086,7 +3079,7 @@ impl Db {
                         .persisted
                         .objectives
                         .get(oid)
-                        .map_or(false, |o| dist(o.zone.pos(), *pos) <= cfg.contact_m),
+                        .is_some_and(|o| dist(o.zone.pos(), *pos) <= cfg.contact_m),
                     _ => false,
                 },
                 assault: *posture == Posture::Assaulting,
@@ -3146,7 +3139,7 @@ impl Db {
                 self.materialize(rt, id);
             } else if (want.ordered
                 || (cfg.live_only && (want.fighting() || want.moving)))
-                && bumpable.last().map_or(false, |(_, p)| *p < want.priority())
+                && bumpable.last().is_some_and(|(_, p)| *p < want.priority())
             {
                 let (out, _) = bumpable.pop().unwrap();
                 info!(
@@ -3170,10 +3163,10 @@ impl Db {
     fn materialize(&mut self, rt: &mut FormationRt, id: FormationId) {
         let Some(f) = self.persisted.formations.get(&id) else { return };
         for gid in &f.groups {
-            let alive = self.persisted.groups.get(gid).map_or(false, |g| {
+            let alive = self.persisted.groups.get(gid).is_some_and(|g| {
                 g.units
                     .into_iter()
-                    .any(|u| self.persisted.units.get(u).map_or(false, |u| !u.dead))
+                    .any(|u| self.persisted.units.get(u).is_some_and(|u| !u.dead))
             });
             if alive && !rt.live.contains(gid) && !rt.spawnq.iter().any(|(_, g)| g == gid)
             {
@@ -3199,10 +3192,10 @@ impl Db {
             .flat_map(|g| g.units.into_iter().copied())
             .filter(|u| self.ephemeral.object_id_by_uid.contains_key(u))
             .collect();
-        if !uids.is_empty() {
-            if let Err(e) = self.update_unit_positions(lua, now, &uids) {
-                warn!("ground war: final positions of formation {id}: {e:?}");
-            }
+        if !uids.is_empty()
+            && let Err(e) = self.update_unit_positions(lua, now, &uids)
+        {
+            warn!("ground war: final positions of formation {id}: {e:?}");
         }
         for gid in gids {
             if let Some(g) = self.persisted.groups.get(&gid) {
@@ -3250,10 +3243,8 @@ impl Db {
         // laid it out (`lay_on_road`). The whole formation at once, as its
         // first group goes in -- here, once any old DCS group of it is gone,
         // so nothing reads the old spot back over the new one.
-        if to_road {
-            if let Err(e) = self.lay_on_road(lua, id) {
-                warn!("ground war: putting formation {id} on the road: {e:?}");
-            }
+        if to_road && let Err(e) = self.lay_on_road(lua, id) {
+            warn!("ground war: putting formation {id} on the road: {e:?}");
         }
         let Some(f) = self.persisted.formations.get(&id) else { return Ok(()) };
         let (path, off_road) = match f.posture {
@@ -3282,10 +3273,10 @@ impl Db {
             .ephemeral
             .spawn_group(perf, &self.persisted, idx, &spctx, group!(self, gid)?, route)
             .with_context(|| format_compact!("spawning formation {id} group {gid}"))?;
-        if let Some(crate::spawnctx::Spawned::Group(g)) = spawned {
-            if let Err(e) = set_march_ai(&g, roe) {
-                warn!("ground war: march orders for {gid}: {e:?}");
-            }
+        if let Some(crate::spawnctx::Spawned::Group(g)) = spawned
+            && let Err(e) = set_march_ai(&g, roe)
+        {
+            warn!("ground war: march orders for {gid}: {e:?}");
         }
         rt.live.insert(gid);
         Ok(())
@@ -3485,7 +3476,7 @@ impl Db {
             let fresh = rt
                 .spotted
                 .get(&key)
-                .map_or(true, |s| (now - s.at).num_seconds() > cfg.remember_secs as i64);
+                .is_none_or(|s| (now - s.at).num_seconds() > cfg.remember_secs as i64);
             // What it looked like: the picture shows this, not what it is now.
             let (kind, alive) = self
                 .formation(*id)
@@ -3565,8 +3556,8 @@ impl Db {
             let held = (now - f.deployment_ts.unwrap_or(f.order_ts)).num_seconds();
             // On a player's Move it drives on past what it only sees, and
             // stops to fight only when the enemy is close enough to engage.
-            let marching = f.marching(now)
-                && !threat.map_or(false, |t| dist(t, pos) <= cfg.engage_m);
+            let marching =
+                f.marching(now) && !threat.is_some_and(|t| dist(t, pos) <= cfg.engage_m);
             let next = match (f.deployment, contact.is_some()) {
                 (Deployment::Column, _) if marching => Deployment::Column,
                 (Deployment::Deploying | Deployment::Deployed | Deployment::DugIn, _)
@@ -3600,10 +3591,10 @@ impl Db {
             let Some(f) = self.persisted.formations.get_mut_cow(&id) else { continue };
             f.deployment = next;
             f.deployment_ts = Some(now);
-            if let Some(c) = contact {
-                if dist(c, pos) > 1. {
-                    f.heading = heading_of(c - pos);
-                }
+            if let Some(c) = contact
+                && dist(c, pos) > 1.
+            {
+                f.heading = heading_of(c - pos);
             }
             self.ephemeral.dirty();
             if live {
@@ -3733,10 +3724,10 @@ impl Db {
                         continue;
                     }
                     for uid in &g.units {
-                        if let Some(u) = self.persisted.units.get(uid) {
-                            if !u.dead {
-                                units.push((*uid, self.unit_role(&u.typ, g.class)));
-                            }
+                        if let Some(u) = self.persisted.units.get(uid)
+                            && !u.dead
+                        {
+                            units.push((*uid, self.unit_role(&u.typ, g.class)));
                         }
                     }
                 }
@@ -3766,7 +3757,7 @@ impl Db {
         }
         let sees = |rt: &FormationRt, side: Side, who: Who| match who {
             Who::G(_) => true,
-            Who::F(id) => rt.spotted.get(&(side, id)).map_or(false, |s| s.at == now),
+            Who::F(id) => rt.spotted.get(&(side, id)).is_some_and(|s| s.at == now),
         };
         let n = forces.len();
         let use_factor: Vec<f64> = forces
@@ -3834,12 +3825,11 @@ impl Db {
                 for gid in gids {
                     let Some(g) = self.persisted.groups.get(gid) else { continue };
                     for uid in &g.units {
-                        if let Some(u) = self.persisted.units.get(uid) {
-                            if !u.dead
-                                && self.unit_role(&u.typ, g.class) == Role::Artillery
-                            {
-                                power += Role::Artillery.firepower(cfg);
-                            }
+                        if let Some(u) = self.persisted.units.get(uid)
+                            && !u.dead
+                            && self.unit_role(&u.typ, g.class) == Role::Artillery
+                        {
+                            power += Role::Artillery.firepower(cfg);
                         }
                     }
                 }
@@ -3924,10 +3914,10 @@ impl Db {
                 }
                 Who::G(oid) => {
                     rt.garrison_damage.insert(oid, left);
-                    if k > 0 {
-                        if let Err(e) = self.update_objective_status(&oid, now) {
-                            warn!("ground war: status of {name} after losses: {e:?}");
-                        }
+                    if k > 0
+                        && let Err(e) = self.update_objective_status(&oid, now)
+                    {
+                        warn!("ground war: status of {name} after losses: {e:?}");
                     }
                 }
             }
@@ -3948,7 +3938,7 @@ impl Db {
                     kills[*a] += share;
                 }
                 given += share;
-                if best.map_or(true, |(_, x)| *d > x) {
+                if best.is_none_or(|(_, x)| *d > x) {
                     best = Some((*a, *d));
                 }
             }
@@ -3994,14 +3984,14 @@ impl Db {
                     now,
                 );
             }
-            if let Who::F(id) = forces[a].who {
-                if let Some(f) = self.persisted.formations.get_mut_cow(&id) {
-                    f.kills += kills[a];
-                    if fighting[a] {
-                        f.supply = (f.supply
-                            - cfg.supply_per_combat_min * minutes * use_factor[a])
-                            .max(0.);
-                    }
+            if let Who::F(id) = forces[a].who
+                && let Some(f) = self.persisted.formations.get_mut_cow(&id)
+            {
+                f.kills += kills[a];
+                if fighting[a] {
+                    f.supply = (f.supply
+                        - cfg.supply_per_combat_min * minutes * use_factor[a])
+                        .max(0.);
                 }
             }
         }
@@ -4011,7 +4001,7 @@ impl Db {
             let key =
                 (side, (pos.x / 5_000.).round() as i64, (pos.y / 5_000.).round() as i64);
             let due =
-                rt.fire_said.get(&key).map_or(true, |t| (now - *t).num_seconds() >= 600);
+                rt.fire_said.get(&key).is_none_or(|t| (now - *t).num_seconds() >= 600);
             if due {
                 rt.fire_said.insert(key, now);
                 let near = self.near_text(pos);
@@ -4044,8 +4034,7 @@ impl Db {
                     (pos.x / 3_000.).round() as i64,
                     (pos.y / 3_000.).round() as i64,
                 );
-                if rt.fire_ts.get(&key).map_or(false, |t| (now - *t).num_seconds() < 180)
-                {
+                if rt.fire_ts.get(&key).is_some_and(|t| (now - *t).num_seconds() < 180) {
                     continue;
                 }
                 rt.fire_ts.insert(key, now);
@@ -4143,7 +4132,7 @@ impl Db {
                     .formations
                     .get(&id)
                     .map_or(0, |f| self.formation_units(f).len()) as f64;
-            let fighting = rt.contact_ts.get(&id).map_or(false, |t| {
+            let fighting = rt.contact_ts.get(&id).is_some_and(|t| {
                 (now - *t).num_seconds() < (cfg.combat_secs.max(10) * 2) as i64
             });
             if supplied {

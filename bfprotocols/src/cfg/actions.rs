@@ -367,19 +367,12 @@ pub(super) fn default_fat_cow_duration() -> u32 {
     20
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, Default)]
 pub enum ActionGeoLimit {
+    #[default]
     Unlimited,
     /// This action can only be run within `max` in meters of a friendly objective
-    NearFriendlyObjective {
-        max: u32,
-    },
-}
-
-impl Default for ActionGeoLimit {
-    fn default() -> Self {
-        Self::Unlimited
-    }
+    NearFriendlyObjective { max: u32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

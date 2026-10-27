@@ -148,7 +148,7 @@ impl Harness {
             .path(path)
             .remote_addr(peer())
             .header("content-type", "application/json")
-            .body(body.to_string());
+            .body(body);
         if let Some(c) = cookie {
             r = r.header("cookie", c);
         }

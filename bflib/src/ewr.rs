@@ -292,7 +292,7 @@ pub const DROP_AGE_SECS: i64 = 120;
 
 /// BRG and HDG are magnetic in the text report (see `Ewr::where_chicken`).
 /// Imperial altitude is in angels (thousands of feet, "A23.8" = 23,800 ft).
-pub const HEADER: &'static str =
+pub const HEADER: &str =
     "   BRG°M      RNG      ALT      SPD      HDG°M      AGE  ASPECT    SRC   TYPE";
 
 impl fmt::Display for GibBraa {
@@ -338,7 +338,7 @@ impl GibBraa {
         self.converted = true;
         match unit {
             EwrUnits::Metric => {
-                self.range = self.range / 1000;
+                self.range /= 1000;
                 self.speed =
                     ((((self.speed as f64) * 3.6) / 100.0).round() * 100.0) as u16;
                 if self.altitude < 1000 {
@@ -350,7 +350,7 @@ impl GibBraa {
                 }
             }
             EwrUnits::Imperial => {
-                self.range = self.range / 1852;
+                self.range /= 1852;
                 self.speed =
                     ((((self.speed as f64) * 1.94384) / 100.0).round() * 100.0) as u16;
                 // Feet to the nearest hundred, shown as angels ("A23.8").
@@ -374,16 +374,11 @@ struct Track {
     detected: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EwrUnits {
+    #[default]
     Imperial,
     Metric,
-}
-
-impl Default for EwrUnits {
-    fn default() -> Self {
-        Self::Imperial
-    }
 }
 
 impl EwrUnits {
@@ -840,7 +835,7 @@ impl Ewr {
                 };
                 ai_aircraft.push((EnId::Unit(uid), side, pos, vel));
             }
-            players.chain(actions).chain(ai_aircraft.into_iter()).collect()
+            players.chain(actions).chain(ai_aircraft).collect()
         };
 
         for tracks in self.tracks.values_mut() {
@@ -1071,134 +1066,130 @@ impl Ewr {
         // is silently skipped this tick, with zero interaction with the
         // culling system: nothing here holds a reference across a
         // despawn/respawn cycle, so there's nothing to go stale.
-        if let (Some(iadn), Some(_rp)) = (&iadn_cfg, &radar_physics) {
-            if iadn.sam_cue_enabled {
-                // HARM defense: poll in-flight tracked ARMs and mark any SAM
-                // site within harm_defense_radius_m as threatened. Must run
-                // before the cue loop below so a fresh threat overrides this
-                // tick's targeting decision, not next tick's.
-                self.update_harm_threats(lua, iadn, now);
-                // Clone the snapshot (RadarDonor is Copy) so the loop body
-                // is free to call &mut self methods (decide_hot_state,
-                // apply_layered_radar_emission) without borrow conflicts.
-                let donors = self.donor_snapshot.clone();
-                for donor in &donors {
-                    if !matches!(donor.sensor_type, SensorType::SamSearchRadar) {
-                        continue;
-                    }
-                    let Some(gid) = donor.gid else { continue };
-                    let Some(group) = db.persisted.groups.get(&gid) else { continue };
-                    // Player-deployed SAMs are tactical assets positioned
-                    // deliberately by a player -- IADN EMCON must not manage
-                    // them. They are brought up hot at spawn (see
-                    // Ephemeral::spawn_group) and left under player control,
-                    // otherwise this loop drives them to Auto every tick and
-                    // they never light up.
-                    if db.persisted.deployed.contains(&gid) {
-                        continue;
-                    }
-                    let sam_pos = Vector2::new(donor.pos.p.x, donor.pos.p.z);
-                    let under_harm_threat = self
-                        .harm_dark_until
-                        .get(&gid)
-                        .map(|until| now < *until)
-                        .unwrap_or(false);
-                    // IADN network gating: this site only gets smart,
-                    // network-fused cueing if its linked command center is
-                    // alive and still friendly. Cut off (never linked, or
-                    // the command center died/was captured) -> it doesn't
-                    // just get abandoned in whatever EMCON state it was
-                    // last forced into; it's explicitly returned to Auto,
-                    // DCS's own always-on default, same as a site with no
-                    // IADN involvement at all.
-                    let networked = db
-                        .persisted
-                        .objectives_by_group
-                        .get(&gid)
-                        .and_then(|sam_oid| {
-                            db.persisted.sam_command_center_link.get(sam_oid)
-                        })
-                        .and_then(|cc_oid| db.persisted.objectives.get(cc_oid))
-                        .map(|cc| cc.owner == donor.side && cc.health() > 0)
-                        .unwrap_or(false);
-                    let mut nearest_cue_dist: Option<f64> = None;
-                    let desired = if under_harm_threat {
-                        // Survival overrides everything else, networked or
-                        // not: go dark even if a good cue exists, rather
-                        // than trading the site for one more shot. Also
-                        // reset engagement-doctrine state so coming off a
-                        // HARM threat re-enters the reaction-delay process
-                        // fresh rather than snapping straight back hot.
-                        self.sam_emcon.remove(&gid);
-                        dcso3::controller::AlarmState::Green
-                    } else if !networked {
-                        self.sam_emcon.remove(&gid);
-                        dcso3::controller::AlarmState::Auto
-                    } else {
-                        let cues = self.sam_cue_targets(
-                            donor.side,
-                            sam_pos,
-                            donor.range as f64,
-                            iadn,
-                        );
-                        nearest_cue_dist = cues
-                            .iter()
-                            .map(|(_, pos, _)| {
-                                na::distance(&sam_pos.into(), &(*pos).into())
-                            })
-                            .fold(None, |acc: Option<f64>, d| {
-                                Some(acc.map_or(d, |a| a.min(d)))
-                            });
-                        self.decide_hot_state(gid, !cues.is_empty(), now, iadn)
-                    };
-                    let group_name = group.name.clone();
-                    if let Ok(live) = dcso3::group::Group::get_by_name(lua, &group_name) {
-                        if let Ok(con) = live.get_controller() {
-                            let _ = con.set_option(dcso3::controller::AiOption::Ground(
-                                dcso3::controller::GroundOption::AlarmState(desired),
-                            ));
-                            // DCS's own ARM evasion is near-perfect on its
-                            // own; it follows the site's drill too, or every
-                            // site would still drop for every HARM.
-                            let _ = con.set_option(dcso3::controller::AiOption::Ground(
-                                dcso3::controller::GroundOption::EvasionOfArm(
-                                    site_drilled(gid, iadn),
-                                ),
-                            ));
-                        }
-                    }
-                    // Layered search/track radar: an optional second control
-                    // layer on top of the group AlarmState above, only for
-                    // sites with units tagged SearchRadar/TrackRadar. Search
-                    // radar mirrors the site's hot/dark state; the separate
-                    // tracking/engagement radar only powers up once a cue is
-                    // within track_radar_range_fraction of the search
-                    // radar's own range, mirroring real layered SAM systems
-                    // (SA-10, Patriot) that keep the higher-exposure
-                    // engagement radar dark until close to actually firing.
-                    let hot = matches!(
-                        desired,
-                        dcso3::controller::AlarmState::Auto
-                            | dcso3::controller::AlarmState::Red
-                    );
-                    self.apply_layered_radar_emission(
-                        lua,
-                        db,
-                        gid,
-                        hot,
-                        nearest_cue_dist,
+        if let (Some(iadn), Some(_rp)) = (&iadn_cfg, &radar_physics)
+            && iadn.sam_cue_enabled
+        {
+            // HARM defense: poll in-flight tracked ARMs and mark any SAM
+            // site within harm_defense_radius_m as threatened. Must run
+            // before the cue loop below so a fresh threat overrides this
+            // tick's targeting decision, not next tick's.
+            self.update_harm_threats(lua, iadn, now);
+            // Clone the snapshot (RadarDonor is Copy) so the loop body
+            // is free to call &mut self methods (decide_hot_state,
+            // apply_layered_radar_emission) without borrow conflicts.
+            let donors = self.donor_snapshot.clone();
+            for donor in &donors {
+                if !matches!(donor.sensor_type, SensorType::SamSearchRadar) {
+                    continue;
+                }
+                let Some(gid) = donor.gid else { continue };
+                let Some(group) = db.persisted.groups.get(&gid) else { continue };
+                // Player-deployed SAMs are tactical assets positioned
+                // deliberately by a player -- IADN EMCON must not manage
+                // them. They are brought up hot at spawn (see
+                // Ephemeral::spawn_group) and left under player control,
+                // otherwise this loop drives them to Auto every tick and
+                // they never light up.
+                if db.persisted.deployed.contains(&gid) {
+                    continue;
+                }
+                let sam_pos = Vector2::new(donor.pos.p.x, donor.pos.p.z);
+                let under_harm_threat = self
+                    .harm_dark_until
+                    .get(&gid)
+                    .map(|until| now < *until)
+                    .unwrap_or(false);
+                // IADN network gating: this site only gets smart,
+                // network-fused cueing if its linked command center is
+                // alive and still friendly. Cut off (never linked, or
+                // the command center died/was captured) -> it doesn't
+                // just get abandoned in whatever EMCON state it was
+                // last forced into; it's explicitly returned to Auto,
+                // DCS's own always-on default, same as a site with no
+                // IADN involvement at all.
+                let networked = db
+                    .persisted
+                    .objectives_by_group
+                    .get(&gid)
+                    .and_then(|sam_oid| db.persisted.sam_command_center_link.get(sam_oid))
+                    .and_then(|cc_oid| db.persisted.objectives.get(cc_oid))
+                    .map(|cc| cc.owner == donor.side && cc.health() > 0)
+                    .unwrap_or(false);
+                let mut nearest_cue_dist: Option<f64> = None;
+                let desired = if under_harm_threat {
+                    // Survival overrides everything else, networked or
+                    // not: go dark even if a good cue exists, rather
+                    // than trading the site for one more shot. Also
+                    // reset engagement-doctrine state so coming off a
+                    // HARM threat re-enters the reaction-delay process
+                    // fresh rather than snapping straight back hot.
+                    self.sam_emcon.remove(&gid);
+                    dcso3::controller::AlarmState::Green
+                } else if !networked {
+                    self.sam_emcon.remove(&gid);
+                    dcso3::controller::AlarmState::Auto
+                } else {
+                    let cues = self.sam_cue_targets(
+                        donor.side,
+                        sam_pos,
                         donor.range as f64,
                         iadn,
                     );
-                    // IADN jamming: degrade this donor's effective detection
-                    // range against airborne contacts near a UnitTag::Jammer
-                    // unit -- see jamming_factor_for_donor.
+                    nearest_cue_dist = cues
+                        .iter()
+                        .map(|(_, pos, _)| na::distance(&sam_pos.into(), &(*pos).into()))
+                        .fold(None, |acc: Option<f64>, d| {
+                            Some(acc.map_or(d, |a| a.min(d)))
+                        });
+                    self.decide_hot_state(gid, !cues.is_empty(), now, iadn)
+                };
+                let group_name = group.name.clone();
+                if let Ok(live) = dcso3::group::Group::get_by_name(lua, &group_name)
+                    && let Ok(con) = live.get_controller()
+                {
+                    let _ = con.set_option(dcso3::controller::AiOption::Ground(
+                        dcso3::controller::GroundOption::AlarmState(desired),
+                    ));
+                    // DCS's own ARM evasion is near-perfect on its
+                    // own; it follows the site's drill too, or every
+                    // site would still drop for every HARM.
+                    let _ = con.set_option(dcso3::controller::AiOption::Ground(
+                        dcso3::controller::GroundOption::EvasionOfArm(site_drilled(
+                            gid, iadn,
+                        )),
+                    ));
                 }
-                // Sites that have lost their own search radar produce no donor
-                // above and would otherwise fall out of the network entirely --
-                // cue them off-board from the fused picture instead.
-                self.cue_blinded_sam_sites(lua, db, now, iadn);
+                // Layered search/track radar: an optional second control
+                // layer on top of the group AlarmState above, only for
+                // sites with units tagged SearchRadar/TrackRadar. Search
+                // radar mirrors the site's hot/dark state; the separate
+                // tracking/engagement radar only powers up once a cue is
+                // within track_radar_range_fraction of the search
+                // radar's own range, mirroring real layered SAM systems
+                // (SA-10, Patriot) that keep the higher-exposure
+                // engagement radar dark until close to actually firing.
+                let hot = matches!(
+                    desired,
+                    dcso3::controller::AlarmState::Auto
+                        | dcso3::controller::AlarmState::Red
+                );
+                self.apply_layered_radar_emission(
+                    lua,
+                    db,
+                    gid,
+                    hot,
+                    nearest_cue_dist,
+                    donor.range as f64,
+                    iadn,
+                );
+                // IADN jamming: degrade this donor's effective detection
+                // range against airborne contacts near a UnitTag::Jammer
+                // unit -- see jamming_factor_for_donor.
             }
+            // Sites that have lost their own search radar produce no donor
+            // above and would otherwise fall out of the network entirely --
+            // cue them off-board from the fused picture instead.
+            self.cue_blinded_sam_sites(lua, db, now, iadn);
         }
         Ok(())
     }
@@ -1297,11 +1288,11 @@ impl Ewr {
             let cues =
                 self.sam_cue_targets(side, sam_pos, cfg.sam_offboard_cue_range_m, cfg);
             let desired = self.decide_hot_state(gid, !cues.is_empty(), now, cfg);
-            if let Ok(live) = dcso3::group::Group::get_by_name(lua, group_name.as_str()) {
-                if let Ok(con) = live.get_controller() {
-                    let _ = con
-                        .set_option(AiOption::Ground(GroundOption::AlarmState(desired)));
-                }
+            if let Ok(live) = dcso3::group::Group::get_by_name(lua, group_name.as_str())
+                && let Ok(con) = live.get_controller()
+            {
+                let _ =
+                    con.set_option(AiOption::Ground(GroundOption::AlarmState(desired)));
             }
             let hot = matches!(desired, AlarmState::Auto | AlarmState::Red);
             self.apply_layered_radar_emission(
@@ -1829,27 +1820,27 @@ impl Ewr {
                 result.sort_by(|a, b| {
                     b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
                 });
-            } else if let Some(last) = result.last() {
-                if priority > last.2 {
-                    result.pop();
-                    result.push((track.id, t2d, priority));
-                    result.sort_by(|a, b| {
-                        b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                }
+            } else if let Some(last) = result.last()
+                && priority > last.2
+            {
+                result.pop();
+                result.push((track.id, t2d, priority));
+                result.sort_by(|a, b| {
+                    b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal)
+                });
             }
         }
         result
     }
 
     pub fn toggle(&mut self, ucid: &Ucid) -> bool {
-        let st = self.player_state.entry(ucid.clone()).or_default();
+        let st = self.player_state.entry(*ucid).or_default();
         st.enabled = !st.enabled;
         st.enabled
     }
 
     pub fn set_units(&mut self, ucid: &Ucid, units: EwrUnits) {
-        let st = self.player_state.entry(ucid.clone()).or_default();
+        let st = self.player_state.entry(*ucid).or_default();
         st.units = units;
         st.units_explicit = true;
     }
@@ -1857,7 +1848,7 @@ impl Ewr {
     /// A player took a slot in `typ`: unless they have chosen EWR units
     /// themselves, report in the units that airframe's gauges read.
     pub fn slot_airframe(&mut self, ucid: &Ucid, typ: &str) {
-        let st = self.player_state.entry(ucid.clone()).or_default();
+        let st = self.player_state.entry(*ucid).or_default();
         if !st.units_explicit {
             st.units = EwrUnits::for_airframe(typ);
         }
@@ -1881,7 +1872,7 @@ impl Ewr {
         shot: bool,
         now: DateTime<Utc>,
     ) -> bool {
-        let st = self.player_state.entry(ucid.clone()).or_default();
+        let st = self.player_state.entry(*ucid).or_default();
         // The same friendly, still live: only re-warn on a first shot or
         // after 30s of holding the lock.
         let same = st.buddy.as_ref().filter(|b| {
@@ -1989,25 +1980,25 @@ impl Ewr {
     /// Live voice GCI: does this player want unprompted calls? Read by
     /// `crate::admin::query_gci` and sent on as `GciFlight.auto`.
     pub fn gci_auto(&self, ucid: &Ucid) -> bool {
-        self.player_state.get(ucid).map_or(true, |s| s.gci_auto)
+        self.player_state.get(ucid).is_none_or(|s| s.gci_auto)
     }
 
     /// Live voice GCI: flip unprompted calls, returning the new state.
     pub fn gci_toggle_auto(&mut self, ucid: &Ucid) -> bool {
-        let s = self.player_state.entry(ucid.clone()).or_default();
+        let s = self.player_state.entry(*ucid).or_default();
         s.gci_auto = !s.gci_auto;
         s.gci_auto
     }
 
     /// Live voice GCI: set unprompted calls explicitly.
     pub fn gci_set_auto(&mut self, ucid: &Ucid, on: bool) {
-        self.player_state.entry(ucid.clone()).or_default().gci_auto = on;
+        self.player_state.entry(*ucid).or_default().gci_auto = on;
     }
 
     /// Live voice GCI: set this player's position-reference override
     /// (`Some(0)` BRAA, `Some(1)` bullseye, `Some(2)` clock, `None` default).
     pub fn gci_set_reference(&mut self, ucid: &Ucid, refmode: Option<u8>) {
-        self.player_state.entry(ucid.clone()).or_default().gci_ref = refmode;
+        self.player_state.entry(*ucid).or_default().gci_ref = refmode;
     }
 
     /// Live voice GCI: record an enemy SAM missile launch (from a Shot event)
@@ -2079,7 +2070,7 @@ impl Ewr {
 
     /// Live voice GCI: toggle this player's opt-in. Returns the new state.
     pub fn gci_toggle(&mut self, ucid: &Ucid) -> bool {
-        let s = self.player_state.entry(ucid.clone()).or_default();
+        let s = self.player_state.entry(*ucid).or_default();
         s.gci_enabled = !s.gci_enabled;
         s.gci_enabled
     }
@@ -2087,7 +2078,7 @@ impl Ewr {
     /// Live voice GCI: set this player's spoken-unit override
     /// (`None` = follow the server default).
     pub fn gci_set_units(&mut self, ucid: &Ucid, units: Option<EwrUnits>) {
-        self.player_state.entry(ucid.clone()).or_default().gci_units = units;
+        self.player_state.entry(*ucid).or_default().gci_units = units;
     }
 
     /// Read-only bandit snapshot for the live voice GCI
@@ -2178,10 +2169,10 @@ impl Ewr {
         let mut tags = Self::contact_typ_vehicle(id, db)
             .and_then(|v| db.ephemeral.cfg.unit_classification.get(&v).map(|t| t.0))
             .unwrap_or_default();
-        if let EnId::Unit(uid) = id {
-            if let Some(u) = db.persisted.units.get(uid) {
-                tags |= u.tags.0;
-            }
+        if let EnId::Unit(uid) = id
+            && let Some(u) = db.persisted.units.get(uid)
+        {
+            tags |= u.tags.0;
         }
         ThreatClass::of(tags, typ)
     }
@@ -2205,7 +2196,7 @@ impl Ewr {
             Some(t) => t,
             None => return reports,
         };
-        let state = self.player_state.entry(ucid.clone()).or_default();
+        let state = self.player_state.entry(*ucid).or_default();
         if !force && !state.enabled {
             return reports;
         }
@@ -2269,7 +2260,7 @@ impl Ewr {
         }
         match ewr_mode {
             EwrMode::Original => {
-                let urgent = closest_fresh.map_or(false, |(range, age)| {
+                let urgent = closest_fresh.is_some_and(|(range, age)| {
                     (range <= 20000 && age <= 10)
                         || (range <= 40000 && age <= 10 && since_last >= 30)
                 });
@@ -2307,7 +2298,7 @@ impl Ewr {
         if !inst.in_air {
             return warnings;
         }
-        let state = self.player_state.entry(ucid.clone()).or_default();
+        let state = self.player_state.entry(*ucid).or_default();
         let since_last = (now - state.last_spike_warned).num_seconds();
         if since_last < 30 {
             return warnings;

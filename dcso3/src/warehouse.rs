@@ -280,21 +280,6 @@ fn count_to_u32(n: f64) -> u32 {
     }
 }
 
-#[cfg(test)]
-mod count_tests {
-    use super::count_to_u32;
-
-    #[test]
-    fn out_of_range_counts_read_as_unlimited() {
-        assert_eq!(count_to_u32(0.0), 0);
-        assert_eq!(count_to_u32(1234.0), 1234);
-        assert_eq!(count_to_u32(12.7), 12);
-        assert_eq!(count_to_u32(-1.0), u32::MAX);
-        assert_eq!(count_to_u32(1e12), u32::MAX);
-        assert_eq!(count_to_u32(f64::NAN), u32::MAX);
-    }
-}
-
 impl Warehouse {
     pub fn get_by_name(lua: MizLua, name: String) -> Result<Self> {
         let wh: LuaTable = lua.inner().globals().raw_get("Warehouse")?;
@@ -353,5 +338,20 @@ impl Warehouse {
 
     pub fn whid(&self) -> Result<String> {
         Ok(self.t.raw_get("whid_")?)
+    }
+}
+
+#[cfg(test)]
+mod count_tests {
+    use super::count_to_u32;
+
+    #[test]
+    fn out_of_range_counts_read_as_unlimited() {
+        assert_eq!(count_to_u32(0.0), 0);
+        assert_eq!(count_to_u32(1234.0), 1234);
+        assert_eq!(count_to_u32(12.7), 12);
+        assert_eq!(count_to_u32(-1.0), u32::MAX);
+        assert_eq!(count_to_u32(1e12), u32::MAX);
+        assert_eq!(count_to_u32(f64::NAN), u32::MAX);
     }
 }

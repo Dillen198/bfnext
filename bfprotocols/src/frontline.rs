@@ -464,7 +464,7 @@ pub fn compute_with_pressure(
                     for (at, pa) in ea {
                         for (bt, pb) in eb {
                             let d = (pa - pb).norm();
-                            if d < stitch_gap && best.map_or(true, |x| d < x.4) {
+                            if d < stitch_gap && best.is_none_or(|x| d < x.4) {
                                 best = Some((a, at, b, bt, d));
                             }
                         }

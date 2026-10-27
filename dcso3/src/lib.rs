@@ -409,7 +409,7 @@ macro_rules! wrapped_table {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 match self.t.raw_get::<Value>("id_") {
                     Ok(Value::Nil) => {
-                        let v = crate::value_to_json(&Value::Table(self.t.clone()));
+                        let v = $crate::value_to_json(&Value::Table(self.t.clone()));
                         write!(f, "{v}")
                     }
                     Ok(v) => {
@@ -437,7 +437,7 @@ macro_rules! wrapped_table {
             fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
                 Ok(Self {
                     t: as_tbl(stringify!($name), $class, value)
-                        .map_err(crate::lua_err)?,
+                        .map_err($crate::lua_err)?,
                     lua: lua.clone(),
                 })
             }
@@ -774,14 +774,14 @@ impl DcsTableExt for mlua::Table {
     where
         T: FromLua,
     {
-        table_raw_get_path(self, &**path)
+        table_raw_get_path(self, path)
     }
 
     fn get_path<T>(&self, path: &Path) -> Result<T>
     where
         T: FromLua,
     {
-        table_get_path(self, &**path)
+        table_get_path(self, path)
     }
 }
 
@@ -1154,7 +1154,7 @@ pub fn rotate2d_gen<T, F: Fn(&mut T) -> &mut Vector2>(
     points: &mut [T],
     f: F,
 ) {
-    let centroid = centroid2d(points.into_iter().map(|t| *f(t)));
+    let centroid = centroid2d(points.iter_mut().map(|t| *f(t)));
     let sin = angle.sin();
     let cos = angle.cos();
     for t in points {
@@ -1190,7 +1190,7 @@ pub fn normal2(v: Vector2) -> Vector2 {
 /// Same as rotate2d, but construct and return a vec containing the rotated points
 /// in the same order as the they appear in the input slice.
 pub fn rotate2d_vec(angle: f64, points: &[Vector2]) -> Vec<Vector2> {
-    let mut points = Vec::from_iter(points.into_iter().map(|p| *p));
+    let mut points = Vec::from_iter(points.iter().copied());
     rotate2d(angle, &mut points);
     points
 }

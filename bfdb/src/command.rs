@@ -184,7 +184,7 @@ pub(crate) fn roster(db: &StatsDb, inst: &InstanceState) -> Result<Roster> {
             ucid,
             name: ucid.to_string(),
             commander: side.is_some()
-                && (admin || g.map_or(false, |g| g.grant == CommanderGrant::Granted)),
+                && (admin || g.is_some_and(|g| g.grant == CommanderGrant::Granted)),
             side,
             score: 0.,
             tier: 1,

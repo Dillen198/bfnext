@@ -238,7 +238,7 @@ fn fund_weight(kind: &bfprotocols::db::objective::ObjectiveKind) -> i32 {
         ObjectiveKind::Fob => 2,
         ObjectiveKind::CarrierGroup { .. } => 2,
         ObjectiveKind::Farp { .. } => 1,
-        ObjectiveKind::SpecialSamSite { .. } => 1,
+        ObjectiveKind::SpecialSamSite => 1,
     }
 }
 
@@ -267,10 +267,10 @@ impl Db {
             .map(|(id, w, _)| (id, w));
         for (oid, w) in candidates {
             let share = (budget as i64 * w as i64 / total_weight as i64) as i32;
-            if share > 0 {
-                if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
-                    obj.points = share;
-                }
+            if share > 0
+                && let Some(obj) = self.persisted.objectives.get_mut_cow(&oid)
+            {
+                obj.points = share;
             }
         }
     }

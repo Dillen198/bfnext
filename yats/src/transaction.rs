@@ -24,17 +24,12 @@ impl<'a, K, V> TransactionalTree<'a, K, V> {
         K: KV,
         V: KV,
     {
-        let k_ser =
-            serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
-        let v_ser = serialize(value)
-            .map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
-        Ok(self
-            .inner
+        let k_ser = serialize(key).map_err(ConflictableTransactionError::Abort)?;
+        let v_ser = serialize(value).map_err(ConflictableTransactionError::Abort)?;
+        self.inner
             .insert(k_ser, v_ser)?
-            .map(|v| {
-                deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into()))
-            })
-            .transpose()?)
+            .map(|v| deserialize(&v).map_err(ConflictableTransactionError::Abort))
+            .transpose()
     }
 
     pub fn remove(
@@ -45,15 +40,11 @@ impl<'a, K, V> TransactionalTree<'a, K, V> {
         K: KV,
         V: KV,
     {
-        let k_ser =
-            serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
-        Ok(self
-            .inner
+        let k_ser = serialize(key).map_err(ConflictableTransactionError::Abort)?;
+        self.inner
             .remove(k_ser)?
-            .map(|v| {
-                deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into()))
-            })
-            .transpose()?)
+            .map(|v| deserialize(&v).map_err(ConflictableTransactionError::Abort))
+            .transpose()
     }
 
     pub fn get(
@@ -64,15 +55,11 @@ impl<'a, K, V> TransactionalTree<'a, K, V> {
         K: KV,
         V: KV,
     {
-        let k_ser =
-            serialize(key).map_err(|e| ConflictableTransactionError::Abort(e.into()))?;
-        Ok(self
-            .inner
+        let k_ser = serialize(key).map_err(ConflictableTransactionError::Abort)?;
+        self.inner
             .get(k_ser)?
-            .map(|v| {
-                deserialize(&v).map_err(|e| ConflictableTransactionError::Abort(e.into()))
-            })
-            .transpose()?)
+            .map(|v| deserialize(&v).map_err(ConflictableTransactionError::Abort))
+            .transpose()
     }
 
     pub fn apply_batch(

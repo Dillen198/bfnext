@@ -216,7 +216,7 @@ impl DiarySource {
     pub(crate) fn ready(&self) -> bool {
         match self {
             DiarySource::Local(_) => true,
-            DiarySource::Worker => hub::hub().map_or(false, |h| h.seen()),
+            DiarySource::Worker => hub::hub().is_some_and(|h| h.seen()),
         }
     }
 

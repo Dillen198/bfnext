@@ -128,8 +128,8 @@ pub(crate) fn pick_air<'a>(
             o.max_range_m.unwrap_or(if o.helicopter { 120_000. } else { f64::INFINITY });
         let dist = if o.helicopter { sit.from_ground_m } else { sit.from_airbase_m };
         sit.threat >= o.min_threat
-            && o.max_threat.map_or(true, |m| sit.threat <= m)
-            && o.max_air_defence.map_or(true, |m| sit.air_defence <= m)
+            && o.max_threat.is_none_or(|m| sit.threat <= m)
+            && o.max_air_defence.is_none_or(|m| sit.air_defence <= m)
             && (o.night || !sit.night)
             && dist <= range
             && (o.targets.is_empty()
@@ -303,15 +303,11 @@ pub(crate) fn available(
     if cfgs.artillery.is_some() {
         put(OpKind::Artillery, c.artillery, None);
     }
-    if cfgs.campaign_events.as_ref().map_or(false, |e| e.enabled) {
+    if cfgs.campaign_events.as_ref().is_some_and(|e| e.enabled) {
         put(OpKind::MissileStrike, c.missile_strike, None);
         put(OpKind::Ambush, c.ambush, None);
     }
-    if cfgs
-        .warehouse
-        .as_ref()
-        .and_then(|w| w.convoy.as_ref())
-        .map_or(false, |c| c.enabled)
+    if cfgs.warehouse.as_ref().and_then(|w| w.convoy.as_ref()).is_some_and(|c| c.enabled)
     {
         put(OpKind::Convoy, c.convoy, None);
     }
@@ -402,10 +398,10 @@ impl<'a> Gen<'a> {
         // the radars show enemy aircraft about.
         let mut cover: Vec<&Obj> =
             self.plan.defend.iter().filter_map(|id| pic.get(id)).collect();
-        if let Some(s) = self.staging() {
-            if !cover.iter().any(|o| o.id == s.id) {
-                cover.push(s);
-            }
+        if let Some(s) = self.staging()
+            && !cover.iter().any(|o| o.id == s.id)
+        {
+            cover.push(s);
         }
         for o in cover {
             if !self.in_air_range(o.pos) {
@@ -431,23 +427,23 @@ impl<'a> Gen<'a> {
 
         // Strike the main effort, unless its air defence would eat the flight.
         let sead_up = pic.under_way.iter().any(|(k, _)| *k == OpKind::Sead);
-        if let Some(me) = self.main_effort() {
-            if self.in_air_range(me.pos) {
-                let ad = pic.air_defence_near(me.pos, SAM_RISK_M);
-                let risk = if ad > 0 && !sead_up { 0.35 } else { 1. };
-                let value = 45. * (1. + (100 - me.health.min(100)) as f64 / 200.) * risk;
-                self.push(
-                    OpKind::Strike,
-                    Some(me),
-                    me.pos,
-                    me.name.clone(),
-                    value,
-                    format_compact!(
-                        "main effort{}",
-                        if ad > 0 { ", air defence known nearby" } else { "" }
-                    ),
-                );
-            }
+        if let Some(me) = self.main_effort()
+            && self.in_air_range(me.pos)
+        {
+            let ad = pic.air_defence_near(me.pos, SAM_RISK_M);
+            let risk = if ad > 0 && !sead_up { 0.35 } else { 1. };
+            let value = 45. * (1. + (100 - me.health.min(100)) as f64 / 200.) * risk;
+            self.push(
+                OpKind::Strike,
+                Some(me),
+                me.pos,
+                me.name.clone(),
+                value,
+                format_compact!(
+                    "main effort{}",
+                    if ad > 0 { ", air defence known nearby" } else { "" }
+                ),
+            );
         }
         // ... and whatever enemy ground our intel holds closing on a base we
         // are holding.
@@ -564,29 +560,32 @@ impl<'a> Gen<'a> {
         let blind = |p: Vector2| {
             !pic.enemy_ground.iter().any(|c| dist(c.pos, p) <= 8_000. && c.age_mins < 30)
         };
-        if let Some(me) = self.main_effort() {
-            if blind(me.pos) && self.in_air_range(me.pos) {
-                self.push(
-                    OpKind::Recon,
-                    Some(me),
-                    me.pos,
-                    me.name.clone(),
-                    30.,
-                    "no fresh intel on the main effort".into(),
-                );
-            }
+        if let Some(me) = self.main_effort()
+            && blind(me.pos)
+            && self.in_air_range(me.pos)
+        {
+            self.push(
+                OpKind::Recon,
+                Some(me),
+                me.pos,
+                me.name.clone(),
+                30.,
+                "no fresh intel on the main effort".into(),
+            );
         }
-        if let Some(d) = self.plan.defend.first().and_then(|id| pic.get(id)) {
-            if d.threatened && blind(d.pos) && self.in_air_range(d.pos) {
-                self.push(
-                    OpKind::Recon,
-                    Some(d),
-                    d.pos,
-                    d.name.clone(),
-                    24.,
-                    format_compact!("{} is threatened by something we can't see", d.name),
-                );
-            }
+        if let Some(d) = self.plan.defend.first().and_then(|id| pic.get(id))
+            && d.threatened
+            && blind(d.pos)
+            && self.in_air_range(d.pos)
+        {
+            self.push(
+                OpKind::Recon,
+                Some(d),
+                d.pos,
+                d.name.clone(),
+                24.,
+                format_compact!("{} is threatened by something we can't see", d.name),
+            );
         }
     }
 
@@ -673,22 +672,21 @@ impl<'a> Gen<'a> {
             }
         }
 
-        if pic.enemy_convoys_near > 0 {
-            if let Some(anchor) = pic.own().min_by(|a, b| a.front_m.total_cmp(&b.front_m))
-            {
-                let value = 28. + 12. * pic.enemy_convoys_near.min(4) as f64;
-                self.push(
-                    OpKind::Ambush,
-                    None,
-                    anchor.pos,
-                    "enemy supply route".into(),
-                    value,
-                    format_compact!(
-                        "{} enemy convoy(s) on roads near the front",
-                        pic.enemy_convoys_near
-                    ),
-                );
-            }
+        if pic.enemy_convoys_near > 0
+            && let Some(anchor) = pic.own().min_by(|a, b| a.front_m.total_cmp(&b.front_m))
+        {
+            let value = 28. + 12. * pic.enemy_convoys_near.min(4) as f64;
+            self.push(
+                OpKind::Ambush,
+                None,
+                anchor.pos,
+                "enemy supply route".into(),
+                value,
+                format_compact!(
+                    "{} enemy convoy(s) on roads near the front",
+                    pic.enemy_convoys_near
+                ),
+            );
         }
     }
 
@@ -726,7 +724,7 @@ impl<'a> Gen<'a> {
             let n = self.out.len();
             self.push(OpKind::Bomber, None, *pos, name, value, why);
             if let Some(c) = self.out.get_mut(n) {
-                c.jtac = Some(jt.clone());
+                c.jtac = Some(*jt);
             }
         }
     }
@@ -936,10 +934,10 @@ impl<'a> Gen<'a> {
         // staging from.
         let mut bases: Vec<&Obj> =
             self.plan.defend.iter().filter_map(|id| pic.get(id)).collect();
-        if let Some(s) = self.staging() {
-            if !bases.iter().any(|o| o.id == s.id) {
-                bases.push(s);
-            }
+        if let Some(s) = self.staging()
+            && !bases.iter().any(|o| o.id == s.id)
+        {
+            bases.push(s);
         }
         for o in bases {
             // A base under attack can't take reinforcements (see
@@ -993,7 +991,7 @@ impl<'a> Gen<'a> {
                         .filter(|(_, p)| dist(*p, o.pos) <= 25_000.)
                         .min_by(|a, b| dist(a.1, o.pos).total_cmp(&dist(b.1, o.pos)))
                     {
-                        Some(t) => Some(t.clone()),
+                        Some(t) => Some(*t),
                         None => continue,
                     }
                 } else {
@@ -1162,7 +1160,7 @@ pub(crate) fn rank(
             c.kind.line() != Line::Fires
                 || rt
                     .and_then(|rt| rt.last_fired.get(&c.anchor))
-                    .map_or(true, |t| now - *t >= cooldown)
+                    .is_none_or(|t| now - *t >= cooldown)
         })
         .map(|mut c| {
             let line = c.kind.line();
@@ -1280,29 +1278,28 @@ pub(crate) fn post_tasks(
     };
     let mut wants: Vec<(String, Option<ObjectiveId>, Vector2)> = vec![];
     if let Some(me) = plan.main_effort.and_then(|id| pic.get(&id)) {
-        if plan.posture != Posture::Defensive {
-            if let Some(k) = by_target(|t| matches!(t, TaskTarget::CaptureObjective)) {
-                wants.push((k, Some(me.id), me.pos));
-            }
+        if plan.posture != Posture::Defensive
+            && let Some(k) = by_target(|t| matches!(t, TaskTarget::CaptureObjective))
+        {
+            wants.push((k, Some(me.id), me.pos));
         }
         if let Some(k) = by_name("CAS") {
             wants.push((k, None, me.pos));
         }
     }
-    if let Some(s) = plan.supply.first().and_then(|id| pic.get(id)) {
-        if let Some(k) = by_target(|t| matches!(t, TaskTarget::SupplyObjective { .. })) {
-            wants.push((k, Some(s.id), s.pos));
-        }
+    if let Some(s) = plan.supply.first().and_then(|id| pic.get(id))
+        && let Some(k) = by_target(|t| matches!(t, TaskTarget::SupplyObjective { .. }))
+    {
+        wants.push((k, Some(s.id), s.pos));
     }
     if let Some(d) = plan
         .defend
         .iter()
         .filter_map(|id| pic.get(id))
         .find(|o| pic.enemy_air_near(o.pos, 80_000.) > 0)
+        && let Some(k) = by_name("CAP")
     {
-        if let Some(k) = by_name("CAP") {
-            wants.push((k, None, d.pos));
-        }
+        wants.push((k, None, d.pos));
     }
     for (kind, oid, pos) in wants {
         if room == 0 {

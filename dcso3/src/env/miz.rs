@@ -373,7 +373,7 @@ impl Coalition {
                 return Ok(Some(c));
             }
         }
-        return Ok(None);
+        Ok(None)
     }
 
     fn index(&self, side: Side, base: Path) -> Result<CoalitionIndex> {

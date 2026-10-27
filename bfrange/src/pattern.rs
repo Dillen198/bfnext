@@ -383,10 +383,10 @@ impl Pattern {
             .unwrap_or(false)
         {
             // a bounce: note it on the card already waiting
-            if let Some(p) = self.pending.get_mut(&f.unit_name) {
-                if !p.res.calls.iter().any(|c| c == "bounced") {
-                    p.res.calls.push("bounced".into());
-                }
+            if let Some(p) = self.pending.get_mut(&f.unit_name)
+                && !p.res.calls.iter().any(|c| c == "bounced")
+            {
+                p.res.calls.push("bounced".into());
             }
             return;
         }
@@ -416,10 +416,9 @@ impl Pattern {
                     if along.abs() <= rw.length / 2. + 400.
                         && across.abs() <= rw.width / 2. + 120.
                         && off < 30.
+                        && best.map(|b| off < b.0).unwrap_or(true)
                     {
-                        if best.map(|b| off < b.0).unwrap_or(true) {
-                            best = Some((off, rw, dir));
-                        }
+                        best = Some((off, rw, dir));
                     }
                 }
             }
@@ -638,19 +637,19 @@ impl Pattern {
                 ),
                 cfg.message_s,
             );
-            if let Some(pt) = &r.pattern {
-                if !pt.calls.is_empty() {
-                    records::to_group(
-                        lua,
-                        p.gid,
-                        &format!(
-                            "PATTERN ({}): {}",
-                            pt.kind.replace('_', " "),
-                            pt.calls.join("; ")
-                        ),
-                        cfg.message_s,
-                    );
-                }
+            if let Some(pt) = &r.pattern
+                && !pt.calls.is_empty()
+            {
+                records::to_group(
+                    lua,
+                    p.gid,
+                    &format!(
+                        "PATTERN ({}): {}",
+                        pt.kind.replace('_', " "),
+                        pt.calls.join("; ")
+                    ),
+                    cfg.message_s,
+                );
             }
         }
     }

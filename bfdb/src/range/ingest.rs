@@ -149,7 +149,7 @@ fn rotated_siblings(path: &Path) -> Vec<PathBuf> {
             n.strip_prefix(stem)
                 .and_then(|r| r.strip_suffix(ext))
                 .and_then(|r| r.strip_suffix('.'))
-                .map_or(false, is_stamp)
+                .is_some_and(is_stamp)
         })
         .map(|e| e.path())
         .collect();
@@ -325,8 +325,7 @@ pub(crate) async fn ingest_loop(ctx: Arc<RangeCtx>, inst: String, path: PathBuf)
             }
             match pass {
                 Pass::Missing(e) => {
-                    if last_missing_warn
-                        .map_or(true, |t| t.elapsed() >= MISSING_WARN_EVERY)
+                    if last_missing_warn.is_none_or(|t| t.elapsed() >= MISSING_WARN_EVERY)
                     {
                         last_missing_warn = Some(Instant::now());
                         warn!(
@@ -485,7 +484,7 @@ mod tests {
         assert_eq!(pos, 16);
         let (pass, _) = read_pass(&p, pos, None).unwrap();
         assert!(matches!(pass, Pass::Partial { .. }));
-        write!(f, "3}}\n").unwrap();
+        writeln!(f, "3}}").unwrap();
         f.flush().unwrap();
         let (pass, _) = read_pass(&p, pos, None).unwrap();
         let Pass::Read { pos: p2, lines, .. } = pass else { panic!("expected a read") };

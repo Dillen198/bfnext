@@ -132,10 +132,10 @@ pub fn read_guidance_table(lua: MizLua) {
 /// The guidance label recorded for a weapon: DCS's own numbering when it
 /// has been read, dcso3's otherwise.
 pub fn guidance_str(g: Option<GuidanceType>) -> &'static str {
-    if let (Some(g), Some(live)) = (g, LIVE_GUIDANCE.get()) {
-        if let Some((_, l)) = live.iter().find(|(n, _)| *n == g as u8) {
-            return l;
-        }
+    if let (Some(g), Some(live)) = (g, LIVE_GUIDANCE.get())
+        && let Some((_, l)) = live.iter().find(|(n, _)| *n == g as u8)
+    {
+        return l;
     }
     dcso3_label(g)
 }
@@ -283,10 +283,10 @@ impl Tracker {
 
     /// A HIT event carrying one of our weapons.
     pub fn record_hit(&mut self, oid: &DcsOid<ClassWeapon>, target: String) {
-        if let Some(w) = self.live.iter_mut().find(|w| &w.oid == oid) {
-            if !w.hits.contains(&target) {
-                w.hits.push(target)
-            }
+        if let Some(w) = self.live.iter_mut().find(|w| &w.oid == oid)
+            && !w.hits.contains(&target)
+        {
+            w.hits.push(target)
         }
     }
 

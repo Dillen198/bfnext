@@ -417,10 +417,10 @@ fn on_player_try_send_chat(
 }
 
 fn on_mission_load_end(lua: HooksLua) -> Result<()> {
-    if harvest::get().is_none() {
-        if let Err(e) = harvest::init(lua) {
-            warn!("DCS database harvest failed: {e:?}")
-        }
+    if harvest::get().is_none()
+        && let Err(e) = harvest::init(lua)
+    {
+        warn!("DCS database harvest failed: {e:?}")
     }
     match dcso3::dcs::Dcs::singleton(lua).and_then(|dcs| dcs.get_mission_filename()) {
         Ok(path) => live_weather::set_mission(PathBuf::from(path.as_str())),
@@ -646,10 +646,10 @@ fn ucid_for_name(lua: MizLua, ctx: &Ctx, name: &str) -> Option<Ucid> {
     }
     let net = Net::singleton(lua).ok()?;
     for id in net.get_player_list().ok()?.into_iter().flatten() {
-        if let Ok(info) = net.get_player_info(id) {
-            if info.name().ok().flatten().map(|n| n.as_str() == name).unwrap_or(false) {
-                return info.ucid().ok().flatten();
-            }
+        if let Ok(info) = net.get_player_info(id)
+            && info.name().ok().flatten().map(|n| n.as_str() == name).unwrap_or(false)
+        {
+            return info.ucid().ok().flatten();
         }
     }
     None
@@ -860,12 +860,11 @@ fn handle_kill(
     );
     ctx.hz.on_kill(shooter, t, target_type, now);
     ctx.ew.unit_dead(lua, t, now);
-    if let Some(s) = shooter {
-        if let Some(f) = ctx.players.flying.get(s).cloned() {
-            if f.is_ground {
-                ctx.ground.lane_event(&ctx.ag, &f, t, true, now);
-            }
-        }
+    if let Some(s) = shooter
+        && let Some(f) = ctx.players.flying.get(s).cloned()
+        && f.is_ground
+    {
+        ctx.ground.lane_event(&ctx.ag, &f, t, true, now);
     }
 }
 
@@ -1003,10 +1002,10 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
             }
         }
         Event::ShootingEnd(e) => {
-            if let Ok(name) = e.initiator.get_name() {
-                if let Some(run) = ctx.ag.strafe.get_mut(name.as_str()) {
-                    run.firing = false;
-                }
+            if let Ok(name) = e.initiator.get_name()
+                && let Some(run) = ctx.ag.strafe.get_mut(name.as_str())
+            {
+                run.firing = false;
             }
         }
         Event::Hit(h) => {
@@ -1032,12 +1031,11 @@ fn handle_event(lua: MizLua, ctx: &mut Ctx, ev: Event) -> Result<()> {
                 }
                 _ => (),
             }
-            if let (Some(s), Some(t)) = (&shooter, &target) {
-                if let Some(f) = ctx.players.flying.get(s).cloned() {
-                    if f.is_ground {
-                        ctx.ground.lane_event(&ctx.ag, &f, t, false, now);
-                    }
-                }
+            if let (Some(s), Some(t)) = (&shooter, &target)
+                && let Some(f) = ctx.players.flying.get(s).cloned()
+                && f.is_ground
+            {
+                ctx.ground.lane_event(&ctx.ag, &f, t, false, now);
             }
         }
         Event::Kill(k) => {
@@ -1286,12 +1284,12 @@ fn strafe_tick(lua: MizLua, ctx: &mut Ctx, now: f64) {
         let Some(t) = st.nearest_target(p) else { continue };
         let tpos = t.pos;
         let d = util::dist3(p, tpos);
-        if let Some(r) = ctx.ag.strafe.get_mut(&unit) {
-            if r.firing {
-                r.min_range = r.min_range.min(d);
-                if d < pit.foul_line_m {
-                    r.foul = true;
-                }
+        if let Some(r) = ctx.ag.strafe.get_mut(&unit)
+            && r.firing
+        {
+            r.min_range = r.min_range.min(d);
+            if d < pit.foul_line_m {
+                r.foul = true;
             }
         }
         let receding = v.dot(&(tpos - p)) < 0.;

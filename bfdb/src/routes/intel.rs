@@ -558,7 +558,7 @@ pub(crate) async fn api_intel_markup_add(
             websec::bad_request(format!("unknown markup kind {:?}", body.kind)).into()
         );
     }
-    if body.text.as_ref().map_or(false, |t| t.len() > 500) {
+    if body.text.as_ref().is_some_and(|t| t.len() > 500) {
         return Err(
             websec::bad_request("markup text is limited to 500 characters").into()
         );

@@ -185,7 +185,7 @@ pub(crate) fn score(
                 };
                 let capturable = if tgt.capturable { 40.0 } else { 0.0 };
                 let value = (20.0 + weakness(tgt) + capturable) * proximity * strategic;
-                if best.as_ref().map_or(true, |(_, v)| value > *v) {
+                if best.as_ref().is_none_or(|(_, v)| value > *v) {
                     best = Some((
                         Buy::Barrage {
                             src_oid: src.oid,
@@ -212,7 +212,7 @@ pub(crate) fn score(
         && !inp.missile_strike_running
     {
         let in_range = |gpos: &Option<Vector2>, tpos: Vector2| {
-            gpos.map_or(false, |g| super::dist(g, tpos) <= inp.alcm_range)
+            gpos.is_some_and(|g| super::dist(g, tpos) <= inp.alcm_range)
         };
         let mut best: Option<(Buy, f64)> = None;
         for tgt in enemy {
@@ -234,7 +234,7 @@ pub(crate) fn score(
             };
             let capturable = if tgt.capturable { 60.0 } else { 0.0 };
             let value = (30.0 + weakness(tgt) + capturable) * strategic;
-            if best.as_ref().map_or(true, |(_, v)| value > *v) {
+            if best.as_ref().is_none_or(|(_, v)| value > *v) {
                 best = Some((
                     Buy::MissileStrike {
                         side,
@@ -278,7 +278,7 @@ pub(crate) fn score(
     {
         let cooled = inp
             .cap_last_ended
-            .map_or(true, |t| (now - t).num_seconds() >= sc.cap_cooldown_secs as i64);
+            .is_none_or(|t| (now - t).num_seconds() >= sc.cap_cooldown_secs as i64);
         if cooled && inp.friendly_air.max(inp.enemy_air) >= 3 {
             let gap = inp.enemy_air.saturating_sub(inp.friendly_air);
             if gap >= sc.cap_min_friendly_pilots {

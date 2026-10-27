@@ -175,10 +175,10 @@ impl AirToGround {
         for (i, st) in self.stations.iter_mut().enumerate() {
             if let Some(t) = st.targets.iter_mut().find(|t| t.name == name) {
                 t.alive = false;
-                if st.respawn_at.is_none() {
-                    if let Some(s) = st.cfg.respawn_s {
-                        st.respawn_at = Some(now + s as f64);
-                    }
+                if st.respawn_at.is_none()
+                    && let Some(s) = st.cfg.respawn_s
+                {
+                    st.respawn_at = Some(now + s as f64);
                 }
                 return Some(i);
             }
@@ -194,12 +194,12 @@ impl AirToGround {
     /// the hot list.
     pub fn slow_tick(&mut self, lua: MizLua, spawns: &mut Spawns, now: f64) {
         for st in self.stations.iter_mut() {
-            if let Some(t) = st.respawn_at {
-                if now >= t {
-                    st.respawn_at = None;
-                    if let Err(e) = respawn(lua, st, spawns, now) {
-                        warn!("station {} respawn failed: {e:?}", st.cfg.id)
-                    }
+            if let Some(t) = st.respawn_at
+                && now >= t
+            {
+                st.respawn_at = None;
+                if let Err(e) = respawn(lua, st, spawns, now) {
+                    warn!("station {} respawn failed: {e:?}", st.cfg.id)
                 }
             }
             st.hot.retain(|_, (_, t)| now - *t < 300.);
@@ -360,10 +360,10 @@ impl AirToGround {
         };
         let target_hit = w.hits.iter().any(|h| st.targets.iter().any(|t| &t.name == h));
         let mut display = w.display.clone();
-        if let Some(n) = salvo {
-            if n > 1 {
-                display = format!("{} (best of {n})", w.display);
-            }
+        if let Some(n) = salvo
+            && n > 1
+        {
+            display = format!("{} (best of {n})", w.display);
         }
         let clock = grading::clock(rel);
         let result = BombResult {
@@ -427,10 +427,10 @@ impl AirToGround {
                 .map(|j| format!("\nGPS DENIED at release ({j})"))
                 .unwrap_or_default(),
         );
-        if cfg.in_game_results {
-            if let Some(g) = sh.group_id {
-                records::to_group(lua, g, &msg, cfg.message_s);
-            }
+        if cfg.in_game_results
+            && let Some(g) = sh.group_id
+        {
+            records::to_group(lua, g, &msg, cfg.message_s);
         }
         let pilot =
             PilotRef { ucid: sh.ucid.map(|u| u.to_string()), name: sh.name.clone() };
@@ -527,10 +527,10 @@ impl AirToGround {
             quality.label(),
             invalid_reason.as_ref().map(|r| format!(" ({r})")).unwrap_or_default()
         );
-        if cfg.in_game_results {
-            if let Some(g) = run.group_id {
-                records::to_group(lua, g, &msg, cfg.message_s);
-            }
+        if cfg.in_game_results
+            && let Some(g) = run.group_id
+        {
+            records::to_group(lua, g, &msg, cfg.message_s);
         }
         let result = StrafeResult {
             station_id: st.cfg.id.clone(),

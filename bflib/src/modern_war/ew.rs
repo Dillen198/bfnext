@@ -178,10 +178,10 @@ pub(crate) fn tick(
         .collect();
     for oid in gone {
         go_dark(lua, ctx, oid);
-        if let Some(site) = ctx.modern_war.ew.sites.remove(&oid) {
-            if let Some(gid) = site.gid {
-                let _ = ctx.db.delete_group(&gid);
-            }
+        if let Some(site) = ctx.modern_war.ew.sites.remove(&oid)
+            && let Some(gid) = site.gid
+        {
+            let _ = ctx.db.delete_group(&gid);
         }
     }
     let land = Land::singleton(lua).ok();
@@ -199,26 +199,22 @@ pub(crate) fn tick(
             }
             ctx.modern_war.ew.sites.remove(&oid);
         }
-        if !ctx.modern_war.ew.sites.contains_key(&oid) {
+        ctx.modern_war.ew.sites.entry(oid).or_insert_with(|| {
             let a: f64 = thread_rng().gen_range(0.0..std::f64::consts::TAU);
-            ctx.modern_war.ew.sites.insert(
-                oid,
-                Site {
-                    side: owner,
-                    name: name.clone(),
-                    pos,
-                    gid: None,
-                    down_since: changed.then_some(now),
-                    on_since: None,
-                    spoof,
-                    guard,
-                    spoof_point: pos
-                        + Vector2::new(a.cos(), a.sin()) * cfg.spoof_offset_m,
-                    intel_mark: None,
-                    culled: true,
-                },
-            );
-        }
+            Site {
+                side: owner,
+                name: name.clone(),
+                pos,
+                gid: None,
+                down_since: changed.then_some(now),
+                on_since: None,
+                spoof,
+                guard,
+                spoof_point: pos + Vector2::new(a.cos(), a.sin()) * cfg.spoof_offset_m,
+                intel_mark: None,
+                culled: true,
+            }
+        });
         // A dead truck: tell the side that killed it, and start the clock
         // on its replacement.
         let dead = ctx.modern_war.ew.sites[&oid]
@@ -285,14 +281,17 @@ pub(crate) fn tick(
             .down_since
             .map(|t| (now - t).num_seconds() >= cfg.respawn_secs as i64)
             .unwrap_or(true);
-        if site.gid.is_none() && due && health > 0 && !site.culled {
-            if let (Some(land), Some(spctx)) = (land.as_ref(), spctx.as_ref()) {
-                // A naval base's centre is often water.
-                match land_near(land, pos + Vector2::new(0., 300.), 3_000.) {
-                    None => warn!("ew: no dry land near {name} for a jammer"),
-                    Some(at) => match ctx
-                        .db
-                        .spawn_jammer_truck(perf, spctx, &ctx.idx, owner, at, 0.)
+        if site.gid.is_none()
+            && due
+            && health > 0
+            && !site.culled
+            && let (Some(land), Some(spctx)) = (land.as_ref(), spctx.as_ref())
+        {
+            // A naval base's centre is often water.
+            match land_near(land, pos + Vector2::new(0., 300.), 3_000.) {
+                None => warn!("ew: no dry land near {name} for a jammer"),
+                Some(at) => {
+                    match ctx.db.spawn_jammer_truck(perf, spctx, &ctx.idx, owner, at, 0.)
                     {
                         Ok(gid) => {
                             info!("ew: {owner:?} jammer {gid} up at {name}");
@@ -323,7 +322,7 @@ pub(crate) fn tick(
                                 .expect("present")
                                 .down_since = Some(now);
                         }
-                    },
+                    }
                 }
             }
         }

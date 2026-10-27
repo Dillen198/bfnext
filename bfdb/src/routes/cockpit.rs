@@ -75,7 +75,7 @@ pub(crate) async fn resolve_by_player_id(
         Err(Error(e)) => {
             // The engine refusing the key (or the id) is a failed guess; the
             // engine being down is not the caller's fault.
-            let refused = e.downcast_ref::<websec::ApiError>().map_or(false, |a| {
+            let refused = e.downcast_ref::<websec::ApiError>().is_some_and(|a| {
                 a.status == warp::http::StatusCode::UNPROCESSABLE_ENTITY
             });
             if refused {
@@ -466,7 +466,7 @@ pub(crate) fn advertised_cockpit_version() -> std::string::String {
     let built = cockpit_plugin_version();
     let (known, start) = {
         let mut g = COCKPIT_RELEASE.lock().unwrap_or_else(|e| e.into_inner());
-        let fresh = g.0.map_or(false, |(at, ok)| {
+        let fresh = g.0.is_some_and(|(at, ok)| {
             at.elapsed()
                 < if ok {
                     COCKPIT_RELEASE_RECHECK_OK
@@ -488,9 +488,9 @@ pub(crate) fn advertised_cockpit_version() -> std::string::String {
                 .head(&url)
                 .send()
                 .await
-                .map_or(false, |r| r.status().is_success());
+                .is_ok_and(|r| r.status().is_success());
             let mut g = COCKPIT_RELEASE.lock().unwrap_or_else(|e| e.into_inner());
-            if !ok && g.0.map_or(true, |(_, was)| was) {
+            if !ok && g.0.is_none_or(|(_, was)| was) {
                 log::warn!("cockpit: no published installer at {url} yet -- advertising overlay version \"unknown\" until there is");
             }
             *g = (Some((std::time::Instant::now(), ok)), false);

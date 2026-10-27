@@ -146,9 +146,9 @@ pub(crate) fn sha256(data: &[u8]) -> [u8; 32] {
         msg.push(0);
     }
     msg.extend_from_slice(&bit_len.to_be_bytes());
-    for block in msg.chunks_exact(64) {
+    for block in msg.as_chunks::<64>().0 {
         let mut w = [0u32; 64];
-        for (i, c) in block.chunks_exact(4).enumerate() {
+        for (i, c) in block.as_chunks::<4>().0.iter().enumerate() {
             w[i] = u32::from_be_bytes([c[0], c[1], c[2], c[3]]);
         }
         for i in 16..64 {
@@ -255,7 +255,7 @@ impl IpNet {
 fn is_loopback(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V6(v6) => {
-            v6.is_loopback() || v6.to_ipv4_mapped().map_or(false, |v4| v4.is_loopback())
+            v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
         }
         IpAddr::V4(v4) => v4.is_loopback(),
     }
@@ -374,7 +374,7 @@ pub(crate) fn with_direct_loopback(
     crate::serve::peer_addr()
         .and(warp::header::optional::<std::string::String>("x-forwarded-for"))
         .map(|peer: Option<SocketAddr>, xff: Option<std::string::String>| {
-            peer.map_or(false, |p| is_loopback(p.ip())) && xff.is_none()
+            peer.is_some_and(|p| is_loopback(p.ip())) && xff.is_none()
         })
 }
 
@@ -474,8 +474,7 @@ impl<K: Hash + Eq + Clone> RateLimiter<K> {
         // Bound memory: a flood of distinct keys must not grow this forever.
         if g.len() > 50_000 {
             g.retain(|_, (_, start, until)| {
-                now.duration_since(*start) < self.window
-                    || until.map_or(false, |u| u > now)
+                now.duration_since(*start) < self.window || until.is_some_and(|u| u > now)
             });
         }
         let e = g.entry(key.clone()).or_insert((0, now, None));
@@ -661,7 +660,7 @@ impl OriginPolicy {
     /// the one the browser used.
     pub(crate) fn allows(&self, origin: &str, host: Option<&str>) -> bool {
         let Some(o) = origin_of(origin) else { return false };
-        if self.allowed.iter().any(|a| *a == o) {
+        if self.allowed.contains(&o) {
             return true;
         }
         match host {
@@ -672,7 +671,7 @@ impl OriginPolicy {
 }
 
 fn has_session_cookie(cookie: Option<&str>) -> bool {
-    cookie.map_or(false, |c| c.split(';').any(|p| p.trim().starts_with("session=")))
+    cookie.is_some_and(|c| c.split(';').any(|p| p.trim().starts_with("session=")))
 }
 
 /// Why a request was refused by [`csrf_verdict`], or `None` to let it through.
@@ -702,7 +701,7 @@ pub(crate) fn csrf_verdict(
     if !has_session_cookie(cookie) {
         return None;
     }
-    let is_ws = upgrade.map_or(false, |u| u.eq_ignore_ascii_case("websocket"));
+    let is_ws = upgrade.is_some_and(|u| u.eq_ignore_ascii_case("websocket"));
     let unsafe_method =
         matches!(*method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE);
     if !is_ws && !unsafe_method {

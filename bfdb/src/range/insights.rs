@@ -1180,7 +1180,7 @@ mod tests {
         }
         // the CSAR / field landings need a sample, the SEAD a death per sortie
         for (i, r) in recs.iter_mut().enumerate() {
-            r.ts = r.ts - chrono::Duration::hours(i as i64);
+            r.ts -= chrono::Duration::hours(i as i64);
         }
         let refs: Vec<&RangeRecord> = recs.iter().collect();
         let out = derive(&refs);

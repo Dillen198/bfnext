@@ -95,7 +95,7 @@ pub(crate) fn cfg(ctx: &Context) -> Option<(SmartCommanderCfg, HqCfg)> {
 /// The HQ is running the war (so the older systems it replaces -- the Smart
 /// Commander's four event actions and air_life's packages -- stand down).
 pub(crate) fn active(cfg: &Cfg) -> bool {
-    cfg.smart_commander.as_ref().and_then(|s| s.hq.as_ref()).map_or(false, |h| h.enabled)
+    cfg.smart_commander.as_ref().and_then(|s| s.hq.as_ref()).is_some_and(|h| h.enabled)
 }
 
 // ---------------------------------------------------------------------------
@@ -352,7 +352,7 @@ fn humans_on(ctx: &Context, side: Side) -> u32 {
         .info_by_player_id
         .values()
         .filter(|ifo| {
-            ctx.db.persisted.players.get(&ifo.ucid).map_or(false, |p| p.side == side)
+            ctx.db.persisted.players.get(&ifo.ucid).is_some_and(|p| p.side == side)
         })
         .count() as u32
 }
@@ -405,7 +405,7 @@ pub(crate) fn tick(
             .hq
             .side(side)
             .last_think
-            .map_or(true, |t| now - t >= Duration::seconds(every as i64));
+            .is_none_or(|t| now - t >= Duration::seconds(every as i64));
         if !due {
             continue;
         }
@@ -419,13 +419,12 @@ pub(crate) fn tick(
     // open: it is a full planning pass.
     for side in cfg.sides.iter().copied().filter(|s| *s != Side::Neutral) {
         let rt = ctx.hq.side(side);
-        let wanted = rt
-            .menu_wanted
-            .map_or(false, |t| now - t < Duration::seconds(MENU_WANTED_SECS));
+        let wanted =
+            rt.menu_wanted.is_some_and(|t| now - t < Duration::seconds(MENU_WANTED_SECS));
         let stale = rt
             .menu
             .as_ref()
-            .map_or(true, |(t, _)| now - *t >= Duration::seconds(MENU_SECS));
+            .is_none_or(|(t, _)| now - *t >= Duration::seconds(MENU_SECS));
         if wanted && stale {
             let _ = launch_menu(ctx, side, 0, now);
             break;
@@ -525,7 +524,7 @@ fn think(
             .side(side)
             .failed
             .get(&key)
-            .map_or(false, |t| (now - *t).num_seconds() < FAILED_RETRY_SECS)
+            .is_some_and(|t| (now - *t).num_seconds() < FAILED_RETRY_SECS)
         {
             continue;
         }
@@ -587,11 +586,11 @@ fn announce_effort(
 fn expire_orders(ctx: &mut Context, cfg: &HqCfg, side: Side, now: DateTime<Utc>) {
     let saved = ctx.db.persisted.hq.side_mut(side);
     let mut changed = false;
-    if saved.human.as_ref().map_or(false, |o| now >= o.expires) {
+    if saved.human.as_ref().is_some_and(|o| now >= o.expires) {
         saved.human = None;
         changed = true;
     }
-    if saved.directive.as_ref().map_or(false, |d| now >= d.expires)
+    if saved.directive.as_ref().is_some_and(|d| now >= d.expires)
         || !cfg.strategist.enabled
     {
         changed |= saved.directive.take().is_some();
@@ -860,13 +859,13 @@ fn sanitize(ctx: &Context, cfg: &HqCfg, side: Side, d: &mut Directive) {
     let owner = |id: u64| {
         ctx.db.persisted.objectives.get(&ObjectiveId::from(id as i64)).map(|o| o.owner())
     };
-    if let Some(me) = d.main_effort {
-        if owner(me).map_or(true, |o| o == side) {
-            warn!(
-                "hq: {side:?} directive main effort {me} is not an enemy objective, ignored"
-            );
-            d.main_effort = None;
-        }
+    if let Some(me) = d.main_effort
+        && owner(me).is_none_or(|o| o == side)
+    {
+        warn!(
+            "hq: {side:?} directive main effort {me} is not an enemy objective, ignored"
+        );
+        d.main_effort = None;
     }
     d.defend.retain(|id| owner(*id) == Some(side));
     d.supply_priority.retain(|id| owner(*id) == Some(side));
@@ -879,15 +878,15 @@ fn sanitize(ctx: &Context, cfg: &HqCfg, side: Side, d: &mut Directive) {
     for w in d.weights.values_mut() {
         *w = w.clamp(0., max);
     }
-    if let Some(i) = d.intent.as_mut() {
-        if i.chars().count() > 280 {
-            *i = i.chars().take(280).collect();
-        }
+    if let Some(i) = d.intent.as_mut()
+        && i.chars().count() > 280
+    {
+        *i = i.chars().take(280).collect();
     }
-    if let Some(r) = d.rationale.as_mut() {
-        if r.chars().count() > 1200 {
-            *r = r.chars().take(1200).collect();
-        }
+    if let Some(r) = d.rationale.as_mut()
+        && r.chars().count() > 1200
+    {
+        *r = r.chars().take(1200).collect();
     }
 }
 
@@ -960,10 +959,10 @@ pub(crate) fn launch_menu(
     n: usize,
     now: DateTime<Utc>,
 ) -> Vec<planner::Cand> {
-    if let Some((at, m)) = ctx.hq.side(side).menu.as_ref() {
-        if now - *at < Duration::seconds(MENU_SECS) {
-            return m.iter().take(n).cloned().collect();
-        }
+    if let Some((at, m)) = ctx.hq.side(side).menu.as_ref()
+        && now - *at < Duration::seconds(MENU_SECS)
+    {
+        return m.iter().take(n).cloned().collect();
     }
     let Some((_, cfg)) = cfg(ctx) else { return vec![] };
     let pic = picture::build(ctx, &cfg, side, now);

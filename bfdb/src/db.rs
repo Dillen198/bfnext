@@ -795,18 +795,22 @@ pub(crate) struct SessionRec {
 
 pub(crate) type Scenario = String;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(crate) enum GroupKind {
-    Deployed { name: String, by: Ucid },
-    Troop { name: String, by: Ucid },
-    Action { name: String, by: Ucid },
+    Deployed {
+        name: String,
+        by: Ucid,
+    },
+    Troop {
+        name: String,
+        by: Ucid,
+    },
+    Action {
+        name: String,
+        by: Ucid,
+    },
+    #[default]
     Objective,
-}
-
-impl Default for GroupKind {
-    fn default() -> Self {
-        GroupKind::Objective
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1012,7 +1016,7 @@ impl InstanceState {
         ));
         e.1 = e.1.max(took);
         e.2 += 1;
-        if e.0.map_or(true, |t: std::time::Instant| {
+        if e.0.is_none_or(|t: std::time::Instant| {
             t.elapsed() >= std::time::Duration::from_secs(60)
         }) {
             warn!(
@@ -1052,7 +1056,7 @@ impl InstanceState {
                 // Once open, only the probes land here (one per RPC_PROBE_SECS),
                 // so this is a reminder every ~5 minutes while it stays down.
                 let every = (300 / RPC_PROBE_SECS).max(1) as u32;
-                if (g.0 - RPC_FAIL_THRESHOLD) % every == 0 {
+                if (g.0 - RPC_FAIL_THRESHOLD).is_multiple_of(every) {
                     warn!(
                         "[{}] engine RPCs still unanswered (~{}m, breaker open)",
                         self.id,
@@ -2717,7 +2721,7 @@ impl StatsDb {
                         // file up while it's replayed.
                         let log_every =
                             if total_batches <= 100_000 { 100 } else { 50_000 };
-                        if total_batches <= 5 || total_batches % log_every == 0 {
+                        if total_batches <= 5 || total_batches.is_multiple_of(log_every) {
                             info!("batch #{total_batches} ts={ts} items={} (total_items={total_items})", items.len());
                         }
                         last_seen_ts = Some(ts);
@@ -2755,7 +2759,9 @@ impl StatsDb {
                                         continue;
                                     }
                                 };
-                                if total_batches <= 10 || total_batches % 100 == 0 {
+                                if total_batches <= 10
+                                    || total_batches.is_multiple_of(100)
+                                {
                                     info!(
                                         "adding stat variant={}",
                                         stat_variant_name(&st)
@@ -2924,7 +2930,7 @@ impl StatsDb {
             let quiet_for = quiet_since.elapsed().as_secs();
             // Say it once, then at most once every JSONL_QUIET_WARN_SECS.
             let warn_due = last_quiet_warn
-                .map_or(true, |t| t.elapsed().as_secs() >= JSONL_QUIET_WARN_SECS);
+                .is_none_or(|t| t.elapsed().as_secs() >= JSONL_QUIET_WARN_SECS);
             let step = match read_result {
                 Ok(step) => step,
                 Err(e) => {
@@ -3289,7 +3295,7 @@ impl StatsDb {
                     if ucid == Ucid::default() {
                         continue;
                     }
-                    let name = pilot.name.last().map(|s| s.clone()).unwrap_or_default();
+                    let name = pilot.name.last().cloned().unwrap_or_default();
                     entries.push((ucid, name, pilot.total));
                 }
                 entries.sort_by(|a, b| {
@@ -3307,7 +3313,7 @@ impl StatsDb {
                     if round_id != rid || ucid == Ucid::default() {
                         continue;
                     }
-                    let e = map.entry(ucid).or_insert_with(Aggregates::default);
+                    let e = map.entry(ucid).or_default();
                     e.air_kills += agg.air_kills;
                     e.ground_kills += agg.ground_kills;
                     e.captures += agg.captures;
@@ -3381,7 +3387,7 @@ impl StatsDb {
         let mut entries = Vec::new();
         for r in self.pilots.pilots.iter() {
             let (ucid, pilot) = r?;
-            let name = pilot.name.last().map(|s| s.clone()).unwrap_or_default();
+            let name = pilot.name.last().cloned().unwrap_or_default();
             entries.push((ucid, name));
         }
         Ok(entries)
@@ -3857,7 +3863,7 @@ impl StatsDb {
         inst: &str,
         version: &str,
     ) -> Result<Option<std::string::String>> {
-        Ok(self.unit_db.get(&(inst.to_string(), version.to_string()))?)
+        self.unit_db.get(&(inst.to_string(), version.to_string()))
     }
 
     pub(crate) fn unit_db_latest(
@@ -4083,7 +4089,7 @@ impl StatsDb {
             if &self.round_instance_of(rid) != inst {
                 continue;
             }
-            if best.map_or(true, |(t, _)| ri.side.0 > t) {
+            if best.is_none_or(|(t, _)| ri.side.0 > t) {
                 best = Some(ri.side);
             }
         }
@@ -5251,7 +5257,7 @@ impl StatsDb {
         for r in self.captures.scan_prefix(&rid)? {
             caps.push(r?.1);
         }
-        caps.sort_by(|a, b| a.time.cmp(&b.time));
+        caps.sort_by_key(|a| a.time);
         let opposite = |s: Side| match s {
             Side::Blue => Side::Red,
             Side::Red => Side::Blue,
@@ -5362,7 +5368,7 @@ impl StatsDb {
             result.push((round_id, sortie_id, sortie));
         }
         // Sort chronologically
-        result.sort_by(|a, b| a.2.takeoff.cmp(&b.2.takeoff));
+        result.sort_by_key(|a| a.2.takeoff);
         Ok(result)
     }
 
@@ -5386,7 +5392,7 @@ impl StatsDb {
             if u != *ucid {
                 continue;
             }
-            let e = map.entry(round_id).or_insert_with(Aggregates::default);
+            let e = map.entry(round_id).or_default();
             e.air_kills += agg.air_kills;
             e.ground_kills += agg.ground_kills;
             e.captures += agg.captures;
@@ -5408,7 +5414,7 @@ impl StatsDb {
             })
             .collect();
         // Sort by round id ascending (oldest first)
-        result.sort_by(|a, b| a.1.cmp(&b.1));
+        result.sort_by_key(|a| a.1);
         Ok(result)
     }
 
@@ -5643,8 +5649,8 @@ impl StatsDb {
         }
 
         for (o, tally) in out.iter_mut().zip(tallies) {
-            o.kills.sort_by(|a, b| a.time.cmp(&b.time));
-            o.deploys.sort_by(|a, b| a.time.cmp(&b.time));
+            o.kills.sort_by_key(|a| a.time);
+            o.deploys.sort_by_key(|a| a.time);
             o.weapons = tally
                 .into_iter()
                 .map(|(weapon, (shots, hits, kills))| SortieWeapon {
@@ -5908,7 +5914,7 @@ impl StatsDb {
                     None => None,
                 };
                 match current {
-                    None => bail!("no session for {} is in progress", &ctx.sortie),
+                    None => bail!("no session for {} is in progress", ctx.sortie),
                     Some((k, mut session)) => {
                         session.end =
                             Some(SessionEnd { api: api_perf, engine: perf, frame, time });
@@ -6485,7 +6491,7 @@ impl StatsDb {
         let mut dead = Vec::new();
         for r in self.auth_sessions.iter() {
             let Ok((id, s)) = r else { continue };
-            if discord_id.map_or(true, |d| s.discord_id == d) {
+            if discord_id.is_none_or(|d| s.discord_id == d) {
                 dead.push(id);
             }
         }
@@ -7069,9 +7075,9 @@ impl StatsDb {
             if !fork_ids.contains(&rid) {
                 continue;
             }
-            self.pilots.aggregates.remove(&(u.clone(), v.clone(), rid))?;
+            self.pilots.aggregates.remove(&(u, v.clone(), rid))?;
             self.pilots.aggregates.fetch_and_update(
-                &(u.clone(), v.clone(), canonical),
+                &(u, v.clone(), canonical),
                 |cur| {
                     let mut c = cur.unwrap_or_default();
                     c.air_kills += agg.air_kills;
@@ -7105,7 +7111,7 @@ impl StatsDb {
                 if !touched(rid) {
                     continue;
                 }
-                self.pilots.round_info.remove(&(u.clone(), rid))?;
+                self.pilots.round_info.remove(&(u, rid))?;
                 moved += 1;
                 match newest.get(&u) {
                     Some((best, _)) if *best >= rid => {}
@@ -7129,7 +7135,7 @@ impl StatsDb {
             if !fork_ids.contains(&rid) {
                 continue;
             }
-            self.pilots.sortie.remove(&(u.clone(), rid, sid))?;
+            self.pilots.sortie.remove(&(u, rid, sid))?;
             self.pilots.sortie.insert(&(u, canonical, sid), &s)?;
             moved += 1;
         }
@@ -7155,7 +7161,7 @@ impl StatsDb {
             if !fork_ids.contains(&rid) {
                 continue;
             }
-            self.deploys.remove(&(u.clone(), rid, did))?;
+            self.deploys.remove(&(u, rid, did))?;
             self.deploys.insert(&(u, canonical, did), &rec)?;
             moved += 1;
         }

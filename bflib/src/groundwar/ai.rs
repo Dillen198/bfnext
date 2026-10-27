@@ -218,7 +218,7 @@ fn value(kind: &ObjectiveKind) -> f64 {
         ObjectiveKind::Fob | ObjectiveKind::Farp { .. } => 1.0,
         ObjectiveKind::NavalBase => 0.9,
         // A SAM site is a strike target, not a ground objective.
-        ObjectiveKind::SpecialSamSite { .. } => 0.4,
+        ObjectiveKind::SpecialSamSite => 0.4,
         ObjectiveKind::CarrierGroup { .. } => 0.,
     }
 }
@@ -347,17 +347,19 @@ fn think_side(
     //    across the map: anything still more than twice the attack reach
     //    from where it is going holds at the nearest friendly base instead.
     for f in forms(ctx, side, now) {
-        if f.ai && f.posture == Posture::Moving && f.to_go > ai.max_attack_m * 2. {
-            if let Some(dest) = nearest_owned(f.pos) {
-                info!(
-                    "ground war AI: formation {} is {:.0} km from its objective, recalling it",
-                    f.id,
-                    f.to_go / 1000.
-                );
-                let to = owned.iter().find(|o| o.id == dest).map(|o| o.pos);
-                if !order_checked(lua, ctx, f.id, Order::Defend(dest), f.pos, to, now) {
-                    order(lua, ctx, f.id, Order::Hold, now);
-                }
+        if f.ai
+            && f.posture == Posture::Moving
+            && f.to_go > ai.max_attack_m * 2.
+            && let Some(dest) = nearest_owned(f.pos)
+        {
+            info!(
+                "ground war AI: formation {} is {:.0} km from its objective, recalling it",
+                f.id,
+                f.to_go / 1000.
+            );
+            let to = owned.iter().find(|o| o.id == dest).map(|o| o.pos);
+            if !order_checked(lua, ctx, f.id, Order::Defend(dest), f.pos, to, now) {
+                order(lua, ctx, f.id, Order::Hold, now);
             }
         }
     }
@@ -445,29 +447,25 @@ fn think_side(
             })
             .filter(|f| dist(f.pos, o.pos) <= RESPONSE_M)
             .min_by(|a, b| dist(a.pos, o.pos).total_cmp(&dist(b.pos, o.pos)));
-        if let Some(f) = pick {
-            if order_checked(lua, ctx, f.id, Order::Defend(o.id), f.pos, Some(o.pos), now)
-            {
-                responses += 1;
-                ctx.groundwar.rt.event(
+        if let Some(f) = pick
+            && order_checked(lua, ctx, f.id, Order::Defend(o.id), f.pos, Some(o.pos), now)
+        {
+            responses += 1;
+            ctx.groundwar.rt.event(
+                side,
+                "order",
+                format_compact!("GROUND COMMAND: counter-attacking at {}", o.name),
+                Some(o.pos),
+                Some(f.id),
+                now,
+            );
+            if cfg.announce {
+                ctx.db.ephemeral.msgs().panel_to_side(
+                    15,
+                    false,
                     side,
-                    "order",
-                    format_compact!("GROUND COMMAND: counter-attacking at {}", o.name),
-                    Some(o.pos),
-                    Some(f.id),
-                    now,
+                    format_compact!("GROUND COMMAND: counter-attacking at {}.", o.name),
                 );
-                if cfg.announce {
-                    ctx.db.ephemeral.msgs().panel_to_side(
-                        15,
-                        false,
-                        side,
-                        format_compact!(
-                            "GROUND COMMAND: counter-attacking at {}.",
-                            o.name
-                        ),
-                    );
-                }
             }
         }
     }
@@ -492,7 +490,7 @@ fn think_side(
             let ok = ctx
                 .db
                 .formation_candidates(cfg, &o.id, side)
-                .map_or(false, |g| !g.is_empty());
+                .is_ok_and(|g| !g.is_empty());
             if !ok {
                 continue;
             }
@@ -620,18 +618,10 @@ fn think_side(
             .iter()
             .filter(|o| dist(o.pos, f.pos) <= ai.max_attack_m)
             .min_by(|a, b| front_dist(a.pos).total_cmp(&front_dist(b.pos)));
-        if let Some(o) = screen {
-            if dist(o.pos, f.pos) > cfg.arrive_m * 2. {
-                order_checked(
-                    lua,
-                    ctx,
-                    f.id,
-                    Order::Defend(o.id),
-                    f.pos,
-                    Some(o.pos),
-                    now,
-                );
-            }
+        if let Some(o) = screen
+            && dist(o.pos, f.pos) > cfg.arrive_m * 2.
+        {
+            order_checked(lua, ctx, f.id, Order::Defend(o.id), f.pos, Some(o.pos), now);
         }
     }
 }

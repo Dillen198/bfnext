@@ -143,7 +143,7 @@ pub(crate) fn list_cargo_for_slot(ctx: &mut Context, slot: &SlotId) -> Result<()
     let uid =
         slot.as_unit_id().ok_or_else(|| anyhow!("{slot:?} is not an aircraft slot"))?;
     let cargo = Cargo::default();
-    let cargo = ctx.db.list_cargo(&slot).unwrap_or(&cargo);
+    let cargo = ctx.db.list_cargo(slot).unwrap_or(&cargo);
     let sifo =
         ctx.db.ephemeral.get_slot_info(slot).ok_or_else(|| anyhow!("invalid slot"))?;
     let capacity =
@@ -191,7 +191,7 @@ pub(crate) fn list_cargo_for_slot(ctx: &mut Context, slot: &SlotId) -> Result<()
     if total > 0 {
         msg.push_str("----------------------------\n");
     }
-    msg.push_str(&format_compact!("total cargo weight: {} kg", total as u32));
+    msg.push_str(&format_compact!("total cargo weight: {} kg", { total }));
     ctx.db.ephemeral.msgs().panel_to_unit(15, false, uid, msg);
     Ok(())
 }
@@ -211,7 +211,7 @@ fn list_nearby_crates(lua: MizLua, gid: GroupId) -> Result<()> {
         slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     let st = SlotStats::get(&ctx.db, lua, &slot).context("getting slot stats")?;
     let nearby = ctx.db.list_nearby_crates(&st).context("listing nearby crates")?;
-    if nearby.len() > 0 {
+    if !nearby.is_empty() {
         let mut msg = CompactString::new("");
         for nc in nearby {
             msg.push_str(&format_compact!(
@@ -360,7 +360,7 @@ pub(crate) fn spawn_crates_for_ucid(
     let slot = player
         .current_slot
         .as_ref()
-        .map(|(slot, _)| slot.clone())
+        .map(|(slot, _)| *slot)
         .ok_or_else(|| anyhow!("you must be in a slot to spawn crates"))?;
     let origin = ctx.db.player_current_objective_id(&slot)?;
 
@@ -399,7 +399,7 @@ pub(crate) fn spawn_crates_for_ucid(
 
     let name = String::from(crate_name);
     let crate_list: Vec<_> =
-        std::iter::repeat((name, crate_def)).take(qty as usize).collect();
+        std::iter::repeat_n((name, crate_def), qty as usize).collect();
     ctx.db.queue_c130_crate_spawns(lua, &slot, crate_list, side, origin, auto_unpack)
 }
 
@@ -632,16 +632,15 @@ fn deliver_pilots(lua: MizLua, gid: GroupId) -> Result<()> {
                 }
                 // Rescuing your own ejected pilot gets the life back, not a
                 // reward on top (see tick_csar).
-                if rescue_reward > 0 {
-                    if let Some(ucid) =
+                if rescue_reward > 0
+                    && let Some(ucid) =
                         rescuer_ucid.as_ref().filter(|u| **u != pilot.ucid)
-                    {
-                        ctx.db.earn_points(
-                            ucid,
-                            rescue_reward as i32,
-                            &format_compact!("for CSAR rescue of {}", pilot.name),
-                        );
-                    }
+                {
+                    ctx.db.earn_points(
+                        ucid,
+                        rescue_reward as i32,
+                        &format_compact!("for CSAR rescue of {}", pilot.name),
+                    );
                 }
             }
             let n = pilots.len();
@@ -805,7 +804,7 @@ pub(super) fn add_cargo_menu_for_group(
     }
     if let Some(whcfg) = &cfg.warehouse {
         // Add fuel transfer crate menu item
-        if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(&side) {
+        if let Some(fuel_cr) = whcfg.supply_transfer_fuel_crate.get(side) {
             mc.add_command_for_group(
                 group,
                 fuel_cr.name.clone(),
@@ -815,7 +814,7 @@ pub(super) fn add_cargo_menu_for_group(
             )?;
         }
         // Add weapons transfer crate menu item
-        if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(&side) {
+        if let Some(weapons_cr) = whcfg.supply_transfer_weapons_crate.get(side) {
             mc.add_command_for_group(
                 group,
                 weapons_cr.name.clone(),
@@ -972,7 +971,7 @@ pub(super) fn add_c130_cargo_menu_for_group(
                 add_supply(weapons_cr.name.as_str())?;
             }
             if !whcfg.carrier_repair_crate.is_empty() {
-                add_supply(whcfg.carrier_repair_crate[&side].name.as_str())?;
+                add_supply(whcfg.carrier_repair_crate[side].name.as_str())?;
             }
         }
         if let Some(er) = emergency_crate(cfg) {
@@ -1051,46 +1050,38 @@ pub(super) fn add_c130_cargo_menu_for_group(
     }
 
     // Add Vehicles submenu for loadable vehicles (if configured)
-    if let Some(c130_cfg) = &cfg.c130_cargo {
-        if let Some(vehicles) = c130_cfg.loadable_vehicles.get(side) {
-            if !vehicles.is_empty() {
-                let vehicles_menu = mc.add_submenu_for_group(
-                    group,
-                    "Vehicles".into(),
-                    Some(root.clone()),
-                )?;
-                // Same tree as the crate categories: an optional path per
-                // vehicle, every level of it paged.
-                let mut tree = CrateTree::new(group, vehicles_menu, 0);
+    if let Some(c130_cfg) = &cfg.c130_cargo
+        && let Some(vehicles) = c130_cfg.loadable_vehicles.get(side)
+        && !vehicles.is_empty()
+    {
+        let vehicles_menu =
+            mc.add_submenu_for_group(group, "Vehicles".into(), Some(root.clone()))?;
+        // Same tree as the crate categories: an optional path per
+        // vehicle, every level of it paged.
+        let mut tree = CrateTree::new(group, vehicles_menu, 0);
 
-                for vehicle in vehicles {
-                    let page = if vehicle.path.is_empty() {
-                        tree.root_page(mc)?
-                    } else {
-                        tree.category(mc, &vehicle.path, 0)?;
-                        tree.page_in(mc, vehicle.path.last().unwrap())?
-                    };
+        for vehicle in vehicles {
+            let page = if vehicle.path.is_empty() {
+                tree.root_page(mc)?
+            } else {
+                tree.category(mc, &vehicle.path, 0)?;
+                tree.page_in(mc, vehicle.path.last().unwrap())?
+            };
 
-                    // Create menu item with cost if applicable
-                    let title = if vehicle.cost > 0 {
-                        String::from(format_compact!(
-                            "{} ({} pts)",
-                            vehicle.name,
-                            vehicle.cost
-                        ))
-                    } else {
-                        String::from(vehicle.name.clone())
-                    };
+            // Create menu item with cost if applicable
+            let title = if vehicle.cost > 0 {
+                String::from(format_compact!("{} ({} pts)", vehicle.name, vehicle.cost))
+            } else {
+                vehicle.name.clone()
+            };
 
-                    mc.add_command_for_group(
-                        group,
-                        title,
-                        Some(page),
-                        spawn_c130_vehicle,
-                        ArgTuple { fst: group, snd: String::from(vehicle.name.clone()) },
-                    )?;
-                }
-            }
+            mc.add_command_for_group(
+                group,
+                title,
+                Some(page),
+                spawn_c130_vehicle,
+                ArgTuple { fst: group, snd: vehicle.name.clone() },
+            )?;
         }
     }
 

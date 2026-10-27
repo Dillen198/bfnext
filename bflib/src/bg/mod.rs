@@ -151,10 +151,12 @@ pub(crate) fn backup_saves(path: &Path) -> Vec<PathBuf> {
     for file in rd.flatten() {
         let fname = file.file_name();
         let Some(fname) = fname.to_str() else { continue };
-        if let Some(ts) = fname.strip_prefix(name) {
-            if !ts.is_empty() && ts.parse::<i64>().is_ok() && file.path().is_file() {
-                found.push(file.path());
-            }
+        if let Some(ts) = fname.strip_prefix(name)
+            && !ts.is_empty()
+            && ts.parse::<i64>().is_ok()
+            && file.path().is_file()
+        {
+            found.push(file.path());
         }
     }
     found
@@ -209,40 +211,24 @@ fn prune_backups(path: &Path, now: DateTime<Utc>) -> Result<()> {
             let day = 86400;
             let week = day * 7;
             let month = week * 4;
-            if file.file_type()?.is_file() {
-                if let Some(ts) = fname.strip_prefix(name) {
-                    if let Ok(ts) = ts.parse::<i64>() {
-                        let age = now - ts;
-                        let file = PathBuf::from(file.path());
-                        if age > month {
-                            by_age
-                                .entry((age / month) * month)
-                                .or_default()
-                                .push((ts, file));
-                        } else if age > week {
-                            by_age
-                                .entry((age / week) * week)
-                                .or_default()
-                                .push((ts, file));
-                        } else if age > day {
-                            by_age.entry((age / day) * day).or_default().push((ts, file));
-                        } else if age > hour {
-                            by_age
-                                .entry((age / hour) * hour)
-                                .or_default()
-                                .push((ts, file));
-                        } else if age > tenmin {
-                            by_age
-                                .entry((age / tenmin) * tenmin)
-                                .or_default()
-                                .push((ts, file));
-                        } else if age > onemin {
-                            by_age
-                                .entry((age / onemin) * onemin)
-                                .or_default()
-                                .push((ts, file));
-                        }
-                    }
+            if file.file_type()?.is_file()
+                && let Some(ts) = fname.strip_prefix(name)
+                && let Ok(ts) = ts.parse::<i64>()
+            {
+                let age = now - ts;
+                let file = file.path();
+                if age > month {
+                    by_age.entry((age / month) * month).or_default().push((ts, file));
+                } else if age > week {
+                    by_age.entry((age / week) * week).or_default().push((ts, file));
+                } else if age > day {
+                    by_age.entry((age / day) * day).or_default().push((ts, file));
+                } else if age > hour {
+                    by_age.entry((age / hour) * hour).or_default().push((ts, file));
+                } else if age > tenmin {
+                    by_age.entry((age / tenmin) * tenmin).or_default().push((ts, file));
+                } else if age > onemin {
+                    by_age.entry((age / onemin) * onemin).or_default().push((ts, file));
                 }
             }
         }
@@ -287,10 +273,10 @@ async fn save(path: PathBuf, encoded: Bytes) -> Result<()> {
         fs::rename(&tmp, &path)?;
         // the first save of a new round retires the reset marker
         let marker = reset_marker_path(&path);
-        if marker.exists() {
-            if let Err(e) = fs::remove_file(&marker) {
-                error!("failed to remove the campaign reset marker {marker:?} {e:?}")
-            }
+        if marker.exists()
+            && let Err(e) = fs::remove_file(&marker)
+        {
+            error!("failed to remove the campaign reset marker {marker:?} {e:?}")
         }
         if let Err(e) = prune_backups(&path, now) {
             error!("failed to prune backup save files {e:?}")
@@ -550,7 +536,7 @@ impl Logs {
     async fn open_files(&mut self) -> Result<()> {
         match self {
             Self::Netidx { .. } => Ok(()),
-            Self::Files { log_path, log_file, stats_path: _, .. } => {
+            Self::Files { log_path, log_file, .. } => {
                 *log_file = Some(
                     File::options().create(true).append(true).open(&log_path).await?,
                 );
@@ -619,10 +605,10 @@ impl Logs {
             Self::Files { stats_jsonl, .. } => stats_jsonl,
             Self::Netidx { stats_jsonl, .. } => stats_jsonl,
         };
-        if let Some(f) = jsonl {
-            if let Err(e) = f.append_stamped("stat", stat) {
-                error!("failed to write stat to JSONL: {e:?}");
-            }
+        if let Some(f) = jsonl
+            && let Err(e) = f.append_stamped("stat", stat)
+        {
+            error!("failed to write stat to JSONL: {e:?}");
         }
         // Also write to netidx archive if in Netidx mode
         match self {
@@ -673,7 +659,7 @@ impl Logs {
                     .context("starting pubperf")?;
                     let stats = Statspub::new(
                         publisher.clone(),
-                        &cfg,
+                        cfg,
                         stats_path.clone(),
                         base.append("stats"),
                         sortie.clone(),
@@ -707,7 +693,7 @@ impl Logs {
                                 "netidx init failed and reopening files also failed {e:?}"
                             )
                         }
-                        return Err(e);
+                        Err(e)
                     }
                 }
             }
@@ -1003,7 +989,7 @@ impl fowlbg::Handler for Background {
     /// task) was handled.
     async fn stop(&mut self) {
         if let Some(a) = self.shutdown.take() {
-            let &(ref lock, ref cvar) = &*a;
+            let (lock, cvar) = &*a;
             let mut synced = lock.lock();
             *synced = true;
             cvar.notify_all();

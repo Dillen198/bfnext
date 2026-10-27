@@ -723,7 +723,7 @@ Host: evil"
 
     #[test]
     fn oversized_body_is_an_error_not_a_cut() {
-        let big = vec![b'x'; 11];
+        let big = [b'x'; 11];
         assert_eq!(read_limited(&big[..10], 10).unwrap().len(), 10);
         let e = read_limited(&big[..], 10).unwrap_err();
         assert!(e.contains("larger than"), "{e}");

@@ -424,11 +424,11 @@ impl Db {
             return Ok(());
         }
         for gid in &doomed {
-            if let Some(oid) = self.persisted.objectives_by_group.get(gid).copied() {
-                if let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) {
-                    for (_, gids) in obj.groups.iter_mut_cow() {
-                        gids.remove_cow(gid);
-                    }
+            if let Some(oid) = self.persisted.objectives_by_group.get(gid).copied()
+                && let Some(obj) = self.persisted.objectives.get_mut_cow(&oid)
+            {
+                for (_, gids) in obj.groups.iter_mut_cow() {
+                    gids.remove_cow(gid);
                 }
             }
             self.persisted.objectives_by_group.remove_cow(gid);
@@ -1187,22 +1187,20 @@ impl Db {
                     }
                     if let Some(oid) =
                         self.persisted.objectives_by_name.get(&cfg_site.name)
+                        && let Some(obj) = self.persisted.objectives.get(oid)
+                        && let Some(groups) = obj.groups.get(side)
                     {
-                        if let Some(obj) = self.persisted.objectives.get(oid) {
-                            if let Some(groups) = obj.groups.get(side) {
-                                for gid in groups {
-                                    if let Some(g) = self.persisted.groups.get(gid) {
-                                        if g.template_name.starts_with("@synthetic:") {
-                                            self.ephemeral.synthetic_templates.insert(
-                                                g.template_name.clone(),
-                                                SyntheticGroupSpec {
-                                                    country: *country,
-                                                    category: GroupCategory::Ground,
-                                                },
-                                            );
-                                        }
-                                    }
-                                }
+                        for gid in groups {
+                            if let Some(g) = self.persisted.groups.get(gid)
+                                && g.template_name.starts_with("@synthetic:")
+                            {
+                                self.ephemeral.synthetic_templates.insert(
+                                    g.template_name.clone(),
+                                    SyntheticGroupSpec {
+                                        country: *country,
+                                        category: GroupCategory::Ground,
+                                    },
+                                );
                             }
                         }
                     }
@@ -1763,7 +1761,7 @@ impl Db {
 
             self.ephemeral.cfg.check_vehicle_has_life_type(&vehicle)?;
             self.ephemeral.slot_info.insert(
-                id.clone(),
+                id,
                 SlotInfo {
                     typ: vehicle,
                     unit_name: unit.name()?,
@@ -1787,11 +1785,11 @@ impl Db {
         let spctx = SpawnCtx::new(lua)?;
         let mut t = Self::default();
         t.ephemeral.set_cfg(miz, idx, cfg, to_bg)?;
-        if let Some(sc) = t.ephemeral.cfg.smart_commander.as_ref() {
-            if sc.treasury_start > 0 {
-                t.persisted.blue_treasury = sc.treasury_start;
-                t.persisted.red_treasury = sc.treasury_start;
-            }
+        if let Some(sc) = t.ephemeral.cfg.smart_commander.as_ref()
+            && sc.treasury_start > 0
+        {
+            t.persisted.blue_treasury = sc.treasury_start;
+            t.persisted.red_treasury = sc.treasury_start;
         }
         let sc_obj_start = t
             .ephemeral
@@ -1864,7 +1862,7 @@ impl Db {
                         )?
                     }
                 } else if name.starts_with("T") || name.starts_with("O") {
-                    () // ignored
+                    // ignored
                 } else {
                     bail!(
                         "invalid trigger zone type code {name}, expected O, G, or T prefix"
@@ -1912,7 +1910,7 @@ impl Db {
             let obj = objective!(&t, id)?;
             if matches!(
                 obj.kind,
-                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. }
+                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite
             ) {
                 continue;
             }
@@ -1957,11 +1955,8 @@ impl Db {
                 for (_, groups) in &obj.groups {
                     for gid in groups {
                         let g = group_mut!(self, gid)?;
-                        match &g.origin {
-                            DeployKind::ObjectiveDeprecated => {
-                                g.origin = DeployKind::Objective { origin: *oid };
-                            }
-                            _ => (),
+                        if let DeployKind::ObjectiveDeprecated = &g.origin {
+                            g.origin = DeployKind::Objective { origin: *oid };
                         }
                         for uid in &g.units {
                             let unit = unit_mut!(self, uid)?;
@@ -2083,7 +2078,7 @@ impl Db {
                 self.ephemeral.push_spawn(*gid);
             }
             let actions: SmallVec<[GroupId; 16]> =
-                SmallVec::from_iter(self.persisted.actions.into_iter().map(|g| *g));
+                SmallVec::from_iter(self.persisted.actions.into_iter().copied());
             debug!("respawn actions");
             for gid in actions {
                 if let Err(e) = self.respawn_action(perf, spctx, idx, gid) {
@@ -2104,7 +2099,7 @@ impl Db {
                         self.ephemeral.push_spawn(unit.group);
                     } else {
                         spctx
-                            .move_farp_pad(idx, obj.owner, &pad_template, pos)
+                            .move_farp_pad(idx, obj.owner, pad_template, pos)
                             .context("moving farp pad")?;
                     }
                     self.ephemeral.set_pad_template_used(pad_template.clone());
@@ -2192,7 +2187,7 @@ impl Db {
                     Some(f) => f.life,
                     None => p.airborne,
                 };
-                (ucid.clone(), lt)
+                (*ucid, lt)
             })
             .collect::<Vec<_>>();
         for (ucid, lt) in airborne_players {
@@ -2211,7 +2206,7 @@ impl Db {
                     .cfg
                     .default_lives
                     .get(&lt)
-                    .map_or(true, |(n, _)| *lives >= *n);
+                    .is_none_or(|(n, _)| *lives >= *n);
                 if full {
                     player.lives.remove_cow(&lt);
                 }

@@ -270,7 +270,7 @@ async fn run(
                 if last_heard.elapsed() > IDLE {
                     break;
                 }
-                if ticks % 60 == 0 && sink.send(Message::ping(Vec::new())).await.is_err() {
+                if ticks.is_multiple_of(60) && sink.send(Message::ping(Vec::new())).await.is_err() {
                     break;
                 }
                 if last_check.elapsed() >= RECHECK {

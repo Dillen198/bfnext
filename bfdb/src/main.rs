@@ -3137,7 +3137,7 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
         .with(cors);
     embedded_files
         .or(cors_routes)
-        .map(|r| warp::Reply::into_response(r))
+        .map(warp::Reply::into_response)
         .with(warp::log::custom(|info| {
             websec::record_request(
                 info.method(),
@@ -3146,6 +3146,6 @@ fn build_routes(rc: RouteCtx) -> warp::filters::BoxedFilter<(Response,)> {
                 info.elapsed(),
             )
         }))
-        .map(|r| warp::Reply::into_response(r))
+        .map(warp::Reply::into_response)
         .boxed()
 }

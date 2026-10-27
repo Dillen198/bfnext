@@ -99,7 +99,7 @@ impl Db {
         self.ephemeral
             .tasked
             .get(ucid)
-            .map_or(false, |z| now < z.until && (z.pos - pos).norm() <= z.radius)
+            .is_some_and(|z| now < z.until && (z.pos - pos).norm() <= z.radius)
     }
 
     /// Bonus XP for work in the task zone; scored by bfdb.

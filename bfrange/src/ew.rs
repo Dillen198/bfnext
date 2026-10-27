@@ -204,19 +204,19 @@ impl Ew {
         }
         self.last = now;
         for j in self.jams.iter_mut() {
-            if let Some(t) = j.dead_at {
-                if now - t >= JAMMER_RESPAWN_S {
-                    spawn::destroy_group(lua, &j.group);
-                    match activate(lua, j, spawns, now) {
-                        Ok(()) => {
-                            j.alive = true;
-                            j.dead_at = None;
-                            info!("jammer {} rebuilt", j.cfg.id);
-                        }
-                        Err(e) => {
-                            warn!("jammer {} rebuild: {e:?}", j.cfg.id);
-                            j.dead_at = Some(now);
-                        }
+            if let Some(t) = j.dead_at
+                && now - t >= JAMMER_RESPAWN_S
+            {
+                spawn::destroy_group(lua, &j.group);
+                match activate(lua, j, spawns, now) {
+                    Ok(()) => {
+                        j.alive = true;
+                        j.dead_at = None;
+                        info!("jammer {} rebuilt", j.cfg.id);
+                    }
+                    Err(e) => {
+                        warn!("jammer {} rebuild: {e:?}", j.cfg.id);
+                        j.dead_at = Some(now);
                     }
                 }
             }

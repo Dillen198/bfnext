@@ -66,9 +66,9 @@ fn build_my_status(ctx: &mut Context, slot: &SlotId) -> CompactString {
     );
     let cfg = &ctx.db.ephemeral.cfg;
     if cfg.lock_sides {
-        let _ = write!(s, "Sides are LOCKED this round\n");
+        let _ = writeln!(s, "Sides are LOCKED this round");
     } else if let Some(n) = cfg.side_switches {
-        let _ = write!(s, "Side switches allowed: {n}/round\n");
+        let _ = writeln!(s, "Side switches allowed: {n}/round");
     }
     if ctx.db.ephemeral.cfg.limited_lives {
         let _ = write!(s, "\nLives:\n");
@@ -130,9 +130,9 @@ fn build_support(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactStr
             let tgt = if j.target().is_some() { " [lasing]" } else { "" };
             // Display, not Debug: this is the id `-jtac <id> ...` takes, and
             // Debug printed it as `Group(123)`.
-            let _ = write!(
+            let _ = writeln!(
                 report,
-                "  JTAC {} code {} near {near}{br}{tgt}\n",
+                "  JTAC {} code {} near {near}{br}{tgt}",
                 j.gid(),
                 j.code()
             );
@@ -160,9 +160,9 @@ fn build_convoys(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactStr
         any = true;
         let age = (now - c.spawn_time).num_minutes().max(0);
         let br = brg_rng_str(from, c.last_pos);
-        let _ = write!(
+        let _ = writeln!(
             report,
-            "{} -> {}  ({}){br}  {}m en route\n",
+            "{} -> {}  ({}){br}  {}m en route",
             obj_name(db, &c.origin),
             obj_name(db, &c.destination),
             c.cargo_type.as_str(),
@@ -682,7 +682,7 @@ pub(super) fn init_info_menu_for_slot(
             ArgTriple { fst: miz_gid, snd: side, trd: 0u8 },
         )?;
     }
-    if crate::hq::cfg(ctx).map_or(false, |(_, h)| h.sides.contains(&side)) {
+    if crate::hq::cfg(ctx).is_some_and(|(_, h)| h.sides.contains(&side)) {
         add_hq_menu(&mc, &mut p, miz_gid, side)?;
     }
     p.command(&mc, "Time & Server".into(), time_and_server, miz_gid)?;

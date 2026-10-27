@@ -368,7 +368,7 @@ fn cut<R: std::io::BufRead>(
                         "Type" => {
                             o.kind = classify(&v);
                             // The replay keeps shells, flares and the like; a clip has no use for them.
-                            if o.kind.map_or(true, |k| k.is_effect()) {
+                            if o.kind.is_none_or(|k| k.is_effect()) {
                                 o.skip = true;
                             }
                         }
@@ -390,7 +390,7 @@ fn cut<R: std::io::BufRead>(
                     let is_self = is_air(o.kind)
                         && o.pilot
                             .as_deref()
-                            .map_or(false, |p| p.trim().to_lowercase() == pilot);
+                            .is_some_and(|p| p.trim().to_lowercase() == pilot);
                     if now - o.last_sample >= o.interval(is_self) {
                         o.sample(now);
                     }
@@ -409,7 +409,7 @@ fn cut<R: std::io::BufRead>(
         .iter()
         .filter(|(_, o)| is_air(o.kind) && !o.samples.is_empty())
         .filter(|(_, o)| {
-            o.pilot.as_deref().map_or(false, |p| p.trim().to_lowercase() == pilot)
+            o.pilot.as_deref().is_some_and(|p| p.trim().to_lowercase() == pilot)
         })
         .collect();
     let near_event = |o: &Obj| {
@@ -421,11 +421,11 @@ fn cut<R: std::io::BufRead>(
             let ta =
                 a.1.name
                     .as_deref()
-                    .map_or(true, |n| !n.eq_ignore_ascii_case(&req.unit_type));
+                    .is_none_or(|n| !n.eq_ignore_ascii_case(&req.unit_type));
             let tb =
                 b.1.name
                     .as_deref()
-                    .map_or(true, |n| !n.eq_ignore_ascii_case(&req.unit_type));
+                    .is_none_or(|n| !n.eq_ignore_ascii_case(&req.unit_type));
             ta.cmp(&tb).then(near_event(a.1).total_cmp(&near_event(b.1)))
         })
         .map(|(id, _)| **id);
@@ -479,7 +479,7 @@ fn cut<R: std::io::BufRead>(
     for (id, o) in objs.iter() {
         if !keep.contains_key(id)
             && is_weapon(o.kind)
-            && o.parent.map_or(false, |p| air.contains(&p))
+            && o.parent.is_some_and(|p| air.contains(&p))
             && !o.samples.is_empty()
         {
             keep.insert(*id, "threat");
@@ -585,7 +585,7 @@ pub(crate) fn prune(dir: &Path, max_age: std::time::Duration) -> usize {
             .map(|m| now.duration_since(m).unwrap_or_default() >= max_age)
             .unwrap_or(false);
         if old
-            && e.path().extension().map_or(false, |x| x == "gz")
+            && e.path().extension().is_some_and(|x| x == "gz")
             && std::fs::remove_file(e.path()).is_ok()
         {
             n += 1;

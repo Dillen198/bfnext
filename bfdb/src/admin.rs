@@ -52,7 +52,7 @@ impl DiscordRoles {
     /// grants all of them.
     pub(crate) fn roles_for(&self, admin_role: &str, member_roles: &[String]) -> u8 {
         let has = |id: &Option<String>| {
-            id.as_ref().map_or(false, |id| member_roles.iter().any(|r| r == id))
+            id.as_ref().is_some_and(|id| member_roles.iter().any(|r| r == id))
         };
         if member_roles.iter().any(|r| r == admin_role) {
             return Role::ALL;

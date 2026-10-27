@@ -707,28 +707,28 @@ impl Iads {
                 // rebuilding
                 if !s.effective() {
                     let at = *s.destroyed_at.get_or_insert(now);
-                    if let Some(r) = respawn {
-                        if now - at >= r as f64 {
-                            spawn::destroy_group(lua, &s.group);
-                            let cfg = net.cfg.clone();
-                            match spawn_site(lua, &cfg, net.side, s, spawns, now) {
-                                Ok(()) => {
-                                    info!("iads {}: site {} rebuilt", cfg.id, s.cfg.id);
-                                    if !s.emitting {
-                                        spawns.defer(
-                                            now + 3.,
-                                            spawn::Pending::Emission {
-                                                group: s.group.clone(),
-                                                on: false,
-                                            },
-                                        );
-                                    }
+                    if let Some(r) = respawn
+                        && now - at >= r as f64
+                    {
+                        spawn::destroy_group(lua, &s.group);
+                        let cfg = net.cfg.clone();
+                        match spawn_site(lua, &cfg, net.side, s, spawns, now) {
+                            Ok(()) => {
+                                info!("iads {}: site {} rebuilt", cfg.id, s.cfg.id);
+                                if !s.emitting {
+                                    spawns.defer(
+                                        now + 3.,
+                                        spawn::Pending::Emission {
+                                            group: s.group.clone(),
+                                            on: false,
+                                        },
+                                    );
                                 }
-                                Err(e) => warn!(
-                                    "iads {}: site {} rebuild failed: {e:?}",
-                                    cfg.id, s.cfg.id
-                                ),
                             }
+                            Err(e) => warn!(
+                                "iads {}: site {} rebuild failed: {e:?}",
+                                cfg.id, s.cfg.id
+                            ),
                         }
                     }
                     continue;
@@ -838,31 +838,28 @@ impl Iads {
                 },
             );
         }
-        if arm {
-            if let Some(d) = self.nets[ni].cfg.harm_defence_s {
-                let s = &mut self.nets[ni].sites[si];
-                // most real sites can't see a HARM coming; give it a moment
-                s.dark_until = now + 6. + d as f64;
-                if s.emitting && !s.sys.is_ewr() {
-                    let g = s.group.clone();
-                    if set_emission(lua, &g, false).is_ok() {
-                        s.emitting = false;
-                    }
-                    info!(
-                        "iads site {} going dark: ARM inbound from {}",
-                        s.cfg.id, shooter.name
-                    );
+        if arm && let Some(d) = self.nets[ni].cfg.harm_defence_s {
+            let s = &mut self.nets[ni].sites[si];
+            // most real sites can't see a HARM coming; give it a moment
+            s.dark_until = now + 6. + d as f64;
+            if s.emitting && !s.sys.is_ewr() {
+                let g = s.group.clone();
+                if set_emission(lua, &g, false).is_ok() {
+                    s.emitting = false;
                 }
+                info!(
+                    "iads site {} going dark: ARM inbound from {}",
+                    s.cfg.id, shooter.name
+                );
             }
         }
     }
 
     pub fn trainer_kill(&mut self, players: &Players, k: &TrainerKill) {
-        if let Some((ni, _)) = self.site_of(&k.shooter_unit) {
-            if let Some(f) = players.flying.get(&k.target_unit) {
-                self.tally.entry((f.ucid.to_string(), ni)).or_default().trainer_deaths +=
-                    1;
-            }
+        if let Some((ni, _)) = self.site_of(&k.shooter_unit)
+            && let Some(f) = players.flying.get(&k.target_unit)
+        {
+            self.tally.entry((f.ucid.to_string(), ni)).or_default().trainer_deaths += 1;
         }
     }
 

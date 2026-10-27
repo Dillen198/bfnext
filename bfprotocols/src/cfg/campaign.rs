@@ -182,11 +182,12 @@ pub(super) fn default_recon_duration() -> u32 {
 
 /// What a task type is posted against, and how the engine decides it is
 /// done.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, Default)]
 pub enum TaskTarget {
     /// Posted at one of the posting player's F10 map marks. Nothing the
     /// engine can measure finishes it, so it stays up until somebody takes
     /// it off the board or its ttl runs out.
+    #[default]
     Position,
     /// Posted against an objective the coalition does not own. Completes by
     /// itself the moment the posting coalition owns it.
@@ -199,12 +200,6 @@ pub enum TaskTarget {
         #[serde(default = "default_supply_task_threshold")]
         threshold: u8,
     },
-}
-
-impl Default for TaskTarget {
-    fn default() -> Self {
-        Self::Position
-    }
 }
 
 pub(super) fn default_supply_task_threshold() -> u8 {

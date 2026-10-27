@@ -127,7 +127,7 @@ pub(crate) fn evaluate(recs: &[&RangeRecord], now: DateTime<Utc>) -> Vec<Qual> {
             .collect();
         let n = misses.len();
         let cep = median(&misses);
-        let earned = n >= 6 && cep.map_or(false, |c| c <= need_cep);
+        let earned = n >= 6 && cep.is_some_and(|c| c <= need_cep);
         let q = cep.map_or(0., |c| if c <= 0. { 1. } else { need_cep / c });
         out.push(Qual {
             id,

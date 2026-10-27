@@ -73,7 +73,7 @@ pub(crate) async fn api_pilot(
 /// per-instance ones.
 pub(crate) fn shown_round(db: &StatsDb) -> Result<impl Fn(db::RoundId) -> bool> {
     let public = db.public_rounds()?;
-    Ok(move |r| public.as_ref().map_or(true, |s| s.contains(&r)))
+    Ok(move |r| public.as_ref().is_none_or(|s| s.contains(&r)))
 }
 
 /// GET /api/pilot/:ucid/sorties — all sorties for a pilot

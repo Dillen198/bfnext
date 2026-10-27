@@ -57,7 +57,7 @@ impl Recorder {
     ) -> String {
         let abs = Timer::singleton(lua)
             .and_then(|t| t.get_abs_time())
-            .map(|t| t.0 as f64)
+            .map(|t| t.0)
             .unwrap_or(0.);
         let (mission_date, mission_time) = self.clock.stamp(abs);
         let id = self.next_id();

@@ -1017,7 +1017,7 @@ impl ObjectiveMarkup {
                     t.capturable_ring,
                     CircleSpec {
                         center: LuaVec3(pos3),
-                        radius: radius as f64 * 0.9,
+                        radius: radius * 0.9,
                         color: capturable_color,
                         fill_color: Color::white(0.),
                         line_type: LineType::Solid,
@@ -1141,7 +1141,7 @@ impl ObjectiveMarkup {
             | ObjectiveKind::Fob
             | ObjectiveKind::Factory { .. }
             | ObjectiveKind::CarrierGroup { .. }
-            | ObjectiveKind::SpecialSamSite { .. }
+            | ObjectiveKind::SpecialSamSite
             | ObjectiveKind::CommandCenter => (),
             ObjectiveKind::Logistics => {
                 for oid in &obj.warehouse.destination {

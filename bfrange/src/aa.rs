@@ -274,31 +274,30 @@ impl AirToAir {
                 *e.shots.entry(shooter.unit_name.clone()).or_default() += 1;
             }
         }
-        if cfg.launch_alerts {
-            if let Some(tn) = &target {
-                if let Some(f) = players.flying.get(tn) {
-                    let brg = util::bearing(f.pos, shooter_pos);
-                    let rng = util::dist2(f.pos, shooter_pos) / util::NM;
-                    records::to_group(
-                        lua,
-                        f.group_id,
-                        &format!(
-                            "MISSILE LAUNCH: {} from {:03.0} for {:.1} nm ({}). Notch {:03.0} / {:03.0}",
-                            if desc.display_name.is_empty() {
-                                &desc.type_name
-                            } else {
-                                &desc.display_name
-                            },
-                            brg,
-                            rng,
-                            shooter.typ,
-                            (brg + 90.).rem_euclid(360.),
-                            (brg + 270.).rem_euclid(360.)
-                        ),
-                        8,
-                    );
-                }
-            }
+        if cfg.launch_alerts
+            && let Some(tn) = &target
+            && let Some(f) = players.flying.get(tn)
+        {
+            let brg = util::bearing(f.pos, shooter_pos);
+            let rng = util::dist2(f.pos, shooter_pos) / util::NM;
+            records::to_group(
+                lua,
+                f.group_id,
+                &format!(
+                    "MISSILE LAUNCH: {} from {:03.0} for {:.1} nm ({}). Notch {:03.0} / {:03.0}",
+                    if desc.display_name.is_empty() {
+                        &desc.type_name
+                    } else {
+                        &desc.display_name
+                    },
+                    brg,
+                    rng,
+                    shooter.typ,
+                    (brg + 90.).rem_euclid(360.),
+                    (brg + 270.).rem_euclid(360.)
+                ),
+                8,
+            );
         }
         self.missiles.push(Missile {
             oid,
@@ -393,12 +392,11 @@ impl AirToAir {
             let m = &mut self.missiles[i];
             m.last_pos = wpos;
             // re-read the target: seekers switch
-            if let Ok(w) = &w {
-                if let Ok(Some(t)) = w.get_target() {
-                    if let Ok(n) = t.get_name() {
-                        m.target = Some(n.to_string());
-                    }
-                }
+            if let Ok(w) = &w
+                && let Ok(Some(t)) = w.get_target()
+                && let Ok(n) = t.get_name()
+            {
+                m.target = Some(n.to_string());
             }
             // no target: the nearest protected player within 3 km
             if m.target.is_none() {
@@ -462,12 +460,11 @@ impl AirToAir {
                     Some(DefenceAspect::Drag) => m.drag_s += dt,
                     None => (),
                 }
-                if m.reaction_s.is_none() {
-                    if let Some(h0) = m.tgt_hdg0 {
-                        if util::angdiff(thdg, h0).abs() > 30. {
-                            m.reaction_s = Some(now - m.t0);
-                        }
-                    }
+                if m.reaction_s.is_none()
+                    && let Some(h0) = m.tgt_hdg0
+                    && util::angdiff(thdg, h0).abs() > 30.
+                {
+                    m.reaction_s = Some(now - m.t0);
                 }
                 if let Some(a0) = m.tgt_alt0 {
                     m.alt_change = tpos.y - a0;
@@ -934,14 +931,12 @@ impl AirToAir {
                     .as_ref()
                     .map(|g| spawn::in_group(&k.target_unit, g))
                     .unwrap_or(false)
+                    && let Ok(u) = Unit::get_by_name(lua, &k.target_unit)
+                    && let Ok(p) = u.get_point()
                 {
-                    if let Ok(u) = Unit::get_by_name(lua, &k.target_unit) {
-                        if let Ok(p) = u.get_point() {
-                            let _ = Trigger::singleton(lua)
-                                .and_then(|t| t.action())
-                                .and_then(|a| a.explosion(LuaVec3(p.0), 300.));
-                        }
-                    }
+                    let _ = Trigger::singleton(lua)
+                        .and_then(|t| t.action())
+                        .and_then(|a| a.explosion(LuaVec3(p.0), 300.));
                 }
             }
         }
@@ -997,15 +992,15 @@ impl AirToAir {
                     units.push((e.adversary_type.clone(), format!("{g}-1")));
                 }
                 for (label, u) in units {
-                    if let Ok(u) = Unit::get_by_name(lua, &u) {
-                        if let (Ok(p), Ok(v)) = (u.get_point(), u.get_velocity()) {
-                            e.track.entry(label).or_default().push(sample(
-                                lua,
-                                now - e.started,
-                                p.0,
-                                v.0,
-                            ));
-                        }
+                    if let Ok(u) = Unit::get_by_name(lua, &u)
+                        && let (Ok(p), Ok(v)) = (u.get_point(), u.get_velocity())
+                    {
+                        e.track.entry(label).or_default().push(sample(
+                            lua,
+                            now - e.started,
+                            p.0,
+                            v.0,
+                        ));
                     }
                 }
             }

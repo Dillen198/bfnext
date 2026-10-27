@@ -87,7 +87,7 @@ impl Serialize for HistogramSer {
             ser.serialize(&self.0, &mut w)
                 .map_err(|e| S::Error::custom(format_compact!("{e:?}")))?;
             BASE64_STANDARD.encode_string(buf, sbuf);
-            serializer.serialize_str(&sbuf)
+            serializer.serialize_str(sbuf)
         })
     }
 }
@@ -158,7 +158,7 @@ impl<'a> Snap<'a> {
     pub fn commit(&mut self) {
         if let Some(h) = self.perf.take() {
             if let Some(ns) = (Utc::now() - self.ts).num_nanoseconds() {
-                if ns >= 1 && ns <= 1_000_000_000 {
+                if (1..=1_000_000_000).contains(&ns) {
                     **h += ns as u64;
                 }
             }
@@ -299,39 +299,39 @@ impl Perf {
             timer_get_time0,
         } = &*self.0;
         PerfStat {
-            get_position: HistStat::new(&get_position, "Unit.getPosition", false),
-            add_group: HistStat::new(&add_group, "Coalition.addGroup", false),
+            get_position: HistStat::new(get_position, "Unit.getPosition", false),
+            add_group: HistStat::new(add_group, "Coalition.addGroup", false),
             add_static_object: HistStat::new(
-                &add_static_object,
+                add_static_object,
                 "Coalition.addStaticObject",
                 false,
             ),
-            get_ammo: HistStat::new(&get_ammo, "Unit.getAmmo", false),
-            get_point: HistStat::new(&get_point, "Unit.getPoint", false),
-            get_velocity: HistStat::new(&get_velocity, "Unit.getVelocity", false),
-            in_air: HistStat::new(&in_air, "Unit.inAir", false),
-            land_get_height: HistStat::new(&land_get_height, "Land.getHeight", false),
-            land_is_visible: HistStat::new(&land_is_visible, "Land.isVisible", false),
+            get_ammo: HistStat::new(get_ammo, "Unit.getAmmo", false),
+            get_point: HistStat::new(get_point, "Unit.getPoint", false),
+            get_velocity: HistStat::new(get_velocity, "Unit.getVelocity", false),
+            in_air: HistStat::new(in_air, "Unit.inAir", false),
+            land_get_height: HistStat::new(land_get_height, "Land.getHeight", false),
+            land_is_visible: HistStat::new(land_is_visible, "Land.isVisible", false),
             timer_get_abs_time: HistStat::new(
-                &timer_get_abs_time,
+                timer_get_abs_time,
                 "Timer.getAbsTime",
                 false,
             ),
-            timer_get_time: HistStat::new(&timer_get_time, "Timer.getTime", false),
-            timer_get_time0: HistStat::new(&timer_get_time0, "Timer.getTime0", false),
+            timer_get_time: HistStat::new(timer_get_time, "Timer.getTime", false),
+            timer_get_time0: HistStat::new(timer_get_time0, "Timer.getTime0", false),
             timer_remove_function: HistStat::new(
-                &timer_remove_function,
+                timer_remove_function,
                 "Timer.removeFunction",
                 false,
             ),
             timer_schedule_function: HistStat::new(
-                &timer_schedule_function,
+                timer_schedule_function,
                 "Timer.scheduleFunction",
                 false,
             ),
-            unit_get_by_name: HistStat::new(&unit_get_by_name, "Unit.getByName", false),
-            unit_get_desc: HistStat::new(&unit_get_desc, "Unit.getDesc", false),
-            unit_is_exist: HistStat::new(&unit_is_exist, "Unit.isExist", false),
+            unit_get_by_name: HistStat::new(unit_get_by_name, "Unit.getByName", false),
+            unit_get_desc: HistStat::new(unit_get_desc, "Unit.getDesc", false),
+            unit_is_exist: HistStat::new(unit_is_exist, "Unit.isExist", false),
         }
     }
 }
@@ -555,7 +555,7 @@ macro_rules! thread_singleton {
 
 pub fn record_perf(h: &mut HistogramSer, start_ts: DateTime<Utc>) {
     if let Some(ns) = (Utc::now() - start_ts).num_nanoseconds() {
-        if ns >= 1 && ns <= 1_000_000_000 {
+        if (1..=1_000_000_000).contains(&ns) {
             **h += ns as u64;
         }
     }

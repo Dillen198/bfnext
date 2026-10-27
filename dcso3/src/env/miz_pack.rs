@@ -253,9 +253,9 @@ impl Display for LuaSerVal {
                     };
                 }
                 let mut seq_max: Option<i64> = None;
-                write!(f, "\n")?;
+                writeln!(f)?;
                 self.indented(f)?;
-                write!(f, "{{\n")?;
+                writeln!(f, "{{")?;
                 if tbl.contains_key(1).unwrap() {
                     for (i, v) in tbl.clone().sequence_values().enumerate() {
                         let i = (i + 1) as i64;

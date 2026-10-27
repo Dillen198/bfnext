@@ -75,7 +75,7 @@ impl Plan {
     }
 
     pub(crate) fn avoided(&self, id: Option<ObjectiveId>) -> bool {
-        id.map_or(false, |id| self.avoid.contains(&id))
+        id.is_some_and(|id| self.avoid.contains(&id))
     }
 }
 
@@ -161,10 +161,10 @@ fn rules(cfg: &HqCfg, pic: &Picture, prev: Option<&Plan>) -> Plan {
     // clearly.
     let mut best: Option<(ObjectiveId, f64)> = None;
     for o in enemy.iter() {
-        if let Some(s) = effort_score(pic, cfg, &o.id) {
-            if best.map_or(true, |(_, b)| s > b) {
-                best = Some((o.id, s));
-            }
+        if let Some(s) = effort_score(pic, cfg, &o.id)
+            && best.is_none_or(|(_, b)| s > b)
+        {
+            best = Some((o.id, s));
         }
     }
     let standing = prev
@@ -252,19 +252,19 @@ fn apply(plan: &mut Plan, pic: &Picture, d: &Directive, source: Source) {
         touched = true;
     }
     if let Some(me) =
-        d.main_effort.map(oid).filter(|id| pic.get(id).map_or(false, |o| !o.own))
+        d.main_effort.map(oid).filter(|id| pic.get(id).is_some_and(|o| !o.own))
     {
         plan.main_effort = Some(me);
         touched = true;
     }
-    let ours = |id: &ObjectiveId| pic.get(id).map_or(false, |o| o.own);
+    let ours = |id: &ObjectiveId| pic.get(id).is_some_and(|o| o.own);
     if !d.defend.is_empty() {
         let mut v: Vec<ObjectiveId> =
             d.defend.iter().copied().map(oid).filter(|i| ours(i)).collect();
         // Anything actually being captured stays on the list whatever the
         // directive says.
         for id in plan.defend.iter().copied() {
-            if pic.get(&id).map_or(false, |o| o.being_captured) && !v.contains(&id) {
+            if pic.get(&id).is_some_and(|o| o.being_captured) && !v.contains(&id) {
                 v.push(id);
             }
         }
@@ -285,7 +285,7 @@ fn apply(plan: &mut Plan, pic: &Picture, d: &Directive, source: Source) {
     }
     if !d.avoid.is_empty() {
         plan.avoid = d.avoid.iter().copied().map(oid).collect();
-        if plan.main_effort.map_or(false, |m| plan.avoid.contains(&m)) {
+        if plan.main_effort.is_some_and(|m| plan.avoid.contains(&m)) {
             plan.main_effort = None;
         }
         touched = true;

@@ -300,7 +300,7 @@ pub(crate) async fn api_auth_local_login(
     // the internet: by default only loopback may even try (--local-login-from).
     let allowed = if allowed_from.is_empty() {
         ip.is_loopback()
-            || matches!(ip, std::net::IpAddr::V6(v6) if v6.to_ipv4_mapped().map_or(false, |v4| v4.is_loopback()))
+            || matches!(ip, std::net::IpAddr::V6(v6) if v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback()))
     } else {
         allowed_from.iter().any(|n| n.contains(ip))
     };

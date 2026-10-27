@@ -148,8 +148,8 @@ impl<'lua> SpawnCtx<'lua> {
     }
 
     /// get at template that you pinky promise not to modify
-    pub fn get_template_ref<'a>(
-        &'a self,
+    pub fn get_template_ref(
+        &self,
         idx: &MizIndex,
         kind: GroupKind,
         side: Side,
@@ -160,15 +160,10 @@ impl<'lua> SpawnCtx<'lua> {
             .ok_or_else(|| anyhow!("no such template {template_name}"))
     }
 
-    pub fn get_trigger_zone<'a>(
-        &'a self,
-        idx: &MizIndex,
-        name: &str,
-    ) -> Result<TriggerZone> {
-        Ok(self
-            .miz
+    pub fn get_trigger_zone(&self, idx: &MizIndex, name: &str) -> Result<TriggerZone> {
+        self.miz
             .get_trigger_zone(idx, name)?
-            .ok_or_else(|| anyhow!("no such trigger zone {name}"))?)
+            .ok_or_else(|| anyhow!("no such trigger zone {name}"))
     }
 
     pub fn move_farp_pad(
@@ -180,7 +175,7 @@ impl<'lua> SpawnCtx<'lua> {
     ) -> Result<Spawned> {
         let pad = {
             let pad = self
-                .get_template(idx, GroupKind::Any, side, &pad_template)
+                .get_template(idx, GroupKind::Any, side, pad_template)
                 .context("getting the pad")?;
             pad.group.set("hidden", false)?;
             pad.group.set("lateActivation", false)?;
@@ -289,7 +284,7 @@ impl<'lua> SpawnCtx<'lua> {
                 Ok(())
             }
             Despawn::GroupByName(name) => {
-                match Group::get_by_name(self.lua, &*name) {
+                match Group::get_by_name(self.lua, &name) {
                     Ok(group) => {
                         if let Err(e) = group.destroy() {
                             info!(
@@ -306,7 +301,7 @@ impl<'lua> SpawnCtx<'lua> {
                 Ok(())
             }
             Despawn::Static(name) => {
-                match dcso3::static_object::StaticObject::get_by_name(self.lua, &*name) {
+                match dcso3::static_object::StaticObject::get_by_name(self.lua, &name) {
                     Ok(Static::Airbase(obj)) => obj.destroy()?,
                     Ok(Static::Static(obj)) => obj.destroy()?,
                     Err(e) => info!("attempt to despawn unknown static {} {}", name, e),

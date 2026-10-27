@@ -233,26 +233,26 @@ impl Ground {
                 "Average",
                 vec![spawn::ground_waypoint(fp, 0., false, vec![])],
             );
-            if let Ok(c) = spawn::country_id(spawn::default_country(f.side)) {
-                if spawn::add_group(lua, c, spawn::GROUND, &g).is_ok() {
-                    spawns.defer(
-                        now + 2.,
-                        spawn::Pending::GroupOption {
-                            group: name.clone(),
-                            id: 0,
-                            value: json!(4),
-                        },
-                    );
-                    spawns.defer(
-                        now + 2.,
-                        spawn::Pending::GroupCommand {
-                            group: name.clone(),
-                            cmd: spawn::bool_cmd("SetImmortal", true),
-                        },
-                    );
-                    j.friendly_group = Some(name);
-                    j.friendly_pos = Some(fp);
-                }
+            if let Ok(c) = spawn::country_id(spawn::default_country(f.side))
+                && spawn::add_group(lua, c, spawn::GROUND, &g).is_ok()
+            {
+                spawns.defer(
+                    now + 2.,
+                    spawn::Pending::GroupOption {
+                        group: name.clone(),
+                        id: 0,
+                        value: json!(4),
+                    },
+                );
+                spawns.defer(
+                    now + 2.,
+                    spawn::Pending::GroupCommand {
+                        group: name.clone(),
+                        cmd: spawn::bool_cmd("SetImmortal", true),
+                    },
+                );
+                j.friendly_group = Some(name);
+                j.friendly_pos = Some(fp);
             }
         }
         // laser on

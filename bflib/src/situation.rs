@@ -743,7 +743,7 @@ where
             })
             .min_by(|a, b| a.2.total_cmp(&b.2))
             .unwrap_or_else(|| (String::from("friendly territory"), bearing, range));
-        if nearest.as_ref().map_or(true, |(d, _)| near_range < *d) {
+        if nearest.as_ref().is_none_or(|(d, _)| near_range < *d) {
             let (lat, lon) = to_ll(pos);
             let v = c.velocity;
             let heading = if v.x.abs() > f64::EPSILON || v.z.abs() > f64::EPSILON {
@@ -1033,12 +1033,11 @@ fn build_comms(
     // The GCI slot-entry block is configured separately (bfdb owns the real
     // controller); surface its callsign/freq note on the card too when set.
     let mut channels: Vec<CommsChannel> = channels;
-    if let Some(gci) = cfg.gci_briefing.as_ref().and_then(|g| g.render(side)) {
-        if let Some(first) = channels.first_mut() {
-            if !first.live {
-                first.note = Some(gci.replace('\n', " -- "));
-            }
-        }
+    if let Some(gci) = cfg.gci_briefing.as_ref().and_then(|g| g.render(side))
+        && let Some(first) = channels.first_mut()
+        && !first.live
+    {
+        first.note = Some(gci.replace('\n', " -- "));
     }
     (channels, plan.flight_channels(side))
 }
@@ -1084,7 +1083,7 @@ fn build_weather(lua: MizLua) -> Option<SituationWeather> {
 
 fn mission_time(lua: MizLua) -> Option<String> {
     let t = dcso3::timer::Timer::singleton(lua).ok()?.get_abs_time().ok()?;
-    let secs = (t.0 as f64).rem_euclid(86_400.0) as u32;
+    let secs = t.0.rem_euclid(86_400.0) as u32;
     Some(format!("{:02}:{:02}", secs / 3600, (secs % 3600) / 60))
 }
 
@@ -1448,10 +1447,10 @@ pub(crate) fn render_panel(
         rep.headline
     );
     if let Some(ls) = rep.posture.last_stand.as_ref() {
-        let _ = write!(s, "{ls}\n");
+        let _ = writeln!(s, "{ls}");
     }
     if let Some(w) = rep.weather.as_ref() {
-        let _ = write!(s, "WX: {}\n", w.summary);
+        let _ = writeln!(s, "WX: {}", w.summary);
     }
     if !rep.tasking.is_empty() {
         s.push_str("\nTASKING:\n");
@@ -1459,9 +1458,9 @@ pub(crate) fn render_panel(
             s.push_str(&task_line(t));
         }
         if rep.tasking.len() > panel_tasks {
-            let _ = write!(
+            let _ = writeln!(
                 s,
-                "(+{} more -- F10 > Info > Situation)\n",
+                "(+{} more -- F10 > Info > Situation)",
                 rep.tasking.len() - panel_tasks
             );
         }
@@ -1480,7 +1479,7 @@ pub(crate) fn render_panel(
         let _ = write!(s, "\n{} -- {:.3} {}\n", gci.label, gci.freq_mhz, gci.modulation);
     }
     if let Some(n) = note {
-        let _ = write!(s, "{n}\n");
+        let _ = writeln!(s, "{n}");
     }
     s
 }
@@ -1524,10 +1523,10 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
         p.players_enemy,
     );
     if let Some(v) = p.victory_condition.as_ref() {
-        let _ = write!(s, "Victory: {v}\n");
+        let _ = writeln!(s, "Victory: {v}");
     }
     if let Some(ls) = p.last_stand.as_ref() {
-        let _ = write!(s, "{ls}\n");
+        let _ = writeln!(s, "{ls}");
     }
     if let Some(w) = rep.weather.as_ref() {
         let _ = write!(
@@ -1539,7 +1538,7 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
     if !rep.recent.is_empty() {
         s.push_str("\nLast hour:\n");
         for e in rep.recent.iter().take(6) {
-            let _ = write!(s, "  {}\n", e.text);
+            let _ = writeln!(s, "  {}", e.text);
         }
     }
     pages.push(s);
@@ -1552,10 +1551,10 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
         for t in &rep.tasking {
             s.push_str(&task_line(t));
             if let Some(ok) = t.success.as_ref() {
-                let _ = write!(s, "    Done when: {ok}\n");
+                let _ = writeln!(s, "    Done when: {ok}");
             }
             if !t.roles.is_empty() {
-                let _ = write!(s, "    Wants: {}\n", t.roles.join(", "));
+                let _ = writeln!(s, "    Wants: {}", t.roles.join(", "));
             }
         }
     }
@@ -1573,7 +1572,7 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
                 h.objective, h.kind, h.owner, h.health, h.logi, h.supply, h.status
             );
             if let Some(r) = h.repair_outlook.as_ref() {
-                let _ = write!(s, "  {r}\n");
+                let _ = writeln!(s, "  {r}");
             }
         }
     }
@@ -1585,18 +1584,18 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
     if a.radar_blind {
         s.push_str("AIR: radar net reporting nothing -- you are blind, not clear.\n");
     } else {
-        let _ = write!(
+        let _ = writeln!(
             s,
-            "AIR: {} hostile track(s) ({} coasting), {} friendly airborne\n",
+            "AIR: {} hostile track(s) ({} coasting), {} friendly airborne",
             a.hostile_tracks, a.stale_tracks, a.friendly_airborne
         );
         if let Some(ax) = a.axis.as_ref() {
-            let _ = write!(s, "  {ax}\n");
+            let _ = writeln!(s, "  {ax}");
         }
         if let Some(t) = a.nearest.as_ref() {
-            let _ = write!(
+            let _ = writeln!(
                 s,
-                "  Nearest: {} {:03}\u{b0}/{:.0}nm off {}, {} ft, {} kt\n",
+                "  Nearest: {} {:03}\u{b0}/{:.0}nm off {}, {} ft, {} kt",
                 t.class, t.bearing_deg, t.range_nm, t.near, t.alt_ft, t.speed_kts
             );
         }
@@ -1608,9 +1607,9 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
         );
     } else {
         for t in rep.threats.iter().take(12) {
-            let _ = write!(
+            let _ = writeln!(
                 s,
-                "  {} near {} -- {:.0}nm ring, {:.0}% conf, \u{b1}{:.1}km, {} {}s old\n",
+                "  {} near {} -- {:.0}nm ring, {:.0}% conf, \u{b1}{:.1}km, {} {}s old",
                 t.label,
                 t.near.as_deref().unwrap_or("?"),
                 t.radius_m.unwrap_or(0.0) / 1852.0,
@@ -1635,9 +1634,9 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
         s.push_str("  none held\n");
     } else {
         for h in &l.hubs {
-            let _ = write!(
+            let _ = writeln!(
                 s,
-                "  {} -- S {}% F {}% HP {}% L {}%, feeding {}{}\n",
+                "  {} -- S {}% F {}% HP {}% L {}%, feeding {}{}",
                 h.objective,
                 h.supply,
                 h.fuel,
@@ -1653,7 +1652,7 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
         s.push_str("  none -- every objective can pay for its own repairs\n");
     } else {
         for g in l.gaps.iter().take(12) {
-            let _ = write!(s, "  {} -- {}\n", g.objective, g.note);
+            let _ = writeln!(s, "  {} -- {}", g.objective, g.note);
         }
     }
     pages.push(s);
@@ -1662,9 +1661,9 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
     let mut s = hdr(5);
     s.push_str("PRESET  FREQ       WHO\n");
     for c in &rep.comms {
-        let _ = write!(
+        let _ = writeln!(
             s,
-            "{:>4}   {:>7.3} {:2}  {}{}\n",
+            "{:>4}   {:>7.3} {:2}  {}{}",
             c.preset.map(|p| p.to_string()).unwrap_or_else(|| String::from("-")),
             c.freq_mhz,
             c.modulation,
@@ -1672,7 +1671,7 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
             if c.live { "  [UP]" } else { "" },
         );
         if let Some(n) = c.note.as_ref() {
-            let _ = write!(s, "         {n}\n");
+            let _ = writeln!(s, "         {n}");
         }
     }
     if !rep.flight_channels.is_empty() {
@@ -1683,7 +1682,7 @@ pub(crate) fn render_pages(rep: &SituationReport) -> Vec<String> {
             .map(|(n, f)| format!("{n} {f:.3}"))
             .collect::<Vec<_>>()
             .join("   ");
-        let _ = write!(s, "  {line}\n");
+        let _ = writeln!(s, "  {line}");
     }
     pages.push(s);
 

@@ -40,7 +40,7 @@ use dcso3::coalition::Side;
 pub(super) fn active_players(eph: &Ephemeral, persisted: &Persisted, side: Side) -> u32 {
     eph.players_by_slot
         .values()
-        .filter(|ucid| persisted.players.get(ucid).map_or(false, |p| p.side == side))
+        .filter(|ucid| persisted.players.get(ucid).is_some_and(|p| p.side == side))
         .count() as u32
 }
 

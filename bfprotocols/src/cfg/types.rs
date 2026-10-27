@@ -53,7 +53,7 @@ impl From<String> for Vehicle {
 
 impl Borrow<str> for Vehicle {
     fn borrow(&self) -> &str {
-        &*self.0
+        &self.0
     }
 }
 
@@ -63,25 +63,24 @@ impl Vehicle {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema, Default)]
 pub enum Rule {
-    Whitelist { allowed: FxHashMap<Ucid, String> },
-    Blacklist { denied: FxHashMap<Ucid, String> },
+    Whitelist {
+        allowed: FxHashMap<Ucid, String>,
+    },
+    Blacklist {
+        denied: FxHashMap<Ucid, String>,
+    },
+    #[default]
     AlwaysAllowed,
     NeverAllowed,
-}
-
-impl Default for Rule {
-    fn default() -> Self {
-        Self::AlwaysAllowed
-    }
 }
 
 impl Rule {
     pub fn check(&self, ucid: &Ucid) -> bool {
         match self {
             Self::Whitelist { allowed } => allowed.contains_key(ucid),
-            Self::Blacklist { denied } => !denied.contains_key(&ucid),
+            Self::Blacklist { denied } => !denied.contains_key(ucid),
             Self::AlwaysAllowed => true,
             Self::NeverAllowed => false,
         }
@@ -253,9 +252,9 @@ impl From<BitFlags<UnitTag>> for UnitTags {
     }
 }
 
-impl Into<Vec<UnitTag>> for UnitTags {
-    fn into(self) -> Vec<UnitTag> {
-        self.0.into_iter().collect()
+impl From<UnitTags> for Vec<UnitTag> {
+    fn from(val: UnitTags) -> Self {
+        val.0.into_iter().collect()
     }
 }
 

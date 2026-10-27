@@ -371,10 +371,10 @@ impl Csar {
         for (mi, m) in self.missions.iter_mut().enumerate() {
             if m.picked.is_some() {
                 // the helicopter carrying him is gone
-                if let Some((u, ..)) = &m.picked {
-                    if !players.flying.contains_key(u) {
-                        ended.push((mi, None));
-                    }
+                if let Some((u, ..)) = &m.picked
+                    && !players.flying.contains_key(u)
+                {
+                    ended.push((mi, None));
                 }
                 continue;
             }

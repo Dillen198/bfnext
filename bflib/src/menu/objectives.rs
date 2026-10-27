@@ -175,11 +175,11 @@ fn shows_priority(obj: &Objective, viewer: Side) -> bool {
 
 /// The objectives a status report for `want`-held bases lists to `viewer`,
 /// with the owner-only kinds the viewer can't see on the map filtered out.
-fn report_objectives<'a>(
-    db: &'a Db,
+fn report_objectives(
+    db: &Db,
     viewer: Side,
     want: Side,
-) -> Vec<(&'a ObjectiveId, &'a Objective)> {
+) -> Vec<(&ObjectiveId, &Objective)> {
     db.objectives()
         .filter(|(_, o)| o.owner() == want && objective_visible_to(o, viewer))
         .collect()
@@ -461,9 +461,9 @@ fn build_detail_card(
     }
     let friendly = obj.owner() == viewer;
     let mut s = format_compact!("========= {} =========\n", obj.name());
-    let _ = write!(
+    let _ = writeln!(
         s,
-        "{} - owned by {}{}\n",
+        "{} - owned by {}{}",
         obj.kind().name(),
         match obj.owner() {
             Side::Blue => "BLUE",
@@ -477,29 +477,29 @@ fn build_detail_card(
     }
     if let Some(p) = from {
         let (b, r) = brg_rng(p, obj.pos());
-        let _ = write!(s, "From you: {b:03}\u{b0} / {r:.1} nm\n");
+        let _ = writeln!(s, "From you: {b:03}\u{b0} / {r:.1} nm");
     }
-    let _ = write!(s, "Zone radius: {:.0} m\n", obj.radius());
-    let _ = write!(s, "----------------------------------\n");
-    let _ = write!(s, "Health {:>3}%   Logi {:>3}%\n", obj.health(), obj.logi());
+    let _ = writeln!(s, "Zone radius: {:.0} m", obj.radius());
+    let _ = writeln!(s, "----------------------------------");
+    let _ = writeln!(s, "Health {:>3}%   Logi {:>3}%", obj.health(), obj.logi());
     if friendly {
-        let _ = write!(
+        let _ = writeln!(
             s,
-            "Munitions {:>3}%   Fuel {:>3}%   Aircraft {:>3}%{}\n",
+            "Munitions {:>3}%   Fuel {:>3}%   Aircraft {:>3}%{}",
             obj.supply(),
             obj.fuel(),
             obj.aircraft(),
             if obj.unlimited_supply() { "  (UNLIMITED)" } else { "" }
         );
-        let _ = write!(s, "Infantry defenders: {}% alive\n", obj.infantry());
-        let _ = write!(s, "Repair: {}\n", repair_state(db, oid, obj));
+        let _ = writeln!(s, "Infantry defenders: {}% alive", obj.infantry());
+        let _ = writeln!(s, "Repair: {}", repair_state(db, oid, obj));
         if obj.logistics_detached() {
-            let _ = write!(s, "NOTE: logistics detached -- no automatic resupply\n");
+            let _ = writeln!(s, "NOTE: logistics detached -- no automatic resupply");
         }
     }
     if obj.kind().is_carrier_group() {
         let brc = crate::atis::carrier_brc(db, obj.kind());
-        let _ = write!(s, "BRC: {brc:03}\u{b0}   (recovery case: Info > Weather)\n");
+        let _ = writeln!(s, "BRC: {brc:03}\u{b0}   (recovery case: Info > Weather)");
     }
     let frac = db
         .ephemeral
@@ -509,9 +509,9 @@ fn build_detail_card(
         .map(|c| c.capture_min_unit_pct_destroyed)
         .unwrap_or(0.0);
     let consolidation = db.ephemeral.cfg.capture_consolidation_secs;
-    let _ = write!(s, "Capture: {}\n", capture_state(frac, consolidation, obj, friendly));
+    let _ = writeln!(s, "Capture: {}", capture_state(frac, consolidation, obj, friendly));
     if obj.threatened() {
-        let _ = write!(s, "THREAT: enemy units within sight of the base\n");
+        let _ = writeln!(s, "THREAT: enemy units within sight of the base");
     }
     // Own bases only: an enemy FARP's TACAN is a homing beacon for a strike.
     if friendly {
@@ -520,7 +520,7 @@ fn build_detail_card(
                 let _ = write!(s, "Navaids:\n{}\n", crate::navaids::summarize(navs));
             }
             _ => {
-                let _ = write!(s, "Navaids: none assigned\n");
+                let _ = writeln!(s, "Navaids: none assigned");
             }
         }
     }
@@ -697,15 +697,15 @@ fn build_capture_advisor_card(
         Err(_) => return CompactString::from("could not read capture status"),
     };
     let mut s = format_compact!("===== CAPTURE ADVISOR: {} =====\n", diag.obj_name);
-    let _ = write!(s, "{} - owned by {}\n", fmt_kind(obj.kind()), side_tag(diag.owner));
+    let _ = writeln!(s, "{} - owned by {}", fmt_kind(obj.kind()), side_tag(diag.owner));
     if let Some((ll, mgrs)) = fmt_position(lua, obj.pos()) {
         let _ = write!(s, "LL:   {ll}\nMGRS: {mgrs}\n");
     }
     if let Some(p) = from {
         let (b, r) = brg_rng(p, obj.pos());
-        let _ = write!(s, "From you: {b:03}\u{b0} / {r:.1} nm\n");
+        let _ = writeln!(s, "From you: {b:03}\u{b0} / {r:.1} nm");
     }
-    let _ = write!(s, "Zone radius: {:.0} m\n", obj.radius());
+    let _ = writeln!(s, "Zone radius: {:.0} m", obj.radius());
     // This card is read by the attacker, so it says no more about the base's
     // stocks and garrison than the F10 map does: supply as its status-hex
     // bucket, infantry (a % still alive) only once the label shows it too.
@@ -722,72 +722,72 @@ fn build_capture_advisor_card(
     let _ = write!(s, "\n----------------------------------\n");
 
     if diag.owner == viewer {
-        let _ = write!(s, "You already own this objective.\n");
+        let _ = writeln!(s, "You already own this objective.");
         if obj.health() < 100 {
-            let _ = write!(s, "REPAIR: {}\n", repair_state(db, oid, obj));
+            let _ = writeln!(s, "REPAIR: {}", repair_state(db, oid, obj));
         }
         return s;
     }
 
     if diag.in_capture_hold {
-        let _ = write!(s, "STATUS: post-capture hold -- takeable NOW by either side.\n");
+        let _ = writeln!(s, "STATUS: post-capture hold -- takeable NOW by either side.");
         let consolidation = db.ephemeral.cfg.capture_consolidation_secs;
         if obj.capture_hold_stalled() {
-            let _ = write!(
+            let _ = writeln!(
                 s,
-                "  the holder's troops are OUT of the zone -- their clock is stopped.\n"
+                "  the holder's troops are OUT of the zone -- their clock is stopped."
             );
         } else if let Some((pct, remaining)) = obj.capture_hold_pct(consolidation) {
-            let _ = write!(
+            let _ = writeln!(
                 s,
-                "  consolidation {pct}% -- about {remaining}s before the garrison spawns.\n"
+                "  consolidation {pct}% -- about {remaining}s before the garrison spawns."
             );
         }
     } else if diag.obj_eligible {
-        let _ = write!(s, "STATUS: objective is ELIGIBLE for capture.\n");
+        let _ = writeln!(s, "STATUS: objective is ELIGIBLE for capture.");
     } else {
-        let _ = write!(s, "STATUS: objective NOT eligible yet --\n");
+        let _ = writeln!(s, "STATUS: objective NOT eligible yet --");
         for b in &diag.obj_blockers {
-            let _ = write!(s, "  - {b}\n");
+            let _ = writeln!(s, "  - {b}");
         }
     }
 
     if let Some(cd) = diag.cooldown_secs {
-        let _ = write!(
+        let _ = writeln!(
             s,
-            "COOLDOWN: base changed hands recently -- no capture timer can start for {cd}s.\n"
+            "COOLDOWN: base changed hands recently -- no capture timer can start for {cd}s."
         );
     }
 
     if obj.health() < 100 && !diag.in_capture_hold {
-        let _ = write!(s, "REPAIR: {}\n", repair_outlook(db, oid, obj));
+        let _ = writeln!(s, "REPAIR: {}", repair_outlook(db, oid, obj));
     }
 
     if let Some(note) = &diag.undefended {
-        let _ = write!(s, "DEFENDERS OFFLINE: {note}.\n");
+        let _ = writeln!(s, "DEFENDERS OFFLINE: {note}.");
     }
 
     if let Some((side, held, base)) = diag.in_progress {
         if side == viewer {
-            let _ = write!(
+            let _ = writeln!(
                 s,
-                "IN PROGRESS: your side is capturing -- held {held}s of ~{base}s (more squads in the zone shorten it). Hold the zone.\n"
+                "IN PROGRESS: your side is capturing -- held {held}s of ~{base}s (more squads in the zone shorten it). Hold the zone."
             );
         } else {
-            let _ = write!(
+            let _ = writeln!(
                 s,
-                "IN PROGRESS: {side:?} is capturing this base -- held {held}s. Kill their troops to stop it.\n"
+                "IN PROGRESS: {side:?} is capturing this base -- held {held}s. Kill their troops to stop it."
             );
         }
     }
 
-    let _ = write!(s, "----------------------------------\n");
+    let _ = writeln!(s, "----------------------------------");
     if diag.troops.is_empty() {
-        let _ = write!(s, "YOUR CAPTURE TROOPS: none within 30 nm.\n");
+        let _ = writeln!(s, "YOUR CAPTURE TROOPS: none within 30 nm.");
         let _ =
-            write!(s, "  Deploy capture-capable troops and move them into the zone.\n");
+            writeln!(s, "  Deploy capture-capable troops and move them into the zone.");
     } else {
-        let _ = write!(s, "YOUR TROOPS NEAR THIS BASE:\n");
+        let _ = writeln!(s, "YOUR TROOPS NEAR THIS BASE:");
         for t in &diag.troops {
             let loc = if t.in_zone {
                 CompactString::from("in the zone")
@@ -796,12 +796,12 @@ fn build_capture_advisor_card(
             };
             let cap =
                 if t.can_capture { "" } else { "  <-- CANNOT capture (troop type)" };
-            let _ = write!(s, "  - {}: {}{}\n", t.name, loc, cap);
+            let _ = writeln!(s, "  - {}: {}{}", t.name, loc, cap);
         }
     }
 
-    let _ = write!(s, "----------------------------------\n");
-    let _ = write!(s, "BOTTOM LINE: {}\n", diag.one_liner());
+    let _ = writeln!(s, "----------------------------------");
+    let _ = writeln!(s, "BOTTOM LINE: {}", diag.one_liner());
     s
 }
 

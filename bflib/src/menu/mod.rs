@@ -313,7 +313,7 @@ fn slot_for_group(lua: MizLua, ctx: &Context, gid: &GroupId) -> Result<(Side, Sl
 
 fn player_name(db: &Db, slot: &SlotId) -> String {
     db.ephemeral
-        .player_in_slot(&slot)
+        .player_in_slot(slot)
         .and_then(|ucid| db.player(ucid).map(|p| p.name.clone()))
         .unwrap_or_default()
 }
@@ -345,7 +345,7 @@ struct CarryCap {
 impl CarryCap {
     fn from_typ(cfg: &Cfg, typ: &str) -> CarryCap {
         cfg.cargo
-            .get(&*typ)
+            .get(typ)
             .map(|c| CarryCap {
                 troops: c.troop_slots > 0 && c.total_slots > 0,
                 crates: c.crate_slots > 0 && c.total_slots > 0,
@@ -422,7 +422,7 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             let flight = if recon && wingman {
                 let res = mc.add_submenu_for_group(miz_gid, "Flight".into(), None);
                 let menu = res.as_ref().ok().cloned();
-                built(true, "Flight", res.map(|_| ()).map_err(anyhow::Error::from));
+                built(true, "Flight", res.map(|_| ()));
                 menu
             } else {
                 None
@@ -517,7 +517,7 @@ pub(super) fn init_for_slot(ctx: &mut Context, lua: MizLua, slot: &SlotId) -> Re
             if cfg
                 .ground_war
                 .as_ref()
-                .map_or(false, |g| g.enabled && g.command_rule.check(&ucid))
+                .is_some_and(|g| g.enabled && g.command_rule.check(&ucid))
             {
                 built(
                     true,
@@ -570,7 +570,7 @@ pub(super) fn process_init_queue(ctx: &mut Context, lua: MizLua) {
                 ctx.menu_init_retries.remove(&slot);
             }
             Err(e) => {
-                let tries = ctx.menu_init_retries.entry(slot.clone()).or_default();
+                let tries = ctx.menu_init_retries.entry(slot).or_default();
                 *tries = tries.saturating_add(1);
                 if *tries <= MENU_INIT_RETRIES {
                     warn!(

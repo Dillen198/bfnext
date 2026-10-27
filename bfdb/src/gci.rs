@@ -597,13 +597,13 @@ pub(crate) async fn run(
                 last_err.as_deref().unwrap_or("unknown")
             );
         }
-        if tick % heartbeat_ticks == 0 {
+        if tick.is_multiple_of(heartbeat_ticks) {
             // Once a minute at info was 6% of the log; keep one every 30
             // minutes at info and the rest at debug. The not-answering warning
             // repeats every 5 minutes -- still hard to miss, not a flood.
             let beat = tick / heartbeat_ticks;
             if engine_ok {
-                if beat % 30 == 0 {
+                if beat.is_multiple_of(30) {
                     log::info!(
                         "gci: alive — {total_flights} airborne flight(s), {flights_in_combat} with contacts"
                     );
@@ -612,7 +612,7 @@ pub(crate) async fn run(
                         "gci: alive — {total_flights} airborne flight(s), {flights_in_combat} with contacts"
                     );
                 }
-            } else if beat % 5 == 0 {
+            } else if beat.is_multiple_of(5) {
                 // Keep saying it — a one-time warning is easy to miss when the
                 // RPC channel is down for a whole mission.
                 log::warn!(
@@ -769,7 +769,7 @@ fn is_threat(c: &GciContact) -> bool {
 
 /// Keep the highest-priority (lowest `Prio`) call seen so far.
 fn consider(best: &mut Option<(Prio, String)>, prio: Prio, text: String) {
-    if best.as_ref().map_or(true, |(p, _)| prio < *p) {
+    if best.as_ref().is_none_or(|(p, _)| prio < *p) {
         *best = Some((prio, text));
     }
 }
@@ -804,14 +804,14 @@ fn coalition_calls(
     };
 
     // TUMBLEWEED — radar net just went down.
-    if cfg.tumbleweed_calls && ss.initialized {
-        if ss.radar_up
-            && !picture.radar_up
-            && tick.wrapping_sub(ss.last_tumbleweed_tick) > 24
-        {
-            ss.last_tumbleweed_tick = tick;
-            out.push((false, format!("all players, {ctrl}, tumbleweed, negative radar")));
-        }
+    if cfg.tumbleweed_calls
+        && ss.initialized
+        && ss.radar_up
+        && !picture.radar_up
+        && tick.wrapping_sub(ss.last_tumbleweed_tick) > 24
+    {
+        ss.last_tumbleweed_tick = tick;
+        out.push((false, format!("all players, {ctrl}, tumbleweed, negative radar")));
     }
     ss.radar_up = picture.radar_up;
 
@@ -836,7 +836,7 @@ fn coalition_calls(
     if cfg.support_calls && !picture.support.is_empty() {
         let due = ss
             .last_support
-            .map_or(true, |t| t.elapsed().as_secs() >= cfg.support_interval_secs);
+            .is_none_or(|t| t.elapsed().as_secs() >= cfg.support_interval_secs);
         if due {
             ss.last_support = Some(Instant::now());
             let mut s = format!("all players, {ctrl}, support.");
@@ -1209,7 +1209,7 @@ fn decide(
             }
             Some(c) => {
                 ic.key = group_key(c);
-                let due = ic.last_vector.map_or(true, |t| t.elapsed().as_secs() >= 10);
+                let due = ic.last_vector.is_none_or(|t| t.elapsed().as_secs() >= 10);
                 if due {
                     if let Some(dh) = intercept_heading(flight, c) {
                         ic.last_vector = Some(Instant::now());
@@ -1240,7 +1240,7 @@ fn decide(
     if best.is_none() {
         let due = pg
             .last_picture
-            .map_or(true, |t| t.elapsed().as_secs() >= cfg.picture_interval_secs);
+            .is_none_or(|t| t.elapsed().as_secs() >= cfg.picture_interval_secs);
         if due {
             pg.last_picture = Some(Instant::now());
             consider(&mut best, Prio::Picture, picture_call(who, &rc));
@@ -1315,7 +1315,7 @@ fn decide(
     let cooldown_ok = urgent
         || pg
             .last_tx
-            .map_or(true, |t| t.elapsed().as_secs() >= cfg.per_player_cooldown_secs);
+            .is_none_or(|t| t.elapsed().as_secs() >= cfg.per_player_cooldown_secs);
     if !cooldown_ok {
         return None;
     }
@@ -1612,7 +1612,7 @@ impl RCtx<'_> {
                 if hour == 0 {
                     hour = 12;
                 }
-                let fa = self.flight.alt_m as i32;
+                let fa = self.flight.alt_m;
                 let hl = match alt_m {
                     Some(a) if a - fa > 900 => " high",
                     Some(a) if a - fa < -900 => " low",
@@ -1839,7 +1839,7 @@ fn spoken_callsign(cs: &str) -> String {
 
     let cs = cs
         .strip_suffix("00")
-        .filter(|s| s.chars().last().map_or(false, |c| c.is_alphabetic()))
+        .filter(|s| s.chars().last().is_some_and(|c| c.is_alphabetic()))
         .unwrap_or(cs);
     let mut out = String::with_capacity(cs.len() + 4);
     let mut prev_digit = false;
@@ -2611,6 +2611,25 @@ fn build_answer(
     }
 }
 
+/// Dropped calls per side since the last report, and when that was.
+static DROPPED_CALLS: std::sync::Mutex<[(u32, Option<std::time::Instant>); 2]> =
+    std::sync::Mutex::new([(0, None), (0, None)]);
+
+/// Count a call that couldn't go out because SRS is down; say so at most
+/// once every ten minutes per side.
+fn note_dropped_call(side: Side) {
+    let i = if side == Side::Red { 0 } else { 1 };
+    let Ok(mut d) = DROPPED_CALLS.lock() else { return };
+    let (n, last) = &mut d[i];
+    *n += 1;
+    let due = last.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(600));
+    if due {
+        log::warn!("gci: SRS not connected for {side:?}; {n} call(s) dropped since the last report");
+        *n = 0;
+        *last = Some(std::time::Instant::now());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::GciConfig;
@@ -2636,24 +2655,5 @@ mod tests {
             atc.fields.contains_key("Incirlik"),
             "sample should show a per-field frequency override"
         );
-    }
-}
-
-/// Dropped calls per side since the last report, and when that was.
-static DROPPED_CALLS: std::sync::Mutex<[(u32, Option<std::time::Instant>); 2]> =
-    std::sync::Mutex::new([(0, None), (0, None)]);
-
-/// Count a call that couldn't go out because SRS is down; say so at most
-/// once every ten minutes per side.
-fn note_dropped_call(side: Side) {
-    let i = if side == Side::Red { 0 } else { 1 };
-    let Ok(mut d) = DROPPED_CALLS.lock() else { return };
-    let (n, last) = &mut d[i];
-    *n += 1;
-    let due = last.map_or(true, |t| t.elapsed() >= std::time::Duration::from_secs(600));
-    if due {
-        log::warn!("gci: SRS not connected for {side:?}; {n} call(s) dropped since the last report");
-        *n = 0;
-        *last = Some(std::time::Instant::now());
     }
 }

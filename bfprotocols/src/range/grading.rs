@@ -186,7 +186,7 @@ pub fn aar_grade(
         + spread(vertical_sd, 1.5) * 0.7;
     if st > 0.05 {
         s -= st;
-        let mut worst = vec![
+        let mut worst = [
             (fore_aft_sd / 2.0, "fore-aft"),
             (lateral_sd / 1.5, "lateral"),
             (vertical_sd / 1.5, "vertical"),

@@ -96,7 +96,7 @@ fn lives_command(ctx: &mut Context, id: PlayerId) -> Result<()> {
 fn gci_command(ctx: &mut Context, id: PlayerId, arg: &str) {
     use crate::ewr::EwrUnits;
     let Some(ifo) = ctx.connected.get(&id) else { return };
-    let ucid = ifo.ucid.clone();
+    let ucid = ifo.ucid;
     let reply = |ctx: &mut Context, m: CompactString| {
         ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), m);
     };
@@ -263,7 +263,7 @@ fn admin_command(ctx: &mut Context, id: PlayerId, cmd: &str, now: DateTime<Utc>)
             pending
                 .retain(|(_, _, at)| now - *at <= Duration::seconds(CONFIRM_WINDOW_SECS));
             if confirmed {
-                match pending.iter().position(|(u, k, _)| u == &ucid && k == &key) {
+                match pending.iter().position(|(u, k, _)| u == &ucid && k == key) {
                     Some(i) => {
                         pending.remove(i);
                         drop(pending);
@@ -360,14 +360,14 @@ fn weather_command(ctx: &mut Context, _lua: HooksLua, id: PlayerId) {
 }
 
 fn balance_command(ctx: &mut Context, id: PlayerId) {
-    if let Some(ifo) = ctx.connected.get(&id) {
-        if let Some(player) = ctx.db.player(&ifo.ucid) {
-            let points = player.points;
-            ctx.db.ephemeral.msgs().send(
-                MsgTyp::Chat(Some(id)),
-                format_compact!("You have {points} points"),
-            );
-        }
+    if let Some(ifo) = ctx.connected.get(&id)
+        && let Some(player) = ctx.db.player(&ifo.ucid)
+    {
+        let points = player.points;
+        ctx.db
+            .ephemeral
+            .msgs()
+            .send(MsgTyp::Chat(Some(id)), format_compact!("You have {points} points"));
     }
 }
 
@@ -437,7 +437,7 @@ fn brief_reply(ctx: &mut Context, lua: MizLua, id: PlayerId) {
     let from = ctx
         .db
         .player(&ucid)
-        .and_then(|p| p.current_slot.as_ref().map(|(s, _)| s.clone()))
+        .and_then(|p| p.current_slot.as_ref().map(|(s, _)| *s))
         .and_then(|slot| crate::menu::player_world_pos(ctx, &slot));
     let rep = crate::situation::build(
         ctx,
@@ -593,7 +593,7 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                         origin,
                         jtac: _,
                     } => {
-                        let player = player.clone();
+                        let player = *player;
                         let points = (spec.cost as f32 / 2.).ceil() as i32;
                         let cost_fraction = *cost_fraction;
                         let origin = *origin;
@@ -644,7 +644,7 @@ fn delete_command(ctx: &mut Context, id: PlayerId, s: &str) {
                         cost_fraction,
                         ..
                     } => {
-                        let player = player.clone();
+                        let player = *player;
                         let points = (spec.cost as f32 / 2.).ceil() as i32;
                         let cost_fraction = *cost_fraction;
                         let origin = *origin;
@@ -825,12 +825,12 @@ fn action_help(
 
 fn action_command(ctx: &mut Context, id: PlayerId, cmd: &str) {
     if cmd.trim().eq_ignore_ascii_case("help") {
-        if let Some(ifo) = ctx.connected.get(&id) {
-            if let Some(player) = ctx.db.player(&ifo.ucid) {
-                let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
-                if let Some(actions) = cfg.actions.get(&player.side) {
-                    action_help(ctx, actions, id)
-                }
+        if let Some(ifo) = ctx.connected.get(&id)
+            && let Some(player) = ctx.db.player(&ifo.ucid)
+        {
+            let cfg = Arc::clone(&ctx.db.ephemeral.cfg);
+            if let Some(actions) = cfg.actions.get(&player.side) {
+                action_help(ctx, actions, id)
             }
         }
     } else {
@@ -845,38 +845,38 @@ pub(super) fn run_action_commands(
 ) -> Result<()> {
     let spctx = SpawnCtx::new(lua).context("creating spawn ctx")?;
     for (id, s) in ctx.action_commands.drain(..) {
-        if let Some(ifo) = ctx.connected.get(&id) {
-            if let Some(player) = ctx.db.player(&ifo.ucid) {
-                let ucid = ifo.ucid.clone();
-                let side = player.side;
-                // The admin blacklist/whitelist only hid the F10 Actions menu;
-                // the chat command went straight through.
-                if !ctx.db.ephemeral.cfg.rules.actions.check(&ucid) {
-                    ctx.db.ephemeral.msgs().send(
-                        MsgTyp::Chat(Some(id)),
-                        "you are not permitted to use actions on this server",
-                    );
-                    continue;
-                }
-                let r = match ActionCmd::parse(&mut ctx.db, lua, side, &s) {
-                    Err(e) => Err(e),
-                    Ok(cmd) => ctx.db.start_action(
-                        lua,
-                        perf,
-                        &spctx,
-                        &ctx.idx,
-                        &ctx.jtac,
-                        side,
-                        Some(ucid),
-                        cmd,
-                    ),
-                };
-                let msg = match r {
-                    Err(e) => format_compact!("could not run action {s}: {e:?}"),
-                    Ok(()) => format_compact!("action {s} started"),
-                };
-                ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg)
+        if let Some(ifo) = ctx.connected.get(&id)
+            && let Some(player) = ctx.db.player(&ifo.ucid)
+        {
+            let ucid = ifo.ucid;
+            let side = player.side;
+            // The admin blacklist/whitelist only hid the F10 Actions menu;
+            // the chat command went straight through.
+            if !ctx.db.ephemeral.cfg.rules.actions.check(&ucid) {
+                ctx.db.ephemeral.msgs().send(
+                    MsgTyp::Chat(Some(id)),
+                    "you are not permitted to use actions on this server",
+                );
+                continue;
             }
+            let r = match ActionCmd::parse(&mut ctx.db, lua, side, &s) {
+                Err(e) => Err(e),
+                Ok(cmd) => ctx.db.start_action(
+                    lua,
+                    perf,
+                    &spctx,
+                    &ctx.idx,
+                    &ctx.jtac,
+                    side,
+                    Some(ucid),
+                    cmd,
+                ),
+            };
+            let msg = match r {
+                Err(e) => format_compact!("could not run action {s}: {e:?}"),
+                Ok(()) => format_compact!("action {s} started"),
+            };
+            ctx.db.ephemeral.msgs().send(MsgTyp::Chat(Some(id)), msg)
         }
     }
     Ok(())
@@ -1045,18 +1045,18 @@ fn run_jtac_command(
             jtac
         }
     };
-    if let Some(_) = cmd.strip_prefix("autoshift") {
+    if cmd.strip_prefix("autoshift").is_some() {
         let arg = ArgTuple { fst: ucid, snd: jtid };
         menu::jtac::jtac_toggle_auto_shift_in(lua, ctx, arg)?;
-    } else if let Some(_) = cmd.strip_prefix("shift") {
+    } else if cmd.strip_prefix("shift").is_some() {
         let arg = ArgTuple { fst: ucid, snd: jtid };
         menu::jtac::jtac_shift_in(lua, ctx, arg)?;
-    } else if let Some(_) = cmd.strip_prefix("status") {
+    } else if cmd.strip_prefix("status").is_some() {
         // Always answered to the one who asked. A Combined Arms commander
         // (no aircraft) used to get it as a panel to their whole side.
         let arg = ArgTuple { fst: Some(ucid), snd: jtid };
         menu::jtac::jtac_status_in(lua, ctx, arg)?
-    } else if let Some(_) = cmd.strip_prefix("building") {
+    } else if cmd.strip_prefix("building").is_some() {
         menu::jtac::jtac_designate_building_in(
             lua,
             ctx,
@@ -1112,15 +1112,15 @@ fn run_jtac_command(
                 .push((id, String::from(format_compact!("{name} {gid} {key}")))),
             _ => error!("your side has no drone waypoint action"),
         }
-    } else if let Some(_) = cmd.strip_prefix("smoke") {
+    } else if cmd.strip_prefix("smoke").is_some() {
         let arg = ArgTuple { fst: ucid, snd: jtid };
         menu::jtac::jtac_smoke_target_in(lua, ctx, arg)?
-    } else if let Some(_) = cmd.strip_prefix("pointer") {
+    } else if cmd.strip_prefix("pointer").is_some() {
         let arg = ArgTuple { fst: ucid, snd: jtid };
         menu::jtac::jtac_toggle_ir_pointer_in(lua, ctx, arg)?
     } else if let Some(s) = cmd.strip_prefix("bomber") {
         let name = s.trim();
-        let name = if name != "" {
+        let name = if !name.is_empty() {
             Some(String::from(name))
         } else {
             let bomber_missions = ctx.db.ephemeral.cfg.actions.get(&side);
@@ -1182,7 +1182,7 @@ fn run_jtac_command(
                 Ok(id) => smallvec![id],
                 Err(_) => {
                     if aid.eq_ignore_ascii_case("all") {
-                        SmallVec::from_iter(jtac.nearby_artillery().into_iter().copied())
+                        SmallVec::from_iter(jtac.nearby_artillery().iter().copied())
                     } else {
                         error!("invalid arty group id {aid}")
                     }
@@ -1276,7 +1276,7 @@ fn help_command(ctx: &mut Context, id: PlayerId) {
 fn looks_like_command(msg: &str) -> bool {
     msg.strip_prefix('-')
         .and_then(|s| s.chars().next())
-        .map_or(false, |c| c.is_ascii_alphabetic())
+        .is_some_and(|c| c.is_ascii_alphabetic())
 }
 
 pub(super) fn process(

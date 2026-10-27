@@ -269,7 +269,7 @@ pub(crate) fn list_backups(dir: &Path) -> Vec<PathBuf> {
                     p.is_dir()
                         && p.file_name()
                             .and_then(|n| n.to_str())
-                            .map_or(false, |n| n.ends_with('Z') && n.len() == 16)
+                            .is_some_and(|n| n.ends_with('Z') && n.len() == 16)
                 })
                 .collect()
         })
@@ -495,7 +495,7 @@ pub(crate) fn explain_open_failure(db_path: &Path, dir: &Path, e: &anyhow::Error
                     .filter(|p| {
                         p.is_dir()
                             && p.file_name()
-                                .map_or(false, |n| n.to_string_lossy().starts_with("db-"))
+                                .is_some_and(|n| n.to_string_lossy().starts_with("db-"))
                     })
                     .collect();
                 v.sort();

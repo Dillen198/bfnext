@@ -307,15 +307,14 @@ pub(crate) fn fetch_weather(lua: MizLua, pos_x: f64, pos_z: f64) -> Result<Weath
         Some(v) if v > 0.0 => visibility_m = v,
         Some(_) => (),
         None => {
-            if wx.get::<bool>("enable_fog").unwrap_or(false) {
-                if let Some(v) = wx
+            if wx.get::<bool>("enable_fog").unwrap_or(false)
+                && let Some(v) = wx
                     .raw_get::<LuaTable>("fog")
                     .ok()
                     .and_then(|f| f.get::<f64>("visibility").ok())
                     .filter(|v| *v > 0.0)
-                {
-                    visibility_m = visibility_m.min(v);
-                }
+            {
+                visibility_m = visibility_m.min(v);
             }
         }
     }
@@ -586,8 +585,8 @@ fn cloud_preset_metar(preset: &str) -> Option<std::string::String> {
                     if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                         current = Some(name.to_string());
                     }
-                } else if t.starts_with("readableName ") || t.starts_with("readableName=") {
-                    if let (Some(name), Some(i)) = (current.as_ref(), t.find("METAR:")) {
+                } else if (t.starts_with("readableName ") || t.starts_with("readableName="))
+                    && let (Some(name), Some(i)) = (current.as_ref(), t.find("METAR:")) {
                         let rest = &t[i + "METAR:".len()..];
                         let end = rest.find(['\'', '"']).unwrap_or(rest.len());
                         let metar = rest[..end].trim();
@@ -595,7 +594,6 @@ fn cloud_preset_metar(preset: &str) -> Option<std::string::String> {
                             map.insert(name.clone(), metar.to_string());
                         }
                     }
-                }
             }
             map
         })
@@ -811,7 +809,7 @@ fn thousands(n: i64) -> std::string::String {
         out.push('-');
     }
     for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(c);
@@ -1033,11 +1031,11 @@ pub(crate) fn carrier_brc(db: &Db, kind: &ObjectiveKind) -> u32 {
         None => return 0,
     };
     for uid in group.units.into_iter() {
-        if let Some(unit) = db.persisted.units.get(uid) {
-            if !unit.dead {
-                let deg = unit.heading.to_degrees().rem_euclid(360.0);
-                return deg.round() as u32 % 360;
-            }
+        if let Some(unit) = db.persisted.units.get(uid)
+            && !unit.dead
+        {
+            let deg = unit.heading.to_degrees().rem_euclid(360.0);
+            return deg.round() as u32 % 360;
         }
     }
     0
@@ -1366,23 +1364,21 @@ pub(crate) fn query_atc(
         // Runways, straight from DCS — no per-map table needed.
         let ab = db.ephemeral.get_airbase_by_oid(oid);
         let mut runways: Vec<AtcRunway> = vec![];
-        if let Some(ab_id) = ab {
-            if let Ok(abase) = Airbase::get_instance(lua, ab_id) {
-                if let Ok(seq) = abase.get_runways() {
-                    for r in seq {
-                        let Ok(r) = r else { continue };
-                        let course =
-                            r.course().unwrap_or(0.0).to_degrees().rem_euclid(360.0);
-                        runways.push(AtcRunway {
-                            name: r.name().map(|n| n.to_string()).unwrap_or_default(),
-                            heading: mag(course),
-                            length_m: r.length().unwrap_or(0.0) as u32,
-                            width_m: r.width().unwrap_or(0.0) as u32,
-                            thr_lat: None,
-                            thr_lon: None,
-                        });
-                    }
-                }
+        if let Some(ab_id) = ab
+            && let Ok(abase) = Airbase::get_instance(lua, ab_id)
+            && let Ok(seq) = abase.get_runways()
+        {
+            for r in seq {
+                let Ok(r) = r else { continue };
+                let course = r.course().unwrap_or(0.0).to_degrees().rem_euclid(360.0);
+                runways.push(AtcRunway {
+                    name: r.name().map(|n| n.to_string()).unwrap_or_default(),
+                    heading: mag(course),
+                    length_m: r.length().unwrap_or(0.0) as u32,
+                    width_m: r.width().unwrap_or(0.0) as u32,
+                    thr_lat: None,
+                    thr_lon: None,
+                });
             }
         }
         let active_runway = ab
@@ -1416,7 +1412,7 @@ pub(crate) fn query_atc(
             dewpoint_c: dewpoint_c as i16,
             visibility_m: wx.visibility_m as u32,
             cloud_base_ft: (wx.has_clouds() && wx.cloud_base_m > 0.0)
-                .then(|| (wx.cloud_base_m * M_TO_FT) as i32),
+                .then_some((wx.cloud_base_m * M_TO_FT) as i32),
             cloud_cover: wx
                 .cloud_preset
                 .as_ref()
@@ -1480,7 +1476,7 @@ pub(crate) fn query_atc(
             }
             let d = obj.pos() - fp;
             let rng = d.magnitude();
-            if nearest.as_ref().map_or(true, |(r, _, _)| rng < *r) {
+            if nearest.as_ref().is_none_or(|(r, _, _)| rng < *r) {
                 let brg = mag(d.y.atan2(d.x).to_degrees());
                 nearest = Some((rng, brg, format_compact!("{oid}").to_string()));
             }

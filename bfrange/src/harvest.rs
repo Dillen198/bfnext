@@ -200,24 +200,22 @@ fn harvest_bombs(g: &LuaTable) -> Vec<WeaponBallistics> {
                 LuaValue::String(s) => s.to_str().map(|s| s.to_string()).ok(),
                 _ => t.raw_get::<Option<String>>("name").ok().flatten(),
             };
-            if let Some(name) = name {
-                if let Some(b) = bomb_entry(&name, &t) {
-                    if !out.iter().any(|x| x.name == b.name) {
-                        out.push(b)
-                    }
-                }
+            if let Some(name) = name
+                && let Some(b) = bomb_entry(&name, &t)
+                && !out.iter().any(|x| x.name == b.name)
+            {
+                out.push(b)
             }
         }
     };
     if let Ok(Some(b)) = g.raw_get::<Option<LuaTable>>("bombs") {
         scan(b)
     }
-    if let Ok(Some(wt)) = g.raw_get::<Option<LuaTable>>("weapons_table") {
-        if let Ok(Some(w)) = wt.raw_get::<Option<LuaTable>>("weapons") {
-            if let Ok(Some(b)) = w.raw_get::<Option<LuaTable>>("bombs") {
-                scan(b)
-            }
-        }
+    if let Ok(Some(wt)) = g.raw_get::<Option<LuaTable>>("weapons_table")
+        && let Ok(Some(w)) = wt.raw_get::<Option<LuaTable>>("weapons")
+        && let Ok(Some(b)) = w.raw_get::<Option<LuaTable>>("bombs")
+    {
+        scan(b)
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
@@ -249,12 +247,11 @@ fn harvest_pylons(g: &LuaTable) -> FxHashMap<String, Vec<(u8, Vec<String>)>> {
                     p.raw_get::<Option<LuaTable>>("Launchers").ok().flatten()
                 {
                     for l in ls.sequence_values::<LuaTable>() {
-                        if let Ok(l) = l {
-                            if let Some(c) =
+                        if let Ok(l) = l
+                            && let Some(c) =
                                 l.raw_get::<Option<String>>("CLSID").ok().flatten()
-                            {
-                                clsids.push(c);
-                            }
+                        {
+                            clsids.push(c);
                         }
                     }
                 }

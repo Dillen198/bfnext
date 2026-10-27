@@ -245,49 +245,6 @@ pub(super) fn default_ground_fallback_max_range_m() -> f64 {
     60_000.0
 }
 
-#[cfg(test)]
-mod ground_fallback_tests {
-    use super::*;
-
-    #[test]
-    fn absent_block_means_on_with_defaults() {
-        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({})).unwrap();
-        let g = h.ground_fallback;
-        assert!(g.enabled);
-        assert!(g.template.is_empty());
-        assert_eq!((g.speed_kph, g.arrive_m, g.max_range_m), (50., 400., 60_000.));
-        assert_eq!(g.timeout_mins, None);
-    }
-
-    #[test]
-    fn a_partial_block_keeps_the_other_defaults() {
-        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({
-            "ground_fallback": { "enabled": false, "template": { "Red": "RTRUCK" } }
-        }))
-        .unwrap();
-        let g = h.ground_fallback;
-        assert!(!g.enabled);
-        assert_eq!(g.template.get(&Side::Red).map(|s| s.as_str()), Some("RTRUCK"));
-        assert_eq!(g.arrive_m, 400.);
-    }
-
-    #[test]
-    fn threat_avoidance_is_on_by_default() {
-        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({})).unwrap();
-        let t = h.threat_avoidance;
-        assert!(t.enabled && t.replan);
-        assert_eq!((t.margin, t.noe_agl_m), (1.25, 40.));
-        assert_eq!((t.max_replans, t.min_replan_secs), (4, 20));
-        assert_eq!((t.unknown_radius_m, t.garrison_radius_m), (10_000., 3_000.));
-        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({
-            "threat_avoidance": { "margin": 1.5, "replan": false }
-        }))
-        .unwrap();
-        assert_eq!(h.threat_avoidance.margin, 1.5);
-        assert!(!h.threat_avoidance.replan && h.threat_avoidance.enabled);
-    }
-}
-
 pub(super) fn default_helo_troop_name() -> String {
     String::from("Standard")
 }
@@ -372,4 +329,47 @@ pub(super) fn default_cap_min_friendly_pilots() -> u32 {
 }
 pub(super) fn default_cap_cooldown_secs() -> u32 {
     300
+}
+
+#[cfg(test)]
+mod ground_fallback_tests {
+    use super::*;
+
+    #[test]
+    fn absent_block_means_on_with_defaults() {
+        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({})).unwrap();
+        let g = h.ground_fallback;
+        assert!(g.enabled);
+        assert!(g.template.is_empty());
+        assert_eq!((g.speed_kph, g.arrive_m, g.max_range_m), (50., 400., 60_000.));
+        assert_eq!(g.timeout_mins, None);
+    }
+
+    #[test]
+    fn a_partial_block_keeps_the_other_defaults() {
+        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({
+            "ground_fallback": { "enabled": false, "template": { "Red": "RTRUCK" } }
+        }))
+        .unwrap();
+        let g = h.ground_fallback;
+        assert!(!g.enabled);
+        assert_eq!(g.template.get(&Side::Red).map(|s| s.as_str()), Some("RTRUCK"));
+        assert_eq!(g.arrive_m, 400.);
+    }
+
+    #[test]
+    fn threat_avoidance_is_on_by_default() {
+        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({})).unwrap();
+        let t = h.threat_avoidance;
+        assert!(t.enabled && t.replan);
+        assert_eq!((t.margin, t.noe_agl_m), (1.25, 40.));
+        assert_eq!((t.max_replans, t.min_replan_secs), (4, 20));
+        assert_eq!((t.unknown_radius_m, t.garrison_radius_m), (10_000., 3_000.));
+        let h: HeloInsertionCfg = serde_json::from_value(serde_json::json!({
+            "threat_avoidance": { "margin": 1.5, "replan": false }
+        }))
+        .unwrap();
+        assert_eq!(h.threat_avoidance.margin, 1.5);
+        assert!(!h.threat_avoidance.replan && h.threat_avoidance.enabled);
+    }
 }

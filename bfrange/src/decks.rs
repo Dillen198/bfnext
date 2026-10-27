@@ -158,10 +158,11 @@ impl Decks {
         }
         // a ship that somehow went away comes back
         for d in &self.decks {
-            if now as i64 % 30 == 0 && !spawn::group_exists(lua, &d.group) {
-                if let Err(e) = spawn_deck(lua, d, spawns, now) {
-                    warn!("ship deck {} respawn: {e:?}", d.cfg.id)
-                }
+            if now as i64 % 30 == 0
+                && !spawn::group_exists(lua, &d.group)
+                && let Err(e) = spawn_deck(lua, d, spawns, now)
+            {
+                warn!("ship deck {} respawn: {e:?}", d.cfg.id)
             }
         }
         let ships: Vec<Option<(V3, V3)>> = self

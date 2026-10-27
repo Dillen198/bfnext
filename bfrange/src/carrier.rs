@@ -482,14 +482,13 @@ impl Carriers {
                     {
                         p.pattern.ninety_alt_ft = Some(h * util::M_TO_FT);
                     }
-                    if let Some(ly) = p.last_y {
-                        if ly.signum() != y.signum()
-                            && x > 0.
-                            && x < 1.5 * util::NM
-                            && p.pattern.wake_alt_ft.is_none()
-                        {
-                            p.pattern.wake_alt_ft = Some(h * util::M_TO_FT);
-                        }
+                    if let Some(ly) = p.last_y
+                        && ly.signum() != y.signum()
+                        && x > 0.
+                        && x < 1.5 * util::NM
+                        && p.pattern.wake_alt_ft.is_none()
+                    {
+                        p.pattern.wake_alt_ft = Some(h * util::M_TO_FT);
                     }
                     let aligned = util::angdiff(track, deck.fb).abs() < 20.;
                     let lue = y.atan2(x.max(1.)).to_degrees();
@@ -622,10 +621,10 @@ impl Carriers {
                     p.state = PassState::Done;
                     p.outcome = Some(PassOutcome::Trap);
                     p.end_t = Some(now);
-                    if let (Some(d), Ok(u)) = (deck, Unit::get_by_name(lua, unit)) {
-                        if let Ok(pt) = u.get_point() {
-                            p.stop_x = Some(-(pt.0 - d.l).dot(&d.u));
-                        }
+                    if let (Some(d), Ok(u)) = (deck, Unit::get_by_name(lua, unit))
+                        && let Ok(pt) = u.get_point()
+                    {
+                        p.stop_x = Some(-(pt.0 - d.l).dot(&d.u));
                     }
                 }
             }
@@ -638,12 +637,12 @@ impl Carriers {
             if c.cfg.unit_name != place {
                 continue;
             }
-            if let Some(p) = c.passes.get_mut(unit) {
-                if p.state == PassState::Touched {
-                    p.state = PassState::Done;
-                    p.outcome = Some(PassOutcome::Bolter);
-                    p.end_t = Some(now);
-                }
+            if let Some(p) = c.passes.get_mut(unit)
+                && p.state == PassState::Touched
+            {
+                p.state = PassState::Done;
+                p.outcome = Some(PassOutcome::Bolter);
+                p.end_t = Some(now);
             }
         }
     }
@@ -867,10 +866,10 @@ fn engine_grade(
         if let (Some(a), Some(b)) = (aoa, band) {
             add(grading::aoa_call(b, a));
         }
-        if matches!(pos, "IC" | "AR") {
-            if let (Some(g), Some(l)) = (gse, lue) {
-                waveoff_limits |= grading::waveoff_limits(g, l);
-            }
+        if matches!(pos, "IC" | "AR")
+            && let (Some(g), Some(l)) = (gse, lue)
+        {
+            waveoff_limits |= grading::waveoff_limits(g, l);
         }
     }
     if let Some(g) = groove_s {
@@ -1092,7 +1091,11 @@ mod tests {
         assert_eq!(g.points, Some(2.));
         // normal-sized calls at worst: (OK)
         let s = groove(|x| {
-            (if x < IM_START && x >= IC_START { 1.0 } else { 0. }, 0., Some(b.on_speed))
+            (
+                if (IC_START..IM_START).contains(&x) { 1.0 } else { 0. },
+                0.,
+                Some(b.on_speed),
+            )
         });
         let g = engine_grade(&s, Some(&b), PassOutcome::Trap, Some(16.), Some(3));
         assert_eq!((g.grade.as_str(), g.comment.as_str()), ("(OK)", "HIM"));

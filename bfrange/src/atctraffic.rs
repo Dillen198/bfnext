@@ -915,8 +915,8 @@ impl AtcTrafficSim {
             let parked = f.plan.lands()
                 && f.was_airborne
                 && !airborne
-                && (f.still_since.map_or(false, |t| now - t > 90.)
-                    || f.landed_since.map_or(false, |t| now - t > 150.));
+                && (f.still_since.is_some_and(|t| now - t > 90.)
+                    || f.landed_since.is_some_and(|t| now - t > 150.));
             let done = (f.plan == Plan::Departure && airborne && far)
                 || parked
                 || now - f.spawned > 5400.;

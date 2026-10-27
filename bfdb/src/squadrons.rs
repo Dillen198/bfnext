@@ -138,7 +138,7 @@ impl Squadrons {
         let mut disband = false;
         self.by_tag.fetch_and_update(&tag, |s| {
             let mut s = s?;
-            if by.map_or(false, |by| by != ucid && by != s.owner) {
+            if by.is_some_and(|by| by != ucid && by != s.owner) {
                 denied = true;
                 return Some(s);
             }

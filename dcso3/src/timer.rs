@@ -129,10 +129,11 @@ impl Timer {
     }
 
     pub fn remove_function(&self, id: FunId) -> Result<()> {
-        Ok(record_perf!(
+        let _: () = record_perf!(
             timer_remove_function,
             self.t.call_function("removeFunction", id)?
-        ))
+        );
+        Ok(())
     }
 
     pub fn set_function_time(&self, id: FunId, when: f64) -> Result<()> {

@@ -230,7 +230,7 @@ fn piper_candidates(model: &std::path::Path) -> Vec<Candidate> {
             let mut more: Vec<PathBuf> = rd
                 .filter_map(|e| e.ok().map(|e| e.path()))
                 .filter(|p| {
-                    p.extension().map_or(false, |x| x.eq_ignore_ascii_case("onnx"))
+                    p.extension().is_some_and(|x| x.eq_ignore_ascii_case("onnx"))
                         && p != model
                 })
                 .collect();

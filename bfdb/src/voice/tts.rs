@@ -328,7 +328,7 @@ impl Neural {
 
     fn failed(&self, e: &anyhow::Error) {
         let mut l = self.last_fail.lock().unwrap();
-        if l.map_or(true, |t| t.elapsed() > Duration::from_secs(300)) {
+        if l.is_none_or(|t| t.elapsed() > Duration::from_secs(300)) {
             log::warn!("tts: {} failed, using the local voice: {e:#}", self.describe());
             *l = Some(std::time::Instant::now());
         }
@@ -417,7 +417,11 @@ impl Neural {
             );
         }
         let b = res.bytes()?;
-        Ok(b.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect())
+        Ok(b.as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect())
     }
 }
 
@@ -451,7 +455,7 @@ pub(crate) fn elevenlabs_voices(url: &str, key: &str) -> Vec<(String, String)> {
             }
         };
     v.sort_by_key(|x| {
-        !x.labels.get("accent").map_or(false, |a| a.to_lowercase().contains("american"))
+        !x.labels.get("accent").is_some_and(|a| a.to_lowercase().contains("american"))
     });
     v.into_iter().map(|x| (x.voice_id, x.name)).collect()
 }

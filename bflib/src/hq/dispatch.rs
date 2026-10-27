@@ -78,7 +78,6 @@ fn run_action(
         ActionKind::Bomber(cfg) => {
             let jtac = c
                 .jtac
-                .clone()
                 .ok_or_else(|| CompactString::from("a bomber needs a JTAC target"))?;
             ActionArgs::Bomber(WithJtac { cfg: cfg.clone(), jtac })
         }
@@ -333,10 +332,10 @@ fn package_flights(
             }
         }
     };
-    if let Some(sam) = c.sead_at {
-        if let Some(gid) = fly(ctx, perf, OpKind::Sead, "SEAD", sam) {
-            out.push((gid, "sead"));
-        }
+    if let Some(sam) = c.sead_at
+        && let Some(gid) = fly(ctx, perf, OpKind::Sead, "SEAD", sam)
+    {
+        out.push((gid, "sead"));
     }
     for _ in 0..c.escort {
         if let Some(gid) = fly(ctx, perf, OpKind::Cap, "escort", c.pos) {

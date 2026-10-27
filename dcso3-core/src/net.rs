@@ -57,18 +57,18 @@ impl TryFrom<String> for SlotId {
     }
 }
 
-impl Into<String> for SlotId {
-    fn into(self) -> String {
-        String::from(match self {
-            Self::Unit(i) => format_compact!("{i}"),
-            Self::Spectator => format_compact!("0"),
-            Self::ArtilleryCommander(s, n) => {
+impl From<SlotId> for String {
+    fn from(val: SlotId) -> Self {
+        String::from(match val {
+            SlotId::Unit(i) => format_compact!("{i}"),
+            SlotId::Spectator => format_compact!("0"),
+            SlotId::ArtilleryCommander(s, n) => {
                 format_compact!("artillery_commander_{s}_{n}")
             }
-            Self::ForwardObserver(s, n) => format_compact!("forward_observer_{s}_{n}"),
-            Self::Instructor(s, n) => format_compact!("instructor_{s}_{n}"),
-            Self::Observer(s, n) => format_compact!("observer_{s}_{n}"),
-            Self::MultiCrew(i, n) => format_compact!("{i}_{n}"),
+            SlotId::ForwardObserver(s, n) => format_compact!("forward_observer_{s}_{n}"),
+            SlotId::Instructor(s, n) => format_compact!("instructor_{s}_{n}"),
+            SlotId::Observer(s, n) => format_compact!("observer_{s}_{n}"),
+            SlotId::MultiCrew(i, n) => format_compact!("{i}_{n}"),
         })
     }
 }
@@ -96,7 +96,7 @@ impl SlotId {
                 }
             }
         }
-        if s == "" {
+        if s.is_empty() {
             Ok(Self::Spectator)
         } else if let Ok(i) = s.parse::<i64>() {
             if i == 0 {
@@ -185,13 +185,8 @@ impl SlotId {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "str48", into = "str48")]
+#[derive(Default)]
 pub struct Ucid([u8; 16]);
-
-impl Default for Ucid {
-    fn default() -> Self {
-        Ucid([0; 16])
-    }
-}
 
 impl fmt::Display for Ucid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -233,12 +228,12 @@ impl FromStr for Ucid {
     }
 }
 
-impl Into<str48> for Ucid {
-    fn into(self) -> str48 {
+impl From<Ucid> for str48 {
+    fn from(val: Ucid) -> Self {
         use std::fmt::Write;
         let mut s = str48::new();
         for i in 0..16 {
-            write!(s, "{:02x}", self.0[i]).unwrap()
+            write!(s, "{:02x}", val.0[i]).unwrap()
         }
         s
     }

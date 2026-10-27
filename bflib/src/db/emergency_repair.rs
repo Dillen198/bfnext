@@ -157,10 +157,11 @@ pub(crate) fn check(side: Side, t: &Target, cooldown_secs: i64) -> Result<(), Re
     if t.is_origin {
         return Err(Refusal::Origin);
     }
-    if let Some(since) = t.secs_since_last {
-        if cooldown_secs > 0 && since < cooldown_secs {
-            return Err(Refusal::Cooldown(cooldown_secs - since));
-        }
+    if let Some(since) = t.secs_since_last
+        && cooldown_secs > 0
+        && since < cooldown_secs
+    {
+        return Err(Refusal::Cooldown(cooldown_secs - since));
     }
     Ok(())
 }
@@ -193,7 +194,7 @@ impl Db {
 
     /// Is `name` the emergency repair crate?
     pub fn is_emergency_repair_crate(&self, name: &str) -> bool {
-        self.emergency_repair_crate().map_or(false, |c| c.name.as_str() == name)
+        self.emergency_repair_crate().is_some_and(|c| c.name.as_str() == name)
     }
 
     /// Can `oid` pay for one repair step out of its own stores? Mirrors the
@@ -382,7 +383,7 @@ impl Db {
     }
 
     fn group_has_dead(&self, gid: &GroupId) -> bool {
-        self.persisted.groups.get(gid).map_or(false, |g| {
+        self.persisted.groups.get(gid).is_some_and(|g| {
             g.units
                 .into_iter()
                 .filter_map(|uid| self.persisted.units.get(uid))

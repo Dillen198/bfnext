@@ -112,17 +112,13 @@ pub(super) fn default_scan_interval_secs() -> u32 {
     Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema,
 )]
 // #[serde(deny_unknown_fields)]
+#[derive(Default)]
 pub enum EwrMode {
     /// Original EWR implementation with immediate track updates
+    #[default]
     Original,
     /// EWR with configurable delay on track updates
     Delayed,
-}
-
-impl Default for EwrMode {
-    fn default() -> Self {
-        Self::Original
-    }
 }
 
 /// Sensor category used by the IADN fusion layer to apply appropriate detection physics.

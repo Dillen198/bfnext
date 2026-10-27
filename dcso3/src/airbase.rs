@@ -77,7 +77,7 @@ impl FromLua for AirbaseCategory {
             0 => Ok(Self::Airdrome),
             1 => Ok(Self::Helipad),
             2 => Ok(Self::Ship),
-            n => Err(crate::lua_err(&anyhow::anyhow!("unknown airbase category {n}"))),
+            n => Err(crate::lua_err(anyhow::anyhow!("unknown airbase category {n}"))),
         }
     }
 }

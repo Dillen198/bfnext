@@ -56,21 +56,24 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum LogiStage {
-    Complete { last_tick: DateTime<Utc> },
-    SyncFromWarehouses { objectives: SmallVec<[ObjectiveId; 128]> },
-    SyncToWarehouses { objectives: SmallVec<[ObjectiveId; 128]> },
-    ExecuteTransfers { transfers: Vec<Transfer> },
+    Complete {
+        last_tick: DateTime<Utc>,
+    },
+    SyncFromWarehouses {
+        objectives: SmallVec<[ObjectiveId; 128]>,
+    },
+    SyncToWarehouses {
+        objectives: SmallVec<[ObjectiveId; 128]>,
+    },
+    ExecuteTransfers {
+        transfers: Vec<Transfer>,
+    },
     // Transports are polled every step, independently of the stage machine
     // (see `Db::manage_transports`), not in stages of their own.
+    #[default]
     Init,
-}
-
-impl Default for LogiStage {
-    fn default() -> Self {
-        Self::Init
-    }
 }
 
 /// Which kind of transport a ledger entry / route id belongs to.
@@ -647,7 +650,7 @@ pub(crate) fn attach_trailers(
         return Ok(0);
     }
     let n = tasks.len();
-    route[0].task = Box::new(Task::ComboTask(tasks));
+    *route[0].task = Task::ComboTask(tasks);
     group.get_controller()?.set_task(Task::Mission { airborne: Some(false), route })?;
     Ok(n)
 }
@@ -747,10 +750,10 @@ impl SupplyConvoy {
                             ConvoyState::Destroyed
                         } else {
                             // Update last known position
-                            if let Ok(unit) = units.get(1) {
-                                if let Ok(pos) = unit.get_point() {
-                                    self.last_pos = Vector2::new(pos.x, pos.z);
-                                }
+                            if let Ok(unit) = units.get(1)
+                                && let Ok(pos) = unit.get_point()
+                            {
+                                self.last_pos = Vector2::new(pos.x, pos.z);
                             }
                             self.state
                         }
@@ -823,10 +826,10 @@ impl AirLogisticsRoute {
                         self.state = LogiRouteState::Destroyed;
                         LogiRouteState::Destroyed
                     } else {
-                        if let Ok(unit) = units.get(1) {
-                            if let Ok(pos) = unit.get_point() {
-                                self.last_pos = Vector2::new(pos.x, pos.z);
-                            }
+                        if let Ok(unit) = units.get(1)
+                            && let Ok(pos) = unit.get_point()
+                        {
+                            self.last_pos = Vector2::new(pos.x, pos.z);
                         }
                         self.state
                     }
@@ -884,10 +887,10 @@ impl SeaLogisticsRoute {
                         self.state = LogiRouteState::Destroyed;
                         LogiRouteState::Destroyed
                     } else {
-                        if let Ok(unit) = units.get(1) {
-                            if let Ok(pos) = unit.get_point() {
-                                self.last_pos = Vector2::new(pos.x, pos.z);
-                            }
+                        if let Ok(unit) = units.get(1)
+                            && let Ok(pos) = unit.get_point()
+                        {
+                            self.last_pos = Vector2::new(pos.x, pos.z);
                         }
                         self.state
                     }
@@ -1762,7 +1765,7 @@ fn route_interdicted_inner(
         if obj.logi == 0
             || matches!(
                 obj.kind,
-                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite { .. }
+                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite
             )
         {
             continue;
@@ -1852,7 +1855,7 @@ pub(super) fn nearest_carrier_objective(
             }
             let c = sum / n as f64;
             let d = na::distance_squared(&c.into(), &pos.into());
-            if best.map_or(true, |(_, bd)| d < bd) {
+            if best.is_none_or(|(_, bd)| d < bd) {
                 best = Some((*oid, d));
             }
         }
@@ -2188,7 +2191,7 @@ impl Db {
                 let is_airframe = is_airframe_item(name);
                 for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
                     if obj.owner == side {
-                        let is_carrier = self.persisted.carrier_groups.contains(&oid);
+                        let is_carrier = self.persisted.carrier_groups.contains(oid);
                         // A carrier stocks only the aircraft physically in its
                         // deck warehouse (the naval roster bftools set), NOT
                         // the whole side's airframe production list -- otherwise
@@ -2200,7 +2203,7 @@ impl Db {
                             continue;
                         }
                         let hub =
-                            self.persisted.logistics_hubs.contains(&oid) || is_carrier;
+                            self.persisted.logistics_hubs.contains(oid) || is_carrier;
                         let unlimited = if is_airframe {
                             obj.unlimited_aircraft
                         } else {
@@ -2230,9 +2233,9 @@ impl Db {
             for (name, qty) in &production.liquids {
                 for (oid, obj) in self.persisted.objectives.iter_mut_cow() {
                     if obj.owner == side {
-                        let is_carrier = self.persisted.carrier_groups.contains(&oid);
+                        let is_carrier = self.persisted.carrier_groups.contains(oid);
                         let hub =
-                            self.persisted.logistics_hubs.contains(&oid) || is_carrier;
+                            self.persisted.logistics_hubs.contains(oid) || is_carrier;
                         let capacity = whcfg.capacity_for(
                             &obj.name,
                             obj.unlimited_supply,
@@ -2461,8 +2464,8 @@ impl Db {
                                 // them and players get "no <type> in stock" for a
                                 // jet that's sitting on the deck.
                                 let mut aboard: Vec<(dcso3::String, u32)> = vec![];
-                                if let Ok(inv) = w.get_inventory(None) {
-                                    if let Ok(ac) = inv.aircraft() {
+                                if let Ok(inv) = w.get_inventory(None)
+                                    && let Ok(ac) = inv.aircraft() {
                                         let _ = ac.for_each(|n, c| {
                                             if c > 0 {
                                                 aboard.push((n, c));
@@ -2470,7 +2473,6 @@ impl Db {
                                             Ok(())
                                         });
                                     }
-                                }
                                 // The carrier's deck warehouse is the ONLY
                                 // source of truth for which aircraft it can
                                 // operate (the naval roster). Drop any airframe
@@ -2719,7 +2721,7 @@ impl Db {
                 | ObjectiveKind::Logistics
                 | ObjectiveKind::NavalBase
                 | ObjectiveKind::Factory { .. }
-                | ObjectiveKind::SpecialSamSite { .. }
+                | ObjectiveKind::SpecialSamSite
                 | ObjectiveKind::CommandCenter => {
                     // These objective types don't require airbase warehouses
                 }
@@ -3104,10 +3106,10 @@ impl Db {
     /// is still there. A transport that ended any way other than a clean
     /// delivery used to be left in the save forever.
     fn drop_transport_group(&mut self, gid: GroupId) {
-        if self.persisted.groups.get(&gid).is_some() {
-            if let Err(e) = self.delete_group(&gid) {
-                warn!("failed to remove logistics transport group {gid}: {e:?}");
-            }
+        if self.persisted.groups.get(&gid).is_some()
+            && let Err(e) = self.delete_group(&gid)
+        {
+            warn!("failed to remove logistics transport group {gid}: {e:?}");
         }
     }
 
@@ -3125,7 +3127,7 @@ impl Db {
             .persisted
             .objectives
             .get(&origin)
-            .map(|o| side.map_or(true, |s| o.owner == s))
+            .map(|o| side.is_none_or(|s| o.owner == s))
             .unwrap_or(false);
         let name = self
             .persisted
@@ -3487,51 +3489,50 @@ impl Db {
                         }
                         // Supply critical alert check
                         let threshold = self.ephemeral.cfg.supply_alert_threshold;
-                        if threshold > 0 {
-                            if let Some(obj) = self.persisted.objectives.get(&oid) {
-                                // Driven off the same three numbers the
-                                // objective's own F10 label shows. This used to
-                                // fire if ANY single warehouse entry was under
-                                // the threshold -- including airframes and item
-                                // types whose production weight is near zero, so
-                                // they barely move the mean. A base could
-                                // therefore carry a red "LOW SUPPLY < 25%"
-                                // marker while its label right next to it read
-                                // "Supply: 100", which is exactly what players
-                                // reported at Gaziantep. The two can no longer
-                                // disagree.
-                                // dcso3 re-exports its own String into this module.
-                                let mut short: Vec<std::string::String> = Vec::new();
-                                if obj.supply < threshold {
-                                    short.push(format!("munitions {}%", obj.supply));
-                                }
-                                if obj.fuel < threshold {
-                                    short.push(format!("fuel {}%", obj.fuel));
-                                }
-                                if obj.aircraft < threshold {
-                                    short.push(format!("aircraft {}%", obj.aircraft));
-                                }
-                                let is_low = !short.is_empty();
-                                let side = obj.owner;
-                                let name = obj.name.clone();
-                                if is_low {
-                                    let newly_warned =
-                                        !self.ephemeral.supply_warned.contains_key(&oid);
-                                    self.ephemeral.supply_warned.entry(oid).or_insert(ts);
-                                    if newly_warned {
-                                        let pos = obj.zone.pos();
-                                        let detail = short.join(" / ");
-                                        let (ml, msgs) =
-                                            self.ephemeral.map_layer_and_msgs();
-                                        ml.on_supply_critical(
-                                            oid, pos, side, &name, &detail, msgs,
-                                        );
-                                    }
-                                } else {
-                                    self.ephemeral.supply_warned.remove(&oid);
+                        if threshold > 0
+                            && let Some(obj) = self.persisted.objectives.get(&oid)
+                        {
+                            // Driven off the same three numbers the
+                            // objective's own F10 label shows. This used to
+                            // fire if ANY single warehouse entry was under
+                            // the threshold -- including airframes and item
+                            // types whose production weight is near zero, so
+                            // they barely move the mean. A base could
+                            // therefore carry a red "LOW SUPPLY < 25%"
+                            // marker while its label right next to it read
+                            // "Supply: 100", which is exactly what players
+                            // reported at Gaziantep. The two can no longer
+                            // disagree.
+                            // dcso3 re-exports its own String into this module.
+                            let mut short: Vec<std::string::String> = Vec::new();
+                            if obj.supply < threshold {
+                                short.push(format!("munitions {}%", obj.supply));
+                            }
+                            if obj.fuel < threshold {
+                                short.push(format!("fuel {}%", obj.fuel));
+                            }
+                            if obj.aircraft < threshold {
+                                short.push(format!("aircraft {}%", obj.aircraft));
+                            }
+                            let is_low = !short.is_empty();
+                            let side = obj.owner;
+                            let name = obj.name.clone();
+                            if is_low {
+                                let newly_warned =
+                                    !self.ephemeral.supply_warned.contains_key(&oid);
+                                self.ephemeral.supply_warned.entry(oid).or_insert(ts);
+                                if newly_warned {
+                                    let pos = obj.zone.pos();
+                                    let detail = short.join(" / ");
                                     let (ml, msgs) = self.ephemeral.map_layer_and_msgs();
-                                    ml.on_supply_recovered(&oid, msgs);
+                                    ml.on_supply_critical(
+                                        oid, pos, side, &name, &detail, msgs,
+                                    );
                                 }
+                            } else {
+                                self.ephemeral.supply_warned.remove(&oid);
+                                let (ml, msgs) = self.ephemeral.map_layer_and_msgs();
+                                ml.on_supply_recovered(&oid, msgs);
                             }
                         }
                     }
@@ -3853,7 +3854,7 @@ impl Db {
             .logistics_hubs
             .into_iter()
             .filter(|lid| {
-                self.persisted.objectives.get(*lid).map_or(false, |l| {
+                self.persisted.objectives.get(*lid).is_some_and(|l| {
                     l.owner == side && l.warehouse.destination.contains(&dest)
                 })
             })
@@ -4316,15 +4317,12 @@ impl Db {
                         // air-starts this airframe from now on.
                         let refused = group!(self, &route.group_id).ok().and_then(|g| {
                             let none_dead = g.units.into_iter().all(|uid| {
-                                self.persisted.units.get(uid).map_or(true, |u| !u.dead)
+                                self.persisted.units.get(uid).is_none_or(|u| !u.dead)
                             });
-                            let at_hub = self
-                                .persisted
-                                .objectives
-                                .get(&route.origin)
-                                .map_or(false, |o| {
-                                    (route.last_pos - o.pos()).norm() < 5_000.
-                                });
+                            let at_hub =
+                                self.persisted.objectives.get(&route.origin).is_some_and(
+                                    |o| (route.last_pos - o.pos()).norm() < 5_000.,
+                                );
                             (none_dead
                                 && at_hub
                                 && ts - route.spawn_time < Duration::minutes(3))
@@ -4663,7 +4661,7 @@ impl Db {
                         whcfg.capacity_for(&obj.name, obj.unlimited_supply, hub, *qty);
                 }
                 None => {
-                    if let Some(_) = other_production.liquids.get(&name) {
+                    if other_production.liquids.get(&name).is_some() {
                         let inv = obj.warehouse.liquids.get_or_default_cow(name);
                         // liquids are side-neutral (fuel/ammo) so always preserve
                         // capacity on carriers; zero out on regular objectives
@@ -4792,7 +4790,7 @@ impl Db {
                     suppliers.push((*oid, hub));
                 }
                 ObjectiveKind::CarrierGroup { .. }
-                | ObjectiveKind::SpecialSamSite { .. }
+                | ObjectiveKind::SpecialSamSite
                 | ObjectiveKind::CommandCenter => (),
             }
         }
@@ -4869,19 +4867,19 @@ impl Db {
                 .and_then(|nb| self.persisted.objectives.get(&nb))
                 .map(|o| o.name.clone());
             let cg = objective_mut!(self, cg_id)?;
-            if let ObjectiveKind::CarrierGroup { parent_naval_base, .. } = &mut cg.kind {
-                if *parent_naval_base != nearest {
-                    *parent_naval_base = nearest;
-                    match &nb_name {
-                        Some(n) => info!(
-                            "[LOGI_ROUTE] carrier group {} now supplied by naval base {n}",
-                            cg.name
-                        ),
-                        None => info!(
-                            "[LOGI_ROUTE] carrier group {} has no friendly naval base",
-                            cg.name
-                        ),
-                    }
+            if let ObjectiveKind::CarrierGroup { parent_naval_base, .. } = &mut cg.kind
+                && *parent_naval_base != nearest
+            {
+                *parent_naval_base = nearest;
+                match &nb_name {
+                    Some(n) => info!(
+                        "[LOGI_ROUTE] carrier group {} now supplied by naval base {n}",
+                        cg.name
+                    ),
+                    None => info!(
+                        "[LOGI_ROUTE] carrier group {} has no friendly naval base",
+                        cg.name
+                    ),
                 }
             }
             cg.warehouse.supplier = nearest;
@@ -4930,8 +4928,7 @@ impl Db {
                 | ObjectiveKind::Farp { .. }
                 | ObjectiveKind::Fob
                 | ObjectiveKind::NavalBase => cfg.airbase_weight,
-                ObjectiveKind::CarrierGroup { .. }
-                | ObjectiveKind::SpecialSamSite { .. } => 0.,
+                ObjectiveKind::CarrierGroup { .. } | ObjectiveKind::SpecialSamSite => 0.,
             };
             if weight > 0. {
                 score += weight * (obj.logi as f64 / 100.);
@@ -5323,7 +5320,7 @@ impl Db {
         // Create convoy tracking struct
         let convoy = SupplyConvoy {
             id: convoy_id.clone(),
-            group_id: group_id.clone(),
+            group_id,
             origin,
             destination,
             cargo_type,
@@ -6906,7 +6903,7 @@ impl Db {
                         .ephemeral
                         .impassable_roads
                         .get(&(lid, *oid))
-                        .map_or(false, |until| now < *until);
+                        .is_some_and(|until| now < *until);
                     if impassable {
                         debug!(
                             "[LOGI_DISPATCH] {} -> {}: road impassable (last convoy stuck)",
@@ -7080,16 +7077,12 @@ impl Db {
                     let mut total_demanded = 0;
                     for n in &mut needed {
                         let inv = n.obj.get_liquids(name);
-                        let demanded = if inv.stored <= inv.capacity {
-                            inv.capacity - inv.stored
-                        } else {
-                            0
-                        };
+                        let demanded = inv.capacity.saturating_sub(inv.stored);
                         total_demanded += demanded;
                         n.demanded = demanded;
                         n.allocated = 0;
                     }
-                    let key = (lid, TransferItem::Liquid(name.clone()));
+                    let key = (lid, TransferItem::Liquid(*name));
                     let avail = releasable(inv)
                         .saturating_sub(committed.get(&key).copied().unwrap_or(0));
                     let mut have = avail;
@@ -7113,7 +7106,7 @@ impl Db {
                                 source: lid,
                                 target: *n.oid,
                                 amount: n.allocated,
-                                item: TransferItem::Liquid(name.clone()),
+                                item: TransferItem::Liquid(*name),
                             };
                             convoy_transfers_by_dest
                                 .entry(*n.oid)
@@ -7137,11 +7130,7 @@ impl Db {
                     let mut total_demanded = 0;
                     for n in &mut needed {
                         let inv = n.obj.get_equipment(name);
-                        let demanded = if inv.stored <= inv.capacity {
-                            inv.capacity - inv.stored
-                        } else {
-                            0
-                        };
+                        let demanded = inv.capacity.saturating_sub(inv.stored);
                         total_demanded += demanded;
                         n.demanded = demanded;
                         n.allocated = 0;
@@ -7229,16 +7218,12 @@ impl Db {
                     let mut total_demanded = 0;
                     for n in &mut needed {
                         let inv = n.obj.get_liquids(name);
-                        let demanded = if inv.stored <= inv.capacity {
-                            inv.capacity - inv.stored
-                        } else {
-                            0
-                        };
+                        let demanded = inv.capacity.saturating_sub(inv.stored);
                         total_demanded += demanded;
                         n.demanded = demanded;
                         n.allocated = 0;
                     }
-                    let key = (lid, TransferItem::Liquid(name.clone()));
+                    let key = (lid, TransferItem::Liquid(*name));
                     let avail = releasable(inv)
                         .saturating_sub(committed.get(&key).copied().unwrap_or(0));
                     let mut have = avail;
@@ -7263,7 +7248,7 @@ impl Db {
                                     source: lid,
                                     target: *n.oid,
                                     amount: n.allocated,
-                                    item: TransferItem::Liquid(name.clone()),
+                                    item: TransferItem::Liquid(*name),
                                 },
                             );
                         }
@@ -7282,11 +7267,7 @@ impl Db {
                     let mut total_demanded = 0;
                     for n in &mut needed {
                         let inv = n.obj.get_equipment(name);
-                        let demanded = if inv.stored <= inv.capacity {
-                            inv.capacity - inv.stored
-                        } else {
-                            0
-                        };
+                        let demanded = inv.capacity.saturating_sub(inv.stored);
                         total_demanded += demanded;
                         n.demanded = demanded;
                         n.allocated = 0;
@@ -7579,7 +7560,7 @@ impl Db {
                             source: nb_id,
                             target: dest_id,
                             amount,
-                            item: TransferItem::Liquid(name.clone()),
+                            item: TransferItem::Liquid(*name),
                         });
                     }
                 }
@@ -7782,7 +7763,7 @@ impl Db {
                 continue;
             }
             let d = na::distance_squared(&pos.into(), &hub.zone.pos().into());
-            if best.map_or(true, |(_, bd)| d < bd) {
+            if best.is_none_or(|(_, bd)| d < bd) {
                 best = Some((*hid, d));
             }
         }
@@ -7999,10 +7980,10 @@ impl Db {
             .get(&oid)
             .cloned()
             .ok_or_else(|| anyhow!("no logistics for objective {}", obj.name))?;
-        if let Ok(ab) = Airbase::get_instance(lua, &stored) {
-            if ab.is_exist().unwrap_or(false) {
-                return Ok(ab);
-            }
+        if let Ok(ab) = Airbase::get_instance(lua, &stored)
+            && ab.is_exist().unwrap_or(false)
+        {
+            return Ok(ab);
         }
         let name = match &obj.kind {
             ObjectiveKind::Farp { pad_template, .. } => pad_template.clone(),
@@ -8165,11 +8146,7 @@ impl Db {
                             continue;
                         }
                         // Normal case: destination has capacity
-                        if dest_inv.capacity >= dest_inv.stored {
-                            dest_inv.capacity - dest_inv.stored
-                        } else {
-                            0
-                        }
+                        dest_inv.capacity.saturating_sub(dest_inv.stored)
                     }
                 };
                 let amount = min(needed, max(1, (inv.stored as f32 * size) as u32));
@@ -8199,13 +8176,7 @@ impl Db {
                 let needed = match to_obj.warehouse.liquids.get(name) {
                     // If destination doesn't have this liquid type, transfer based on source inventory
                     None => inv.stored,
-                    Some(dest_inv) => {
-                        if dest_inv.capacity >= dest_inv.stored {
-                            dest_inv.capacity - dest_inv.stored
-                        } else {
-                            0
-                        }
-                    }
+                    Some(dest_inv) => dest_inv.capacity.saturating_sub(dest_inv.stored),
                 };
                 let amount = min(needed, max(1, (inv.stored as f32 * size) as u32));
                 if amount > 0 {
@@ -8274,7 +8245,7 @@ impl Db {
             }
         }
         for liq in production.liquids.keys() {
-            if let Some(inv) = obj.warehouse.liquids.get_mut_cow(&liq) {
+            if let Some(inv) = obj.warehouse.liquids.get_mut_cow(liq) {
                 inv.reduce(percent);
             }
         }
@@ -8301,9 +8272,9 @@ impl Db {
             }
         };
         let mut msg = CompactString::new("logistics report\n");
-        let _ = write!(
+        let _ = writeln!(
             msg,
-            "tick {} min, delivery every {} tick(s), hub reserve {}%, front-line routing {}\n",
+            "tick {} min, delivery every {} tick(s), hub reserve {}%, front-line routing {}",
             whcfg.tick,
             whcfg.ticks_per_delivery,
             whcfg.hub_reserve_percent,
@@ -8312,16 +8283,16 @@ impl Db {
         let materiel = whcfg.materiel.as_ref().filter(|m| m.enabled);
         match materiel {
             Some(m) => {
-                let _ = write!(
+                let _ = writeln!(
                     msg,
-                    "materiel: {} per delivery, repair {} / deploy {} per use\n",
+                    "materiel: {} per delivery, repair {} / deploy {} per use",
                     m.hub_production, m.repair_cost, m.deploy_cost
                 );
             }
             None => {
-                let _ = write!(
+                let _ = writeln!(
                     msg,
-                    "materiel: disabled (repair/deploy use the legacy % draw)\n"
+                    "materiel: disabled (repair/deploy use the legacy % draw)"
                 );
             }
         }
@@ -8330,9 +8301,9 @@ impl Db {
                 continue;
             }
             let baseline = self.persisted.production_baseline.get(&side).copied();
-            let _ = write!(
+            let _ = writeln!(
                 msg,
-                "-- {side:?}: convoys {}, air routes {}, sea routes {}, production baseline {}\n",
+                "-- {side:?}: convoys {}, air routes {}, sea routes {}, production baseline {}",
                 self.ephemeral.active_convoys.values().filter(|c| c.side == side).count(),
                 self.ephemeral
                     .active_air_routes
@@ -8364,9 +8335,9 @@ impl Db {
                 .get(MATERIEL_ITEM)
                 .map(|i| format_compact!("{}/{}", i.stored, i.capacity))
                 .unwrap_or_else(|| "none".into());
-            let _ = write!(
+            let _ = writeln!(
                 msg,
-                "hub {} ({:?}, {:?}): logi {}%, materiel {mat}, feeds {} destination(s)\n",
+                "hub {} ({:?}, {:?}): logi {}%, materiel {mat}, feeds {} destination(s)",
                 obj.name,
                 obj.owner,
                 obj.kind,
@@ -8375,13 +8346,13 @@ impl Db {
             );
         }
         if self.persisted.pending_cargo.len() == 0 {
-            let _ = write!(msg, "no cargo in flight\n");
+            let _ = writeln!(msg, "no cargo in flight");
         } else {
             for (id, p) in &self.persisted.pending_cargo {
                 let units: u32 = p.transfers.iter().map(|t| t.amount).sum();
-                let _ = write!(
+                let _ = writeln!(
                     msg,
-                    "in flight {id}: {} -> {}, {units} unit(s), {} min out\n",
+                    "in flight {id}: {} -> {}, {units} unit(s), {} min out",
                     self.persisted
                         .objectives
                         .get(&p.origin)
@@ -8406,9 +8377,9 @@ impl Db {
             if worst >= 50 {
                 continue;
             }
-            let _ = write!(
+            let _ = writeln!(
                 msg,
-                "LOW {}: munitions {}%, fuel {}%, aircraft {}%, supplier {}{}\n",
+                "LOW {}: munitions {}%, fuel {}%, aircraft {}%, supplier {}{}",
                 obj.name,
                 obj.supply,
                 obj.fuel,
@@ -8439,7 +8410,7 @@ impl Db {
                     .airbase_by_oid
                     .get(&oid)
                     .ok_or_else(|| anyhow!("no airbase for {oid}"))?;
-                let wh = Airbase::get_instance(lua, &abid)
+                let wh = Airbase::get_instance(lua, abid)
                     .context("getting airbase")?
                     .get_warehouse()
                     .context("getting warehouse")?;
@@ -8451,7 +8422,7 @@ impl Db {
                         format_compact!("getting {name} count from warehouse")
                     })?;
                     if qty > 0 {
-                        write!(msg, "{name}, {qty}\n")?
+                        writeln!(msg, "{name}, {qty}")?
                     }
                     Ok(())
                 })?;
@@ -8460,7 +8431,7 @@ impl Db {
                         format_compact!("getting liquid {:?} from warehouse", name)
                     })?;
                     if qty > 0 {
-                        write!(msg, "{:?}, {qty}\n", name)?
+                        writeln!(msg, "{:?}, {qty}", name)?
                     }
                 }
                 warn!("{msg}")
@@ -8469,10 +8440,10 @@ impl Db {
                 let obj = objective!(self, oid)?;
                 let mut msg = CompactString::new("");
                 for (name, inv) in &obj.warehouse.equipment {
-                    write!(msg, "{name}, {}/{}\n", inv.stored, inv.capacity)?
+                    writeln!(msg, "{name}, {}/{}", inv.stored, inv.capacity)?
                 }
                 for (name, inv) in &obj.warehouse.liquids {
-                    write!(msg, "{:?}, {}/{}\n", name, inv.stored, inv.capacity)?
+                    writeln!(msg, "{:?}, {}/{}", name, inv.stored, inv.capacity)?
                 }
                 warn!("{msg}")
             }

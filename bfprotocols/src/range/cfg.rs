@@ -218,16 +218,12 @@ impl Loc {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ObjCategory {
+    #[default]
     Static,
     Vehicle,
     Ship,
-}
-
-impl Default for ObjCategory {
-    fn default() -> Self {
-        Self::Static
-    }
 }
 
 /// One target object at a station.

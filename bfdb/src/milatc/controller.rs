@@ -482,7 +482,7 @@ impl Controller {
     }
 
     fn quiet(&self, pos: Pos, now: f64, secs: f64) -> bool {
-        self.last_said.borrow().get(&pos).map_or(true, |t| now - t >= secs)
+        self.last_said.borrow().get(&pos).is_none_or(|t| now - t >= secs)
     }
 
     // ─── names and numbers ────────────────────────────────────────────────
@@ -497,7 +497,7 @@ impl Controller {
     }
 
     fn has(&self, pos: Pos) -> bool {
-        self.ap.positions.get(&pos).map_or(false, |v| !v.is_empty())
+        self.ap.positions.get(&pos).is_some_and(|v| !v.is_empty())
     }
 
     fn contact(&self, pos: Pos) -> String {
@@ -596,8 +596,7 @@ impl Controller {
         self.traffic = traffic
             .iter()
             .filter(|t| {
-                !(t.ai
-                    && t.ai_plan.as_deref().map_or(false, |p| p.starts_with("carrier:")))
+                !(t.ai && t.ai_plan.as_deref().is_some_and(|p| p.starts_with("carrier:")))
             })
             .filter_map(|t| {
                 Some(Ac {
@@ -686,7 +685,7 @@ impl Controller {
         self.traffic.iter().find(|a| {
             a.unit_id != except
                 && (a.on_ground || a.agl_ft < 100)
-                && self.ap.strip_at(a.p, 0.).map_or(false, |s| s == pair)
+                && (self.ap.strip_at(a.p, 0.) == Some(pair))
         })
     }
 
@@ -981,7 +980,7 @@ impl Controller {
 
         // Off a runway: any crossing clearance has been used.
         if let Some(c) = f.crossing_cleared.clone() {
-            if self.ap.strip_at(f.ac.p, 20.).map_or(true, |s| s != c)
+            if self.ap.strip_at(f.ac.p, 20.).is_none_or(|s| s != c)
                 && f.t_phase + 5. < now
             {
                 f.crossing_cleared = None;
@@ -1296,7 +1295,7 @@ impl Controller {
                 && o.runway
                     .as_deref()
                     .and_then(|x| self.ap.runway(x))
-                    .map_or(false, |x| x.pair == r.pair)
+                    .is_some_and(|x| x.pair == r.pair)
         }) {
             return Some("departing traffic".into());
         }
@@ -1345,7 +1344,7 @@ impl Controller {
             .filter(|o| {
                 o.key != f.key && o.takeoff_waiting && o.runway.as_deref() == Some(runway)
             })
-            .filter(|o| o.ready_at.map_or(false, |t| t < mine))
+            .filter(|o| o.ready_at.is_some_and(|t| t < mine))
             .collect();
         v.sort_by(|a, b| a.ready_at.unwrap_or(0.).total_cmp(&b.ready_at.unwrap_or(0.)));
         v
@@ -2241,7 +2240,7 @@ impl Controller {
     fn tower_takes(&self, f: &Flight, intent: Intent) -> bool {
         matches!(intent, Intent::CheckIn | Intent::RequestApproach)
             && !f.ac.on_ground
-            && self.ap.runway(&self.arr_runway()).map_or(false, |r| {
+            && self.ap.runway(&self.arr_runway()).is_some_and(|r| {
                 f.ac.p.dist(r.thr) < (self.ap.arrival.tower_radius_nm + 4.) * NM
             })
     }
@@ -2826,8 +2825,8 @@ impl Controller {
             .iter()
             .filter(|(pair, c)| {
                 now >= c.until
-                    || c.by.map_or(false, |k| {
-                        self.flights.get(&k).map_or(true, |f| {
+                    || c.by.is_some_and(|k| {
+                        self.flights.get(&k).is_none_or(|f| {
                             self.ap.strip_at(f.ac.p, 0.) != Some(pair.as_str())
                         })
                     })
@@ -2897,7 +2896,7 @@ impl Controller {
                 f.ac.on_ground
                     && !f.ac.rotary
                     && now - f.seen < 3.
-                    && f.stop_since.map_or(false, |t| now - t > 45.)
+                    && f.stop_since.is_some_and(|t| now - t > 45.)
             })
             .filter(|f| {
                 self.ap.strip_at(f.ac.p, 20.).is_none()
@@ -2912,7 +2911,7 @@ impl Controller {
             let Some(mut f) = self.flights.remove(&k) else { continue };
             // the blocker itself, if it is a player stopped a while
             if let Some((_, _, tw)) = blockers.iter().find(|b| b.0 == f.key) {
-                let long = f.stop_since.map_or(false, |t| now - t > 90.);
+                let long = f.stop_since.is_some_and(|t| now - t > 90.);
                 if !f.is_ai()
                     && long
                     && matches!(f.phase, Phase::TaxiOut | Phase::TaxiIn)
@@ -3132,7 +3131,7 @@ impl Controller {
             (None, Some((o, why))) => {
                 // both players: only the one further from it holds
                 if let Some(other) = self.flights.get(&o.unit_id) {
-                    if !other.is_ai() && other.give_way.map_or(false, |g| g.0 == f.key) {
+                    if !other.is_ai() && other.give_way.is_some_and(|g| g.0 == f.key) {
                         return;
                     }
                 }
@@ -3142,7 +3141,7 @@ impl Controller {
                 f.give_way = Some((o.unit_id, now));
             }
             (Some((who, since)), c) => {
-                let still = c.as_ref().map_or(false, |(o, _)| o.unit_id == who);
+                let still = c.as_ref().is_some_and(|(o, _)| o.unit_id == who);
                 if (!still && now - since > 4.) || now - since > 120. {
                     f.give_way = None;
                     let t = format!(
@@ -3299,7 +3298,7 @@ impl Controller {
             })
             .find(|o| {
                 ahead.windows(2).any(|w| seg_dist(o.ac.p, w[0], w[1]) < 60.)
-                    || o.route.as_ref().map_or(false, |r| {
+                    || o.route.as_ref().is_some_and(|r| {
                         let theirs = self.ap.path_ahead(r, o.ac.p, 600.);
                         theirs.iter().any(|q| {
                             ahead.windows(2).any(|w| seg_dist(*q, w[0], w[1]) < 40.)
@@ -3329,7 +3328,7 @@ impl Controller {
                 && self
                     .ap
                     .runway(&self.arr_runway())
-                    .map_or(false, |r| o.ac.p.dist(r.thr) / NM < field_nm.min(12.))
+                    .is_some_and(|r| o.ac.p.dist(r.thr) / NM < field_nm.min(12.))
         });
         match f.ai_hold_since {
             None => {
@@ -3358,7 +3357,7 @@ impl Controller {
                 } else {
                     f.ai_clear_since.get_or_insert(now);
                 }
-                let clear_long = f.ai_clear_since.map_or(false, |t| now - t > 30.);
+                let clear_long = f.ai_clear_since.is_some_and(|t| now - t > 30.);
                 if (clear_long && now - since > 60.) || now - since > 360. {
                     let rwy = self.arr_runway();
                     let t = format!(
@@ -3424,7 +3423,7 @@ impl Controller {
             (AiPlan::Departure, Phase::TaxiOut | Phase::HoldingShort) => {
                 // Near the runway: Ground hands it over, and it calls ready.
                 let rwy = f.runway.clone().unwrap_or_else(|| self.dep_runway());
-                let near = self.ap.runway(&rwy).map_or(false, |r| {
+                let near = self.ap.runway(&rwy).is_some_and(|r| {
                     let (along, cross) = r.frame(f.ac.p);
                     along < 900. && cross.abs() < 250.
                 });
@@ -3503,20 +3502,19 @@ impl Controller {
                     self.check_in(f, Pos::Tower, &p, now, out);
                 }
             }
-            (AiPlan::Arrival, Phase::Ground) => {
+            (AiPlan::Arrival, Phase::Ground)
                 if f.freq == Some(Pos::Ground)
                     && quiet(self, Pos::Ground)
-                    && f.once("ai-in")
-                {
-                    let t = format!(
-                        "{}, {}, clear of {rwy_arr}, taxi to parking.",
-                        self.facility(Pos::Ground),
-                        f.call
-                    );
-                    self.pilot_says(f, Pos::Ground, t, now, out);
-                    let p = Parsed::of(Intent::ClearOfRunway);
-                    self.taxi_to_parking(f, Pos::Ground, &p, now, out);
-                }
+                    && f.once("ai-in") =>
+            {
+                let t = format!(
+                    "{}, {}, clear of {rwy_arr}, taxi to parking.",
+                    self.facility(Pos::Ground),
+                    f.call
+                );
+                self.pilot_says(f, Pos::Ground, t, now, out);
+                let p = Parsed::of(Intent::ClearOfRunway);
+                self.taxi_to_parking(f, Pos::Ground, &p, now, out);
             }
             _ => {}
         }
@@ -3573,7 +3571,7 @@ pub(crate) fn readback(text: &str, call: &str, field: &str, r: f64) -> Option<St
             keep.push(if r < 0.5 {
                 format!("over to {rest}")
             } else {
-                rest.split(' ').last().unwrap_or(rest).to_string()
+                rest.split(' ').next_back().unwrap_or(rest).to_string()
             });
             continue;
         }

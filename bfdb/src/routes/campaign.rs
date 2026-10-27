@@ -361,7 +361,7 @@ pub(crate) async fn api_objectives(
         match &*live {
             Ok(json) => {
                 if let Ok(live) =
-                    serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(&json)
+                    serde_json::from_str::<Vec<bfprotocols::api::ObjectiveInfo>>(json)
                 {
                     // The persisted health/logi/supply/fuel can lag the engine
                     // (e.g. after a mission reload re-emits Stat::Objective at
@@ -462,7 +462,7 @@ pub(crate) async fn api_frontline(
                 )
             })
             .filter(|(_, o)| !o.kind.is_carrier_group())
-            .filter(|(_, o)| in_engine.map_or(true, |n| n.contains(o.name.as_str())))
+            .filter(|(_, o)| in_engine.is_none_or(|n| n.contains(o.name.as_str())))
             .map(|(_, o)| (o.pos.latitude, o.pos.longitude, o.owner))
             .collect();
         if ll.len() < 4 {
@@ -668,7 +668,7 @@ pub(crate) async fn api_situation(
         }
         // Keep the engine's damage/neutral lines too -- they aren't captures and
         // nothing else records them. Newest first.
-        recent.extend(rep.recent.into_iter());
+        recent.extend(rep.recent);
         recent.sort_by(|a, b| b.at.cmp(&a.at));
         recent.truncate(20);
         rep.recent = recent;
@@ -942,7 +942,7 @@ pub(crate) fn stats_summary(db: &StatsDb, inst: &Inst) -> Result<serde_json::Val
         let local_restart_at = active_round
             .and_then(|(_, rid, _)| db.active_session_stop(*rid))
             .map(|t| t.to_rfc3339());
-        let weather = db.latest_weather(&inst).map(|w| {
+        let weather = db.latest_weather(inst).map(|w| {
             serde_json::json!({
                 "temp_c": w.temp_c,
                 "wind_speed_kts": w.wind_speed_kts,
@@ -1057,12 +1057,12 @@ pub(crate) async fn stats_apply_bot_info(
             "weather": bot_weather_json,
         })
         .to_string();
-        if should_push_server_info(&inst, &payload) {
+        if should_push_server_info(inst, &payload) {
             let _ = tokio::time::timeout(
                 std::time::Duration::from_secs(2),
                 call_engine_rpc_str(
-                    &db,
-                    &inst,
+                    db,
+                    inst,
                     "set-server-info",
                     vec![("info", netidx::publisher::Value::from(payload))],
                 ),
@@ -1323,7 +1323,7 @@ pub(crate) async fn api_unitdb(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let snap = task::block_in_place(|| db.unit_db_latest(&inst.id.to_string()))?;
+    let snap = task::block_in_place(|| db.unit_db_latest(inst.id.as_ref()))?;
     let body = match snap {
         Some((_, json)) => json,
         None => {
@@ -1337,8 +1337,7 @@ pub(crate) async fn api_unitdb_stale(
     db: StatsDb,
     inst: Inst,
 ) -> std::result::Result<impl warp::Reply, Error> {
-    let stale =
-        task::block_in_place(|| db.unit_db_stale_overrides(&inst.id.to_string()))?;
+    let stale = task::block_in_place(|| db.unit_db_stale_overrides(inst.id.as_ref()))?;
     Ok(warp::reply::json(&stale))
 }
 
@@ -1434,7 +1433,7 @@ pub(crate) async fn api_instances(
         .iter()
         .filter(|cfg| cfg.public || is_admin)
         .filter(|cfg| {
-            let all = q.get("all").map_or(false, |v| v == "1" || v == "true");
+            let all = q.get("all").is_some_and(|v| v == "1" || v == "true");
             match q.get("kind").map(|k| k.as_str()) {
                 _ if all => true,
                 Some("range") => cfg.is_range(),

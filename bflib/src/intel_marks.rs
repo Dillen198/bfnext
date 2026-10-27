@@ -74,10 +74,10 @@ fn decimate<T: Copy>(pts: &[T], max: usize) -> Vec<T> {
     }
     let step = pts.len().div_ceil(max - 1);
     let mut out: Vec<T> = pts.iter().step_by(step).copied().collect();
-    if let Some(last) = pts.last() {
-        if (pts.len() - 1) % step != 0 {
-            out.push(*last);
-        }
+    if let Some(last) = pts.last()
+        && !(pts.len() - 1).is_multiple_of(step)
+    {
+        out.push(*last);
     }
     out
 }
@@ -203,23 +203,23 @@ pub fn reconcile(
         }
 
         // author label at the first point
-        if !m.by_name.is_empty() {
-            if let Some(&anchor) = pts.first() {
-                let id = MarkId::new();
-                msgs.text_to_all(
-                    sf,
-                    id,
-                    TextSpec {
-                        pos: anchor,
-                        color: col,
-                        fill_color: clear,
-                        font_size: 10,
-                        read_only: true,
-                        text: format!("recon · {}", m.by_name).into(),
-                    },
-                );
-                ids.push(id);
-            }
+        if !m.by_name.is_empty()
+            && let Some(&anchor) = pts.first()
+        {
+            let id = MarkId::new();
+            msgs.text_to_all(
+                sf,
+                id,
+                TextSpec {
+                    pos: anchor,
+                    color: col,
+                    fill_color: clear,
+                    font_size: 10,
+                    read_only: true,
+                    text: format!("recon · {}", m.by_name).into(),
+                },
+            );
+            ids.push(id);
         }
 
         state.insert(m.id.clone(), ids);

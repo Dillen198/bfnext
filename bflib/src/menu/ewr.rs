@@ -48,23 +48,23 @@ pub(crate) fn build_braa_report(
         format_compact!("{} BRAA\n", if friendly { "Friendlies" } else { "Bandits" });
     let mode = ctx.db.ephemeral.cfg.ewr_mode;
     let delay = ctx.db.ephemeral.cfg.ewr_delay;
-    if let Some(player) = ctx.db.player(ucid) {
-        if let Some((_, Some(inst))) = &player.current_slot {
-            let contacts = ctx.ewr.where_chicken(
-                &ctx.db,
-                ctx.db.ephemeral.now(),
-                friendly,
-                true,
-                ucid,
-                player,
-                inst,
-                mode,
-                delay,
-            );
-            let _ = write!(report, "{}\n", ewr::HEADER);
-            for braa in contacts {
-                let _ = write!(report, "{braa}\n");
-            }
+    if let Some(player) = ctx.db.player(ucid)
+        && let Some((_, Some(inst))) = &player.current_slot
+    {
+        let contacts = ctx.ewr.where_chicken(
+            &ctx.db,
+            ctx.db.ephemeral.now(),
+            friendly,
+            true,
+            ucid,
+            player,
+            inst,
+            mode,
+            delay,
+        );
+        let _ = writeln!(report, "{}", ewr::HEADER);
+        for braa in contacts {
+            let _ = writeln!(report, "{braa}");
         }
     }
     report
@@ -78,7 +78,7 @@ pub(crate) fn build_ground_intel_report(ctx: &mut Context, ucid: &Ucid) -> Compa
             let pos = Vector2::new(inst.position.p.x, inst.position.p.z);
             let lines = ctx.ewr.intel_picture(side, pos, &ctx.db.ephemeral.intel_db);
             for line in lines {
-                let _ = write!(report, "{line}\n");
+                let _ = writeln!(report, "{line}");
             }
         } else {
             let _ = write!(report, "Not in a slot");

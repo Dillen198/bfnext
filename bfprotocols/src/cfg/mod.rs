@@ -999,12 +999,12 @@ impl Cfg {
                 None
             }
         };
-        for (_, actions) in &mut cfg.actions {
+        for actions in cfg.actions.values_mut() {
             actions.sort_by(|name0, _, name1, _| name0.cmp(name1));
         }
         // translate deployables to the new format
         let mut has_deprecated = false;
-        for (_, deps) in cfg.deployables.iter_mut() {
+        for deps in cfg.deployables.values_mut() {
             for dep in deps.iter_mut() {
                 if let Some(mut parts) = dep.deprecated_logistics.take() {
                     parts.defenses_template = dep.deprecated_template.take();
@@ -1176,7 +1176,7 @@ impl Cfg {
             let name = &er.crate_def.name;
             let wh = cfg.warehouse.as_ref();
             let clash = cfg.repair_crate.values().any(|c| &c.name == name)
-                || wh.map_or(false, |w| {
+                || wh.is_some_and(|w| {
                     w.supply_transfer_fuel_crate
                         .values()
                         .chain(w.supply_transfer_weapons_crate.values())
@@ -1350,7 +1350,7 @@ impl Cfg {
     pub fn check_vehicle_has_life_type(&self, vehicle: &Vehicle) -> Result<()> {
         match self.life_types.get(vehicle) {
             None => bail!("vehicle {:?} doesn't have a configured life type", vehicle),
-            Some(typ) => match self.default_lives.get(&typ) {
+            Some(typ) => match self.default_lives.get(typ) {
                 Some((n, f)) if *n > 0 && *f > 0 => (),
                 None => bail!("vehicle {:?} has no configured life type", vehicle),
                 Some((n, f)) => {

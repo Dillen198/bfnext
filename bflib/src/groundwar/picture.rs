@@ -72,7 +72,7 @@ fn kind_name(k: &ObjectiveKind) -> &'static str {
         ObjectiveKind::Factory { .. } => "factory",
         ObjectiveKind::NavalBase => "naval",
         ObjectiveKind::CarrierGroup { .. } => "carrier",
-        ObjectiveKind::SpecialSamSite { .. } => "sam",
+        ObjectiveKind::SpecialSamSite => "sam",
         ObjectiveKind::CommandCenter => "command",
     }
 }
@@ -161,8 +161,7 @@ fn players(ctx: &Context, lua: MizLua, geo: &Geo, side: Side) -> Vec<LivePlayer>
                 let air = u.in_air().unwrap_or(i.in_air);
                 Some((pos, vel, air))
             });
-            let (pos, vel, in_air) =
-                live.unwrap_or((i.position.clone(), i.velocity, i.in_air));
+            let (pos, vel, in_air) = live.unwrap_or((i.position, i.velocity, i.in_air));
             let tags = db.ephemeral.cfg.unit_classification.get(&i.typ).map(|t| t.0);
             let category = match tags {
                 Some(t) if t.contains(UnitTag::Helicopter) => "helicopter",
@@ -357,7 +356,7 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
                     .formations
                     .iter()
                     .copied()
-                    .filter(|id| db.formation(*id).map_or(false, |f| f.side == side))
+                    .filter(|id| db.formation(*id).is_some_and(|f| f.side == side))
                     .collect(),
                 intensity: (b.heat * 100.).round() / 100.,
                 our_losses: b.losses(side),
@@ -387,7 +386,7 @@ pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
                             })
                             .flat_map(|g| g.units.into_iter())
                             .filter(|u| {
-                                db.persisted.units.get(u).map_or(false, |u| !u.dead)
+                                db.persisted.units.get(u).is_some_and(|u| !u.dead)
                             })
                             .count() as u32
                     })

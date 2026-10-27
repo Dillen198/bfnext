@@ -135,10 +135,10 @@ impl Helo {
                             p.heading_deg.unwrap_or(0.),
                             None,
                         );
-                        if let Ok(c) = spawn::country_id("CJTF_BLUE") {
-                            if let Err(e) = spawn::add_static(lua, c, &s) {
-                                warn!("pad {} marker: {e:?}", p.id)
-                            }
+                        if let Ok(c) = spawn::country_id("CJTF_BLUE")
+                            && let Err(e) = spawn::add_static(lua, c, &s)
+                        {
+                            warn!("pad {} marker: {e:?}", p.id)
                         }
                     }
                     draw_pad(lua, pos, &p.name, p.perfect_m);
@@ -691,12 +691,12 @@ impl Helo {
                 if !f.is_helo && !f.is_ground {
                     c.fixed_wing = true;
                 }
-                if let Ok(u) = dcso3::unit::Unit::get_by_name(lua, &f.unit_name) {
-                    if let Ok(on) = u.get_cargos_on_board() {
-                        let v = on.iter().any(|n| n.as_str() == name.as_str());
-                        on_now = Some(v);
-                        c.inside |= v;
-                    }
+                if let Ok(u) = dcso3::unit::Unit::get_by_name(lua, &f.unit_name)
+                    && let Ok(on) = u.get_cargos_on_board()
+                {
+                    let v = on.iter().any(|n| n.as_str() == name.as_str());
+                    on_now = Some(v);
+                    c.inside |= v;
                 }
                 // out of the bay in flight: an airdrop, released here
                 let gone = match on_now {

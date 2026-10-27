@@ -285,10 +285,10 @@ pub fn group_exists(lua: MizLua, name: &str) -> bool {
 
 pub fn destroy_group(lua: MizLua, name: &str) {
     // gone already (or never spawned) is not an error
-    if let Ok(g) = Group::get_by_name(lua, name) {
-        if let Err(e) = g.destroy() {
-            warn!("could not destroy group {name}: {e:?}")
-        }
+    if let Ok(g) = Group::get_by_name(lua, name)
+        && let Err(e) = g.destroy()
+    {
+        warn!("could not destroy group {name}: {e:?}")
     }
 }
 

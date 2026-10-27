@@ -107,9 +107,7 @@ impl Db {
                 let dead = group
                     .units
                     .into_iter()
-                    .filter(|uid| {
-                        self.persisted.units.get(*uid).map_or(false, |u| u.dead)
-                    })
+                    .filter(|uid| self.persisted.units.get(*uid).is_some_and(|u| u.dead))
                     .count();
                 if dead > 0 {
                     found.push((rank, Reverse(dead), *gid));
@@ -150,7 +148,7 @@ impl Db {
     /// The reinforcement convoy already headed for `dest`, if there is one.
     fn reinforcements_bound_for(&self, dest: Vector2) -> Option<GroupId> {
         self.persisted.actions.into_iter().copied().find(|gid| {
-            self.persisted.groups.get(gid).map_or(false, |g| {
+            self.persisted.groups.get(gid).is_some_and(|g| {
                 matches!(
                     &g.origin,
                     DeployKind::Action {
@@ -235,15 +233,14 @@ impl Db {
             })?;
         let src = objective!(self, source)?;
         let (sname, spos) = (src.name.clone(), src.zone.pos());
-        if materiel > 0 {
-            if let Some(inv) = self
+        if materiel > 0
+            && let Some(inv) = self
                 .persisted
                 .objectives
                 .get_mut_cow(&source)
                 .and_then(|o| o.warehouse.equipment.get_mut_cow(&materiel_key))
-            {
-                *inv -= materiel;
-            }
+        {
+            *inv -= materiel;
         }
         let delta = tpos - spos;
         let dir =
@@ -442,7 +439,7 @@ impl Db {
         let live: Vec<_> = carriers.iter().filter(|u| !u.dead).collect();
         let parked = live
             .iter()
-            .all(|u| u.moved.map_or(true, |t| now - t >= Duration::seconds(PARKED_SECS)));
+            .all(|u| u.moved.is_none_or(|t| now - t >= Duration::seconds(PARKED_SECS)));
         if parked && live.iter().any(|u| dist(u.pos, *dest) <= END_OF_ROAD_M.max(arrive))
         {
             return Ok(Outcome::Arrived { alive, total });

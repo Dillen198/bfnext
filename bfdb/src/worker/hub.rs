@@ -76,7 +76,7 @@ fn routes(hub: Arc<Hub>) -> warp::filters::BoxedFilter<(warp::reply::Response,)>
         .and(warp::header::optional::<String>("authorization"))
         .and(warp::ws())
         .map(move |peer: Option<SocketAddr>, auth: Option<String>, ws: warp::ws::Ws| {
-            if !peer.map_or(false, |p| p.ip().is_loopback()) {
+            if !peer.is_some_and(|p| p.ip().is_loopback()) {
                 return websec::ws_refused(
                     warp::http::StatusCode::FORBIDDEN,
                     "loopback only",
@@ -204,7 +204,7 @@ impl Hub {
             let _ = sink.close().await;
         });
         let still_current = |hub: &Hub| {
-            hub.current.lock().unwrap().as_ref().map_or(false, |(n, _)| *n == me)
+            hub.current.lock().unwrap().as_ref().is_some_and(|(n, _)| *n == me)
         };
         loop {
             // A silent link is a dead one: the worker pings every 20 s.
@@ -247,7 +247,7 @@ impl Hub {
         }
         {
             let mut g = self.current.lock().unwrap();
-            if g.as_ref().map_or(false, |(n, _)| *n == me) {
+            if g.as_ref().is_some_and(|(n, _)| *n == me) {
                 *g = None;
             }
         }
@@ -452,7 +452,7 @@ pub(crate) fn news_draw(
     let fail = |msg: String, billed: bool, rate_limited: bool| {
         crate::news_image::GenError { msg, billed, rate_limited }
     };
-    if !hub().map_or(false, |h| h.draws.load(Ordering::Relaxed)) {
+    if !hub().is_some_and(|h| h.draws.load(Ordering::Relaxed)) {
         return Err(fail(
             "the worker has no picture provider (or is not connected)".into(),
             false,

@@ -214,10 +214,10 @@ impl ShotDb {
     pub fn shot(&mut self, db: &Db, now: DateTime<Utc>, e: &ShotEvent) -> Result<()> {
         // A shot with no weapon name can't match an exclusion entry, so it
         // falls through to the normal path -- same as any unlisted weapon.
-        if let Some(name) = e.weapon_name.as_ref() {
-            if db.ephemeral.cfg.weapon_target_exclusions.contains(name) {
-                return Ok(());
-            }
+        if let Some(name) = e.weapon_name.as_ref()
+            && db.ephemeral.cfg.weapon_target_exclusions.contains(name)
+        {
+            return Ok(());
         }
         // Calling weapon.get_target() on a weapon that targets a ground point
         // rather than a unit object hard-crashes DCS inside
@@ -240,8 +240,7 @@ impl ShotDb {
             return Ok(());
         }
         let initiator_oid = ok!(initiator.object_id());
-        let initiator_uid =
-            some!(db.ephemeral.get_uid_by_object_id(&initiator_oid)).clone();
+        let initiator_uid = *some!(db.ephemeral.get_uid_by_object_id(&initiator_oid));
         let initiator_unit = ok!(db.unit(&initiator_uid));
         // Second line of defence for the crash the comment above describes.
         // `get_category()` on a China-Asset-Pack / modded ballistic launcher
@@ -269,7 +268,7 @@ impl ShotDb {
         }
         // Cruise missiles fly at a map point even off an aircraft (B-52 /
         // Tu-95 ALCMs); asking DCS for their target is the same crash.
-        if e.weapon_name.as_ref().map_or(false, |n| is_cruise_missile(n.as_str())) {
+        if e.weapon_name.as_ref().is_some_and(|n| is_cruise_missile(n.as_str())) {
             return Ok(());
         }
         let target = ok!(some!(e.weapon.get_target()?).as_unit());
@@ -336,11 +335,11 @@ impl ShotDb {
     pub fn bring_out_your_dead(&mut self, now: DateTime<Utc>) -> Vec<Dead> {
         let mut dead = Vec::with_capacity(self.dead.len());
         for (target, time) in self.dead.drain() {
-            if let Some(shots) = self.by_target.remove(&target) {
-                if shots.len() > 0 {
-                    let victim = shots[0].target.clone();
-                    dead.push(Dead { victim, time, shots });
-                }
+            if let Some(shots) = self.by_target.remove(&target)
+                && !shots.is_empty()
+            {
+                let victim = shots[0].target.clone();
+                dead.push(Dead { victim, time, shots });
             }
             self.recently_dead.insert(target, time);
         }

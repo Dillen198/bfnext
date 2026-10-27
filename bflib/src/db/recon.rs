@@ -76,7 +76,7 @@ impl Db {
                 .cfg
                 .unit_classification
                 .get(typ)
-                .map_or(false, |tags| tags.0.contains(UnitTag::Recon))
+                .is_some_and(|tags| tags.0.contains(UnitTag::Recon))
     }
 
     fn player_recon_cfg(&self) -> Option<PlayerReconCfg> {
@@ -84,7 +84,7 @@ impl Db {
     }
 
     fn elint_cfg(&self) -> ElintConfig {
-        self.ephemeral.cfg.elint.clone().unwrap_or_else(ElintConfig::default)
+        self.ephemeral.cfg.elint.clone().unwrap_or_default()
     }
 
     /// The shared intel database (ELINT/SIGINT, player recon, JTAC eyes-on)
@@ -137,7 +137,7 @@ impl Db {
         let n = self
             .ephemeral
             .intel_db
-            .retire_jtac_units(|uid| units.get(&uid).map_or(true, |u| u.dead));
+            .retire_jtac_units(|uid| units.get(&uid).is_none_or(|u| u.dead));
         if n > 0 {
             debug!("removed {n} JTAC intel contacts whose units are gone");
         }
@@ -244,11 +244,11 @@ impl Db {
         if self.ephemeral.recon_sessions.contains_key(ucid) {
             return "Recon pass already in progress -- cancel it first".into();
         }
-        if let Some(until) = self.ephemeral.recon_cooldown.get(ucid).copied() {
-            if now < until {
-                let secs = (until - now).num_seconds().max(1);
-                return format_compact!("Recon on cooldown for {secs}s");
-            }
+        if let Some(until) = self.ephemeral.recon_cooldown.get(ucid).copied()
+            && now < until
+        {
+            let secs = (until - now).num_seconds().max(1);
+            return format_compact!("Recon on cooldown for {secs}s");
         }
         let player = match self.player(ucid) {
             Some(p) => p,
@@ -357,13 +357,13 @@ impl Db {
                 cfg.dwell_secs
             );
         }
-        if let Some(until) = self.ephemeral.recon_cooldown.get(ucid).copied() {
-            if now < until {
-                return format_compact!(
-                    "Recon on cooldown for {}s",
-                    (until - now).num_seconds().max(1)
-                );
-            }
+        if let Some(until) = self.ephemeral.recon_cooldown.get(ucid).copied()
+            && now < until
+        {
+            return format_compact!(
+                "Recon on cooldown for {}s",
+                (until - now).num_seconds().max(1)
+            );
         }
         match self
             .player(ucid)

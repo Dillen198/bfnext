@@ -249,11 +249,10 @@ impl<K, V> Tree<K, V> {
         K: KV,
         V: KV,
     {
-        Ok(self
-            .inner
+        self.inner
             .insert(serialize(key)?, self.enc(value)?)?
             .map(|old| deserialize(&old))
-            .transpose()?)
+            .transpose()
     }
 
     /// Perform a multi-key serializable transaction. sled-backed trees only;
@@ -287,7 +286,7 @@ impl<K, V> Tree<K, V> {
         K: KV,
         V: KV,
     {
-        Ok(self.inner.get(serialize(key)?)?.map(|v| deserialize(&v)).transpose()?)
+        self.inner.get(serialize(key)?)?.map(|v| deserialize(&v)).transpose()
     }
 
     /// Retrieve a value from the Tree if it exists. The key must be in serialized form.
@@ -296,7 +295,7 @@ impl<K, V> Tree<K, V> {
         K: KV,
         V: KV,
     {
-        Ok(self.inner.get(key_bytes.as_ref())?.map(|v| deserialize(&v)).transpose()?)
+        self.inner.get(key_bytes.as_ref())?.map(|v| deserialize(&v)).transpose()
     }
 
     /// Deserialize a key and retrieve it's value from the Tree if it exists.
@@ -306,8 +305,7 @@ impl<K, V> Tree<K, V> {
         K: KV,
         V: KV,
     {
-        Ok(self
-            .inner
+        self.inner
             .get(key_bytes.as_ref())?
             .map(|v| {
                 Ok::<_, anyhow::Error>((
@@ -315,7 +313,7 @@ impl<K, V> Tree<K, V> {
                     deserialize(&v)?,
                 ))
             })
-            .transpose()?)
+            .transpose()
     }
 
     /// Delete a value, returning the old value if it existed.
@@ -324,7 +322,7 @@ impl<K, V> Tree<K, V> {
         K: KV,
         V: KV,
     {
-        Ok(self.inner.remove(serialize(key)?)?.map(|v| deserialize(&v)).transpose()?)
+        self.inner.remove(serialize(key)?)?.map(|v| deserialize(&v)).transpose()
     }
 
     /// Delete a key without decoding its old value. `remove` hands the old
@@ -553,11 +551,10 @@ impl<K, V> Tree<K, V> {
         K: KV,
         V: KV,
     {
-        Ok(self
-            .sled_tree("merge")?
+        self.sled_tree("merge")?
             .merge(serialize(key)?, serialize(value)?)?
             .map(|old_v| deserialize(&old_v))
-            .transpose()?)
+            .transpose()
     }
 
     /// Sets a merge operator for use with the `merge` function.
@@ -1216,7 +1213,7 @@ mod tests {
                 tree.range((3u32, String::new())..(9u32, String::new())).unwrap().count(),
                 3
             );
-            assert_eq!(tree.iter().rev().next().unwrap().unwrap().0 .0, 9);
+            assert_eq!(tree.iter().next_back().unwrap().unwrap().0 .0, 9);
             assert_eq!(tree.first().unwrap().unwrap().1, vec![1]);
             assert_eq!(tree.get(&(5, "e".into())).unwrap(), Some(vec![5]));
             let new = tree

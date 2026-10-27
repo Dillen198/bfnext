@@ -180,7 +180,7 @@ async fn h_feed(ctx: Arc<RangeCtx>, q: Q) -> Response {
         let mut items = vec![];
         let before = before.as_ref().map(|(t, id)| (*t, id.as_str()));
         ctx.store.walk_newest(&sc.ids(), 0, before, |s| {
-            if kind.as_deref().map_or(true, |k| s.kind() == k) {
+            if kind.as_deref().is_none_or(|k| s.kind() == k) {
                 items.push(boards::summary(&ctx.store, &s));
             }
             items.len() < limit
@@ -204,9 +204,9 @@ async fn h_results(ctx: Arc<RangeCtx>, q: Q) -> Response {
     let since = since_days(num(&q, "days"));
     let keep = |s: &Stored| {
         s.ts_ms >= since
-            && kind.as_deref().map_or(true, |k| s.kind() == k)
-            && unit.as_deref().map_or(true, |u| s.unit_type().eq_ignore_ascii_case(u))
-            && station.as_deref().map_or(true, |st| s.station() == Some(st))
+            && kind.as_deref().is_none_or(|k| s.kind() == k)
+            && unit.as_deref().is_none_or(|u| s.unit_type().eq_ignore_ascii_case(u))
+            && station.as_deref().is_none_or(|st| s.station() == Some(st))
     };
     let r = block_in_place(|| {
         let mut total = 0usize;
@@ -726,7 +726,7 @@ fn pick_acmi(dir: &std::path::Path, ts: SystemTime) -> Option<std::path::PathBuf
         let is_acmi = p
             .file_name()
             .and_then(|n| n.to_str())
-            .map_or(false, |n| n.to_ascii_lowercase().ends_with(".acmi"));
+            .is_some_and(|n| n.to_ascii_lowercase().ends_with(".acmi"));
         if !is_acmi {
             continue;
         }
@@ -739,7 +739,7 @@ fn pick_acmi(dir: &std::path::Path, ts: SystemTime) -> Option<std::path::PathBuf
     }
     let containing = cands
         .iter()
-        .filter(|(_, c, _)| c.map_or(false, |c| c <= ts + slack))
+        .filter(|(_, c, _)| c.is_some_and(|c| c <= ts + slack))
         .max_by_key(|(_, c, _)| *c)
         .map(|(p, _, _)| p.clone());
     containing
@@ -1076,20 +1076,25 @@ async fn h_replay_results(ctx: Arc<RangeCtx>, rec: String) -> Response {
         (sum.start_ms.max(0) as u64, (sum.start_ms + sum.duration_ms).max(0) as u64);
     let mut items = vec![];
     let r = block_in_place(|| {
-        ctx.store.walk_newest(&[sum.instance.clone()], from, Some((to + 1, "")), |s| {
-            let v = boards::summary(&ctx.store, &s);
-            items.push(json!({
-                "id": s.id,
-                "kind": s.kind(),
-                "pilot": s.pilot_name(),
-                "ucid": s.ucid(),
-                "unit_type": s.unit_type(),
-                "t": s.ts_ms as i64 - sum.start_ms,
-                "headline": v.get("headline").cloned().unwrap_or(Value::Null),
-                "score": v.get("score").cloned().unwrap_or(Value::Null),
-            }));
-            items.len() < 500
-        })
+        ctx.store.walk_newest(
+            std::slice::from_ref(&sum.instance),
+            from,
+            Some((to + 1, "")),
+            |s| {
+                let v = boards::summary(&ctx.store, &s);
+                items.push(json!({
+                    "id": s.id,
+                    "kind": s.kind(),
+                    "pilot": s.pilot_name(),
+                    "ucid": s.ucid(),
+                    "unit_type": s.unit_type(),
+                    "t": s.ts_ms as i64 - sum.start_ms,
+                    "headline": v.get("headline").cloned().unwrap_or(Value::Null),
+                    "score": v.get("score").cloned().unwrap_or(Value::Null),
+                }));
+                items.len() < 500
+            },
+        )
     });
     if let Err(e) = r {
         return internal(e);
@@ -1160,7 +1165,7 @@ async fn atc_live(ws: warp::ws::WebSocket, inst: String, station: String) {
         tokio::select! {
             f = rx.recv() => match f {
                 Ok(f) => {
-                    if tuned.as_ref().map_or(false, |t| !t.contains(f.station())) {
+                    if tuned.as_ref().is_some_and(|t| !t.contains(f.station())) {
                         continue;
                     }
                     let m = match live::wire(&f) {
@@ -1209,14 +1214,10 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
     let sid = crate::extract_session_cookie();
     let body = warp::body::content_length_limit(16 * 1024).and(warp::body::bytes());
 
-    let live =
-        warp::path!("api" / "range" / "live").and(c.clone()).and(q.clone()).then(h_live);
-    let feed =
-        warp::path!("api" / "range" / "feed").and(c.clone()).and(q.clone()).then(h_feed);
-    let results = warp::path!("api" / "range" / "results")
-        .and(c.clone())
-        .and(q.clone())
-        .then(h_results);
+    let live = warp::path!("api" / "range" / "live").and(c.clone()).and(q).then(h_live);
+    let feed = warp::path!("api" / "range" / "feed").and(c.clone()).and(q).then(h_feed);
+    let results =
+        warp::path!("api" / "range" / "results").and(c.clone()).and(q).then(h_results);
     let result = warp::path!("api" / "range" / "result" / String)
         .and(c.clone())
         .then(|id: String, ctx: Arc<RangeCtx>| h_result(ctx, id));
@@ -1232,47 +1233,38 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
     let me = warp::path!("api" / "range" / "me")
         .and(c.clone())
         .and(sid.clone())
-        .and(q.clone())
+        .and(q)
         .then(h_me);
     let pilot = warp::path!("api" / "range" / "pilot" / String)
         .and(c.clone())
-        .and(q.clone())
+        .and(q)
         .then(|u: String, ctx: Arc<RangeCtx>, q: Q| h_pilot(ctx, u, q));
-    let pilots = warp::path!("api" / "range" / "pilots")
-        .and(c.clone())
-        .and(q.clone())
-        .then(h_pilots);
-    let greenie = warp::path!("api" / "range" / "greenie")
-        .and(c.clone())
-        .and(q.clone())
-        .then(h_greenie);
+    let pilots =
+        warp::path!("api" / "range" / "pilots").and(c.clone()).and(q).then(h_pilots);
+    let greenie =
+        warp::path!("api" / "range" / "greenie").and(c.clone()).and(q).then(h_greenie);
     let boards_r = warp::path!("api" / "range" / "leaderboards")
         .and(c.clone())
-        .and(q.clone())
+        .and(q)
         .then(h_leaderboards);
     let impacts = warp::path!("api" / "range" / "stations" / String / "impacts")
         .and(c.clone())
-        .and(q.clone())
+        .and(q)
         .then(|st: String, ctx: Arc<RangeCtx>, q: Q| h_impacts(ctx, st, q));
-    let catalog = warp::path!("api" / "range" / "catalog")
-        .and(c.clone())
-        .and(q.clone())
-        .then(h_catalog);
-    let atc =
-        warp::path!("api" / "range" / "atc").and(c.clone()).and(q.clone()).then(h_atc);
+    let catalog =
+        warp::path!("api" / "range" / "catalog").and(c.clone()).and(q).then(h_catalog);
+    let atc = warp::path!("api" / "range" / "atc").and(c.clone()).and(q).then(h_atc);
     let atc_live = warp::path!("api" / "range" / "atc" / "live")
         .and(crate::websec::ws_limited())
         .and(c.clone())
-        .and(q.clone())
+        .and(q)
         .then(|ws, ip, ctx: Arc<RangeCtx>, q: Q| h_atc_live(ws, ip, ctx, q));
     let atc_audio = warp::path!("api" / "range" / "atc" / "audio" / u64)
         .and(c.clone())
-        .and(q.clone())
+        .and(q)
         .then(|id: u64, ctx: Arc<RangeCtx>, q: Q| h_atc_audio(ctx, q, id));
-    let weapons = warp::path!("api" / "range" / "weapons")
-        .and(c.clone())
-        .and(q.clone())
-        .then(h_weapons);
+    let weapons =
+        warp::path!("api" / "range" / "weapons").and(c.clone()).and(q).then(h_weapons);
     let tacview = warp::path!("api" / "range" / "tacview" / String)
         .and(c.clone())
         .then(|id: String, ctx: Arc<RangeCtx>| h_tacview(ctx, id));
@@ -1292,23 +1284,23 @@ pub(crate) fn routes(ctx: Arc<RangeCtx>) -> BoxedFilter<(Response,)> {
     let spawn = warp::path!("api" / "range" / "spawn")
         .and(warp::post())
         .and(c.clone())
-        .and(q.clone())
+        .and(q)
         .and(sid.clone())
-        .and(body.clone())
+        .and(body)
         .then(h_spawn);
     let despawn = warp::path!("api" / "range" / "despawn")
         .and(warp::post())
         .and(c.clone())
-        .and(q.clone())
+        .and(q)
         .and(sid.clone())
-        .and(body.clone())
+        .and(body)
         .then(h_despawn);
     let reset = warp::path!("api" / "range" / "admin" / "reset-station")
         .and(warp::post())
         .and(c.clone())
-        .and(q.clone())
+        .and(q)
         .and(sid.clone())
-        .and(body.clone())
+        .and(body)
         .then(h_reset_station);
 
     // Boxed in small groups: each `.or` nests the type one level deeper.

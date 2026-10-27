@@ -185,10 +185,10 @@ pub(crate) fn tick(
         .map(|(g, _)| *g)
         .collect();
     for g in dry {
-        if set_roe(lua, ctx, &g, GroundRoe::WeaponHold) {
-            if let Some(m) = ctx.modern_war.sam.groups.get_mut(&g) {
-                m.last_applied = Some(now);
-            }
+        if set_roe(lua, ctx, &g, GroundRoe::WeaponHold)
+            && let Some(m) = ctx.modern_war.sam.groups.get_mut(&g)
+        {
+            m.last_applied = Some(now);
         }
     }
     // Resupply.
@@ -236,15 +236,15 @@ pub(crate) fn tick(
             set_roe(lua, ctx, &g, GroundRoe::WeaponFree);
             let name = site_name(ctx, &g);
             info!("sam stock: {g} at {name} rearmed");
-            if cfg.announce {
-                if let Some(side) = ctx.db.persisted.groups.get(&g).map(|x| x.side) {
-                    ctx.db.ephemeral.msgs().panel_to_side(
-                        15,
-                        false,
-                        side,
-                        format_compact!("SAM site at {name} has been rearmed."),
-                    );
-                }
+            if cfg.announce
+                && let Some(side) = ctx.db.persisted.groups.get(&g).map(|x| x.side)
+            {
+                ctx.db.ephemeral.msgs().panel_to_side(
+                    15,
+                    false,
+                    side,
+                    format_compact!("SAM site at {name} has been rearmed."),
+                );
             }
         }
     }

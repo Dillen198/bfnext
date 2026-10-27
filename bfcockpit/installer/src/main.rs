@@ -395,10 +395,8 @@ mod installer_ui {
                                 nwg::stop_thread_dispatch()
                             }
                         }
-                        nwg::Event::OnWindowClose => {
-                            if handle == ui.window {
-                                nwg::stop_thread_dispatch()
-                            }
+                        nwg::Event::OnWindowClose if handle == ui.window => {
+                            nwg::stop_thread_dispatch()
                         }
                         _ => {}
                     }

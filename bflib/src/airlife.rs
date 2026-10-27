@@ -338,16 +338,16 @@ fn wingman_templates(
         (_, true) => &cfg.rotary_templates_red,
     };
     let mut out: Vec<String> = own.iter().map(|s| String::from(s.as_str())).collect();
-    if out.is_empty() {
-        if let Some(ce) = ctx.db.ephemeral.cfg.campaign_events.as_deref() {
-            let roster = match (side, rotary) {
-                (Side::Blue, false) => &ce.cap_templates_blue,
-                (Side::Blue, true) => &ce.helo_templates_blue,
-                (_, false) => &ce.cap_templates_red,
-                (_, true) => &ce.helo_templates_red,
-            };
-            out = roster.iter().map(|t| String::from(t.template.as_str())).collect();
-        }
+    if out.is_empty()
+        && let Some(ce) = ctx.db.ephemeral.cfg.campaign_events.as_deref()
+    {
+        let roster = match (side, rotary) {
+            (Side::Blue, false) => &ce.cap_templates_blue,
+            (Side::Blue, true) => &ce.helo_templates_blue,
+            (_, false) => &ce.cap_templates_red,
+            (_, true) => &ce.helo_templates_red,
+        };
+        out = roster.iter().map(|t| String::from(t.template.as_str())).collect();
     }
     out.shuffle(&mut thread_rng());
     out

@@ -306,7 +306,7 @@ async fn h_pilot(ctx: Arc<ReplayCtx>, sid: Option<Uuid>, ucid: String, q: Q) -> 
                         .summary(&f.rec)
                         .ok()
                         .flatten()
-                        .map_or(true, |s| released(&ctx, sid, &s))
+                        .is_none_or(|s| released(&ctx, sid, &s))
             });
             reply_json(StatusCode::OK, &v)
         }
@@ -327,7 +327,7 @@ pub(crate) fn routes(ctx: Arc<ReplayCtx>) -> BoxedFilter<(Response,)> {
     let recs = warp::path!("api" / "replay" / "recordings")
         .and(c.clone())
         .and(sid.clone())
-        .and(q.clone())
+        .and(q)
         .then(h_recordings);
     let meta = warp::path!("api" / "replay" / "rec" / String)
         .and(c.clone())
@@ -344,7 +344,7 @@ pub(crate) fn routes(ctx: Arc<ReplayCtx>) -> BoxedFilter<(Response,)> {
     let object = warp::path!("api" / "replay" / "rec" / String / "object" / u32)
         .and(c.clone())
         .and(sid.clone())
-        .and(q.clone())
+        .and(q)
         .then(|id: String, idx: u32, ctx: Arc<ReplayCtx>, sid: Option<Uuid>, q: Q| {
             h_object(ctx, sid, id, idx, q)
         });
@@ -361,7 +361,7 @@ pub(crate) fn routes(ctx: Arc<ReplayCtx>) -> BoxedFilter<(Response,)> {
     let pilot = warp::path!("api" / "replay" / "pilot" / String)
         .and(c.clone())
         .and(sid.clone())
-        .and(q.clone())
+        .and(q)
         .then(|u: String, ctx: Arc<ReplayCtx>, sid: Option<Uuid>, q: Q| {
             h_pilot(ctx, sid, u, q)
         });

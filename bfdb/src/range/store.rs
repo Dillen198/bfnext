@@ -180,7 +180,7 @@ impl RangeStore {
                 Some(v) => serde_json::from_slice::<Value>(&v)
                     .ok()
                     .and_then(|v| v.get("last_ts").and_then(|t| t.as_u64()))
-                    .map_or(true, |last| ts_ms >= last),
+                    .is_none_or(|last| ts_ms >= last),
                 None => true,
             };
             if newer && !name.is_empty() {
@@ -320,7 +320,7 @@ impl RangeStore {
                 match it.peek() {
                     Some(Ok((k, _))) => {
                         let ts = split_key(k).map(|(_, t, _)| t).unwrap_or(0);
-                        if best.map_or(true, |(_, bt)| ts > bt) {
+                        if best.is_none_or(|(_, bt)| ts > bt) {
                             best = Some((i, ts));
                         }
                     }
@@ -333,7 +333,7 @@ impl RangeStore {
             }
             if let Some(i) = failed {
                 if let Some(Err(e)) = iters[i].next() {
-                    return Err(e.into());
+                    return Err(e);
                 }
             }
             let Some((i, _)) = best else {
@@ -449,7 +449,7 @@ impl RangeStore {
                     let name =
                         v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
                     let last = v.get("last_ts").and_then(|t| t.as_u64()).unwrap_or(0);
-                    if best.as_ref().map_or(true, |(_, l)| last > *l) {
+                    if best.as_ref().is_none_or(|(_, l)| last > *l) {
                         best = Some((name, last));
                     }
                 }

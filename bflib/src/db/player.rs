@@ -258,7 +258,7 @@ impl Contribution {
 
 impl SortieTally {
     fn add_contribution(&mut self, what: String) {
-        if !self.contributions.iter().any(|c| *c == what) {
+        if !self.contributions.contains(&what) {
             self.contributions.push(what);
         }
     }
@@ -464,7 +464,7 @@ impl Db {
                 .persisted
                 .players
                 .get(ucid)
-                .map_or(false, |p| p.sorties < ROOKIE_SORTIES)
+                .is_some_and(|p| p.sorties < ROOKIE_SORTIES)
     }
 
     pub fn player_deslot(&mut self, ucid: &Ucid) {
@@ -643,7 +643,7 @@ impl Db {
             .get_slot_by_object_id(id)
             .and_then(|s| self.ephemeral.players_by_slot.get(s))
         {
-            Some(ucid) => Some(ucid.clone()),
+            Some(ucid) => Some(*ucid),
             None => {
                 if !include_deployed {
                     None
@@ -661,16 +661,9 @@ impl Db {
                                 cost_fraction: _,
                                 origin: _,
                                 jtac: _,
-                            } => Some(player.clone()),
-                            DeployKind::Troop {
-                                player,
-                                spec: _,
-                                moved_by: _,
-                                origin: _,
-                                cost_fraction: _,
-                                ..
                             } => Some(*player),
-                            DeployKind::Action { player, .. } => player.clone(),
+                            DeployKind::Troop { player, .. } => Some(*player),
+                            DeployKind::Action { player, .. } => *player,
                             DeployKind::Crate { .. }
                             | DeployKind::Objective { .. }
                             | DeployKind::ObjectiveDeprecated
@@ -798,12 +791,12 @@ impl Db {
         for (i, (label, n, each)) in items.iter().enumerate() {
             let c = n * each;
             if i == 0 {
-                let _ = write!(m, "  {label} airframe: {c}\n");
+                let _ = writeln!(m, "  {label} airframe: {c}");
             } else if c > 0 {
-                let _ = write!(m, "  {n} x {label}: {c}  ({each} each)\n");
+                let _ = writeln!(m, "  {n} x {label}: {c}  ({each} each)");
             }
         }
-        let _ = write!(m, "  TOTAL: {total}\n");
+        let _ = writeln!(m, "  TOTAL: {total}");
         let fund_pts = fund.map(|(_, p)| p.max(0)).unwrap_or(0);
         let available = balance.max(0) + fund_pts;
         let _ = write!(m, "Your points: {balance}");
@@ -848,7 +841,7 @@ impl Db {
         let Some(sifo) = self.ephemeral.slot_info.get(&slot) else {
             return Ok(TakeoffRes::NotPlayerSlot);
         };
-        let (mut cost, strict, cost_msg) = match self.compute_flight_cost(&sifo, unit) {
+        let (mut cost, strict, cost_msg) = match self.compute_flight_cost(sifo, unit) {
             Ok(cost) => cost,
             Err(e) => {
                 error!("failed to compute flight cost {e:?}");
@@ -880,12 +873,11 @@ impl Db {
             cost = points.lifeline_store_charge(cost.saturating_sub(airframe));
         }
         // Enforce the post-slot-entry takeoff hold.
-        if let Some((_, Some(inst))) = &player.current_slot {
-            if let Some(ok_at) = inst.takeoff_ok_at {
-                if time < ok_at {
-                    return Ok(TakeoffRes::TooEarly((ok_at - time).num_seconds().max(1)));
-                }
-            }
+        if let Some((_, Some(inst))) = &player.current_slot
+            && let Some(ok_at) = inst.takeoff_ok_at
+            && time < ok_at
+        {
+            return Ok(TakeoffRes::TooEarly((ok_at - time).num_seconds().max(1)));
         }
         let owned_objective =
             self.persisted.objectives.into_iter().find_map(|(oid, obj)| {
@@ -995,7 +987,7 @@ impl Db {
                         (-(player_pays as i32), frac)
                     }
                 };
-                self.adjust_points(&ucid, adj, msg);
+                self.adjust_points(ucid, adj, msg);
                 self.ephemeral.dirty();
                 frac
             }
@@ -1121,12 +1113,9 @@ impl Db {
         {
             *landed = Some(self.ephemeral.clock.now());
         }
-        let sifo = match self.ephemeral.slot_info.get(&slot) {
-            Some(sifo) => sifo,
-            None => return None,
-        };
+        let sifo = self.ephemeral.slot_info.get(&slot)?;
         let life_type = self.ephemeral.cfg.life_types.get(&sifo.typ).copied();
-        let (cost, _, cost_msg) = match self.compute_flight_cost(&sifo, unit) {
+        let (cost, _, cost_msg) = match self.compute_flight_cost(sifo, unit) {
             Ok(cost) => cost,
             Err(e) => {
                 error!("failed to compute flight cost {e:?}");
@@ -1134,12 +1123,9 @@ impl Db {
             }
         };
         let (ucid, player) =
-            match self.ephemeral.players_by_slot.get(&slot).and_then(|ucid| {
+            self.ephemeral.players_by_slot.get(&slot).and_then(|ucid| {
                 self.persisted.players.get_mut_cow(ucid).map(|p| (*ucid, p))
-            }) {
-                Some(player) => player,
-                None => return None,
-            };
+            })?;
         let owned_objective =
             self.persisted.objectives.into_iter().find_map(|(oid, o)| {
                 if o.owner == player.side && o.zone.contains(position) {
@@ -1199,7 +1185,7 @@ impl Db {
                     banked = provisional_points;
                     self.adjust_points_silent(
                         &ucid,
-                        provisional_points as i32,
+                        provisional_points,
                         "provisional points committed",
                     );
                 }
@@ -1257,10 +1243,10 @@ impl Db {
                 .unwrap_or(false);
             match (max, has_deficit) {
                 (Some(max), true) => break (current, max),
-                _ => match current.down() {
-                    Some(lower) => current = lower,
-                    None => return None,
-                },
+                _ => {
+                    let lower = current.down()?;
+                    current = lower
+                }
             }
         };
         let player = self.persisted.players.get_mut_cow(ucid)?;
@@ -1517,7 +1503,7 @@ impl Db {
             }
         }
         loop {
-            match player.lives.get(&life_type).map(|t| *t) {
+            match player.lives.get(&life_type).copied() {
                 None => {
                     yes!();
                 }
@@ -1540,17 +1526,17 @@ impl Db {
     }
 
     pub fn player_connected(&mut self, ucid: Ucid, name: String) {
-        if let Some(player) = self.persisted.players.get(&ucid) {
-            if player.current_slot.is_some() {
-                self.player_deslot(&ucid)
-            }
+        if let Some(player) = self.persisted.players.get(&ucid)
+            && player.current_slot.is_some()
+        {
+            self.player_deslot(&ucid)
         }
-        if let Some(player) = self.persisted.players.get_mut_cow(&ucid) {
-            if player.name != name {
-                player.alts.insert(name.clone());
-                player.name = name;
-                self.ephemeral.dirty()
-            }
+        if let Some(player) = self.persisted.players.get_mut_cow(&ucid)
+            && player.name != name
+        {
+            player.alts.insert(name.clone());
+            player.name = name;
+            self.ephemeral.dirty()
         }
         // Register only fires once, the first time a ucid is ever seen, so a
         // returning player reconnecting into a new round would otherwise never
@@ -1644,11 +1630,8 @@ impl Db {
                 } else if side == Side::Neutral {
                     Err("you can't switch to neutral")
                 } else {
-                    match &mut player.side_switches {
-                        Some(n) => {
-                            *n -= 1;
-                        }
-                        None => (),
+                    if let Some(n) = &mut player.side_switches {
+                        *n -= 1;
                     }
                     player.side = side;
                     // see try_occupy_slot
@@ -1672,60 +1655,58 @@ impl Db {
         let coord = Coord::singleton(lua)?;
         for ucid in ids {
             let mut inform_cost = None;
-            if let Some(player) = self.persisted.players.get_mut_cow(ucid) {
-                if let Some((slot, Some(inst))) = &mut player.current_slot {
-                    if let Some(id) = self.ephemeral.object_id_by_slot.get(slot) {
-                        let instance = match unit.take() {
-                            Some(unit) => unit.change_instance(id),
-                            None => Unit::get_instance(lua, id),
-                        };
-                        let instance = match instance {
-                            Ok(i) => Ok(i),
-                            Err(_) => {
-                                // Routine: a player who left the slot between the poll
-                                // starting and this lookup has no unit by id
-                                // any more. The by-name fallback usually finds
-                                // it, and when it does not the skip below says
-                                // so -- this was the middle of three warnings
-                                // for one benign race.
-                                debug!("failed to get unit by id, trying by name");
-                                Unit::get_by_name(lua, &inst.unit_name)
+            if let Some(player) = self.persisted.players.get_mut_cow(ucid)
+                && let Some((slot, Some(inst))) = &mut player.current_slot
+                && let Some(id) = self.ephemeral.object_id_by_slot.get(slot)
+            {
+                let instance = match unit.take() {
+                    Some(unit) => unit.change_instance(id),
+                    None => Unit::get_instance(lua, id),
+                };
+                let instance = match instance {
+                    Ok(i) => Ok(i),
+                    Err(_) => {
+                        // Routine: a player who left the slot between the poll
+                        // starting and this lookup has no unit by id
+                        // any more. The by-name fallback usually finds
+                        // it, and when it does not the skip below says
+                        // so -- this was the middle of three warnings
+                        // for one benign race.
+                        debug!("failed to get unit by id, trying by name");
+                        Unit::get_by_name(lua, &inst.unit_name)
+                    }
+                };
+                match instance {
+                    Ok(instance) => {
+                        let pos = instance.get_position()?;
+                        if (inst.position.p.0 - pos.p.0).magnitude_squared() > 1.0 {
+                            if inst.stopped_at_objective {
+                                inform_cost = Some((*slot, player.points));
                             }
-                        };
-                        match instance {
-                            Ok(instance) => {
-                                let pos = instance.get_position()?;
-                                if (inst.position.p.0 - pos.p.0).magnitude_squared() > 1.0
-                                {
-                                    if inst.stopped_at_objective {
-                                        inform_cost = Some((*slot, player.points));
-                                    }
-                                    inst.stopped_at_objective = false;
-                                    inst.position = pos;
-                                    inst.velocity = instance.get_velocity()?.0;
-                                    inst.in_air = instance.in_air()?;
-                                    inst.moved = Some(now);
-                                } else if inst.landed_at_objective.is_some() {
-                                    inst.stopped_at_objective = true;
-                                }
-                                unit = Some(instance);
-                                self.ephemeral.stat(Stat::Position {
-                                    id: EnId::Player(*ucid),
-                                    pos: stats::Pos {
-                                        pos: coord.lo_to_ll(inst.position.p)?,
-                                        velocity: inst.velocity,
-                                    },
-                                });
-                            }
-                            Err(e) => {
-                                // a shot-down player's unit is gone before the
-                                // Dead event arrives; the kill is still recorded
-                                info!(
-                                    "updating player positions, skipping invalid unit {ucid:?}, {id:?}, player {e:?}",
-                                );
-                                dead.push(id.clone())
-                            }
+                            inst.stopped_at_objective = false;
+                            inst.position = pos;
+                            inst.velocity = instance.get_velocity()?.0;
+                            inst.in_air = instance.in_air()?;
+                            inst.moved = Some(now);
+                        } else if inst.landed_at_objective.is_some() {
+                            inst.stopped_at_objective = true;
                         }
+                        unit = Some(instance);
+                        self.ephemeral.stat(Stat::Position {
+                            id: EnId::Player(*ucid),
+                            pos: stats::Pos {
+                                pos: coord.lo_to_ll(inst.position.p)?,
+                                velocity: inst.velocity,
+                            },
+                        });
+                    }
+                    Err(e) => {
+                        // a shot-down player's unit is gone before the
+                        // Dead event arrives; the kill is still recorded
+                        info!(
+                            "updating player positions, skipping invalid unit {ucid:?}, {id:?}, player {e:?}",
+                        );
+                        dead.push(id.clone())
                     }
                 }
             }
@@ -1747,7 +1728,7 @@ impl Db {
                     .find(|(_, o)| Some(o.owner) == side && o.zone.contains(pos))
                     .map(|(_, o)| (o.name.clone(), o.points));
                 let fund = fund.as_ref().map(|(n, p)| (n.as_str(), *p));
-                if let Some(m) = self.flight_cost_panel(sifo, &unit, balance, fund)? {
+                if let Some(m) = self.flight_cost_panel(sifo, unit, balance, fund)? {
                     self.ephemeral.panel_to_player(&self.persisted, 60, ucid, m)
                 }
             }
@@ -1807,8 +1788,8 @@ impl Db {
             None | Some((_, _)) => (),
         }
         self.ephemeral.players_by_slot.insert(slot, ucid);
-        self.ephemeral.slot_by_object_id.insert(id.clone(), slot.clone());
-        self.ephemeral.object_id_by_slot.insert(slot.clone(), id.clone());
+        self.ephemeral.slot_by_object_id.insert(id.clone(), slot);
+        self.ephemeral.object_id_by_slot.insert(slot, id.clone());
         let mut adjust_warehouse = || -> Result<()> {
             let id = maybe!(self.ephemeral.airbase_by_oid, obj.id, "airbase")?;
             let wh = Airbase::get_instance(lua, id)
@@ -2023,131 +2004,118 @@ impl Db {
             // was, so the enemy bases it drove up to never woke and it rolled
             // into an empty objective.
         }
-        if let Some(slot) = self.ephemeral.slot_by_object_id.get(&objid).cloned() {
-            if let Some(ucid) = self.ephemeral.player_in_slot(&slot).cloned() {
-                let player_side = self.persisted.players.get(&ucid).map(|p| p.side);
-                // Only ground-start slots have their airframe / stores debited
-                // from the departure base (see adjust_warehouse), so only they
-                // are credited back on landing.
-                let ground_start = self
-                    .ephemeral
-                    .slot_info
-                    .get(&slot)
-                    .map(|s| s.ground_start)
-                    .unwrap_or(false);
-                let player = maybe_mut!(self.persisted.players, ucid, "player")?;
-                if let Some((_, Some(inst))) = player.current_slot.as_mut() {
-                    let typ = inst.typ.clone();
-                    if let Some(oid) = inst.landed_at_objective {
-                        let mut fix_warehouse = || -> Result<()> {
-                            let obj =
-                                objective_mut!(self, oid).context("get objective")?;
-                            // The base can change hands while a player sits
-                            // parked in it. `landed_at_objective` was friendly
-                            // when it was set; re-check now so a captured base
-                            // doesn't absorb the departing (enemy) player's
-                            // airframe and stores into what is now the new
-                            // owner's warehouse.
-                            if player_side != Some(obj.owner()) {
-                                return Ok(());
+        if let Some(slot) = self.ephemeral.slot_by_object_id.get(objid).cloned()
+            && let Some(ucid) = self.ephemeral.player_in_slot(&slot).cloned()
+        {
+            let player_side = self.persisted.players.get(&ucid).map(|p| p.side);
+            // Only ground-start slots have their airframe / stores debited
+            // from the departure base (see adjust_warehouse), so only they
+            // are credited back on landing.
+            let ground_start = self
+                .ephemeral
+                .slot_info
+                .get(&slot)
+                .map(|s| s.ground_start)
+                .unwrap_or(false);
+            let player = maybe_mut!(self.persisted.players, ucid, "player")?;
+            if let Some((_, Some(inst))) = player.current_slot.as_mut() {
+                let typ = inst.typ.clone();
+                if let Some(oid) = inst.landed_at_objective {
+                    let mut fix_warehouse = || -> Result<()> {
+                        let obj = objective_mut!(self, oid).context("get objective")?;
+                        // The base can change hands while a player sits
+                        // parked in it. `landed_at_objective` was friendly
+                        // when it was set; re-check now so a captured base
+                        // doesn't absorb the departing (enemy) player's
+                        // airframe and stores into what is now the new
+                        // owner's warehouse.
+                        if player_side != Some(obj.owner()) {
+                            return Ok(());
+                        }
+                        // A zone-only FOB or command center, or a carrier
+                        // whose deck mapping went with a capture, has no
+                        // DCS warehouse: there is nothing to credit, and
+                        // takeoff from there debited nothing either. This
+                        // used to log "unable to fix warehouse no such
+                        // airbase ObjectiveId(N)" as an ERROR every time.
+                        let Some(id) = self.ephemeral.airbase_by_oid.get(&oid).cloned()
+                        else {
+                            debug!(
+                                "{} has no DCS warehouse, nothing to credit for {typ}",
+                                obj.name
+                            );
+                            return Ok(());
+                        };
+                        let airbase =
+                            Airbase::get_instance(lua, &id).context("get airbase")?;
+                        let wh = airbase.get_warehouse().context("get warehouse")?;
+                        let mut sync: SmallVec<[String; 4]> = smallvec![typ.0.clone()];
+                        // Return the airframe + its remaining stores to the
+                        // base it landed at -- for every objective type
+                        // (FARP, FOB, airbase, naval). This is the credit
+                        // half of the takeoff debit in adjust_warehouse.
+                        if ground_start && let Ok(unit) = Unit::get_instance(lua, objid) {
+                            wh.add_item(typ.0.clone(), 1)?;
+                            for ammo in unit.get_ammo().context("get ammo")? {
+                                let ammo = ammo.context("ammo")?;
+                                let count = ammo.count().context("ammo count")?;
+                                let atyp = ammo.type_name().context("ammo typ")?;
+                                sync.push(atyp.clone());
+                                wh.add_item(atyp, count)
+                                    .context("add item to warehouse")?;
                             }
-                            // A zone-only FOB or command center, or a carrier
-                            // whose deck mapping went with a capture, has no
-                            // DCS warehouse: there is nothing to credit, and
-                            // takeoff from there debited nothing either. This
-                            // used to log "unable to fix warehouse no such
-                            // airbase ObjectiveId(N)" as an ERROR every time.
-                            let Some(id) =
-                                self.ephemeral.airbase_by_oid.get(&oid).cloned()
-                            else {
-                                debug!(
-                                    "{} has no DCS warehouse, nothing to credit for {typ}",
-                                    obj.name
-                                );
-                                return Ok(());
-                            };
-                            let airbase =
-                                Airbase::get_instance(lua, &id).context("get airbase")?;
-                            let wh = airbase.get_warehouse().context("get warehouse")?;
-                            let mut sync: SmallVec<[String; 4]> =
-                                smallvec![typ.0.clone()];
-                            // Return the airframe + its remaining stores to the
-                            // base it landed at -- for every objective type
-                            // (FARP, FOB, airbase, naval). This is the credit
-                            // half of the takeoff debit in adjust_warehouse.
-                            if ground_start
-                                && let Ok(unit) = Unit::get_instance(lua, &objid)
-                            {
-                                wh.add_item(typ.0.clone(), 1)?;
-                                for ammo in unit.get_ammo().context("get ammo")? {
-                                    let ammo = ammo.context("ammo")?;
-                                    let count = ammo.count().context("ammo count")?;
-                                    let atyp = ammo.type_name().context("ammo typ")?;
-                                    sync.push(atyp.clone());
-                                    wh.add_item(atyp, count)
-                                        .context("add item to warehouse")?;
-                                }
-                                // Remaining internal fuel comes back as jet fuel.
-                                if let Ok(frac) = unit.get_fuel() {
-                                    let max_kg = unit
-                                        .get_desc()
-                                        .ok()
-                                        .and_then(|d| {
-                                            d.raw_get::<f64>("fuelMassMax").ok()
-                                        })
-                                        .unwrap_or(0.0);
-                                    let kg = (frac.clamp(0.0, 1.0) as f64 * max_kg)
-                                        .round()
-                                        as u32;
-                                    if kg > 0 {
-                                        let _ = wh.add_liquid(
-                                            dcso3::warehouse::LiquidType::JetFuel,
-                                            kg,
-                                        );
-                                        if let Some(inv) =
-                                            obj.warehouse.liquids.get_mut_cow(
-                                                &dcso3::warehouse::LiquidType::JetFuel,
+                            // Remaining internal fuel comes back as jet fuel.
+                            if let Ok(frac) = unit.get_fuel() {
+                                let max_kg = unit
+                                    .get_desc()
+                                    .ok()
+                                    .and_then(|d| d.raw_get::<f64>("fuelMassMax").ok())
+                                    .unwrap_or(0.0);
+                                let kg =
+                                    (frac.clamp(0.0, 1.0) as f64 * max_kg).round() as u32;
+                                if kg > 0 {
+                                    let _ = wh.add_liquid(
+                                        dcso3::warehouse::LiquidType::JetFuel,
+                                        kg,
+                                    );
+                                    if let Some(inv) = obj.warehouse.liquids.get_mut_cow(
+                                        &dcso3::warehouse::LiquidType::JetFuel,
+                                    ) {
+                                        inv.stored = wh
+                                            .get_liquid_amount(
+                                                dcso3::warehouse::LiquidType::JetFuel,
                                             )
-                                        {
-                                            inv.stored = wh
-                                                .get_liquid_amount(
-                                                    dcso3::warehouse::LiquidType::JetFuel,
-                                                )
-                                                .unwrap_or(inv.stored);
-                                        }
+                                            .unwrap_or(inv.stored);
                                     }
                                 }
                             }
-                            for typ in sync {
-                                if let Some(inv) =
-                                    obj.warehouse.equipment.get_mut_cow(&typ)
-                                {
-                                    inv.stored =
-                                        wh.get_item_count(typ).context("getting item")?;
-                                    self.ephemeral.dirty();
-                                }
-                            }
-                            Ok(())
-                        };
-                        if let Err(e) = fix_warehouse() {
-                            error!("unable to fix warehouse {:?}", e)
                         }
+                        for typ in sync {
+                            if let Some(inv) = obj.warehouse.equipment.get_mut_cow(&typ) {
+                                inv.stored =
+                                    wh.get_item_count(typ).context("getting item")?;
+                                self.ephemeral.dirty();
+                            }
+                        }
+                        Ok(())
+                    };
+                    if let Err(e) = fix_warehouse() {
+                        error!("unable to fix warehouse {:?}", e)
                     }
                 }
-                self.return_troops_on_deslot(&slot);
-                self.player_deslot(&ucid)
             }
+            self.return_troops_on_deslot(&slot);
+            self.player_deslot(&ucid)
         }
         Ok(dead)
     }
 
     pub fn player_disconnected(&mut self, ucid: &Ucid) {
         if let Some((_, Some(inst))) =
-            self.persisted.players.get(&ucid).and_then(|p| p.current_slot.as_ref())
+            self.persisted.players.get(ucid).and_then(|p| p.current_slot.as_ref())
+            && let Some(oid) = inst.landed_at_objective
         {
-            if let Some(oid) = inst.landed_at_objective {
-                self.ephemeral.push_sync_warehouse(oid, inst.typ.clone());
-            }
+            self.ephemeral.push_sync_warehouse(oid, inst.typ.clone());
         }
         self.ephemeral.stat(Stat::Disconnect { id: *ucid });
         self.ephemeral.ca_drivers.retain(|_, (driver, _)| driver != ucid);
@@ -2155,7 +2123,7 @@ impl Db {
             .persisted
             .players
             .get(ucid)
-            .and_then(|p| p.current_slot.as_ref().map(|(s, _)| s.clone()))
+            .and_then(|p| p.current_slot.as_ref().map(|(s, _)| *s))
         {
             self.return_troops_on_deslot(&slot);
         }
@@ -2248,22 +2216,22 @@ impl Db {
                 self.ephemeral.dirty();
                 use std::fmt::Write;
                 let mut msg = CompactString::from("");
-                write!(
+                writeln!(
                     msg,
-                    "{tp}(-{penalty_points}) points, you have team killed {name}.\n",
+                    "{tp}(-{penalty_points}) points, you have team killed {name}.",
                 )
                 .unwrap();
-                if lost.len() > 0 {
+                if !lost.is_empty() {
                     write!(msg, "\nYou have lost\n").unwrap();
                     for (ty, n) in lost {
-                        write!(msg, "{n} {ty} life\n").unwrap()
+                        writeln!(msg, "{n} {ty} life").unwrap()
                     }
                 };
                 if deplane {
-                    write!(msg, "Shortly you will be deplaned\n").unwrap();
-                    write!(
+                    writeln!(msg, "Shortly you will be deplaned").unwrap();
+                    writeln!(
                         msg,
-                        "your death may be monitored for quality assurance purposes\n"
+                        "your death may be monitored for quality assurance purposes"
                     )
                     .unwrap();
                     write!(msg, "have a nice day").unwrap();
@@ -2323,7 +2291,7 @@ impl Db {
         for shot in valid_shots().filter(|s| s.hit) {
             let Some(k) = credit_key(&shot.shooter) else { continue };
             add_credit(&mut credit, k, 1.);
-            if last_hit.map_or(true, |(_, t)| shot.time >= t) {
+            if last_hit.is_none_or(|(_, t)| shot.time >= t) {
                 last_hit = Some((k, shot.time));
             }
         }
@@ -2458,7 +2426,7 @@ impl Db {
                     };
                     let tasked = !via_ai
                         && victim_pos
-                            .map_or(false, |p| self.in_task_zone(&ucid, p, dead.time));
+                            .is_some_and(|p| self.in_task_zone(&ucid, p, dead.time));
                     let task_mult =
                         if tasked { super::tasking::TASK_POINTS_MULT } else { 1.0 };
                     if tasked {

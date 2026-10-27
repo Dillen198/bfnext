@@ -213,7 +213,7 @@ impl IntelDatabase {
         let existing_id = self.by_side.get(&side).and_then(|ids| {
             ids.iter()
                 .find(|&&id| {
-                    self.contacts.get(&id).map_or(false, |c| {
+                    self.contacts.get(&id).is_some_and(|c| {
                         c.unit_class == unit_class
                             && na::distance_squared(&c.pos.into(), &pos.into())
                                 <= assoc_sq
@@ -364,10 +364,10 @@ impl IntelDatabase {
             cfg,
             now,
         );
-        if let Some(c) = self.contacts.get_mut(&id) {
-            if !c.jtac_units.contains(&uid) {
-                c.jtac_units.push(uid);
-            }
+        if let Some(c) = self.contacts.get_mut(&id)
+            && !c.jtac_units.contains(&uid)
+        {
+            c.jtac_units.push(uid);
         }
         match self.jtac_unit_contact.insert((side, uid), id) {
             Some(old) if old != id => self.release_jtac_unit(old, uid),
