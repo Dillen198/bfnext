@@ -16,6 +16,7 @@ chrono = { workspace = true }
 compact_str = { workspace = true }
 crossbeam = { workspace = true }
 dcso3 = { version = "0.1", path = "../dcso3", features = ["perf"] }
+fowlbg = { version = "0.1", path = "../fowlbg" }
 enumflags2 = { workspace = true, features = ["serde"] }
 # Not named in bflib's source: dcso3's simple_enum! derives JsonSchema,
 # and that derive refers to the `schemars` crate by name in the caller.

@@ -322,6 +322,7 @@ dependencies = [
  "crossbeam",
  "dcso3",
  "enumflags2",
+ "fowlbg",
  "futures",
  "fxhash",
  "humantime",
