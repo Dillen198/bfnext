@@ -188,6 +188,24 @@ DEFAULT:
     # ~\.config\netidx\client.json, C:\netidx\client.json, NETIDX_CFG) a
     # loopback one is written to %APPDATA%\netidx\client.json: bfdb and the
     # engine inside DCS will not start without one.
+    # Authenticated netidx (mutual TLS) is OFF unless this block is set: left
+    # out, the resolver, bfdb and the engines are Anonymous exactly as before.
+    # Read deploy/netidx-tls.md first. Every process on the resolver switches
+    # together (the engine's own CFG gets a `netidx_tls` block too): a TLS
+    # client cannot talk to an Anonymous resolver, nor the reverse. With it
+    # set, procman runs the resolver from <home>\netidx-resolver.tls.json
+    # (rewritten each start; netidx-resolver.json is kept for rolling back)
+    # and passes bfdb --netidx-tls <home>\netidx-tls.bfdb.json. It cannot do
+    # that with netidx_resolver_config above: a resolver config of your own is
+    # never rewritten, so make that one TLS by hand.
+    # netidx_tls:
+    #   dir: "C:\\fowl\\tls"                 # ca.pem, <name>.crt and <name>.key for each name below
+    #   resolver: "resolver.campaign.fowl"   # this box's resolver (its certificate's name)
+    #   identity: "bfdb.fowl"                # bfdb's certificate
+    #   grant: ["engine.campaign.fowl"]      # the engines' certificates: full access, like bfdb
+    #   # domain: "fowl"                     # default: the last label of `resolver`
+    #   # trusted: "C:\\fowl\\tls\\ca.pem"   # default: <dir>\ca.pem
+    #   # perms: {"/": {"bfdb.fowl": "swlpd", "engine.campaign.fowl": "swlpd"}}   # replaces the generated perms
     # public_api_url: "https://api.vectorstrike.org"   # this bfdb's public origin, for range card images in Discord
     engine_config: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\ODFv2_CFG"
     config: "C:\\Users\\ATPAdmin\\Saved Games\\DCS.vectorstrike_1\\campaign.json"
@@ -414,6 +432,9 @@ DEFAULT:
     #     # (\\192.168.1.60\FowlRangeLogs\stats.jsonl ...).
     #     # netidx_resolver: "192.168.1.60:4564"
     #     # netidx_config: "C:\fowl\netidx.range.json"   # or name a client.json yourself
+    #     # Once that PC's resolver runs TLS (deploy/netidx-tls.md): its
+    #     # certificate's name. bfdb reaches it as the bfdb.netidx_tls identity.
+    #     # netidx_tls_resolver: "resolver.range.fowl"
     #     public: true
     #     # A range instance NEVER inherits `gci.enabled: true` from the shared
     #     # block below -- GCI stays off unless you set it here. Spelled out

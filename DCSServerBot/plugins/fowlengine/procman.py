@@ -275,6 +275,12 @@ def _expand(val) -> Optional[str]:
     return os.path.expandvars(val)
 
 
+def _tls_under(name: str, domain: str) -> bool:
+    """`name` is `domain` or a name under it (whole labels): what netidx needs
+    to offer an identity filed under `domain` to a server called `name`."""
+    return bool(domain) and (name == domain or name.endswith("." + domain))
+
+
 def _opt_int(val) -> Optional[str]:
     """A whole-number YAML value as a flag argument; empty/missing/garbage -> None
     (bfdb's own default then applies)."""
@@ -801,6 +807,12 @@ class Procman:
                 # of the shared one. See deploy/range.md, "Range on a second PC".
                 "netidx_config": self._netidx_config_for(inst),
             }
+            # Mutual TLS for that resolver, only with netidx_tls_resolver and
+            # bfdb.netidx_tls both set (deploy/netidx-tls.md); absent, the
+            # entry is what it always was.
+            inst_tls = self._instance_tls(inst)
+            if inst_tls:
+                entry["netidx_tls"] = inst_tls
             self._warn_unreachable_paths(inst_id, entry)
             entries.append(entry)
         payload = {
@@ -1224,6 +1236,9 @@ class Procman:
             "--snapshot-interval": _opt_int(c.get("snapshot_interval")),
             "--snapshot-prefix": (c.get("snapshot_prefix") or None),
             "--snapshot-region": (c.get("snapshot_region") or None),
+            # Mutual TLS to the shared resolver (deploy/netidx-tls.md); None,
+            # and so no flag, unless bfdb.netidx_tls is set.
+            "--netidx-tls": self._render_bfdb_tls(),
         }
         if instances_file:
             # Multi-instance: every per-server path/port/base lives in the file,
@@ -1474,6 +1489,145 @@ class Procman:
             out.append(a)
         return " ".join(out)
 
+    # ---- netidx TLS (opt-in) ---------------------------------------------
+
+    def netidx_tls(self) -> Optional[dict]:
+        """`bfdb.netidx_tls:` with its paths worked out, or None when TLS is off
+        -- the block is absent, the default and today's Anonymous netidx -- or
+        unusable (said in the log, and then also off: a half-made TLS setup
+        must not take the resolver down). deploy/netidx-tls.md.
+
+        `dir` holds `ca.pem` and `<name>.crt` / `<name>.key` for each name:
+        `resolver` (the resolver procman runs on this box) and `identity`
+        (bfdb's own). `grant` names the other identities (the engines) the
+        resolver gives full access, besides bfdb's; `perms` replaces the
+        generated permissions outright."""
+        t = self.cfg.get("netidx_tls")
+        if not t:
+            return None
+        if not isinstance(t, dict):
+            self.log.error("FowlEngine/procman: bfdb.netidx_tls must be a mapping -- netidx stays Anonymous")
+            return None
+        d = _expand(t.get("dir"))
+        resolver = str(t.get("resolver") or "").strip()
+        identity = str(t.get("identity") or "").strip()
+        if not (d and resolver and identity):
+            self.log.error(
+                "FowlEngine/procman: bfdb.netidx_tls needs dir, resolver and identity -- netidx stays Anonymous"
+            )
+            return None
+        domain = str(t.get("domain") or "").strip(".") or resolver.rsplit(".", 1)[-1]
+        if not _tls_under(resolver, domain):
+            self.log.error(
+                f"FowlEngine/procman: bfdb.netidx_tls.resolver {resolver!r} is not under domain {domain!r} "
+                f"-- netidx stays Anonymous"
+            )
+            return None
+        grant = t.get("grant") or []
+        if isinstance(grant, str):
+            grant = [grant]
+        return {
+            "dir": d,
+            "trusted": _expand(t.get("trusted")) or os.path.join(d, "ca.pem"),
+            "resolver": resolver,
+            "identity": identity,
+            "domain": str(t.get("domain") or "").strip(".") or None,
+            "grant": [str(g).strip() for g in grant if str(g).strip()],
+            "perms": t.get("perms") if isinstance(t.get("perms"), dict) else None,
+            "askpass": _expand(t.get("askpass")),
+        }
+
+    def _tls_client_block(self, tls: dict, resolver_name: str) -> dict:
+        """bfdb's TLS block for a resolver called `resolver_name`: the shape of
+        fowlbg::netidx::Tls (`--netidx-tls`, an instance's `netidx_tls`)."""
+        d, ident = tls["dir"], tls["identity"]
+        out = {
+            "trusted": tls["trusted"],
+            "certificate": os.path.join(d, f"{ident}.crt"),
+            "private_key": os.path.join(d, f"{ident}.key"),
+            "resolver_name": resolver_name,
+        }
+        if tls["domain"]:
+            out["domain"] = tls["domain"]
+        if tls["askpass"]:
+            out["askpass"] = tls["askpass"]
+        return out
+
+    def _write_json(self, path: str, payload: dict) -> Optional[str]:
+        """Write `payload` to `path` atomically; the path, or None if it failed
+        and there is no older copy."""
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, indent=2)
+            os.replace(tmp, path)
+            return path
+        except OSError as ex:
+            self.log.error(f"FowlEngine/procman: failed to write {path}: {ex}")
+            return path if os.path.exists(path) else None
+
+    def _render_bfdb_tls(self) -> Optional[str]:
+        """`--netidx-tls`: <home>/netidx-tls.bfdb.json for the shared resolver,
+        or None with TLS off."""
+        tls = self.netidx_tls()
+        if not tls or not self.home:
+            return None
+        return self._write_json(
+            os.path.join(self.home, "netidx-tls.bfdb.json"), self._tls_client_block(tls, tls["resolver"])
+        )
+
+    def _instance_tls(self, inst: dict) -> Optional[dict]:
+        """An instance's `netidx_tls` for bfdb: set when it names its resolver's
+        TLS name (`netidx_tls_resolver:`, a range PC whose resolver runs TLS).
+        Unset, the instance follows the shared resolver (`--netidx-tls`) when it
+        has no netidx_config/netidx_resolver of its own, else stays Anonymous."""
+        name = str(inst.get("netidx_tls_resolver") or "").strip()
+        if not name:
+            return None
+        tls = self.netidx_tls()
+        if not tls:
+            self.log.error(
+                f"FowlEngine/procman: instance {inst.get('id')} sets netidx_tls_resolver but bfdb.netidx_tls "
+                f"is not set up -- this instance stays Anonymous"
+            )
+            return None
+        return self._tls_client_block(tls, name)
+
+    def _tls_resolver_config(self, tls: dict) -> Optional[str]:
+        """<home>/netidx-resolver.tls.json, rewritten on every start from
+        `bfdb.netidx_tls` (the Anonymous netidx-resolver.json is left as it is,
+        for rolling back). Loopback, like the Anonymous one."""
+        d, name = tls["dir"], tls["resolver"]
+        perms = tls["perms"]
+        if perms is None:
+            everyone = [tls["identity"], *tls["grant"]]
+            perms = {"/": {i: "swlpd" for i in everyone}}
+        cfg = {
+            "parent": None,
+            "children": [],
+            "member_servers": [{
+                "pid_file": "",
+                "addr": f"127.0.0.1:{NETIDX_RESOLVER_PORT}",
+                "max_connections": 768,
+                "hello_timeout": 10,
+                "reader_ttl": 60,
+                "writer_ttl": 120,
+                "id_map_type": "DoNotMap",
+                "auth": {"Tls": {
+                    "name": name,
+                    "trusted": tls["trusted"],
+                    "certificate": os.path.join(d, f"{name}.crt"),
+                    "private_key": os.path.join(d, f"{name}.key"),
+                }},
+            }],
+            "perms": perms,
+        }
+        path = self._write_json(os.path.join(self.home, "netidx-resolver.tls.json"), cfg)
+        if path:
+            self.log.info(f"FowlEngine/procman: netidx TLS resolver config {path} (resolver {name})")
+        return path
+
     # ---- netidx resolver -------------------------------------------------
 
     @property
@@ -1499,10 +1653,20 @@ class Procman:
     def _resolver_config(self) -> Optional[str]:
         """`bfdb.netidx_resolver_config`, else a loopback-only one written to
         <home>/netidx-resolver.json the first time (resolver-server will not
-        start without -c)."""
+        start without -c). With `bfdb.netidx_tls` set it is the TLS one,
+        <home>/netidx-resolver.tls.json, instead."""
         rcfg = self._resolved("netidx_resolver_config")
+        tls = self.netidx_tls()
+        if tls and rcfg:
+            self.log.warning(
+                f"FowlEngine/procman: bfdb.netidx_tls is set but netidx_resolver_config names your own "
+                f"resolver config ({rcfg}) -- procman leaves it alone, so switch its member server and "
+                f"perms to TLS yourself (deploy/netidx-tls.md)"
+            )
         if rcfg or not self.home:
             return rcfg
+        if tls:
+            return self._tls_resolver_config(tls)
         path = os.path.join(self.home, "netidx-resolver.json")
         if not os.path.exists(path):
             cfg = {
