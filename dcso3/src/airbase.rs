@@ -27,7 +27,7 @@ wrapped_prim!(AirbaseId, i64, Hash, Copy);
 
 wrapped_table!(Runway, None);
 
-impl<'lua> Runway<'lua> {
+impl Runway {
     pub fn id(&self) -> Result<RunwayId> {
         Ok(self.t.raw_get("Name")?)
     }
@@ -36,8 +36,8 @@ impl<'lua> Runway<'lua> {
     /// bare "22". DCS has stored this as either a string or a number across
     /// versions, so accept both.
     pub fn name(&self) -> Result<String> {
-        match self.t.raw_get::<_, Value>("Name")? {
-            Value::String(s) => Ok(String::from(s.to_str()?)),
+        match self.t.raw_get::<Value>("Name")? {
+            Value::String(s) => Ok(String::from(&*s.to_str()?)),
             Value::Integer(i) => Ok(String::from(format!("{:02}", i))),
             Value::Number(n) => Ok(String::from(format!("{:02}", n as i64))),
             _ => bail!("runway has no usable Name field"),
@@ -69,8 +69,8 @@ pub enum AirbaseCategory {
     Ship,
 }
 
-impl<'lua> FromLua<'lua> for AirbaseCategory {
-    fn from_lua(value: Value<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for AirbaseCategory {
+    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
         match u32::from_lua(value, _lua)? {
             0 => Ok(Self::Airdrome),
             1 => Ok(Self::Helipad),
@@ -170,27 +170,27 @@ impl ParkingSpot {
     }
 }
 
-impl<'lua> FromLua<'lua> for ParkingSpot {
-    fn from_lua(value: Value<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for ParkingSpot {
+    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
         let tbl: LuaTable = FromLua::from_lua(value, _lua)?;
         Ok(Self {
             term_index: tbl.raw_get("Term_Index")?,
             term_type: tbl.raw_get("Term_Type")?,
             pos: tbl.raw_get("vTerminalPos")?,
-            dist_to_rw: tbl.raw_get::<_, Option<f64>>("fDistToRW")?.unwrap_or(0.),
+            dist_to_rw: tbl.raw_get::<Option<f64>>("fDistToRW")?.unwrap_or(0.),
             // Kept as the three states DCS actually has. `Option<bool>` is
             // `None` only for a missing key -- Lua's own truthiness makes
             // anything present-but-not-`false` read as `true` -- so this
             // distinguishes "DCS says no" from "DCS did not say".
-            to_ac: tbl.raw_get::<_, Option<bool>>("TO_AC")?,
+            to_ac: tbl.raw_get::<Option<bool>>("TO_AC")?,
         })
     }
 }
 
 wrapped_table!(Airbase, Some("Airbase"));
 
-impl<'lua> Airbase<'lua> {
-    pub fn get_by_name(lua: MizLua<'lua>, name: String) -> Result<Self> {
+impl Airbase {
+    pub fn get_by_name(lua: MizLua, name: String) -> Result<Self> {
         let globals = lua.inner().globals();
         let airbase: LuaTable = globals.raw_get("Airbase")?;
         Ok(airbase.call_function("getByName", name)?)
@@ -204,7 +204,7 @@ impl<'lua> Airbase<'lua> {
         Ok(self.t.call_method("destroy", ())?)
     }
 
-    pub fn get_desc(&self) -> Result<mlua::Table<'lua>> {
+    pub fn get_desc(&self) -> Result<mlua::Table> {
         Ok(self.t.call_method("getDesc", ())?)
     }
 
@@ -227,7 +227,7 @@ impl<'lua> Airbase<'lua> {
         Ok(self.t.call_method("getCallsign", ())?)
     }
 
-    pub fn get_unit(&self, i: i64) -> Result<Object<'lua>> {
+    pub fn get_unit(&self, i: i64) -> Result<Object> {
         Ok(self.t.call_method("getUnit", i)?)
     }
 
@@ -239,7 +239,7 @@ impl<'lua> Airbase<'lua> {
         Ok(self.t.call_method("getID", ())?)
     }
 
-    pub fn get_parking(&self, available: bool) -> Result<Parking<'lua>> {
+    pub fn get_parking(&self, available: bool) -> Result<Parking> {
         Ok(self.t.call_method("getParking", available)?)
     }
 
@@ -258,7 +258,7 @@ impl<'lua> Airbase<'lua> {
         Ok(spots)
     }
 
-    pub fn get_runways(&self) -> Result<Sequence<'lua, Runway<'lua>>> {
+    pub fn get_runways(&self) -> Result<Sequence<Runway>> {
         Ok(self.t.call_method("getRunways", ())?)
     }
 
@@ -286,28 +286,28 @@ impl<'lua> Airbase<'lua> {
         Ok(self.t.call_method("setCoalition", coa)?)
     }
 
-    pub fn get_warehouse(&self) -> Result<Warehouse<'lua>> {
+    pub fn get_warehouse(&self) -> Result<Warehouse> {
         Ok(self.t.call_method("getWarehouse", ())?)
     }
 
-    pub fn as_object(&self) -> Result<Object<'lua>> {
-        Ok(Object::from_lua(Value::Table(self.t.clone()), self.lua)?)
+    pub fn as_object(&self) -> Result<Object> {
+        Ok(Object::from_lua(Value::Table(self.t.clone()), &self.lua)?)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ClassAirbase;
 
-impl<'lua> DcsObject<'lua> for Airbase<'lua> {
+impl DcsObject for Airbase {
     type Class = ClassAirbase;
 
-    fn get_instance(lua: MizLua<'lua>, id: &DcsOid<Self::Class>) -> Result<Self> {
+    fn get_instance(lua: MizLua, id: &DcsOid<Self::Class>) -> Result<Self> {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
         let t = Airbase {
             t,
-            lua: lua.inner(),
+            lua: lua.inner().clone(),
         };
         if !t.is_exist()? {
             bail!("{} is an invalid airbase", id.id)
@@ -315,7 +315,7 @@ impl<'lua> DcsObject<'lua> for Airbase<'lua> {
         Ok(t)
     }
 
-    fn get_instance_dyn<T>(lua: MizLua<'lua>, id: &DcsOid<T>) -> Result<Self> {
+    fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Airbase")?;
         let id = DcsOid {
             id: id.id,
@@ -334,7 +334,7 @@ impl<'lua> DcsObject<'lua> for Airbase<'lua> {
     }
 
     fn change_instance_dyn<T>(self, id: &DcsOid<T>) -> Result<Self> {
-        id.check_implements(MizLua(self.lua), "Airbase")?;
+        id.check_implements(MizLua(&self.lua), "Airbase")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
             bail!("{} is an invalid airbase", id.id)

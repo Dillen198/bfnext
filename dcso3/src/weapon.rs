@@ -85,9 +85,9 @@ simple_enum!(WeaponFlag, u64, [
 
 wrapped_table!(Weapon, Some("Weapon"));
 
-impl<'lua> Weapon<'lua> {
-    pub fn as_object(&self) -> Result<Object<'lua>> {
-        Ok(Object::from_lua(Value::Table(self.t.clone()), self.lua)?)
+impl Weapon {
+    pub fn as_object(&self) -> Result<Object> {
+        Ok(Object::from_lua(Value::Table(self.t.clone()), &self.lua)?)
     }
 
     pub fn is_exist(&self) -> Result<bool> {
@@ -102,18 +102,18 @@ impl<'lua> Weapon<'lua> {
         Ok(self.t.call_method("getTypeName", ())?)
     }
 
-    pub fn get_launcher(&self) -> Result<Unit<'lua>> {
+    pub fn get_launcher(&self) -> Result<Unit> {
         Ok(self.t.call_method("getLauncher", ())?)
     }
 
-    pub fn get_target(&self) -> Result<Option<Object<'lua>>> {
+    pub fn get_target(&self) -> Result<Option<Object>> {
         match self.t.call_method("getTarget", ())? {
             Value::Nil => Ok(None),
-            v => Ok(Some(Object::from_lua(v, self.lua)?)),
+            v => Ok(Some(Object::from_lua(v, &self.lua)?)),
         }
     }
 
-    pub fn get_desc(&self) -> Result<mlua::Table<'lua>> {
+    pub fn get_desc(&self) -> Result<mlua::Table> {
         Ok(self.t.call_method("getDesc", ())?)
     }
 
@@ -207,17 +207,17 @@ pub struct WeaponDesc {
 
 impl WeaponDesc {
     pub fn from_table(t: &mlua::Table) -> Result<Self> {
-        let num = |k: &str| -> Option<f64> { t.raw_get::<_, Option<f64>>(k).ok().flatten() };
-        let int = |k: &str| -> Option<i64> { t.raw_get::<_, Option<i64>>(k).ok().flatten() };
+        let num = |k: &str| -> Option<f64> { t.raw_get::<Option<f64>>(k).ok().flatten() };
+        let int = |k: &str| -> Option<i64> { t.raw_get::<Option<i64>>(k).ok().flatten() };
         let warhead: Option<mlua::Table> = t.raw_get("warhead").ok().flatten();
         let wnum = |k: &str| -> Option<f64> {
             warhead
                 .as_ref()
-                .and_then(|w| w.raw_get::<_, Option<f64>>(k).ok().flatten())
+                .and_then(|w| w.raw_get::<Option<f64>>(k).ok().flatten())
         };
         Ok(Self {
-            type_name: t.raw_get::<_, Option<std::string::String>>("typeName")?.unwrap_or_default(),
-            display_name: t.raw_get::<_, Option<std::string::String>>("displayName")?.unwrap_or_default(),
+            type_name: t.raw_get::<Option<std::string::String>>("typeName")?.unwrap_or_default(),
+            display_name: t.raw_get::<Option<std::string::String>>("displayName")?.unwrap_or_default(),
             category: int("category").and_then(|c| match c {
                 0 => Some(WeaponCategory::Shell),
                 1 => Some(WeaponCategory::Missile),
@@ -259,16 +259,16 @@ impl WeaponDesc {
 
 pub use dcso3_core::weapon::ClassWeapon;
 
-impl<'lua> DcsObject<'lua> for Weapon<'lua> {
+impl DcsObject for Weapon {
     type Class = ClassWeapon;
 
-    fn get_instance(lua: MizLua<'lua>, id: &DcsOid<Self::Class>) -> Result<Self> {
+    fn get_instance(lua: MizLua, id: &DcsOid<Self::Class>) -> Result<Self> {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
         let t = Weapon {
             t,
-            lua: lua.inner(),
+            lua: lua.inner().clone(),
         };
         if !t.is_exist()? {
             bail!("{} is an invalid weapon", id.id)
@@ -276,7 +276,7 @@ impl<'lua> DcsObject<'lua> for Weapon<'lua> {
         Ok(t)
     }
 
-    fn get_instance_dyn<T>(lua: MizLua<'lua>, id: &DcsOid<T>) -> Result<Self> {
+    fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Weapon")?;
         let id = DcsOid {
             id: id.id,
@@ -295,7 +295,7 @@ impl<'lua> DcsObject<'lua> for Weapon<'lua> {
     }
 
     fn change_instance_dyn<T>(self, id: &DcsOid<T>) -> Result<Self> {
-        id.check_implements(MizLua(self.lua), "Weapon")?;
+        id.check_implements(MizLua(&self.lua), "Weapon")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
             bail!("{} is an invalid weapon", id.id)

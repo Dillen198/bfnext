@@ -66,7 +66,7 @@ pub use dcso3_core::net::{SlotId, Ucid};
 
 wrapped_table!(PlayerInfo, None);
 
-impl<'lua> PlayerInfo<'lua> {
+impl PlayerInfo {
     pub fn id(&self) -> Result<PlayerId> {
         Ok(self.t.raw_get("id")?)
     }
@@ -105,8 +105,8 @@ pub enum DcsLuaEnvironment {
     Export,
 }
 
-impl<'lua> IntoLua<'lua> for DcsLuaEnvironment {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for DcsLuaEnvironment {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         Ok(Value::String(match self {
             Self::Server => lua.create_string("server"),
             Self::Mission => lua.create_string("mission"),
@@ -118,8 +118,8 @@ impl<'lua> IntoLua<'lua> for DcsLuaEnvironment {
 
 wrapped_table!(Net, None);
 
-impl<'lua> Net<'lua> {
-    pub fn singleton<L: LuaEnv<'lua>>(lua: L) -> Result<Self> {
+impl Net {
+    pub fn singleton<'lua, L: LuaEnv<'lua>>(lua: L) -> Result<Self> {
         Ok(lua.inner().globals().raw_get("net")?)
     }
 
@@ -138,7 +138,7 @@ impl<'lua> Net<'lua> {
             .call_function("send_chat_to", (message, player, from_id))?)
     }
 
-    pub fn get_player_list(&self) -> Result<Sequence<'lua, PlayerId>> {
+    pub fn get_player_list(&self) -> Result<Sequence<PlayerId>> {
         Ok(self.t.call_function("get_player_list", ())?)
     }
 
@@ -150,7 +150,7 @@ impl<'lua> Net<'lua> {
         Ok(self.t.call_function("get_server_id", ())?)
     }
 
-    pub fn get_player_info(&self, id: PlayerId) -> Result<PlayerInfo<'_>> {
+    pub fn get_player_info(&self, id: PlayerId) -> Result<PlayerInfo> {
         Ok(self.t.call_function("get_player_info", id)?)
     }
 
@@ -176,11 +176,11 @@ impl<'lua> Net<'lua> {
             .call_function("force_player_slot", (id, side, slot))?)
     }
 
-    pub fn lua2json<T: IntoLua<'lua>>(&self, v: T) -> Result<String> {
+    pub fn lua2json<T: IntoLua>(&self, v: T) -> Result<String> {
         Ok(self.t.call_function("lua2json", v)?)
     }
 
-    pub fn json2lua<T: FromLua<'lua>>(&self, v: String) -> Result<T> {
+    pub fn json2lua<T: FromLua>(&self, v: String) -> Result<T> {
         Ok(self.t.call_function("json2lua", v)?)
     }
 

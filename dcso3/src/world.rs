@@ -49,8 +49,8 @@ pub enum SearchVolume {
     },
 }
 
-impl<'lua> IntoLua<'lua> for SearchVolume {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for SearchVolume {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let tbl = lua.create_table()?;
         let params = lua.create_table()?;
         match self {
@@ -88,38 +88,38 @@ impl<'lua> IntoLua<'lua> for SearchVolume {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct MarkPanel<'lua> {
+pub struct MarkPanel {
     pub id: MarkId,
     pub time: Time,
-    pub initiator: Option<Unit<'lua>>,
+    pub initiator: Option<Unit>,
     pub side: SideFilter,
     pub group_id: Option<GroupId>,
     pub text: String,
     pub pos: LuaVec3,
 }
 
-impl<'lua> FromLua<'lua> for MarkPanel<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for MarkPanel {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = LuaTable::from_lua(value, lua)?;
         Ok(Self {
             id: tbl.raw_get("idx")?,
             time: tbl.raw_get("time")?,
             initiator: crate::event::opt_unit(&tbl, "initiator", lua)?,
-            side: match tbl.raw_get::<_, i64>("coalition")? {
+            side: match tbl.raw_get::<i64>("coalition")? {
                 -1 | 255 => SideFilter::All,
                 0 => SideFilter::Neutral,
                 1 => SideFilter::Red,
                 2 => SideFilter::Blue,
                 _ => return Err(cvt_err("side filter")),
             },
-            group_id: match tbl.raw_get::<_, i64>("groupID")? {
+            group_id: match tbl.raw_get::<i64>("groupID")? {
                 -1 => None,
                 n => Some(GroupId::from(n)),
             },
             // DCS can leave `text` nil on a mark nobody has typed into yet.
             // For a mark, no text and empty text mean the same thing, so it
             // reads as "" rather than making every key matcher unwrap it.
-            text: tbl.raw_get::<_, Option<String>>("text")?.unwrap_or_default(),
+            text: tbl.raw_get::<Option<String>>("text")?.unwrap_or_default(),
             pos: tbl.raw_get("pos")?,
         })
     }
@@ -135,14 +135,14 @@ impl HandlerId {
 
 wrapped_table!(World, None);
 
-impl<'lua> World<'lua> {
-    pub fn singleton(lua: MizLua<'lua>) -> Result<Self> {
+impl World {
+    pub fn singleton(lua: MizLua) -> Result<Self> {
         Ok(lua.inner().globals().raw_get("world")?)
     }
 
     pub fn add_event_handler<F>(&self, f: F) -> Result<HandlerId>
     where
-        F: Fn(MizLua<'lua>, Event) -> Result<()> + 'static,
+        F: Fn(MizLua, Event) -> Result<()> + 'static,
     {
         let globals = self.lua.globals();
         let id = HandlerId::new();
@@ -160,7 +160,7 @@ impl<'lua> World<'lua> {
                     }
                 })?,
         )?;
-        self.t.call_function::<_, ()>("addEventHandler", tbl.clone())?;
+        self.t.call_function::<()>("addEventHandler", tbl.clone())?;
         globals.raw_set(id.key(), tbl)?;
         Ok(id)
     }
@@ -170,16 +170,16 @@ impl<'lua> World<'lua> {
         let key = id.key();
         let handler = globals.raw_get(key.clone())?;
         let handler = as_tbl("EventHandler", None, handler)?;
-        self.t.call_function::<_, ()>("removeEventHandler", handler)?;
+        self.t.call_function::<()>("removeEventHandler", handler)?;
         globals.raw_remove(key)?;
         Ok(())
     }
 
-    pub fn get_player(&self) -> Result<Sequence<'lua, Unit<'lua>>> {
+    pub fn get_player(&self) -> Result<Sequence<Unit>> {
         Ok(self.t.call_function("getPlayer", ())?)
     }
 
-    pub fn get_airbases(&self) -> Result<Sequence<'lua, Airbase<'lua>>> {
+    pub fn get_airbases(&self) -> Result<Sequence<Airbase>> {
         Ok(self.t.call_function("getAirbases", ())?)
     }
 
@@ -191,8 +191,8 @@ impl<'lua> World<'lua> {
         f: F,
     ) -> Result<()>
     where
-        T: IntoLua<'lua> + FromLua<'lua>,
-        F: Fn(MizLua, Object<'lua>, T) -> Result<bool> + 'static,
+        T: IntoLua + FromLua,
+        F: Fn(MizLua, Object, T) -> Result<bool> + 'static,
     {
         let f = self
             .lua
@@ -208,7 +208,7 @@ impl<'lua> World<'lua> {
         Ok(self.t.call_function("removeJunk", volume)?)
     }
 
-    pub fn get_mark_panels(&self) -> Result<Sequence<'lua, MarkPanel<'lua>>> {
+    pub fn get_mark_panels(&self) -> Result<Sequence<MarkPanel>> {
         Ok(self.t.call_function("getMarkPanels", ())?)
     }
 }

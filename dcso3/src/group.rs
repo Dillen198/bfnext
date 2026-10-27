@@ -49,8 +49,8 @@ pub enum Owner {
     Side(Side),
 }
 
-impl<'lua> FromLua<'lua> for Owner {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Owner {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         match i64::from_lua(value.clone(), lua)? {
             3 => Ok(Self::Contested),
             _ => Ok(Owner::Side(Side::from_lua(value, lua)?)),
@@ -60,8 +60,8 @@ impl<'lua> FromLua<'lua> for Owner {
 
 wrapped_table!(Group, Some("Group"));
 
-impl<'lua> Group<'lua> {
-    pub fn get_by_name(lua: MizLua<'lua>, name: &str) -> Result<Group<'lua>> {
+impl Group {
+    pub fn get_by_name(lua: MizLua, name: &str) -> Result<Group> {
         let globals = lua.inner().globals();
         let class = as_tbl("Group", None, globals.raw_get("Group")?)?;
         let g: Group = class.call_function("getByName", name)?;
@@ -109,15 +109,15 @@ impl<'lua> Group<'lua> {
         Ok(self.t.call_method("getInitialSize", ())?)
     }
 
-    pub fn get_unit(&self, index: usize) -> Result<Unit<'lua>> {
+    pub fn get_unit(&self, index: usize) -> Result<Unit> {
         Ok(self.t.call_method("getUnit", index)?)
     }
 
-    pub fn get_units(&self) -> Result<Sequence<'lua, Unit<'lua>>> {
+    pub fn get_units(&self) -> Result<Sequence<Unit>> {
         Ok(self.t.call_method("getUnits", ())?)
     }
 
-    pub fn get_controller(&self) -> Result<Controller<'lua>> {
+    pub fn get_controller(&self) -> Result<Controller> {
         Ok(self.t.call_method("getController", ())?)
     }
 
@@ -125,24 +125,24 @@ impl<'lua> Group<'lua> {
         Ok(self.t.call_method("enableEmission", on)?)
     }
 
-    pub fn as_object(&self) -> Result<Object<'lua>> {
-        Ok(Object::from_lua(Value::Table(self.t.clone()), self.lua)?)
+    pub fn as_object(&self) -> Result<Object> {
+        Ok(Object::from_lua(Value::Table(self.t.clone()), &self.lua)?)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ClassGroup;
 
-impl<'lua> DcsObject<'lua> for Group<'lua> {
+impl DcsObject for Group {
     type Class = ClassGroup;
 
-    fn get_instance(lua: MizLua<'lua>, id: &DcsOid<Self::Class>) -> Result<Self> {
+    fn get_instance(lua: MizLua, id: &DcsOid<Self::Class>) -> Result<Self> {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
         let t = Group {
             t,
-            lua: lua.inner(),
+            lua: lua.inner().clone(),
         };
         if !t.is_exist()? {
             bail!("{} is an invalid group", id.id)
@@ -155,7 +155,7 @@ impl<'lua> DcsObject<'lua> for Group<'lua> {
         Ok(t)
     }
 
-    fn get_instance_dyn<T>(lua: MizLua<'lua>, id: &DcsOid<T>) -> Result<Self> {
+    fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Group")?;
         let id = DcsOid {
             id: id.id,
@@ -179,7 +179,7 @@ impl<'lua> DcsObject<'lua> for Group<'lua> {
     }
 
     fn change_instance_dyn<T>(self, id: &DcsOid<T>) -> Result<Self> {
-        id.check_implements(MizLua(self.lua), "Group")?;
+        id.check_implements(MizLua(&self.lua), "Group")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
             bail!("{} is an invalid group", id.id)

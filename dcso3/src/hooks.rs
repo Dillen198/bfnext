@@ -24,28 +24,28 @@ use mlua::prelude::*;
 const LOGIN_SERVER_ERROR: &str = "server error, try again";
 
 #[derive(Debug)]
-pub struct UserHooks<'lua> {
-    on_mission_load_begin: Option<mlua::Function<'lua>>,
-    on_mission_load_progress: Option<mlua::Function<'lua>>,
-    on_mission_load_end: Option<mlua::Function<'lua>>,
-    on_simulation_start: Option<mlua::Function<'lua>>,
-    on_simulation_stop: Option<mlua::Function<'lua>>,
-    on_simulation_frame: Option<mlua::Function<'lua>>,
-    on_simulation_pause: Option<mlua::Function<'lua>>,
-    on_simulation_resume: Option<mlua::Function<'lua>>,
-    on_player_connect: Option<mlua::Function<'lua>>,
-    on_player_disconnect: Option<mlua::Function<'lua>>,
-    on_player_start: Option<mlua::Function<'lua>>,
-    on_player_stop: Option<mlua::Function<'lua>>,
-    on_player_change_slot: Option<mlua::Function<'lua>>,
-    on_player_try_connect: Option<mlua::Function<'lua>>,
-    on_player_try_send_chat: Option<mlua::Function<'lua>>,
-    on_player_try_change_slot: Option<mlua::Function<'lua>>,
-    lua: &'lua Lua,
+pub struct UserHooks {
+    on_mission_load_begin: Option<mlua::Function>,
+    on_mission_load_progress: Option<mlua::Function>,
+    on_mission_load_end: Option<mlua::Function>,
+    on_simulation_start: Option<mlua::Function>,
+    on_simulation_stop: Option<mlua::Function>,
+    on_simulation_frame: Option<mlua::Function>,
+    on_simulation_pause: Option<mlua::Function>,
+    on_simulation_resume: Option<mlua::Function>,
+    on_player_connect: Option<mlua::Function>,
+    on_player_disconnect: Option<mlua::Function>,
+    on_player_start: Option<mlua::Function>,
+    on_player_stop: Option<mlua::Function>,
+    on_player_change_slot: Option<mlua::Function>,
+    on_player_try_connect: Option<mlua::Function>,
+    on_player_try_send_chat: Option<mlua::Function>,
+    on_player_try_change_slot: Option<mlua::Function>,
+    lua: Lua,
 }
 
-impl<'lua> UserHooks<'lua> {
-    pub fn new(lua: HooksLua<'lua>) -> Self {
+impl UserHooks {
+    pub fn new(lua: HooksLua) -> Self {
         Self {
             on_mission_load_begin: None,
             on_mission_load_progress: None,
@@ -63,7 +63,7 @@ impl<'lua> UserHooks<'lua> {
             on_player_try_change_slot: None,
             on_player_try_connect: None,
             on_player_try_send_chat: None,
-            lua: lua.inner(),
+            lua: lua.inner().clone(),
         }
     }
 

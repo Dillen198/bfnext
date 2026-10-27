@@ -29,19 +29,19 @@ use std::ops::Deref;
 pub use dcso3_core::coalition::Side;
 
 #[derive(Debug, Clone)]
-pub enum Static<'lua> {
-    Airbase(Airbase<'lua>),
-    Static(StaticObject<'lua>),
+pub enum Static {
+    Airbase(Airbase),
+    Static(StaticObject),
 }
 
 simple_enum_unknown!(Service, u8, [Atc => 0, Awacs => 1, Fac => 3, Tanker => 2]);
 wrapped_table!(Coalition, None);
 
-impl<'lua> Coalition<'lua> {
-    pub fn singleton(lua: MizLua<'lua>) -> Result<Self> {
+impl Coalition {
+    pub fn singleton(lua: MizLua) -> Result<Self> {
         Ok(Self {
             t: lua.inner().globals().raw_get("coalition")?,
-            lua: lua.inner(),
+            lua: lua.inner().clone(),
         })
     }
 
@@ -49,8 +49,8 @@ impl<'lua> Coalition<'lua> {
         &self,
         country: Country,
         category: GroupCategory,
-        data: env::miz::Group<'lua>,
-    ) -> Result<Group<'lua>> {
+        data: env::miz::Group,
+    ) -> Result<Group> {
         Ok(record_perf!(
             add_group,
             self.t
@@ -61,41 +61,41 @@ impl<'lua> Coalition<'lua> {
     pub fn add_static_object(
         &self,
         country: Country,
-        data: env::miz::Unit<'lua>,
-    ) -> Result<Static<'lua>> {
+        data: env::miz::Unit,
+    ) -> Result<Static> {
         let tbl: LuaTable = record_perf!(
             add_static_object,
             self.t.call_function("addStaticObject", (country, data))?
         );
         let mt = tbl
-            .get_metatable()
+            .metatable()
             .ok_or_else(|| anyhow!("returned static object has no meta table"))?;
-        if mt.raw_get::<_, String>("className_")?.as_str() == "Airbase" {
+        if mt.raw_get::<String>("className_")?.as_str() == "Airbase" {
             Ok(Static::Airbase(Airbase::from_lua(
                 Value::Table(tbl),
-                self.lua,
+                &self.lua,
             )?))
         } else {
             Ok(Static::Static(StaticObject::from_lua(
                 Value::Table(tbl),
-                self.lua,
+                &self.lua,
             )?))
         }
     }
 
-    pub fn get_groups(&self, side: Side) -> Result<Sequence<'lua, Group<'lua>>> {
+    pub fn get_groups(&self, side: Side) -> Result<Sequence<Group>> {
         Ok(self.t.call_function("getGroups", side)?)
     }
 
-    pub fn get_static_objects(&self, side: Side) -> Result<Sequence<'lua, StaticObject<'lua>>> {
+    pub fn get_static_objects(&self, side: Side) -> Result<Sequence<StaticObject>> {
         Ok(self.t.call_function("getStaticObjects", side)?)
     }
 
-    pub fn get_airbases(&self, side: Side) -> Result<Sequence<'lua, Airbase<'lua>>> {
+    pub fn get_airbases(&self, side: Side) -> Result<Sequence<Airbase>> {
         Ok(self.t.call_function("getAirbases", side)?)
     }
 
-    pub fn get_players(&self, side: Side) -> Result<Sequence<'lua, Unit<'lua>>> {
+    pub fn get_players(&self, side: Side) -> Result<Sequence<Unit>> {
         Ok(self.t.call_function("getPlayers", side)?)
     }
 
@@ -103,7 +103,7 @@ impl<'lua> Coalition<'lua> {
         &self,
         side: Side,
         service: Service,
-    ) -> Result<Sequence<'lua, Unit<'lua>>> {
+    ) -> Result<Sequence<Unit>> {
         Ok(self
             .t
             .call_function("getServiceProviders", (side, service))?)

@@ -23,7 +23,7 @@ use dcso3::{
 use mlua::{prelude::*, Lua, Value};
 
 /// Build the table DCS writes for a WrappedAction/Option waypoint task.
-fn option_task<'lua>(lua: &'lua Lua, tag: u8, value: Value<'lua>) -> Value<'lua> {
+fn option_task(lua: &Lua, tag: u8, value: Value) -> Value {
     let params = lua.create_table().unwrap();
     params.set("name", tag).unwrap();
     params.set("value", value).unwrap();
@@ -38,7 +38,7 @@ fn option_task<'lua>(lua: &'lua Lua, tag: u8, value: Value<'lua>) -> Value<'lua>
     Value::Table(task)
 }
 
-fn parse_contact<'lua>(lua: &'lua Lua, value: &str) -> Vec<(Attribute, bool)> {
+fn parse_contact(lua: &Lua, value: &str) -> Vec<(Attribute, bool)> {
     let v = Value::String(lua.create_string(value).unwrap());
     let task: Task = FromLua::from_lua(option_task(lua, 21, v), lua)
         .unwrap_or_else(|e| panic!("parsing radio-usage-contact {value:?}: {e}"));

@@ -129,11 +129,11 @@ string_enum!(Attribute, u8, [
 
 wrapped_table!(Attributes, None);
 
-impl<'lua> Attributes<'lua> {
-    pub fn new(lua: &'lua Lua) -> Result<Self> {
+impl Attributes {
+    pub fn new(lua: &Lua) -> Result<Self> {
         Ok(Self {
             t: lua.create_table()?,
-            lua
+            lua: lua.clone(),
         })
     }
 

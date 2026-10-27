@@ -34,17 +34,17 @@ pub enum BirthPlace {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Shot<'lua> {
+pub struct Shot {
     pub time: Time,
     /// None when the shooter no longer exists by the time the event is
     /// delivered (see `opt_object`); the weapon is still live and tracked.
-    pub initiator: Option<Unit<'lua>>,
-    pub weapon: Weapon<'lua>,
+    pub initiator: Option<Unit>,
+    pub weapon: Weapon,
     pub weapon_name: Option<String>,
 }
 
-impl<'lua> FromLua<'lua> for Shot<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Shot {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("Shot", None, value).map_err(lua_err)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
@@ -56,14 +56,14 @@ impl<'lua> FromLua<'lua> for Shot<'lua> {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ShootingEnd<'lua> {
+pub struct ShootingEnd {
     pub time: Time,
-    pub initiator: Unit<'lua>,
+    pub initiator: Unit,
     pub weapon_name: Option<String>,
 }
 
-impl<'lua> FromLua<'lua> for ShootingEnd<'lua> {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for ShootingEnd {
+    fn from_lua(value: Value, _: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("Shot", None, value).map_err(lua_err)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
@@ -85,7 +85,7 @@ impl<'lua> FromLua<'lua> for ShootingEnd<'lua> {
 /// than a missing one, so it collapses to None too.
 fn opt_weapon_name(tbl: &mlua::Table) -> LuaResult<Option<String>> {
     Ok(tbl
-        .raw_get::<_, Option<String>>("weapon_name")?
+        .raw_get::<Option<String>>("weapon_name")?
         .filter(|s| !s.as_str().is_empty()))
 }
 
@@ -94,13 +94,13 @@ fn opt_weapon_name(tbl: &mlua::Table) -> LuaResult<Option<String>> {
 /// a unit that has since died. Those can't be turned into a usable `Object`
 /// (any method call would fail anyway), so degrade them to `None` instead of
 /// failing the whole event and spamming the log.
-fn opt_object<'lua>(
-    tbl: &LuaTable<'lua>,
+fn opt_object(
+    tbl: &LuaTable,
     key: &str,
-    lua: &'lua Lua,
-) -> LuaResult<Option<Object<'lua>>> {
-    match tbl.raw_get::<_, Value<'lua>>(key)? {
-        Value::Table(t) if t.get_metatable().is_some() => {
+    lua: &Lua,
+) -> LuaResult<Option<Object>> {
+    match tbl.raw_get::<Value>(key)? {
+        Value::Table(t) if t.metatable().is_some() => {
             Ok(Some(Object::from_lua(Value::Table(t), lua)?))
         }
         _ => Ok(None),
@@ -108,19 +108,19 @@ fn opt_object<'lua>(
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct WeaponUse<'lua> {
+pub struct WeaponUse {
     pub time: Time,
-    pub initiator: Option<Object<'lua>>,
-    pub target: Option<Object<'lua>>,
+    pub initiator: Option<Object>,
+    pub target: Option<Object>,
     pub weapon_name: Option<String>,
     /// The weapon object itself, when DCS supplies a live one. Hit and Kill
     /// carry it for missiles, bombs and rockets (not for gun rounds), and it
     /// is the only thing that ties a hit back to the Shot that launched it.
-    pub weapon: Option<Weapon<'lua>>,
+    pub weapon: Option<Weapon>,
 }
 
-impl<'lua> FromLua<'lua> for WeaponUse<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for WeaponUse {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("WeaponUse", None, value).map_err(lua_err)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
@@ -134,9 +134,9 @@ impl<'lua> FromLua<'lua> for WeaponUse<'lua> {
 
 /// `opt_object` for fields that must be a `Unit` when present. A bare table
 /// (dead unit) is None; a live object of the wrong class is still an error.
-pub(crate) fn opt_unit<'lua>(tbl: &LuaTable<'lua>, key: &str, lua: &'lua Lua) -> LuaResult<Option<Unit<'lua>>> {
-    match tbl.raw_get::<_, Value<'lua>>(key)? {
-        Value::Table(t) if t.get_metatable().is_some() => {
+pub(crate) fn opt_unit(tbl: &LuaTable, key: &str, lua: &Lua) -> LuaResult<Option<Unit>> {
+    match tbl.raw_get::<Value>(key)? {
+        Value::Table(t) if t.metatable().is_some() => {
             Ok(Some(Unit::from_lua(Value::Table(t), lua)?))
         }
         _ => Ok(None),
@@ -146,9 +146,9 @@ pub(crate) fn opt_unit<'lua>(tbl: &LuaTable<'lua>, key: &str, lua: &'lua Lua) ->
 /// The `weapon` field of an event, if it is a real weapon object. Same
 /// reasoning as `opt_object`: a bare table without a metatable is a weapon
 /// that no longer exists and cannot be called.
-fn opt_weapon<'lua>(tbl: &LuaTable<'lua>, lua: &'lua Lua) -> LuaResult<Option<Weapon<'lua>>> {
-    match tbl.raw_get::<_, Value<'lua>>("weapon")? {
-        Value::Table(t) if t.get_metatable().is_some() => {
+fn opt_weapon(tbl: &LuaTable, lua: &Lua) -> LuaResult<Option<Weapon>> {
+    match tbl.raw_get::<Value>("weapon")? {
+        Value::Table(t) if t.metatable().is_some() => {
             Ok(Weapon::from_lua(Value::Table(t), lua).ok())
         }
         _ => Ok(None),
@@ -159,18 +159,18 @@ fn opt_weapon<'lua>(tbl: &LuaTable<'lua>, lua: &'lua Lua) -> LuaResult<Option<We
 /// `Option` so a refuelling event for a unit that has just been deleted
 /// degrades to `None` instead of failing the whole event.
 #[derive(Debug, Clone, Serialize)]
-pub struct Refueling<'lua> {
+pub struct Refueling {
     pub time: Time,
     /// NB: on a dedicated server, when the receiver is a client, DCS reports
     /// the TANKER as the initiator of REFUELING and fires REFUELING_STOP
     /// twice (once for the tanker, once for the receiver). Open ED bug since
     /// 2.8.6; resolve the receiver by proximity when the initiator has the
     /// "Tankers" attribute.
-    pub initiator: Option<Object<'lua>>,
+    pub initiator: Option<Object>,
 }
 
-impl<'lua> FromLua<'lua> for Refueling<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Refueling {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("Refueling", None, value).map_err(lua_err)?;
         Ok(Self { time: tbl.raw_get("time")?, initiator: opt_object(&tbl, "initiator", lua)? })
     }
@@ -182,23 +182,23 @@ impl<'lua> FromLua<'lua> for Refueling<'lua> {
 /// `"LSO: GRADE:C _SLOX_ _LURX_ 3PTSIW WIRE #1"`. Only the Supercarrier (and
 /// the Tarawa, which shares its LSO) produces it, and not for every pass.
 #[derive(Debug, Clone, Serialize)]
-pub struct LandingQualityMark<'lua> {
+pub struct LandingQualityMark {
     pub time: Time,
-    pub initiator: Option<Object<'lua>>,
+    pub initiator: Option<Object>,
     /// The carrier the pass was flown to.
-    pub place: Option<Object<'lua>>,
+    pub place: Option<Object>,
     pub comment: Option<String>,
 }
 
-impl<'lua> FromLua<'lua> for LandingQualityMark<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for LandingQualityMark {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("LandingQualityMark", None, value).map_err(lua_err)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
             initiator: opt_object(&tbl, "initiator", lua)?,
             place: opt_object(&tbl, "place", lua)?,
             comment: tbl
-                .raw_get::<_, Option<String>>("comment")?
+                .raw_get::<Option<String>>("comment")?
                 .filter(|s| !s.as_str().is_empty()),
         })
     }
@@ -206,14 +206,14 @@ impl<'lua> FromLua<'lua> for LandingQualityMark<'lua> {
 
 /// S_EVENT_WEAPON_DROP: fires on jettison, for a narrow set of weapons only.
 #[derive(Debug, Clone, Serialize)]
-pub struct WeaponDrop<'lua> {
+pub struct WeaponDrop {
     pub time: Time,
-    pub initiator: Option<Object<'lua>>,
+    pub initiator: Option<Object>,
     pub weapon_name: Option<String>,
 }
 
-impl<'lua> FromLua<'lua> for WeaponDrop<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for WeaponDrop {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("WeaponDrop", None, value).map_err(lua_err)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
@@ -228,8 +228,8 @@ pub struct LeaveUnit {
     pub initiator: Option<DcsOid<ClassUnit>>,
 }
 
-impl<'lua> FromLua<'lua> for LeaveUnit {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for LeaveUnit {
+    fn from_lua(value: Value, _: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("LeaveUnit", None, value).map_err(lua_err)?;
         let tbl: Option<LuaTable> = tbl.raw_get("initiator")?;
         let initiator = tbl
@@ -246,30 +246,30 @@ impl<'lua> FromLua<'lua> for LeaveUnit {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct UnitEvent<'lua> {
+pub struct UnitEvent {
     pub time: Time,
-    pub initiator: Option<Object<'lua>>,
+    pub initiator: Option<Object>,
 }
 
-impl<'lua> FromLua<'lua> for UnitEvent<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for UnitEvent {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("UnitEvent", None, value).map_err(lua_err)?;
         Ok(Self { time: tbl.raw_get("time")?, initiator: opt_object(&tbl, "initiator", lua)? })
     }
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct EjectionEvent<'lua> {
+pub struct EjectionEvent {
     pub time: Time,
     /// Both are optional: DCS often omits `target` (the ejected seat/pilot)
     /// or hands over an already-dead airframe, and requiring either used to
     /// drop the whole ejection -- which is how CSAR missed downed pilots.
-    pub initiator: Option<Object<'lua>>,
-    pub target: Option<Object<'lua>>,
+    pub initiator: Option<Object>,
+    pub target: Option<Object>,
 }
 
-impl<'lua> FromLua<'lua> for EjectionEvent<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for EjectionEvent {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("EjectionEvent", None, value).map_err(lua_err)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
@@ -280,16 +280,16 @@ impl<'lua> FromLua<'lua> for EjectionEvent<'lua> {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct Birth<'lua> {
+pub struct Birth {
     pub time: Time,
     /// None if the object died before the event was delivered.
-    pub initiator: Option<Object<'lua>>,
-    pub place: Option<Object<'lua>>,
+    pub initiator: Option<Object>,
+    pub place: Option<Object>,
     pub subplace: Option<i64>,
 }
 
-impl<'lua> FromLua<'lua> for Birth<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Birth {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("AtPlace", None, value).map_err(lua_err)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
@@ -301,16 +301,16 @@ impl<'lua> FromLua<'lua> for Birth<'lua> {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct AtPlace<'lua> {
+pub struct AtPlace {
     pub time: Time,
     /// None if the object died before the event was delivered.
-    pub initiator: Option<Object<'lua>>,
-    pub place: Option<Object<'lua>>,
+    pub initiator: Option<Object>,
+    pub place: Option<Object>,
     pub subplace: Option<i64>,
 }
 
-impl<'lua> FromLua<'lua> for AtPlace<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for AtPlace {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("AtPlace", None, value).map_err(lua_err)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
@@ -322,14 +322,14 @@ impl<'lua> FromLua<'lua> for AtPlace<'lua> {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct WeaponAdd<'lua> {
+pub struct WeaponAdd {
     pub time: Time,
-    pub initiator: Option<Object<'lua>>,
+    pub initiator: Option<Object>,
     pub weapon_name: Option<String>,
 }
 
-impl<'lua> FromLua<'lua> for WeaponAdd<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for WeaponAdd {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = as_tbl("WeaponAdd", None, value).map_err(lua_err)?;
         Ok(Self {
             time: tbl.raw_get("time")?,
@@ -341,46 +341,46 @@ impl<'lua> FromLua<'lua> for WeaponAdd<'lua> {
 
 /// This is a dcs event
 #[derive(Debug, Clone, Serialize)]
-pub enum Event<'lua> {
+pub enum Event {
     Invalid,
-    Shot(Shot<'lua>),
-    Hit(WeaponUse<'lua>),
-    Takeoff(AtPlace<'lua>),
-    Land(AtPlace<'lua>),
-    Crash(UnitEvent<'lua>),
-    Ejection(EjectionEvent<'lua>),
-    Refueling(Refueling<'lua>),
-    Dead(UnitEvent<'lua>),
-    PilotDead(UnitEvent<'lua>),
+    Shot(Shot),
+    Hit(WeaponUse),
+    Takeoff(AtPlace),
+    Land(AtPlace),
+    Crash(UnitEvent),
+    Ejection(EjectionEvent),
+    Refueling(Refueling),
+    Dead(UnitEvent),
+    PilotDead(UnitEvent),
     BaseCaptured,
     MissionStart,
     MissionEnd,
     TookControl,
-    RefuelingStop(Refueling<'lua>),
-    Birth(Birth<'lua>),
+    RefuelingStop(Refueling),
+    Birth(Birth),
     HumanFailure,
     DetailedFailure,
-    EngineStartup(AtPlace<'lua>),
-    EngineShutdown(AtPlace<'lua>),
-    PlayerEnterUnit(UnitEvent<'lua>),
+    EngineStartup(AtPlace),
+    EngineShutdown(AtPlace),
+    PlayerEnterUnit(UnitEvent),
     PlayerLeaveUnit(LeaveUnit),
     PlayerComment,
-    ShootingStart(WeaponUse<'lua>),
-    ShootingEnd(ShootingEnd<'lua>),
-    MarkAdded(MarkPanel<'lua>),
-    MarkChange(MarkPanel<'lua>),
-    MarkRemoved(MarkPanel<'lua>),
-    Kill(WeaponUse<'lua>),
-    Score(UnitEvent<'lua>),
-    UnitLost(UnitEvent<'lua>),
+    ShootingStart(WeaponUse),
+    ShootingEnd(ShootingEnd),
+    MarkAdded(MarkPanel),
+    MarkChange(MarkPanel),
+    MarkRemoved(MarkPanel),
+    Kill(WeaponUse),
+    Score(UnitEvent),
+    UnitLost(UnitEvent),
     LandingAfterEjection,
     ParatrooperLanding,
     DiscardChairAfterEjection,
-    WeaponAdd(WeaponAdd<'lua>),
+    WeaponAdd(WeaponAdd),
     TriggerZone,
-    LandingQualityMark(LandingQualityMark<'lua>),
+    LandingQualityMark(LandingQualityMark),
     Bda,
-    AiAbortMission(UnitEvent<'lua>),
+    AiAbortMission(UnitEvent),
     DayNight,
     FlightTime,
     PlayerSelfKillPilot,
@@ -390,7 +390,7 @@ pub enum Event<'lua> {
     UnitDeleteTask,
     SimulationStart,
     WeaponRearm,
-    WeaponDrop(WeaponDrop<'lua>),
+    WeaponDrop(WeaponDrop),
     UnitTaskComplete,
     UnitTaskStage,
     MacExtraScore,
@@ -398,9 +398,9 @@ pub enum Event<'lua> {
     MissionWinner,
     /// S_EVENT_RUNWAY_TAKEOFF (2.9.6+): wheels leave a runway, FARP or deck.
     /// On a carrier, a bolter is RunwayTouch followed by RunwayTakeoff.
-    RunwayTakeoff(AtPlace<'lua>),
+    RunwayTakeoff(AtPlace),
     /// S_EVENT_RUNWAY_TOUCH (2.9.6+): wheels touch a runway, FARP or deck.
-    RunwayTouch(AtPlace<'lua>),
+    RunwayTouch(AtPlace),
     MacLmsRestart,
     SimulationFreeze,
     SimulationUnfreeze,
@@ -410,11 +410,11 @@ pub enum Event<'lua> {
     Max,
 }
 
-fn translate<'a, 'lua: 'a>(
-    lua: &'lua Lua,
+fn translate(
+    lua: &Lua,
     id: i64,
-    value: Value<'lua>,
-) -> Result<Event<'lua>> {
+    value: Value,
+) -> Result<Event> {
     Ok(match id {
         0 => Event::Invalid,
         1 => Event::Shot(Shot::from_lua(value, lua)?),
@@ -494,8 +494,8 @@ fn translate<'a, 'lua: 'a>(
     })
 }
 
-impl<'lua> FromLua<'lua> for Event<'lua> {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Event {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let id = as_tbl_ref("Event", &value).map_err(lua_err)?.raw_get("id")?;
         match translate(lua, id, value.clone()) {
             Ok(ev) => Ok(ev),
@@ -534,7 +534,7 @@ mod tests {
         lua
     }
 
-    fn event<'lua>(lua: &'lua Lua, src: &str) -> LuaResult<Event<'lua>> {
+    fn event(lua: &Lua, src: &str) -> LuaResult<Event> {
         let v: Value = lua.load(src).eval()?;
         Event::from_lua(v, lua)
     }

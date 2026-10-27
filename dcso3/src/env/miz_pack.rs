@@ -45,11 +45,11 @@ pub fn scratch_lua() -> Result<Lua> {
 /// must be a scratch Lua state safe to run an arbitrary DCS-authored script
 /// in (see [`scratch_lua`]) - the entry's top level `<entry_name> = { ... }`
 /// assignment is executed as-is and then read back out of `lua`'s globals.
-pub fn read_table_from_miz<'lua>(
-    lua: &'lua Lua,
+pub fn read_table_from_miz(
+    lua: &Lua,
     miz_path: &Path,
     entry_name: &str,
-) -> Result<Table<'lua>> {
+) -> Result<Table> {
     let file = fs::File::open(miz_path)
         .with_context(|| format!("opening {miz_path:?}"))?;
     let mut archive =
@@ -217,12 +217,12 @@ fn write_lua_number(f: &mut std::fmt::Formatter<'_>, n: f64) -> std::fmt::Result
     }
 }
 
-struct LuaSerVal<'lua> {
-    value: Value<'lua>,
+struct LuaSerVal {
+    value: Value,
     level: usize,
 }
 
-impl<'lua> LuaSerVal<'lua> {
+impl LuaSerVal {
     fn indented(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for _ in 0..self.level {
             write!(f, " ")?;
@@ -231,14 +231,14 @@ impl<'lua> LuaSerVal<'lua> {
     }
 }
 
-impl<'lua> Display for LuaSerVal<'lua> {
+impl Display for LuaSerVal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.value {
             Value::Boolean(b) => write!(f, "{b}"),
             Value::Integer(i) => write!(f, "{i}"),
             Value::Nil => write!(f, "nil"),
             Value::Number(n) => write_lua_number(f, *n),
-            Value::String(s) => write_lua_string(f, s.as_bytes()),
+            Value::String(s) => write_lua_string(f, &s.as_bytes()),
             Value::Table(tbl) => {
                 macro_rules! write_elt {
                     ($k:expr, $v:expr) => {
@@ -296,7 +296,8 @@ impl<'lua> Display for LuaSerVal<'lua> {
             | Value::Function(_)
             | Value::LightUserData(_)
             | Value::Thread(_)
-            | Value::UserData(_) => panic!("value type {:?} can't be serialized", self.value),
+            | Value::UserData(_)
+            | Value::Other(_) => panic!("value type {:?} can't be serialized", self.value),
         }
     }
 }
@@ -309,7 +310,7 @@ impl<'lua> Display for LuaSerVal<'lua> {
 /// ids (`warehouses.airports[<airdrome id>]`, a unit layer mask indexed from
 /// 0), so renumbering is left to callers that know which tables are arrays --
 /// see bftools' `compact_mission_arrays`.
-pub fn serialize_to_lua<'lua>(key: &str, value: Value<'lua>) -> Result<std::string::String> {
+pub fn serialize_to_lua(key: &str, value: Value) -> Result<std::string::String> {
     let res = std::panic::catch_unwind(AssertUnwindSafe(move || {
         use std::fmt::Write;
         let mut s = std::string::String::with_capacity(1024 * 1024);
@@ -389,11 +390,11 @@ mod tests {
         let src = serialize_to_lua("rt", Value::Table(t))?;
         lua.load(src.as_str()).set_mode(ChunkMode::Text).exec()?;
         let back: Table = lua.globals().raw_get("rt")?;
-        assert_eq!(back.raw_get::<_, mlua::String>("s")?.as_bytes(), odd);
-        assert!(back.raw_get::<_, f64>("nan")?.is_nan());
-        assert_eq!(back.raw_get::<_, f64>("pinf")?, f64::INFINITY);
-        assert_eq!(back.raw_get::<_, f64>("ninf")?, f64::NEG_INFINITY);
-        assert_eq!(back.raw_get::<_, f64>("pi")?, std::f64::consts::PI);
+        assert_eq!(back.raw_get::<mlua::String>("s")?.as_bytes(), odd);
+        assert!(back.raw_get::<f64>("nan")?.is_nan());
+        assert_eq!(back.raw_get::<f64>("pinf")?, f64::INFINITY);
+        assert_eq!(back.raw_get::<f64>("ninf")?, f64::NEG_INFINITY);
+        assert_eq!(back.raw_get::<f64>("pi")?, std::f64::consts::PI);
         Ok(())
     }
 
@@ -447,9 +448,9 @@ mod tests {
         // the rewritten entry has the change and keeps the non-UTF-8 name
         let lua = scratch_lua()?;
         let back = read_table_from_miz(&lua, &miz.0, "mission")?;
-        assert_eq!(back.raw_get::<_, i64>("start_time")?, 43200);
-        assert_eq!(back.raw_get::<_, mlua::String>("name")?.as_bytes(), b"\xd2\xe1");
-        assert_eq!(back.raw_get::<_, Table>("weather")?.raw_get::<_, i64>("qnh")?, 745);
+        assert_eq!(back.raw_get::<i64>("start_time")?, 43200);
+        assert_eq!(back.raw_get::<mlua::String>("name")?.as_bytes(), b"\xd2\xe1");
+        assert_eq!(back.raw_get::<Table>("weather")?.raw_get::<i64>("qnh")?, 745);
         // every other entry is byte for byte what it was
         assert_eq!(miz.entry("options")?, options);
         assert_eq!(miz.entry("l10n/DEFAULT/a.png")?, image);
@@ -481,7 +482,7 @@ mod tests {
         let lua = scratch_lua()?;
         for lib in ["io", "os", "package", "debug"] {
             assert!(
-                matches!(lua.globals().raw_get::<_, Value>(lib)?, Value::Nil),
+                matches!(lua.globals().raw_get::<Value>(lib)?, Value::Nil),
                 "{lib} is loaded"
             );
         }

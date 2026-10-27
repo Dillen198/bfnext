@@ -35,8 +35,8 @@ pub enum RoadType {
 
 wrapped_table!(Land, None);
 
-impl<'lua> Land<'lua> {
-    pub fn singleton(lua: MizLua<'lua>) -> Result<Self> {
+impl Land {
+    pub fn singleton(lua: MizLua) -> Result<Self> {
         Ok(lua.inner().globals().raw_get("land")?)
     }
 
@@ -75,7 +75,7 @@ impl<'lua> Land<'lua> {
             .call_function("getIP", (origin, direction, distance))?)
     }
 
-    pub fn get_profile(&self, origin: LuaVec3, destination: LuaVec3) -> Result<Sequence<'lua, LuaVec3>> {
+    pub fn get_profile(&self, origin: LuaVec3, destination: LuaVec3) -> Result<Sequence<LuaVec3>> {
         Ok(self.t.call_function("profile", (origin, destination))?)
     }
 
@@ -95,7 +95,7 @@ impl<'lua> Land<'lua> {
         typ: RoadType,
         origin: LuaVec2,
         destination: LuaVec2,
-    ) -> Result<Sequence<'lua, LuaVec2>> {
+    ) -> Result<Sequence<LuaVec2>> {
         let typ = match typ {
             RoadType::Road => "roads",
             RoadType::Rail => "rails",

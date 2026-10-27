@@ -390,20 +390,20 @@ macro_rules! string_enum {
 #[macro_export]
 macro_rules! __lua_newtype {
     ($name:ident, $type:ty) => {
-        impl<'lua> $crate::__private::mlua::FromLua<'lua> for $name {
+        impl $crate::__private::mlua::FromLua for $name {
             fn from_lua(
-                value: $crate::__private::mlua::Value<'lua>,
-                lua: &'lua $crate::__private::mlua::Lua,
+                value: $crate::__private::mlua::Value,
+                lua: &$crate::__private::mlua::Lua,
             ) -> $crate::__private::mlua::Result<Self> {
                 Ok(Self(<$type as $crate::__private::mlua::FromLua>::from_lua(value, lua)?))
             }
         }
 
-        impl<'lua> $crate::__private::mlua::IntoLua<'lua> for $name {
+        impl $crate::__private::mlua::IntoLua for $name {
             fn into_lua(
                 self,
-                lua: &'lua $crate::__private::mlua::Lua,
-            ) -> $crate::__private::mlua::Result<$crate::__private::mlua::Value<'lua>> {
+                lua: &$crate::__private::mlua::Lua,
+            ) -> $crate::__private::mlua::Result<$crate::__private::mlua::Value> {
                 $crate::__private::mlua::IntoLua::into_lua(self.0, lua)
             }
         }
@@ -415,10 +415,10 @@ macro_rules! __lua_newtype {
 #[macro_export]
 macro_rules! __lua_simple_enum {
     ($name:ident, $repr:ident, [$($case:ident => $num:literal),+]) => {
-        impl<'lua> $crate::__private::mlua::FromLua<'lua> for $name {
+        impl $crate::__private::mlua::FromLua for $name {
             fn from_lua(
-                value: $crate::__private::mlua::Value<'lua>,
-                lua: &'lua $crate::__private::mlua::Lua,
+                value: $crate::__private::mlua::Value,
+                lua: &$crate::__private::mlua::Lua,
             ) -> $crate::__private::mlua::Result<Self> {
                 Ok(match <$repr as $crate::__private::mlua::FromLua>::from_lua(value, lua)? {
                     $($num => Self::$case),+,
@@ -427,11 +427,11 @@ macro_rules! __lua_simple_enum {
             }
         }
 
-        impl<'lua> $crate::__private::mlua::IntoLua<'lua> for $name {
+        impl $crate::__private::mlua::IntoLua for $name {
             fn into_lua(
                 self,
-                _lua: &'lua $crate::__private::mlua::Lua,
-            ) -> $crate::__private::mlua::Result<$crate::__private::mlua::Value<'lua>> {
+                _lua: &$crate::__private::mlua::Lua,
+            ) -> $crate::__private::mlua::Result<$crate::__private::mlua::Value> {
                 Ok($crate::__private::mlua::Value::Integer(self as i64))
             }
         }
@@ -443,10 +443,10 @@ macro_rules! __lua_simple_enum {
 #[macro_export]
 macro_rules! __lua_simple_enum_unknown {
     ($name:ident, $repr:ident) => {
-        impl<'lua> $crate::__private::mlua::FromLua<'lua> for $name {
+        impl $crate::__private::mlua::FromLua for $name {
             fn from_lua(
-                value: $crate::__private::mlua::Value<'lua>,
-                lua: &'lua $crate::__private::mlua::Lua,
+                value: $crate::__private::mlua::Value,
+                lua: &$crate::__private::mlua::Lua,
             ) -> $crate::__private::mlua::Result<Self> {
                 Ok(Self::from_id(<$repr as $crate::__private::mlua::FromLua>::from_lua(
                     value, lua,
@@ -454,11 +454,11 @@ macro_rules! __lua_simple_enum_unknown {
             }
         }
 
-        impl<'lua> $crate::__private::mlua::IntoLua<'lua> for $name {
+        impl $crate::__private::mlua::IntoLua for $name {
             fn into_lua(
                 self,
-                _lua: &'lua $crate::__private::mlua::Lua,
-            ) -> $crate::__private::mlua::Result<$crate::__private::mlua::Value<'lua>> {
+                _lua: &$crate::__private::mlua::Lua,
+            ) -> $crate::__private::mlua::Result<$crate::__private::mlua::Value> {
                 Ok($crate::__private::mlua::Value::Integer(self.id() as i64))
             }
         }
@@ -472,10 +472,10 @@ macro_rules! __lua_string_enum {
     ($name:ident,
      [$($case:ident => $str:literal),+],
      [$($altcase:ident => $altstr:literal),*]) => {
-        impl<'lua> $crate::__private::mlua::FromLua<'lua> for $name {
+        impl $crate::__private::mlua::FromLua for $name {
             fn from_lua(
-                value: $crate::__private::mlua::Value<'lua>,
-                lua: &'lua $crate::__private::mlua::Lua,
+                value: $crate::__private::mlua::Value,
+                lua: &$crate::__private::mlua::Lua,
             ) -> $crate::__private::mlua::Result<Self> {
                 let s = <$crate::String as $crate::__private::mlua::FromLua>::from_lua(value, lua)?;
                 Ok(match s.as_str() {
@@ -486,11 +486,11 @@ macro_rules! __lua_string_enum {
             }
         }
 
-        impl<'lua> $crate::__private::mlua::IntoLua<'lua> for $name {
+        impl $crate::__private::mlua::IntoLua for $name {
             fn into_lua(
                 self,
-                lua: &'lua $crate::__private::mlua::Lua,
-            ) -> $crate::__private::mlua::Result<$crate::__private::mlua::Value<'lua>> {
+                lua: &$crate::__private::mlua::Lua,
+            ) -> $crate::__private::mlua::Result<$crate::__private::mlua::Value> {
                 Ok($crate::__private::mlua::Value::String(match self {
                     $(Self::$case => lua.create_string($str)?),+,
                     Self::Custom(s) => lua.create_string(s.as_str())?

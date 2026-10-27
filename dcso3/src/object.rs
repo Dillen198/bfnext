@@ -40,13 +40,13 @@ impl<T> DcsOidExt for DcsOid<T> {
     }
 }
 
-pub trait DcsObject<'lua>: Sized + Deref<Target = mlua::Table<'lua>> {
+pub trait DcsObject: Sized + Deref<Target = mlua::Table> {
     type Class: fmt::Debug + Clone;
 
     fn object_id(&self) -> Result<DcsOid<Self::Class>> {
         let id = self.raw_get("id_")?;
         let m = self
-            .get_metatable()
+            .metatable()
             .ok_or_else(|| anyhow!("object with no metatable"))?;
         let class = m.raw_get("className_")?;
         Ok(DcsOid {
@@ -58,8 +58,8 @@ pub trait DcsObject<'lua>: Sized + Deref<Target = mlua::Table<'lua>> {
 
     fn change_instance(self, id: &DcsOid<Self::Class>) -> Result<Self>;
     fn change_instance_dyn<T>(self, id: &DcsOid<T>) -> Result<Self>;
-    fn get_instance(lua: MizLua<'lua>, id: &DcsOid<Self::Class>) -> Result<Self>;
-    fn get_instance_dyn<T>(lua: MizLua<'lua>, id: &DcsOid<T>) -> Result<Self>;
+    fn get_instance(lua: MizLua, id: &DcsOid<Self::Class>) -> Result<Self>;
+    fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self>;
 }
 
 simple_enum_unknown!(ObjectCategory, u8, [
@@ -74,7 +74,7 @@ simple_enum_unknown!(ObjectCategory, u8, [
 
 wrapped_table!(Object, Some("Object"));
 
-impl<'lua> Object<'lua> {
+impl Object {
     pub fn destroy(self) -> Result<()> {
         Ok(self.t.call_method("destroy", ())?)
     }
@@ -83,7 +83,7 @@ impl<'lua> Object<'lua> {
         Ok(self.t.call_method("getCategory", ())?)
     }
 
-    pub fn get_desc(&self) -> Result<mlua::Table<'lua>> {
+    pub fn get_desc(&self) -> Result<mlua::Table> {
         Ok(self.t.call_method("getDesc", ())?)
     }
 
@@ -137,32 +137,32 @@ impl<'lua> Object<'lua> {
         Ok(self.t.call_method("isExist", ())?)
     }
 
-    pub fn as_unit(&self) -> Result<Unit<'lua>> {
-        Ok(Unit::from_lua(Value::Table(self.t.clone()), self.lua)?)
+    pub fn as_unit(&self) -> Result<Unit> {
+        Ok(Unit::from_lua(Value::Table(self.t.clone()), &self.lua)?)
     }
 
-    pub fn as_weapon(&self) -> Result<Weapon<'lua>> {
-        Ok(Weapon::from_lua(Value::Table(self.t.clone()), self.lua)?)
+    pub fn as_weapon(&self) -> Result<Weapon> {
+        Ok(Weapon::from_lua(Value::Table(self.t.clone()), &self.lua)?)
     }
 
-    pub fn as_static(&self) -> Result<StaticObject<'lua>> {
+    pub fn as_static(&self) -> Result<StaticObject> {
         Ok(StaticObject::from_lua(
             Value::Table(self.t.clone()),
-            self.lua,
+            &self.lua,
         )?)
     }
 }
 
-impl<'lua> DcsObject<'lua> for Object<'lua> {
+impl DcsObject for Object {
     type Class = ClassObject;
 
-    fn get_instance(lua: MizLua<'lua>, id: &DcsOid<Self::Class>) -> Result<Self> {
+    fn get_instance(lua: MizLua, id: &DcsOid<Self::Class>) -> Result<Self> {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
         let t = Object {
             t,
-            lua: lua.inner(),
+            lua: lua.inner().clone(),
         };
         if !t.is_exist()? {
             bail!("{} is an invalid object", id.id)
@@ -170,7 +170,7 @@ impl<'lua> DcsObject<'lua> for Object<'lua> {
         Ok(t)
     }
 
-    fn get_instance_dyn<T>(lua: MizLua<'lua>, id: &DcsOid<T>) -> Result<Self> {
+    fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Object")?;
         let id = DcsOid {
             id: id.id,
@@ -189,7 +189,7 @@ impl<'lua> DcsObject<'lua> for Object<'lua> {
     }
 
     fn change_instance_dyn<T>(self, id: &DcsOid<T>) -> Result<Self> {
-        id.check_implements(MizLua(self.lua), "Object")?;
+        id.check_implements(MizLua(&self.lua), "Object")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
             bail!("{} is an invalid object", id.id)

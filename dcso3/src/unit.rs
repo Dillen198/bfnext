@@ -36,38 +36,38 @@ simple_enum_unknown!(UnitCategory, u8, [
 
 wrapped_table!(Ammo, None);
 
-impl<'lua> Ammo<'lua> {
+impl Ammo {
     pub fn count(&self) -> Result<u32> {
         Ok(self.t.raw_get("count")?)
     }
 
     pub fn type_name(&self) -> Result<String> {
-        Ok(self.t.raw_get::<_, LuaTable>("desc")?.raw_get("typeName")?)
+        Ok(self.t.raw_get::<LuaTable>("desc")?.raw_get("typeName")?)
     }
 
     /// `desc.missileCategory` when this is a missile (DCS
     /// `Weapon.MissileCategory`: 1 AAM, 2 SAM, 3 BM, 4 anti-ship,
     /// 5 cruise, 6 other), None for guns, shells and bombs.
     pub fn missile_category(&self) -> Result<Option<u8>> {
-        Ok(self.t.raw_get::<_, LuaTable>("desc")?.raw_get("missileCategory")?)
+        Ok(self.t.raw_get::<LuaTable>("desc")?.raw_get("missileCategory")?)
     }
 
     pub fn display_name(&self) -> Result<String> {
         Ok(self
             .t
-            .raw_get::<_, LuaTable>("desc")?
+            .raw_get::<LuaTable>("desc")?
             .raw_get("displayName")?)
     }
 
     pub fn weapon_flags(&self) -> Result<u64> {
-        Ok(self.t.raw_get::<_, LuaTable>("desc")?.raw_get("flags")?)
+        Ok(self.t.raw_get::<LuaTable>("desc")?.raw_get("flags")?)
     }
 }
 
 wrapped_table!(Unit, Some("Unit"));
 
-impl<'lua> Unit<'lua> {
-    pub fn get_by_name(lua: MizLua<'lua>, name: &str) -> Result<Unit<'lua>> {
+impl Unit {
+    pub fn get_by_name(lua: MizLua, name: &str) -> Result<Unit> {
         let globals = lua.inner().globals();
         let unit = as_tbl("Unit", None, globals.raw_get("Unit")?)?;
         Ok(record_perf!(
@@ -87,12 +87,12 @@ impl<'lua> Unit<'lua> {
         Ok(self.t.call_method("destroy", ())?)
     }
 
-    pub fn get_desc(&self) -> Result<mlua::Table<'lua>> {
+    pub fn get_desc(&self) -> Result<mlua::Table> {
         Ok(self.t.call_method("getDesc", ())?)
     }
 
-    pub fn as_object(&self) -> Result<Object<'lua>> {
-        Ok(Object::from_lua(Value::Table(self.t.clone()), self.lua)?)
+    pub fn as_object(&self) -> Result<Object> {
+        Ok(Object::from_lua(Value::Table(self.t.clone()), &self.lua)?)
     }
 
     pub fn get_type_name(&self) -> Result<String> {
@@ -150,11 +150,11 @@ impl<'lua> Unit<'lua> {
         Ok(self.t.call_method("getNumber", ())?)
     }
 
-    pub fn get_controller(&self) -> Result<Controller<'lua>> {
+    pub fn get_controller(&self) -> Result<Controller> {
         Ok(self.t.call_method("getController", ())?)
     }
 
-    pub fn get_group(&self) -> Result<Group<'lua>> {
+    pub fn get_group(&self) -> Result<Group> {
         Ok(self.t.call_method("getGroup", ())?)
     }
 
@@ -208,16 +208,16 @@ impl<'lua> Unit<'lua> {
 
     /// `Unit.getRadar()`: whether at least one of the unit's radars is on,
     /// and the object it is tracking -- a lock -- if any.
-    pub fn get_radar(&self) -> Result<(bool, Option<Object<'lua>>)> {
+    pub fn get_radar(&self) -> Result<(bool, Option<Object>)> {
         let (on, target): (Option<bool>, Value) = self.t.call_method("getRadar", ())?;
         let target = match target {
             Value::Nil => None,
-            v => Some(Object::from_lua(v, self.lua)?),
+            v => Some(Object::from_lua(v, &self.lua)?),
         };
         Ok((on.unwrap_or(false), target))
     }
 
-    pub fn get_ammo(&self) -> Result<Sequence<'lua, Ammo<'lua>>> {
+    pub fn get_ammo(&self) -> Result<Sequence<Ammo>> {
         Ok(record_perf!(get_ammo, self.t.call_method("getAmmo", ())?))
     }
 
@@ -244,7 +244,7 @@ impl<'lua> Unit<'lua> {
                 // name of the static, which is what the crate tracking keys
                 // off. Skip anything that will not answer rather than failing
                 // the whole scan.
-                if let Ok(name) = cargo.call_method::<_, String>("getName", ()) {
+                if let Ok(name) = cargo.call_method::<String>("getName", ()) {
                     res.push(name)
                 }
             }
@@ -255,7 +255,7 @@ impl<'lua> Unit<'lua> {
 
 pub use dcso3_core::unit::ClassUnit;
 
-impl<'lua> DcsObject<'lua> for Unit<'lua> {
+impl DcsObject for Unit {
     type Class = ClassUnit;
 
     fn object_id(&self) -> Result<DcsOid<Self::Class>> {
@@ -266,13 +266,13 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
         })
     }
 
-    fn get_instance(lua: MizLua<'lua>, id: &DcsOid<Self::Class>) -> Result<Self> {
+    fn get_instance(lua: MizLua, id: &DcsOid<Self::Class>) -> Result<Self> {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
         let t = Unit {
             t,
-            lua: lua.inner(),
+            lua: lua.inner().clone(),
         };
         if !t.is_exist()? {
             debug!("{} is an invalid unit", id.id);
@@ -286,7 +286,7 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
         Ok(t)
     }
 
-    fn get_instance_dyn<T>(lua: MizLua<'lua>, id: &DcsOid<T>) -> Result<Self> {
+    fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Unit")?;
         let id = DcsOid {
             id: id.id,
@@ -311,7 +311,7 @@ impl<'lua> DcsObject<'lua> for Unit<'lua> {
     }
 
     fn change_instance_dyn<T>(self, id: &DcsOid<T>) -> Result<Self> {
-        id.check_implements(MizLua(self.lua), "Unit")?;
+        id.check_implements(MizLua(&self.lua), "Unit")?;
         self.t.raw_set("id_", id.id)?;
         if !self.is_exist()? {
             debug!("{} is an invalid unit", id.id);

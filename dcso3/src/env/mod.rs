@@ -23,8 +23,8 @@ pub mod warehouse;
 
 wrapped_table!(Env, None);
 
-impl<'lua> Env<'lua> {
-    pub fn singleton<L: LuaEnv<'lua>>(lua: L) -> Result<Self> {
+impl Env {
+    pub fn singleton<'lua, L: LuaEnv<'lua>>(lua: L) -> Result<Self> {
         Ok(lua.inner().globals().raw_get("env")?)
     }
 

@@ -26,7 +26,7 @@ use crate::{
 use mlua::{prelude::*, Value};
 use serde_derive::{Deserialize, Serialize};
 
-fn eval<'lua, T: FromLua<'lua>>(lua: &'lua Lua, src: &str) -> LuaResult<T> {
+fn eval<T: FromLua>(lua: &Lua, src: &str) -> LuaResult<T> {
     T::from_lua(lua.load(src).eval::<Value>()?, lua)
 }
 
@@ -130,22 +130,22 @@ fn bools_are_lua_truthiness() {
 fn table_reads_of_missing_and_mistyped_fields() {
     let lua = Lua::new();
     let t: LuaTable = lua.load("{ n = 1, s = '2', f = 2.5, b = false }").eval().unwrap();
-    assert_eq!(t.raw_get::<_, Option<i64>>("missing").unwrap(), None);
-    assert!(t.raw_get::<_, i64>("missing").is_err());
-    assert!(t.raw_get::<_, String>("missing").is_err());
-    assert_eq!(t.raw_get::<_, Option<String>>("missing").unwrap(), None);
-    assert_eq!(t.raw_get::<_, i64>("s").unwrap(), 2);
-    assert_eq!(t.raw_get::<_, String>("n").unwrap().as_str(), "1");
-    assert_eq!(t.raw_get::<_, i64>("f").unwrap(), 2); // 2.5, truncated
-    assert_eq!(t.get::<_, f64>("f").unwrap(), 2.5);
-    assert!(!t.get::<_, bool>("b").unwrap());
-    assert!(!t.get::<_, bool>("missing").unwrap());
-    assert!(t.raw_get::<_, LuaTable>("missing").is_err());
-    assert!(t.raw_get::<_, Option<LuaTable>>("missing").unwrap().is_none());
+    assert_eq!(t.raw_get::<Option<i64>>("missing").unwrap(), None);
+    assert!(t.raw_get::<i64>("missing").is_err());
+    assert!(t.raw_get::<String>("missing").is_err());
+    assert_eq!(t.raw_get::<Option<String>>("missing").unwrap(), None);
+    assert_eq!(t.raw_get::<i64>("s").unwrap(), 2);
+    assert_eq!(t.raw_get::<String>("n").unwrap().as_str(), "1");
+    assert_eq!(t.raw_get::<i64>("f").unwrap(), 2); // 2.5, truncated
+    assert_eq!(t.get::<f64>("f").unwrap(), 2.5);
+    assert!(!t.get::<bool>("b").unwrap());
+    assert!(!t.get::<bool>("missing").unwrap());
+    assert!(t.raw_get::<LuaTable>("missing").is_err());
+    assert!(t.raw_get::<Option<LuaTable>>("missing").unwrap().is_none());
     // integer and float keys are the same key in Lua
     let a: LuaTable = lua.load("{ 'a', 'b' }").eval().unwrap();
-    assert_eq!(a.raw_get::<_, String>(2).unwrap().as_str(), "b");
-    assert_eq!(a.raw_get::<_, String>(2.0).unwrap().as_str(), "b");
+    assert_eq!(a.raw_get::<String>(2).unwrap().as_str(), "b");
+    assert_eq!(a.raw_get::<String>(2.0).unwrap().as_str(), "b");
 }
 
 #[test]
@@ -228,11 +228,11 @@ fn serde_round_trip() {
     assert!(lua.from_value::<Cfg>(v).is_err());
     let back = lua.to_value(&cfg).unwrap();
     let t = back.as_table().unwrap();
-    assert!(matches!(t.raw_get::<_, Value>("a").unwrap(), Value::Integer(1)));
+    assert!(matches!(t.raw_get::<Value>("a").unwrap(), Value::Integer(1)));
     // stored as a float, read back as an integer: Lua 5.1 has one number type
-    assert!(matches!(t.raw_get::<_, Value>("f").unwrap(), Value::Integer(2)));
+    assert!(matches!(t.raw_get::<Value>("f").unwrap(), Value::Integer(2)));
     // None is mlua's null (a null light userdata), not nil: the key exists
-    assert!(matches!(t.raw_get::<_, Value>("c").unwrap(), Value::LightUserData(p) if p.0.is_null()));
-    assert_eq!(t.raw_get::<_, LuaTable>("v").unwrap().raw_len(), 0);
+    assert!(matches!(t.raw_get::<Value>("c").unwrap(), Value::LightUserData(p) if p.0.is_null()));
+    assert_eq!(t.raw_get::<LuaTable>("v").unwrap().raw_len(), 0);
     assert_eq!(lua.from_value::<Cfg>(back).unwrap(), cfg);
 }

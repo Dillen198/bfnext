@@ -21,7 +21,7 @@ use std::fmt::Debug;
 pub fn cvt_err(to: &'static str) -> LuaError {
     LuaError::FromLuaConversionError {
         from: "value",
-        to,
+        to: to.into(),
         message: None,
     }
 }
@@ -34,17 +34,17 @@ pub fn lua_err<E: Debug>(err: E) -> LuaError {
     LuaError::RuntimeError(format!("{:?}", err))
 }
 
-impl<'lua> IntoLua<'lua> for String {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for String {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         Ok(Value::String(lua.create_string(self.0)?))
     }
 }
 
-impl<'lua> FromLua<'lua> for String {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for String {
+    fn from_lua(value: Value, _: &Lua) -> LuaResult<Self> {
         use compact_str::format_compact;
         match value {
-            Value::String(s) => Ok(Self(CompactString::from(s.to_str()?))),
+            Value::String(s) => Ok(Self(CompactString::from(&*s.to_str()?))),
             Value::Boolean(b) => Ok(Self(format_compact!("{b}"))),
             Value::Integer(n) => Ok(Self(format_compact!("{n}"))),
             Value::Number(n) => Ok(Self(format_compact!("{n}"))),
@@ -53,7 +53,7 @@ impl<'lua> FromLua<'lua> for String {
             // that may legitimately be absent must be read as Option<String>.
             v => Err(LuaError::FromLuaConversionError {
                 from: v.type_name(),
-                to: "String",
+                to: "String".into(),
                 message: None,
             }),
         }

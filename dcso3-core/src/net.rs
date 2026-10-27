@@ -251,8 +251,8 @@ mod lua_impls {
     use fixedstr::str48;
     use mlua::{prelude::*, Value};
 
-    impl<'lua> FromLua<'lua> for SlotId {
-        fn from_lua(value: Value<'lua>, _: &'lua Lua) -> LuaResult<Self> {
+    impl FromLua for SlotId {
+        fn from_lua(value: Value, _: &Lua) -> LuaResult<Self> {
             match value {
                 Value::Integer(i) => {
                     if i == 0 {
@@ -277,8 +277,8 @@ mod lua_impls {
         }
     }
 
-    impl<'lua> IntoLua<'lua> for SlotId {
-        fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+    impl IntoLua for SlotId {
+        fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
             match self {
                 Self::Unit(i) => {
                     if i < 1 {
@@ -321,8 +321,8 @@ mod lua_impls {
         }
     }
 
-    impl<'lua> FromLua<'lua> for Ucid {
-        fn from_lua(value: Value<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+    impl FromLua for Ucid {
+        fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
             match value {
                 Value::String(s) => s
                     .to_str()?
@@ -333,8 +333,8 @@ mod lua_impls {
         }
     }
 
-    impl<'lua> IntoLua<'lua> for Ucid {
-        fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+    impl IntoLua for Ucid {
+        fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
             let s: str48 = self.into();
             Ok(Value::String(lua.create_string(s.as_str())?))
         }

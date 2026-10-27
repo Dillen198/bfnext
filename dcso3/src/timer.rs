@@ -49,8 +49,8 @@ fn run_scheduled<R>(name: &str, f: impl FnOnce() -> Result<R>) -> Option<R> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct FunId(i64);
 
-impl<'lua> FromLua<'lua> for FunId {
-    fn from_lua(value: Value<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for FunId {
+    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
         match value {
             Value::Integer(i) => Ok(FunId(i)),
             _ => Err(cvt_err("FunId")),
@@ -58,16 +58,16 @@ impl<'lua> FromLua<'lua> for FunId {
     }
 }
 
-impl<'lua> IntoLua<'lua> for FunId {
-    fn into_lua(self, _lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for FunId {
+    fn into_lua(self, _lua: &Lua) -> LuaResult<Value> {
         Ok(Value::Integer(self.0))
     }
 }
 
 wrapped_table!(Timer, None);
 
-impl<'lua> Timer<'lua> {
-    pub fn singleton(lua: MizLua<'lua>) -> Result<Self> {
+impl Timer {
+    pub fn singleton(lua: MizLua) -> Result<Self> {
         Ok(lua.inner().globals().raw_get("timer")?)
     }
 
@@ -102,7 +102,7 @@ impl<'lua> Timer<'lua> {
     pub fn schedule_function<T, F>(&self, when: Time, arg: T, f: F) -> Result<FunId>
     where
         F: Fn(MizLua, T, Time) -> Result<Option<Time>> + 'static,
-        T: IntoLua<'lua> + FromLua<'lua>,
+        T: IntoLua + FromLua,
     {
         let f = self
             .lua
@@ -125,7 +125,7 @@ impl<'lua> Timer<'lua> {
     pub fn schedule_once<T, F>(&self, when: Time, arg: T, f: F) -> Result<FunId>
     where
         F: Fn(MizLua, T, Time) -> Result<()> + 'static,
-        T: IntoLua<'lua> + FromLua<'lua>,
+        T: IntoLua + FromLua,
     {
         let f = self
             .lua

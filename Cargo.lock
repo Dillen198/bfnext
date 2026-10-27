@@ -2159,17 +2159,19 @@ dependencies = [
 
 [[package]]
 name = "mlua"
-version = "0.9.9"
+version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d111deb18a9c9bd33e1541309f4742523bfab01d276bfa9a27519f6de9c11dc7"
+checksum = "c1f5f8fbebc7db5f671671134b9321c4b9aa9adeafccfd9a8c020ae45c6a35d0"
 dependencies = [
  "bstr",
+ "either",
  "erased-serde",
  "mlua-sys",
  "mlua_derive",
  "num-traits",
- "once_cell",
+ "parking_lot 0.12.5",
  "rustc-hash",
+ "rustversion",
  "serde",
  "serde-value",
 ]
@@ -2189,9 +2191,9 @@ dependencies = [
 
 [[package]]
 name = "mlua_derive"
-version = "0.9.3"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09697a6cec88e7f58a02c7ab5c18c611c6907c8654613df9cc0192658a4fb859"
+checksum = "870d71c172fcf491c6b5fb4c04160619a2ee3e5a42a1402269c66bcbf1dd4deb"
 dependencies = [
  "proc-macro2",
  "quote",

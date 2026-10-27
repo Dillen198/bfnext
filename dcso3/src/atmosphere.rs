@@ -30,8 +30,8 @@ pub struct TempPressure {
     pub pressure_pa: f64,
 }
 
-impl<'lua> Atmosphere<'lua> {
-    pub fn singleton(lua: MizLua<'lua>) -> Result<Self> {
+impl Atmosphere {
+    pub fn singleton(lua: MizLua) -> Result<Self> {
         Ok(lua.inner().globals().raw_get("atmosphere")?)
     }
 

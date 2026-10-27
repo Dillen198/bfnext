@@ -24,10 +24,10 @@ use std::{marker::PhantomData, ops::Deref};
 
 wrapped_table!(Spot, Some("Spot"));
 
-impl<'lua> Spot<'lua> {
+impl Spot {
     pub fn create_laser(
-        lua: MizLua<'lua>,
-        source: Object<'lua>,
+        lua: MizLua,
+        source: Object,
         local_ref: Option<LuaVec3>,
         target: LuaVec3,
         code: u16,
@@ -38,8 +38,8 @@ impl<'lua> Spot<'lua> {
     }
 
     pub fn create_infra_red(
-        lua: MizLua<'lua>,
-        source: Object<'lua>,
+        lua: MizLua,
+        source: Object,
         local_ref: Option<LuaVec3>,
         target: LuaVec3,
     ) -> Result<Self> {
@@ -72,21 +72,21 @@ impl<'lua> Spot<'lua> {
 #[derive(Debug, Clone)]
 pub struct ClassSpot;
 
-impl<'lua> DcsObject<'lua> for Spot<'lua> {
+impl DcsObject for Spot {
     type Class = ClassSpot;
 
-    fn get_instance(lua: MizLua<'lua>, id: &DcsOid<Self::Class>) -> Result<Self> {
+    fn get_instance(lua: MizLua, id: &DcsOid<Self::Class>) -> Result<Self> {
         let t = lua.inner().create_table()?;
         t.set_metatable(Some(lua.inner().globals().raw_get(&**id.class)?));
         t.raw_set("id_", id.id)?;
         let t = Self {
             t,
-            lua: lua.inner(),
+            lua: lua.inner().clone(),
         };
         Ok(t)
     }
 
-    fn get_instance_dyn<T>(lua: MizLua<'lua>, id: &DcsOid<T>) -> Result<Self> {
+    fn get_instance_dyn<T>(lua: MizLua, id: &DcsOid<T>) -> Result<Self> {
         id.check_implements(lua, "Spot")?;
         let id = DcsOid {
             id: id.id,
@@ -102,7 +102,7 @@ impl<'lua> DcsObject<'lua> for Spot<'lua> {
     }
 
     fn change_instance_dyn<T>(self, id: &DcsOid<T>) -> Result<Self> {
-        id.check_implements(MizLua(self.lua), "Spot")?;
+        id.check_implements(MizLua(&self.lua), "Spot")?;
         self.t.raw_set("id_", id.id)?;
         Ok(self)
     }

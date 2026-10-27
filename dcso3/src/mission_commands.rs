@@ -23,8 +23,8 @@ use std::ops::Deref;
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct ItemPath(Vec<String>);
 
-impl<'lua> IntoLua<'lua> for ItemPath {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for ItemPath {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let tbl = lua.create_table()?;
         for s in self.0 {
             tbl.raw_push(s)?
@@ -33,8 +33,8 @@ impl<'lua> IntoLua<'lua> for ItemPath {
     }
 }
 
-impl<'lua> FromLua<'lua> for ItemPath {
-    fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for ItemPath {
+    fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
         let tbl = LuaTable::from_lua(value, lua)?;
         let mut res = Vec::new();
         for v in tbl.sequence_values() {
@@ -50,14 +50,14 @@ macro_rules! item {
         #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(ItemPath);
 
-        impl<'lua> IntoLua<'lua> for $name {
-            fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+        impl IntoLua for $name {
+            fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
                 self.0.into_lua(lua)
             }
         }
 
-        impl<'lua> FromLua<'lua> for $name {
-            fn from_lua(value: Value<'lua>, lua: &'lua Lua) -> LuaResult<Self> {
+        impl FromLua for $name {
+            fn from_lua(value: Value, lua: &Lua) -> LuaResult<Self> {
                 Ok(Self(ItemPath::from_lua(value, lua)?))
             }
         }
@@ -85,8 +85,8 @@ item!(GroupCommandItem);
 
 wrapped_table!(MissionCommands, None);
 
-impl<'lua> MissionCommands<'lua> {
-    pub fn singleton(lua: MizLua<'lua>) -> Result<Self> {
+impl MissionCommands {
+    pub fn singleton(lua: MizLua) -> Result<Self> {
         Ok(lua.inner().globals().raw_get("missionCommands")?)
     }
 
@@ -103,7 +103,7 @@ impl<'lua> MissionCommands<'lua> {
     ) -> Result<CommandItem>
     where
         F: Fn(MizLua, A) -> Result<()> + 'static,
-        A: IntoLua<'lua> + FromLua<'lua>,
+        A: IntoLua + FromLua,
     {
         let msg = format_compact!("command {:?},{name}", parent);
         let f = self.lua.create_function(move |lua, arg: A| {
@@ -139,7 +139,7 @@ impl<'lua> MissionCommands<'lua> {
     ) -> Result<CoalitionCommandItem>
     where
         F: Fn(MizLua, A) -> Result<()> + 'static,
-        A: IntoLua<'lua> + FromLua<'lua>,
+        A: IntoLua + FromLua,
     {
         let msg = format_compact!("coa cmd {:?},{name}", parent);
         let f = self.lua.create_function(move |lua, arg: A| {
@@ -179,7 +179,7 @@ impl<'lua> MissionCommands<'lua> {
     ) -> Result<GroupCommandItem>
     where
         F: Fn(MizLua, A) -> Result<()> + 'static,
-        A: IntoLua<'lua> + FromLua<'lua>,
+        A: IntoLua + FromLua,
     {
         let msg = format_compact!("grp cmd {:?}, {name}", parent);
         let f = self.lua.create_function(move |lua, arg: A| {
@@ -258,9 +258,9 @@ fn path_key(path: &[String]) -> std::string::String {
     out
 }
 
-fn mirror_root(lua: &Lua) -> LuaResult<LuaTable<'_>> {
+fn mirror_root(lua: &Lua) -> LuaResult<LuaTable> {
     let globals = lua.globals();
-    match globals.raw_get::<_, Option<LuaTable>>(MIRROR_GLOBAL)? {
+    match globals.raw_get::<Option<LuaTable>>(MIRROR_GLOBAL)? {
         Some(t) => Ok(t),
         None => {
             let t = lua.create_table()?;
@@ -273,9 +273,9 @@ fn mirror_root(lua: &Lua) -> LuaResult<LuaTable<'_>> {
 /// `{ order = <counter>, items = { [pathkey] = entry } }` for one group. The
 /// counter preserves registration order, which is the order the player sees in
 /// the F10 menu and therefore the order a mirrored menu must render in.
-fn mirror_group(lua: &Lua, group: GroupId) -> LuaResult<LuaTable<'_>> {
+fn mirror_group(lua: &Lua, group: GroupId) -> LuaResult<LuaTable> {
     let root = mirror_root(lua)?;
-    match root.raw_get::<_, Option<LuaTable>>(group)? {
+    match root.raw_get::<Option<LuaTable>>(group)? {
         Some(t) => Ok(t),
         None => {
             let t = lua.create_table()?;
@@ -287,15 +287,15 @@ fn mirror_group(lua: &Lua, group: GroupId) -> LuaResult<LuaTable<'_>> {
     }
 }
 
-fn mirror_record<'lua>(
-    lua: &'lua Lua,
+fn mirror_record(
+    lua: &Lua,
     group: GroupId,
     path: &[String],
     name: &String,
-    handler: Option<(LuaFunction<'lua>, Value<'lua>)>,
+    handler: Option<(LuaFunction, Value)>,
 ) -> LuaResult<()> {
     let g = mirror_group(lua, group)?;
-    let order = g.raw_get::<_, i64>("order")? + 1;
+    let order = g.raw_get::<i64>("order")? + 1;
     g.raw_set("order", order)?;
 
     let seq = lua.create_table()?;
@@ -316,7 +316,7 @@ fn mirror_record<'lua>(
         None => entry.raw_set("command", false)?,
     }
 
-    g.raw_get::<_, LuaTable>("items")?
+    g.raw_get::<LuaTable>("items")?
         .raw_set(path_key(path), entry)?;
     Ok(())
 }
@@ -325,7 +325,7 @@ fn mirror_record<'lua>(
 /// its whole subtree, so the mirror has to do the same or it keeps offering
 /// items that no longer exist.
 fn mirror_forget(lua: &Lua, group: GroupId, path: &[String]) -> LuaResult<()> {
-    let items = mirror_group(lua, group)?.raw_get::<_, LuaTable>("items")?;
+    let items = mirror_group(lua, group)?.raw_get::<LuaTable>("items")?;
     let key = path_key(path);
     let mut prefix = key.clone();
     prefix.push(PATH_SEP);
@@ -366,23 +366,23 @@ pub struct MirroredMenuItem {
 pub fn mirrored_menu(lua: MizLua, group: GroupId) -> Result<Vec<MirroredMenuItem>> {
     let lua = lua.inner();
     let root = mirror_root(lua)?;
-    let Some(g) = root.raw_get::<_, Option<LuaTable>>(group)? else {
+    let Some(g) = root.raw_get::<Option<LuaTable>>(group)? else {
         return Ok(Vec::new());
     };
-    let items = g.raw_get::<_, LuaTable>("items")?;
+    let items = g.raw_get::<LuaTable>("items")?;
 
     let mut out = Vec::new();
     for pair in items.pairs::<std::string::String, LuaTable>() {
         let (_, entry) = pair?;
         let mut path = Vec::new();
-        for seg in entry.raw_get::<_, LuaTable>("path")?.sequence_values::<String>() {
+        for seg in entry.raw_get::<LuaTable>("path")?.sequence_values::<String>() {
             path.push(seg?.as_str().to_string());
         }
         out.push(MirroredMenuItem {
             path,
-            name: entry.raw_get::<_, String>("name")?.as_str().to_string(),
-            command: entry.raw_get::<_, bool>("command")?,
-            order: entry.raw_get::<_, i64>("order")?,
+            name: entry.raw_get::<String>("name")?.as_str().to_string(),
+            command: entry.raw_get::<bool>("command")?,
+            order: entry.raw_get::<i64>("order")?,
         });
     }
     out.sort_by_key(|i| i.order);
@@ -399,21 +399,21 @@ pub fn mirrored_menu(lua: MizLua, group: GroupId) -> Result<Vec<MirroredMenuItem
 pub fn invoke_mirrored_menu(lua: MizLua, group: GroupId, path: &[std::string::String]) -> Result<bool> {
     let inner = lua.inner();
     let root = mirror_root(inner)?;
-    let Some(g) = root.raw_get::<_, Option<LuaTable>>(group)? else {
+    let Some(g) = root.raw_get::<Option<LuaTable>>(group)? else {
         return Ok(false);
     };
     let key: Vec<String> = path.iter().map(|s| String::from(s.as_str())).collect();
     let Some(entry) = g
-        .raw_get::<_, LuaTable>("items")?
-        .raw_get::<_, Option<LuaTable>>(path_key(&key))?
+        .raw_get::<LuaTable>("items")?
+        .raw_get::<Option<LuaTable>>(path_key(&key))?
     else {
         return Ok(false);
     };
-    if !entry.raw_get::<_, bool>("command")? {
+    if !entry.raw_get::<bool>("command")? {
         return Ok(false);
     }
     let f: LuaFunction = entry.raw_get("fn")?;
     let arg: Value = entry.raw_get("arg")?;
-    f.call::<_, ()>(arg)?;
+    f.call::<()>(arg)?;
     Ok(true)
 }

@@ -31,8 +31,8 @@ pub struct Zone {
     pub radius: f64,
 }
 
-impl<'lua> FromLua<'lua> for Zone {
-    fn from_lua(value: Value<'lua>, _lua: &'lua Lua) -> LuaResult<Self> {
+impl FromLua for Zone {
+    fn from_lua(value: Value, _lua: &Lua) -> LuaResult<Self> {
         match value {
             Value::Table(tbl) => Ok(Self {
                 point: tbl.raw_get("point")?,
@@ -43,8 +43,8 @@ impl<'lua> FromLua<'lua> for Zone {
     }
 }
 
-impl<'lua> IntoLua<'lua> for Zone {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for Zone {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         let table = lua.create_table()?;
         table.raw_set("point", self.point)?;
         table.raw_set("radius", self.radius)?;
@@ -207,8 +207,8 @@ const FREEFORM_SHAPE_ID: i64 = 7;
 
 wrapped_table!(Action, None);
 
-impl<'lua> Action<'lua> {
-    pub fn set_user_flag<K: IntoLua<'lua>, V: IntoLua<'lua>>(
+impl Action {
+    pub fn set_user_flag<K: IntoLua, V: IntoLua>(
         &self,
         key: K,
         value: V,
@@ -522,17 +522,17 @@ impl<'lua> Action<'lua> {
             )
         }
         let mut args: Vec<Value> = Vec::with_capacity(spec.points.len() + 8);
-        args.push(FREEFORM_SHAPE_ID.into_lua(self.lua)?);
-        args.push(side.into_lua(self.lua)?);
-        args.push(id.into_lua(self.lua)?);
+        args.push(FREEFORM_SHAPE_ID.into_lua(&self.lua)?);
+        args.push(side.into_lua(&self.lua)?);
+        args.push(id.into_lua(&self.lua)?);
         for p in spec.points {
-            args.push(p.into_lua(self.lua)?);
+            args.push(p.into_lua(&self.lua)?);
         }
-        args.push(spec.color.into_lua(self.lua)?);
-        args.push(spec.fill_color.into_lua(self.lua)?);
-        args.push(spec.line_type.into_lua(self.lua)?);
-        args.push(spec.read_only.into_lua(self.lua)?);
-        args.push(message.into_lua(self.lua)?);
+        args.push(spec.color.into_lua(&self.lua)?);
+        args.push(spec.fill_color.into_lua(&self.lua)?);
+        args.push(spec.line_type.into_lua(&self.lua)?);
+        args.push(spec.read_only.into_lua(&self.lua)?);
+        args.push(message.into_lua(&self.lua)?);
         Ok(self.call_function("markupToAll", MultiValue::from_vec(args))?)
     }
 
@@ -594,12 +594,12 @@ impl<'lua> Action<'lua> {
 
 wrapped_table!(Trigger, None);
 
-impl<'lua> Trigger<'lua> {
-    pub fn singleton(lua: MizLua<'lua>) -> Result<Self> {
+impl Trigger {
+    pub fn singleton(lua: MizLua) -> Result<Self> {
         Ok(lua.inner().globals().raw_get("trigger")?)
     }
 
-    pub fn action(&self) -> Result<Action<'lua>> {
+    pub fn action(&self) -> Result<Action> {
         Ok(self.raw_get("action")?)
     }
 

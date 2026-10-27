@@ -44,7 +44,9 @@ log = "0.4.20"
 # DCS embeds Lua 5.1, so every crate uses lua51 (and links DCS's lua.dll,
 # see setup-build.ps1). Crates add "serialize" / "module" as they need;
 # bftools is outside the workspace and pins its own (vendored) copy.
-mlua = { version = "0.9.9", features = ["lua51"] }
+# error-send: 0.10's Error is only Send + Sync with it, and every crate
+# turns Lua errors into anyhow::Error with `?`.
+mlua = { version = "0.10.5", features = ["lua51", "error-send"] }
 nalgebra = { version = "0.33", features = ["serde-serialize"] }
 netidx-archive = { version = "0.27.1" }
 netidx-protocols = { version = "0.27" }

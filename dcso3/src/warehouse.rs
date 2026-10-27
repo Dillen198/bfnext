@@ -27,7 +27,7 @@ wrapped_table!(ItemInventory, None);
 // Inventory counts are decoded as f64 and clamped by `count_to_u32` for the
 // same reason as get_item_count: one unlimited/negative/huge entry decoded
 // straight into u32 used to abort the whole get_inventory walk.
-impl<'lua> ItemInventory<'lua> {
+impl ItemInventory {
     pub fn item(&self, name: &str) -> Result<u32> {
         Ok(count_to_u32(self.t.raw_get(name)?))
     }
@@ -41,7 +41,7 @@ impl<'lua> ItemInventory<'lua> {
 
 wrapped_table!(LiquidInventory, None);
 
-impl<'lua> LiquidInventory<'lua> {
+impl LiquidInventory {
     pub fn item(&self, name: LiquidType) -> Result<u32> {
         Ok(count_to_u32(self.t.raw_get(name)?))
     }
@@ -55,16 +55,16 @@ impl<'lua> LiquidInventory<'lua> {
 
 wrapped_table!(Inventory, None);
 
-impl<'lua> Inventory<'lua> {
-    pub fn weapons(&self) -> Result<ItemInventory<'lua>> {
+impl Inventory {
+    pub fn weapons(&self) -> Result<ItemInventory> {
         Ok(self.t.raw_get("weapon")?)
     }
 
-    pub fn aircraft(&self) -> Result<ItemInventory<'lua>> {
+    pub fn aircraft(&self) -> Result<ItemInventory> {
         Ok(self.t.raw_get("aircraft")?)
     }
 
-    pub fn liquids(&self) -> Result<LiquidInventory<'lua>> {
+    pub fn liquids(&self) -> Result<LiquidInventory> {
         Ok(self.t.raw_get("liquids")?)
     }
 
@@ -176,13 +176,13 @@ impl WSCategory {
 
 wrapped_table!(WSType, None);
 
-impl<'lua> WSType<'lua> {
+impl WSType {
     /// The raw four level wsType, e.g. `[4, 6, 10, 2]`. Missing levels read
     /// as 0.
     pub fn levels(&self) -> Result<[i64; 4]> {
         let mut levels = [0; 4];
         for (i, l) in levels.iter_mut().enumerate() {
-            *l = self.t.raw_get::<_, Option<i64>>(i + 1)?.unwrap_or(0);
+            *l = self.t.raw_get::<Option<i64>>(i + 1)?.unwrap_or(0);
         }
         Ok(levels)
     }
@@ -218,20 +218,20 @@ impl<'lua> WSType<'lua> {
 
 wrapped_table!(ResourceMap, None);
 
-impl<'lua> ResourceMap<'lua> {
+impl ResourceMap {
     pub fn for_each<F: FnMut(String, WSType) -> Result<()>>(&self, mut f: F) -> Result<()> {
         Ok(self.t.for_each(|k, v| f(k, v).map_err(lua_err))?)
     }
 }
 
 #[derive(Debug, Clone)]
-pub enum WarehouseItem<'lua> {
+pub enum WarehouseItem {
     Name(String),
-    Typ(WSType<'lua>),
+    Typ(WSType),
 }
 
-impl<'lua> IntoLua<'lua> for WarehouseItem<'lua> {
-    fn into_lua(self, lua: &'lua Lua) -> LuaResult<Value<'lua>> {
+impl IntoLua for WarehouseItem {
+    fn into_lua(self, lua: &Lua) -> LuaResult<Value> {
         match self {
             Self::Name(s) => s.into_lua(lua),
             Self::Typ(t) => Ok(Value::Table(t.t)),
@@ -239,14 +239,14 @@ impl<'lua> IntoLua<'lua> for WarehouseItem<'lua> {
     }
 }
 
-impl<'lua> From<String> for WarehouseItem<'lua> {
+impl From<String> for WarehouseItem {
     fn from(value: String) -> Self {
         Self::Name(value)
     }
 }
 
-impl<'lua> From<WSType<'lua>> for WarehouseItem<'lua> {
-    fn from(value: WSType<'lua>) -> Self {
+impl From<WSType> for WarehouseItem {
+    fn from(value: WSType) -> Self {
         Self::Typ(value)
     }
 }
@@ -282,36 +282,36 @@ mod count_tests {
     }
 }
 
-impl<'lua> Warehouse<'lua> {
-    pub fn get_by_name(lua: MizLua<'lua>, name: String) -> Result<Self> {
+impl Warehouse {
+    pub fn get_by_name(lua: MizLua, name: String) -> Result<Self> {
         let wh: LuaTable = lua.inner().globals().raw_get("Warehouse")?;
         Ok(wh.call_function("getByName", name)?)
     }
 
-    pub fn get_resource_map(lua: MizLua<'lua>) -> Result<ResourceMap<'lua>> {
+    pub fn get_resource_map(lua: MizLua) -> Result<ResourceMap> {
         let wh: LuaTable = lua.inner().globals().raw_get("Warehouse")?;
         Ok(wh.call_function("getResourceMap", ())?)
     }
 
-    pub fn add_item<T: Into<WarehouseItem<'lua>>>(&self, item: T, count: u32) -> Result<()> {
+    pub fn add_item<T: Into<WarehouseItem>>(&self, item: T, count: u32) -> Result<()> {
         Ok(self
             .t
             .call_method("addItem", (Into::<WarehouseItem>::into(item), count))?)
     }
 
-    pub fn remove_item<T: Into<WarehouseItem<'lua>>>(&self, item: T, count: u32) -> Result<()> {
+    pub fn remove_item<T: Into<WarehouseItem>>(&self, item: T, count: u32) -> Result<()> {
         Ok(self
             .t
             .call_method("removeItem", (Into::<WarehouseItem>::into(item), count))?)
     }
 
-    pub fn set_item<T: Into<WarehouseItem<'lua>>>(&self, item: T, count: u32) -> Result<()> {
+    pub fn set_item<T: Into<WarehouseItem>>(&self, item: T, count: u32) -> Result<()> {
         Ok(self
             .t
             .call_method("setItem", (Into::<WarehouseItem>::into(item), count))?)
     }
 
-    pub fn get_item_count<T: Into<WarehouseItem<'lua>>>(&self, item: T) -> Result<u32> {
+    pub fn get_item_count<T: Into<WarehouseItem>>(&self, item: T) -> Result<u32> {
         let n: f64 = self
             .t
             .call_method("getItemCount", Into::<WarehouseItem>::into(item))?;
@@ -335,11 +335,11 @@ impl<'lua> Warehouse<'lua> {
         Ok(self.t.call_method("setLiquidAmount", (typ, count))?)
     }
 
-    pub fn get_inventory(&self, filter: Option<String>) -> Result<Inventory<'lua>> {
+    pub fn get_inventory(&self, filter: Option<String>) -> Result<Inventory> {
         Ok(self.t.call_method("getInventory", filter)?)
     }
 
-    pub fn get_owner(&self) -> Result<Airbase<'_>> {
+    pub fn get_owner(&self) -> Result<Airbase> {
         Ok(self.t.call_method("getOwner", ())?)
     }
 
