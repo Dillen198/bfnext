@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ChevronUp, Download, Search, X } from '@icons'
+import { ChevronDown, ChevronUp, Download, Pencil, Search, X } from '@icons'
 import { AnnotationIndex, applyOverrides, withOverride, type Json, type Overrides } from '../model'
-import { offsetOnGrid, terrainAt, toDcsXY, type DcsTerrain } from '../nav'
+import { DCS_MAPS, offsetOnGrid, terrainAt, terrainNamed, toDcsXY, type DcsTerrain } from '../nav'
 import { shareString } from '../dcsdtc'
 import { download, ExportError, safeName } from '../exports'
 import { dcsdtcTarget, loadModel, type Target } from '../targets'
-import { aircraftDef, type NativeType, type Plan, type PlanWaypoint } from '../types'
+import { aircraftDef, MAX_WAYPOINTS, type NativeType, type Plan, type PlanWaypoint } from '../types'
 import { Body, HitRow } from './editor'
 import { collectLeaves, offsetSupport, playerHelp, type Ctx, type PointOption } from './core'
 import { buildFor, METHOD, type Msg } from './build'
@@ -14,7 +14,6 @@ import { buildPages, pageChanges, routeFilled, type Page } from './pages'
 import { flagPointers, isOn, switchesFor, type LoadSwitch } from './switches'
 import { DcsDtcGuide, NativeGuide } from './guides'
 import DtcMap from './DtcMap'
-import { addableList, pageHasMap } from './places'
 import OffsetsEditor from './OffsetsEditor'
 import './dtc.css'
 
@@ -28,14 +27,16 @@ interface Props {
   onTarget: (t: Target) => void
   readOnly: boolean
   onSystems: (key: string, ov: Overrides) => void
-  /** Change the plan's route points (their offsets). */
+  /** Change the plan's route: drawn on the map here, or its offsets. */
   onWaypoints: (w: PlanWaypoint[]) => void
+  /** The campaign's DCS map, for a plan with no route yet. */
+  homeMap?: string | null
   tosSeconds: (i: number) => number | null
   tosText: (i: number) => string | null
   onClose: () => void
 }
 
-export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly, onSystems, onWaypoints, tosSeconds, tosText, onClose }: Props) {
+export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly, onSystems, onWaypoints, homeMap, tosSeconds, tosText, onClose }: Props) {
   const def = aircraftDef(plan.aircraft)
   const { data: model, error } = useQuery({ queryKey: ['planner-model', target.key], queryFn: () => loadModel(target), staleTime: Infinity })
   const ov = (plan.systems?.[target.key] ?? {}) as Overrides
@@ -55,7 +56,21 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
   }, [onClose])
 
-  const map = plan.waypoints.length ? terrainAt(plan.waypoints[0].lat, plan.waypoints[0].lon) : null
+  // The route's map once it has a point; before that the campaign's, or the one picked.
+  const [mapName, setMapName] = useState<string | null>(null)
+  const routeMap = plan.waypoints.length ? terrainAt(plan.waypoints[0].lat, plan.waypoints[0].lon) : null
+  const map = routeMap ?? terrainNamed(mapName ?? homeMap ?? 'Caucasus')
+  // Drawing starts on when there is nothing to draw on yet.
+  const [drawing, setDrawing] = useState(plan.waypoints.length === 0 && !readOnly)
+  const route = drawing && !readOnly ? {
+    add: (lat: number, lon: number) => {
+      if (plan.waypoints.length >= MAX_WAYPOINTS) return
+      const prev = plan.waypoints[plan.waypoints.length - 1]
+      onWaypoints([...plan.waypoints, { name: '', lat, lon, alt_ft: prev?.alt_ft ?? 20000, elev_ft: 0, target: false, note: '' }])
+    },
+    move: (i: number, lat: number, lon: number) => onWaypoints(plan.waypoints.map((w, j) => (j === i ? { ...w, lat, lon } : w))),
+    remove: (i: number) => onWaypoints(plan.waypoints.filter((_, j) => j !== i)),
+  } : null
   const points: PointOption[] = useMemo(() => !map ? [] : plan.waypoints.map((w, i) => {
     const { x, y } = toDcsXY(w.lat, w.lon, map.terrain)
     return { label: `${i + 1} ${w.name || `WP${i + 1}`}`, x, y, lat: w.lat, lon: w.lon, elev_m: w.elev_ft * 0.3048 }
@@ -126,7 +141,7 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
       setMsg({ kind: 'err', text: e instanceof ExportError ? e.message : String(e) })
     }
   }
-  const noRoute = plan.waypoints.length === 0 ? 'Add your route on the map first.' : undefined
+  const noRoute = plan.waypoints.length === 0 ? 'Draw your route on the map first.' : undefined
   const nativeName = `${safeName(plan.name || 'Flight plan')}.dtc`
 
   const hits = query.trim()
@@ -244,21 +259,33 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
         </main>
 
         <section className="dtc-mapcol" aria-label="Map">
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Map</span>
-            {map && page && !hits && !changedHits && (
-              <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)' }}>
-                {addableList(ctx, page.segs) ? 'click to add a point to this page' : pageHasMap(ctx, page.segs, routeFilled(page, idx, value)) ? 'this page in blue' : 'your route'}
+            {routeMap ? (
+              <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)' }}>{routeMap.terrain.name}</span>
+            ) : (
+              <select className="vs-input" value={map?.terrain.name ?? ''} onChange={e => setMapName(e.target.value)} aria-label="DCS map"
+                style={{ fontSize: '0.66rem', padding: '2px 4px' }}>
+                {DCS_MAPS.map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+            )}
+            {!readOnly && (
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                {drawing && plan.waypoints.length > 0 && (
+                  <button type="button" className="vs-btn-ghost" style={{ fontSize: '0.64rem', padding: '3px 8px' }}
+                    onClick={() => onWaypoints(plan.waypoints.slice(0, -1))}>Undo last</button>
+                )}
+                <button type="button" className={drawing ? 'vs-btn' : 'vs-btn-outline'} aria-pressed={drawing} onClick={() => setDrawing(v => !v)}
+                  style={{ display: 'inline-flex', gap: 5, alignItems: 'center', fontSize: '0.64rem', padding: '3px 10px' }}>
+                  <Pencil size={11} /> {drawing ? 'Done drawing' : 'Draw route'}
+                </button>
               </span>
             )}
           </div>
-          {map ? (
+          {map && (
             <div style={{ flex: 1, minHeight: 0 }}>
-              <DtcMap ctx={ctx} plan={plan} map={map} pageSegs={page?.segs ?? []} extras={offsetMarks(plan.waypoints, map)} />
-            </div>
-          ) : (
-            <div style={{ ...dim, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: 6, padding: 20 }}>
-              Draw your route on the planner map first: the cartridge is shown here on it.
+              <DtcMap key={map.terrain.name} ctx={ctx} plan={plan} map={map} pageSegs={page && !hits && !changedHits ? page.segs : []}
+                extras={offsetMarks(plan.waypoints, map)} route={route} />
             </div>
           )}
         </section>

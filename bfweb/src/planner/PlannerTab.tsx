@@ -94,6 +94,12 @@ export default function PlannerTab({ side, adminSide, report }: Props) {
   const start = parseClock(plan.start_time)
   const totals = legList.reduce((s, l) => ({ d: s.d + l.dist_nm, t: s.t + l.ete_s }), { d: 0, t: 0 })
   const map = plan.waypoints.length ? terrainAt(plan.waypoints[0].lat, plan.waypoints[0].lon) : null
+  // The campaign's map, for drawing a route from nothing in the cartridge window.
+  const homeMap = useMemo(() => {
+    const o = (report?.map ?? []).filter(x => x.lat !== 0 || x.lon !== 0)
+    if (!o.length) return null
+    return terrainAt(o.reduce((s, x) => s + x.lat, 0) / o.length, o.reduce((s, x) => s + x.lon, 0) / o.length)?.terrain.name ?? null
+  }, [report])
 
   const edit = (f: (p: Plan) => Plan) => setEd(e => ({ ...e, plan: f(e.plan), dirty: true }))
   const editWpt = (i: number, patch: Partial<PlanWaypoint>) =>
@@ -468,6 +474,7 @@ export default function PlannerTab({ side, adminSide, report }: Props) {
           tosText={tosText}
           side={side}
           onWaypoints={w => edit(p => ({ ...p, waypoints: w }))}
+          homeMap={homeMap}
         />
 
         <Panel title="Route & kneeboard" size="sm">

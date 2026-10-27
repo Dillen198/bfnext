@@ -121,6 +121,15 @@ export interface DcsTerrain {
   id: string
 }
 
+/** Every DCS map the planner knows, by name. */
+export const DCS_MAPS: string[] = Terrains.map(t => t.name)
+
+/** A DCS map by name ("Syria"). */
+export function terrainNamed(name: string): DcsTerrain | null {
+  const t = Terrains.find(x => x.name === name)
+  return t ? { terrain: t, id: DCS_TERRAIN_ID[t.name] ?? t.name } : null
+}
+
 /** The DCS map a point is on: the nearest map centre within 500 nm. */
 export function terrainAt(lat: number, lon: number): DcsTerrain | null {
   let best: Terrain | null = null

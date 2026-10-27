@@ -17,6 +17,9 @@ interface Props {
   plan: Plan
   map: DcsTerrain
   pageSegs: Seg[]
+  /** Drawing the route: a click adds a waypoint, a drag moves one, a
+   *  right-click deletes it. Null leaves the route as it is. */
+  route?: { add: (lat: number, lon: number) => void; move: (i: number, lat: number, lon: number) => void; remove: (i: number) => void } | null
 }
 
 /**
@@ -24,12 +27,13 @@ interface Props {
  * you are on (drag to move, click the map to add), and every other cartridge
  * point faintly.
  */
-export default function DtcMap({ ctx, plan, map, pageSegs, extras = [] }: Props) {
+export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = null }: Props) {
   const { theme } = useTheme()
   const mapStyle = useMemo(() => mapStyleFor(theme), [theme])
   const pts = useMemo(() => positions(ctx, map, pageSegs), [ctx, map, pageSegs])
-  const add = addableList(ctx, pageSegs)
-  const slots = add ? [] : slotsOn(ctx, pageSegs)
+  // While the route is drawn, the map's clicks are the route's.
+  const add = route ? null : addableList(ctx, pageSegs)
+  const slots = add || route ? [] : slotsOn(ctx, pageSegs)
   const [slotKey, setSlotKey] = useState<string | null>(null)
   const slot = slots.find(x => x.segs.join('/') === slotKey) ?? slots.find(x => !x.placed) ?? slots[0]
 
@@ -52,7 +56,7 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [] }: Props)
     return { geo: { type: 'FeatureCollection' as const, features: feats }, launches }
   }, [pts, ctx.value, map])
 
-  const route = useMemo(() => ({
+  const routeGeo = useMemo(() => ({
     type: 'FeatureCollection' as const,
     features: plan.waypoints.length < 2 ? [] : [{
       type: 'Feature' as const, properties: {},
@@ -84,6 +88,7 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [] }: Props)
   }
 
   const click = (e: MapLayerMouseEvent) => {
+    if (route) { route.add(e.lngLat.lat, e.lngLat.lng); return }
     if (!add && slot && !ctx.readOnly) {
       // Put the chosen slot here and switch it on, then move to the next empty one.
       const cur = getAt(ctx.value, slot.segs) as JsonObject
@@ -107,7 +112,7 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [] }: Props)
   return (
     <div style={{ position: 'relative', height: '100%', minHeight: 220, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
       <Map key={theme} mapStyle={mapStyle} style={{ width: '100%', height: '100%' }} initialViewState={view}
-        dragRotate={false} attributionControl={false} cursor={add ? 'crosshair' : 'grab'} onClick={click}>
+        dragRotate={false} attributionControl={false} cursor={add || slot || route ? 'crosshair' : 'grab'} onClick={click}>
         <Source id="dtc-lar" type="geojson" data={lars.geo}>
           <Layer id="dtc-lar-fill" type="fill" paint={{ 'fill-color': '#40a6ff', 'fill-opacity': 0.12 }} />
           <Layer id="dtc-lar-line" type="line" paint={{ 'line-color': '#40a6ff', 'line-width': 1.2, 'line-dasharray': [3, 2] }} />
@@ -128,12 +133,19 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [] }: Props)
             <div title={e.label} style={{ padding: '0 4px', borderRadius: 3, background: '#f0a030', color: '#1a1004', fontSize: 9, fontWeight: 800, border: '1px solid #1a1004', whiteSpace: 'nowrap' }}>{e.label}</div>
           </Marker>
         ))}
-        <Source id="dtc-route" type="geojson" data={route}>
+        <Source id="dtc-route" type="geojson" data={routeGeo}>
           <Layer id="dtc-route-line" type="line" paint={{ 'line-color': '#facc15', 'line-width': 2, 'line-opacity': 0.7, 'line-dasharray': [2, 1] }} />
         </Source>
         {plan.waypoints.map((w, i) => (
-          <Marker key={`wp-${i}`} latitude={w.lat} longitude={w.lon}>
-            <div title={`${i + 1} ${w.name}`} style={{ width: 16, height: 16, borderRadius: 8, background: '#facc15', color: '#0b0f08', fontSize: 9, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.8, border: '1px solid #0b0f08' }}>{i + 1}</div>
+          <Marker key={`wp-${i}`} latitude={w.lat} longitude={w.lon} draggable={!!route}
+            onDragEnd={e => route?.move(i, e.lngLat.lat, e.lngLat.lng)}
+            onClick={e => { if (route) e.originalEvent.stopPropagation() }}>
+            <div title={`${i + 1} ${w.name}${route ? ' (drag to move, right-click to delete)' : ''}`}
+              onContextMenu={e => { if (route) { e.preventDefault(); route.remove(i) } }}
+              style={{
+                width: route ? 20 : 16, height: route ? 20 : 16, borderRadius: 10, background: '#facc15', color: '#0b0f08', fontSize: 9, fontWeight: 800,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: route ? 1 : 0.8, border: '1px solid #0b0f08', cursor: route ? 'move' : 'default',
+              }}>{i + 1}</div>
           </Marker>
         ))}
         {pts.filter(p => !p.here).map(p => (
@@ -161,7 +173,7 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [] }: Props)
         </label>
       )}
       <div style={{ position: 'absolute', left: 8, bottom: 8, padding: '4px 8px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', fontSize: '0.62rem', color: 'var(--text-dim)', pointerEvents: 'none' }}>
-        {slot && !add ? <>Click the map to place <b style={{ color: 'var(--text)' }}>{slot.label}</b>. Shaded: release zone, ◆ launch point.</> : add ? <>Click the map to add a point to <b style={{ color: 'var(--text)' }}>{add.label}</b>. Drag a blue marker to move it.</> : <><span style={{ color: '#facc15' }}>●</span> your route · <span style={{ color: '#40a6ff' }}>■</span> this page · <span style={{ color: '#9aa3ad' }}>●</span> other cartridge points</>}
+        {route ? <>Click the map to add waypoint <b style={{ color: 'var(--text)' }}>{plan.waypoints.length + 1}</b>. Drag a waypoint to move it, right-click to delete it.</> : slot && !add ? <>Click the map to place <b style={{ color: 'var(--text)' }}>{slot.label}</b>. Shaded: release zone, ◆ launch point.</> : add ? <>Click the map to add a point to <b style={{ color: 'var(--text)' }}>{add.label}</b>. Drag a blue marker to move it.</> : <><span style={{ color: '#facc15' }}>●</span> your route · <span style={{ color: '#40a6ff' }}>■</span> this page · <span style={{ color: '#9aa3ad' }}>●</span> other cartridge points</>}
       </div>
     </div>
   )
