@@ -67,7 +67,7 @@ impl<'a, K, V> TransactionalTree<'a, K, V> {
         &self,
         batch: &Batch<K, V>,
     ) -> std::result::Result<(), sled::transaction::UnabortableTransactionError> {
-        self.inner.apply_batch(&batch.inner)
+        self.inner.apply_batch(&batch.to_sled())
     }
 
     pub fn flush(&self) {
@@ -100,7 +100,9 @@ macro_rules! impl_transactional {
           {
               use sled::Transactional;
 
-              ($(&self.$i.inner),+).transaction(|trees| {
+              let unsupported = || sled::transaction::TransactionError::Storage(
+                  sled::Error::Unsupported("transactions on a redb-backed tree".into()));
+              ($(self.$i.raw().as_sled().ok_or_else(unsupported)?),+).transaction(|trees| {
                   f((
                       $(TransactionalTree::new(&trees.$i)),+
                   ))

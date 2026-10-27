@@ -9,6 +9,10 @@ bincode = { workspace = true }
 pin-project = { workspace = true }
 sled = { workspace = true }
 anyhow = { workspace = true }
+# The engine bfdb is moving to (docs/plans/storage-migration.md), and the
+# self-describing value encoding redb-backed trees write (src/codec.rs).
+redb = "4.4"
+rmp-serde = "1.3"
 
 [dev-dependencies]
 serde_derive = { workspace = true }
