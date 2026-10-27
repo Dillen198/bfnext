@@ -625,12 +625,32 @@ DEFAULT:
   #   python -c "import secrets; print(secrets.token_urlsafe(32))"
   # The OPS page's config editor can't change keys that name a program, a
   # path, a URL or an update source -- edit those here on the box.
+  #
+  # Fowl Engine Manager on another PC (deploy/manager-remote.md) calls these
+  # same routes over Tailscale with ops_api.api_key -- the only time the
+  # WebService listens beyond loopback (0.0.0.0, with a firewall rule that
+  # lets only the tailnet in). require_own_key: true is part of that setup:
+  # with it the RestAPI key, which bfdb and other stats readers also hold,
+  # can't restart DCS or rewrite this file from another machine. The box's
+  # Manager shows whether it is on (its bot-config check "OPS API key").
+  # With it on and api_key unset the OPS routes are not added at all (404,
+  # and an error in the bot log at startup).
+  #
+  # Remote backups (GET backup, POST backup/start|verify|cancel) are handed
+  # to the box's Fowl Engine Manager service through request files in
+  # <manager_dir>\remote\. manager_dir is the Manager's data folder; leave
+  # it unset and it is %FOWL_MANAGER_DATA%, else %ProgramData%\FowlEngine --
+  # the Manager's own default. %VARS% in it are expanded. Like any *_dir key
+  # it can't be changed from the OPS page. Remote backups also have to be
+  # turned on in the Manager on the box (SETTINGS -> Remote backups); a
+  # restore is never remote.
   ops_api:
     enabled: true
     service_name: DCSServerBot     # the Windows service install-service.ps1 created
     # prefix: "/stats"             # override when bfdb.dcsserverbot_url's path differs
     # api_key: ""                  # its own long random value (see above)
-    # require_own_key: false       # true = never fall back to the RestAPI key
+    # require_own_key: false       # true = never fall back to the RestAPI key (needed for remote control)
+    # manager_dir: ""              # default %FOWL_MANAGER_DATA%, else %ProgramData%\FowlEngine
 
   # ---------------------------------------------
   # Heartbeat  (heartbeat.py -- optional outside monitoring)

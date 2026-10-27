@@ -156,6 +156,9 @@ impl Default for Agent {
 
 impl Agent {
     pub fn new() -> Agent {
+        // the only jobs this process runs are remote ones (remote.rs): say
+        // so to whoever finds the box busy (backup::busy_message)
+        crate::backup::set_origin("a remote request over the OPS API (the Manager service)");
         let cfg = ManagerConfig::load();
         Agent {
             cfg_mtime: std::fs::metadata(config::config_path()).and_then(|m| m.modified()).ok(),

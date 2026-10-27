@@ -8,6 +8,7 @@
 //! ```lua
 //! local http = require('bfcockpit_net')
 //! local id = http.request("GET", url)              -- returns at once
+//! -- or http.request(method, url, body, timeout, { ["X-Name"] = "value" })
 //! -- ...later, from onSimulationFrame:
 //! for _, r in ipairs(http.poll()) do               -- never blocks
 //!     -- r.id, r.status (0 when no response came back), r.body, r.error
@@ -26,6 +27,9 @@
 //! http.random_key([len])   -- `len` (16..128, default 40) letters and digits
 //!                          -- from the OS CSPRNG (BCryptGenRandom), for the
 //!                          -- `-cockpitkey` handshake instead of math.random
+//! http.headers             -- true: `request` takes a 5th argument, a table of
+//!                          -- extra request headers (absent in older DLLs,
+//!                          -- which ignore that argument)
 //! http.version             -- this DLL's crate version ("1.0.0")
 //! http.script_version      -- the BFCOCKPIT_VERSION of the Hooks script it
 //!                          -- was built with, e.g. "3.3.0": compare it with
@@ -92,7 +96,7 @@ const NO_KEY: &str = "this bfcockpit_net.dll was built without the release key, 
                       an update -- install the new version by hand";
 
 enum Work {
-    Http { method: String, url: String, body: Option<String>, timeout: Duration },
+    Http { method: String, url: String, body: Option<String>, timeout: Duration, headers: Vec<(String, String)> },
     Update { version: String, write_dir: PathBuf },
 }
 
@@ -166,7 +170,9 @@ fn read_limited(r: impl Read, max: u64) -> Result<String, String> {
 
 fn run(agent: &ureq::Agent, job: Job) -> Done {
     match job.work {
-        Work::Http { method, url, body, timeout } => http(agent, job.id, &method, &url, body, timeout),
+        Work::Http { method, url, body, timeout, headers } => {
+            http(agent, job.id, &method, &url, body, timeout, &headers)
+        }
         Work::Update { version, write_dir } => match update_now(agent, &version, &write_dir) {
             Ok(msg) => Done { id: job.id, status: 200, body: msg, error: None },
             Err(e) => Done { id: job.id, status: 0, body: String::new(), error: Some(e) },
@@ -174,11 +180,22 @@ fn run(agent: &ureq::Agent, job: Job) -> Done {
     }
 }
 
-fn http(agent: &ureq::Agent, id: u64, method: &str, url: &str, body: Option<String>, timeout: Duration) -> Done {
-    let req = agent
+fn http(
+    agent: &ureq::Agent,
+    id: u64,
+    method: &str,
+    url: &str,
+    body: Option<String>,
+    timeout: Duration,
+    headers: &[(String, String)],
+) -> Done {
+    let mut req = agent
         .request(method, url)
         .timeout(timeout)
         .set("Accept", "application/json");
+    for (name, value) in headers {
+        req = req.set(name, value);
+    }
     let res = match &body {
         Some(body) => req.set("Content-Type", "application/json").send_string(body),
         None => req.call(),
@@ -325,7 +342,53 @@ fn lua_str(v: &LuaValue) -> Option<String> {
     }
 }
 
-fn queue(method: &LuaValue, url: &LuaValue, body: &LuaValue, timeout: &LuaValue) -> Result<u64, String> {
+/// At most this many extra headers on one request.
+const MAX_HEADERS: usize = 16;
+
+/// A header name (an HTTP token, and not one this module sets itself) and a
+/// value of printable ASCII: nothing that could split the request.
+fn valid_header(name: &str, value: &str) -> bool {
+    const OURS: &[&str] = &["accept", "content-type", "content-length", "host", "user-agent", "transfer-encoding"];
+    !name.is_empty()
+        && name.len() <= 64
+        && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        && !OURS.contains(&name.to_ascii_lowercase().as_str())
+        && value.len() <= 1024
+        && value.bytes().all(|b| (0x20..0x7f).contains(&b))
+}
+
+/// The optional headers table of `request`: nil, or string keys to string
+/// values.
+fn headers_of(v: &LuaValue) -> Result<Vec<(String, String)>, String> {
+    let t = match v {
+        LuaValue::Nil => return Ok(Vec::new()),
+        LuaValue::Table(t) => t,
+        _ => return Err("headers must be a table or nil".into()),
+    };
+    let mut out = Vec::new();
+    for pair in t.clone().pairs::<LuaValue, LuaValue>() {
+        let (k, v) = pair.map_err(|e| format!("reading headers: {e}"))?;
+        let (Some(name), Some(value)) = (lua_str(&k), lua_str(&v)) else {
+            return Err("headers must map strings to strings".into());
+        };
+        if !valid_header(&name, &value) {
+            return Err(format!("header {name:?} is not allowed"));
+        }
+        if out.len() == MAX_HEADERS {
+            return Err(format!("more than {MAX_HEADERS} headers"));
+        }
+        out.push((name, value));
+    }
+    Ok(out)
+}
+
+fn queue(
+    method: &LuaValue,
+    url: &LuaValue,
+    body: &LuaValue,
+    timeout: &LuaValue,
+    headers: &LuaValue,
+) -> Result<u64, String> {
     let method = lua_str(method).ok_or("method must be a string")?;
     let url = lua_str(url).ok_or("url must be a string")?;
     if !(url.starts_with("https://") || url.starts_with("http://")) {
@@ -343,7 +406,8 @@ fn queue(method: &LuaValue, url: &LuaValue, body: &LuaValue, timeout: &LuaValue)
     .filter(|t| t.is_finite() && *t > 0.)
     .map(|t| Duration::from_secs_f64(t.min(120.)))
     .unwrap_or(DEFAULT_TIMEOUT);
-    send(Work::Http { method: method.to_ascii_uppercase(), url, body, timeout })
+    let headers = headers_of(headers)?;
+    send(Work::Http { method: method.to_ascii_uppercase(), url, body, timeout, headers })
 }
 
 fn send(work: Work) -> Result<u64, String> {
@@ -358,7 +422,9 @@ fn send(work: Work) -> Result<u64, String> {
     Ok(id)
 }
 
-/// `request(method, url [, body [, timeout_secs]]) -> id | nil, err`
+/// `request(method, url [, body [, timeout_secs [, headers]]]) -> id | nil, err`
+///
+/// `headers` is a table of extra request headers, `{ ["X-Name"] = "value" }`.
 ///
 /// Reports bad arguments as `nil, message` and never raises: raising a Lua
 /// error from Rust inside DCS's lua.dll corrupts the heap and kills the
@@ -367,9 +433,9 @@ fn send(work: Work) -> Result<u64, String> {
 /// would make mlua raise on a wrong type before this code ever ran.
 fn request<'lua>(
     _: &'lua Lua,
-    (method, url, body, timeout): (LuaValue<'lua>, LuaValue<'lua>, LuaValue<'lua>, LuaValue<'lua>),
+    (method, url, body, timeout, headers): (LuaValue<'lua>, LuaValue<'lua>, LuaValue<'lua>, LuaValue<'lua>, LuaValue<'lua>),
 ) -> LuaResult<(Option<u64>, Option<String>)> {
-    Ok(match queue(&method, &url, &body, &timeout) {
+    Ok(match queue(&method, &url, &body, &timeout, &headers) {
         Ok(id) => (Some(id), None),
         Err(e) => (None, Some(e)),
     })
@@ -500,6 +566,7 @@ fn bfcockpit_net(lua: &Lua) -> LuaResult<LuaTable<'_>> {
     m.set("poll", lua.create_function(poll)?)?;
     m.set("update", lua.create_function(update)?)?;
     m.set("random_key", lua.create_function(random_key)?)?;
+    m.set("headers", true)?;
     m.set("version", env!("CARGO_PKG_VERSION"))?;
     m.set("script_version", env!("BFCOCKPIT_SCRIPT_VERSION"))?;
     m.set("git", env!("BFCOCKPIT_NET_GIT"))?;
@@ -551,6 +618,30 @@ mod tests {
         // every character turns up over enough draws (no stuck alphabet)
         let many: std::collections::HashSet<char> = new_key(4000).unwrap().chars().collect();
         assert_eq!(many.len(), KEY_CHARS.len());
+    }
+
+    #[test]
+    fn headers_are_checked() {
+        assert!(valid_header("X-Cockpit-Key", "abcDEF123"));
+        assert!(!valid_header("X-Cockpit-Key", "a
+Host: evil"), "no request splitting");
+        assert!(!valid_header("Bad Name", "v"));
+        assert!(!valid_header("", "v"));
+        assert!(!valid_header("Content-Type", "text/plain"), "set by request itself");
+        assert!(!valid_header("x-k", &"v".repeat(1025)));
+    }
+
+    #[test]
+    fn headers_table_from_lua() {
+        let lua = Lua::new();
+        assert!(headers_of(&LuaValue::Nil).unwrap().is_empty());
+        let t: LuaValue = lua.load(r#"{ ["X-Cockpit-Key"] = "abc" }"#).eval().unwrap();
+        assert_eq!(headers_of(&t).unwrap(), vec![("X-Cockpit-Key".to_string(), "abc".to_string())]);
+        let bad: LuaValue = lua.load(r#"{ ["X-A"] = 5 }"#).eval().unwrap();
+        assert!(headers_of(&bad).is_err());
+        let list: LuaValue = lua.load(r#"{ "a", "b" }"#).eval().unwrap();
+        assert!(headers_of(&list).is_err(), "integer keys are not header names");
+        assert!(headers_of(&LuaValue::Boolean(true)).is_err());
     }
 
     #[test]

@@ -35,6 +35,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
     thread,
+    time::Duration,
 };
 use tokio::{
     runtime::Builder,
@@ -385,6 +386,45 @@ impl Rpcs {
     }
 }
 
+/// The waits between attempts to start the publisher. A mission restart drops
+/// the old publisher just before binding the new one, and its listener lets go
+/// of the port a moment later; with an exact `netidx_bind` port (deploy/
+/// range-pc/setup-range-pc.ps1 -PublisherPort) the first bind can lose that
+/// race. About 15 s in all before giving up.
+const BIND_BACKOFF: &[Duration] = &[
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+];
+
+/// `attempt` until it succeeds, sleeping `backoff[i]` after failure `i`; the
+/// last failure once `backoff` is used up.
+async fn retry<T, E: std::fmt::Display, Fut>(
+    what: &str,
+    backoff: &[Duration],
+    mut attempt: impl FnMut() -> Fut,
+) -> std::result::Result<T, E>
+where
+    Fut: std::future::Future<Output = std::result::Result<T, E>>,
+{
+    let mut waits = backoff.iter();
+    loop {
+        match attempt().await {
+            Ok(v) => return Ok(v),
+            Err(e) => match waits.next() {
+                Some(wait) => {
+                    info!("{what} failed ({e}), trying again in {wait:?}");
+                    tokio::time::sleep(*wait).await;
+                }
+                None => return Err(e),
+            },
+        }
+    }
+}
+
 async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
     let mut sinks = Sinks::new(&write_dir);
     let mut _rpcs: Option<Rpcs> = None;
@@ -428,7 +468,12 @@ async fn background_loop(write_dir: PathBuf, mut rx: UnboundedReceiver<Task>) {
                         continue;
                     }
                 };
-                let publisher = match PublisherBuilder::new(cfg).bind_cfg(bind).build().await {
+                let publisher = retry("starting the netidx publisher", BIND_BACKOFF, || {
+                    let cfg = cfg.clone();
+                    async move { PublisherBuilder::new(cfg).bind_cfg(bind).build().await }
+                })
+                .await;
+                let publisher = match publisher {
                     Ok(p) => p,
                     Err(e) => {
                         error!("failed to start the netidx publisher: {e:?}");
@@ -477,5 +522,70 @@ pub fn init(write_dir: PathBuf) -> UnboundedSender<Task> {
 pub fn send(t: Task) {
     if let Some(tx) = TX.get() {
         let _ = tx.send(t);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn rt() -> tokio::runtime::Runtime {
+        Builder::new_current_thread().enable_all().build().unwrap()
+    }
+
+    const FAST: &[Duration] = &[Duration::from_millis(1); 3];
+
+    #[test]
+    fn retry_stops_at_the_first_success() {
+        let calls = AtomicUsize::new(0);
+        let r: std::result::Result<usize, String> = rt().block_on(retry("t", FAST, || {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            async move { if n < 2 { Err(format!("fail {n}")) } else { Ok(n) } }
+        }));
+        assert_eq!(r, Ok(2));
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn retry_gives_up_with_the_last_error() {
+        let calls = AtomicUsize::new(0);
+        let r: std::result::Result<(), String> = rt().block_on(retry("t", FAST, || {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            async move { Err(format!("fail {n}")) }
+        }));
+        assert_eq!(r, Err("fail 3".to_string()), "one try plus one per backoff step");
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+    }
+
+    /// What a pinned port looks like across a mission restart: the old
+    /// listener lets go of the port only after the first bind was tried.
+    #[test]
+    fn retry_rides_out_a_port_still_held() {
+        rt().block_on(async {
+            let old = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = old.local_addr().unwrap();
+            let release = tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                drop(old);
+            });
+            let tries = AtomicUsize::new(0);
+            let backoff = [Duration::from_millis(50); 10];
+            let new = retry("binding", &backoff, || {
+                tries.fetch_add(1, Ordering::SeqCst);
+                tokio::net::TcpListener::bind(addr)
+            })
+            .await
+            .expect("bound once the old listener let go");
+            assert_eq!(new.local_addr().unwrap(), addr);
+            assert!(tries.load(Ordering::SeqCst) > 1, "the first bind should have hit the held port");
+            release.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn bind_backoff_is_bounded() {
+        let total: Duration = BIND_BACKOFF.iter().sum();
+        assert!(total >= Duration::from_secs(5) && total <= Duration::from_secs(30), "{total:?}");
     }
 }

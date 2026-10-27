@@ -63,7 +63,7 @@
 -- copy it was built with to answer /api/cockpit/plugin/version, and the panel
 -- compares that with its own to tell the player when to update. Keep the
 -- format exactly as it is.
-local BFCOCKPIT_VERSION = "3.3.0"
+local BFCOCKPIT_VERSION = "3.4.0"
 
 local net = require('net')
 
@@ -105,11 +105,24 @@ local NET_DIRS = {
 }
 for _, d in ipairs(NET_DIRS) do package.cpath = package.cpath .. ";" .. d .. "?.dll" end
 local http
+-- Set when the DLL was built for another version of this script (its build
+-- stamp, bfcockpit/net/build.rs). The installer always ships a matching
+-- pair; a mismatch is a hand-copied or half-updated install, which may lack
+-- what this script uses. Shown in the panel's status line.
+local net_mismatch = nil
 do
     local ok, mod = pcall(require, 'bfcockpit_net')
     if ok and type(mod) == 'table' then
         http = mod
-        logmsg("bfcockpit_net " .. tostring(mod.version) .. " loaded")
+        local built_for = mod.script_version
+        logmsg("bfcockpit_net " .. tostring(mod.version) .. " loaded (built for script "
+            .. tostring(built_for) .. ", commit " .. tostring(mod.git) .. ")")
+        if type(built_for) ~= 'string' then
+            net_mismatch = "bfcockpit_net.dll is older than this script"
+        elseif built_for ~= BFCOCKPIT_VERSION then
+            net_mismatch = "bfcockpit_net.dll is from version " .. built_for .. ", this script is " .. BFCOCKPIT_VERSION
+        end
+        if net_mismatch then logmsg("WARNING: " .. net_mismatch .. " -- re-run the Vector Strike installer") end
     else
         logmsg("bfcockpit_net.dll not loaded (" .. tostring(mod) .. ") -- expected in " .. NET_DIRS[1])
     end
@@ -125,7 +138,9 @@ local DEFAULTS = {
     api = "https://api.vectorstrike.org",
 
     -- Pin to one bfdb instance id (e.g. "vs1") instead of letting the server
-    -- name decide. Leave nil unless the panel shows the wrong server.
+    -- name decide. Leave nil unless the panel shows the wrong server. A pin
+    -- also tells the panel to trust whatever server you are on with its key
+    -- (see "Panel key" in the script), so take it out before playing elsewhere.
     instance = nil,
 
     -- 0.3 (ghost) .. 1.0 (solid).
@@ -560,10 +575,16 @@ end
 -- and quotes it on every request. Only a client that can send chat as you can
 -- register a key for you. See bflib/src/cockpit.rs, "Overlay keys".
 --
--- Lua 5.1's math.random is not a strong generator, so the seed mixes several
--- things only this machine knows at this moment; bfdb additionally rate-limits
--- wrong keys, which is what makes guessing hopeless.
+-- The chat line goes only to a server the campaign API knows (see "Is this a
+-- Vector Strike server?" below): on anybody else's server it would be an
+-- ordinary chat line, in front of everyone and in their logs.
+--
+-- The key comes from the OS's CSPRNG through bfcockpit_net.dll. A DLL older
+-- than 3.4 has no random_key, and then Lua 5.1's math.random has to do: it is
+-- not a strong generator, so the seed mixes several things only this machine
+-- knows at this moment. bfdb rate-limits wrong keys either way.
 local KEY_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+local KEY_LEN = 40
 local cockpit_key = nil
 -- os.clock() after which the engine will have seen the key: the chat line is
 -- handled on the server's next frame, and a request that beat it would be
@@ -571,14 +592,16 @@ local cockpit_key = nil
 local key_ready_at = nil
 local key_sent_at = -1e9
 
-local function new_key()
+local server_confirmed  -- forward, see "Is this a Vector Strike server?"
+
+local function weak_key()
     local addr = tonumber(tostring({}):match("(%x+)$") or "0", 16) or 0
     local seed = (os.time() * 1000003 + math.floor(os.clock() * 1000000) + addr) % 2147483647
     math.randomseed(seed)
     -- Throw away the first few outputs: MSVC's rand() barely moves on them.
     for _ = 1, 10 do math.random() end
     local out = {}
-    for i = 1, 40 do
+    for i = 1, KEY_LEN do
         if i % 10 == 0 then
             math.randomseed((math.random(1, 2147483646) + math.floor(os.clock() * 1000000)) % 2147483647)
         end
@@ -588,9 +611,19 @@ local function new_key()
     return table.concat(out)
 end
 
+local function new_key()
+    if http and http.random_key then
+        local ok, key, err = pcall(http.random_key, KEY_LEN)
+        if ok and type(key) == 'string' then return key end
+        logmsg("random_key failed (" .. tostring(ok and err or key) .. "), using math.random")
+    end
+    return weak_key()
+end
+
 -- (Re)send our key. At most every 15 s however often it is asked for, so a
 -- server that keeps refusing cannot turn this into chat spam.
 local function register_key()
+    if not server_confirmed() then return end
     local now = os.clock()
     if now - key_sent_at < 15 then return end
     if not cockpit_key then cockpit_key = new_key() end
@@ -605,8 +638,15 @@ local function register_key()
     end
 end
 
+-- What "Is this a Vector Strike server?" found out, for the server `name`.
+local function fresh_server_check()
+    return { name = nil, answer = nil, asking = false, retry_at = -1e9 }
+end
+local server_check = fresh_server_check()
+
 local function forget_key()
     cockpit_key, key_ready_at, key_sent_at = nil, nil, -1e9
+    server_check = fresh_server_check()
 end
 
 -- ── API client ───────────────────────────────────────────────────────
@@ -620,6 +660,12 @@ end
 local pending = {}  -- request id -> callback(data, err, status)
 local pending_raw = {}  -- id -> callback(result), for http.update
 
+-- The key goes in an X-Cockpit-Key header, which stays out of proxy and access
+-- logs. In the URL (`?ckey=`) only when the DLL is too old to send headers,
+-- or this server's bfdb is too old to read them (see api_call).
+local key_in_query = not (http and http.headers)
+
+-- `params.instance` / `params.server` replace the one this adds itself.
 local function api_url(path, params, authed)
     local parts = { (tostring(cfg.api):gsub("/+$", "")), path }
     local sep = "?"
@@ -631,9 +677,15 @@ local function api_url(path, params, authed)
     if authed then
         local ok, id = pcall(net.get_my_player_id)
         add("playerid", ok and id or nil)
-        add("ckey", cockpit_key)
+        if key_in_query then add("ckey", cockpit_key) end
     end
-    if cfg.instance then add("instance", cfg.instance) else add("server", server_name()) end
+    if params and (params.instance or params.server) then
+        -- named by the caller: added with the other params below
+    elseif cfg.instance then
+        add("instance", cfg.instance)
+    else
+        add("server", server_name())
+    end
     add("plugin", BFCOCKPIT_VERSION)
     for k, v in pairs(params or {}) do add(k, v) end
     return table.concat(parts)
@@ -654,7 +706,24 @@ local function api_call(method, path, params, body, authed, cb)
     end
     local url = api_url(path, params, authed)
     if cfg.debug then logmsg(method .. " " .. url:gsub("ckey=[^&]*", "ckey=<hidden>")) end
-    local id, err = http.request(method, url, json, 15)
+    local headers = nil
+    if authed and cockpit_key and http.headers then
+        headers = { ["X-Cockpit-Key"] = cockpit_key }
+        if not key_in_query then
+            -- A bfdb from before the header answers a call whose key it can't
+            -- see "this cockpit overlay is out of date (no key)": quote the
+            -- key in the URL from then on.
+            local inner = cb
+            cb = function(data, e, status)
+                if status == 401 and not key_in_query and tostring(e):find("(no key)", 1, true) then
+                    key_in_query = true
+                    logmsg("this server's bfdb does not read X-Cockpit-Key yet -- sending the key in the URL")
+                end
+                inner(data, e, status)
+            end
+        end
+    end
+    local id, err = http.request(method, url, json, 15, headers)
     if not id then
         cb(nil, "request failed: " .. tostring(err), 0)
         return
@@ -700,6 +769,86 @@ local function pump_network()
         local ok2, err = pcall(deliver, r)
         if not ok2 then logmsg("response handler errored: " .. tostring(err)) end
     end
+end
+
+-- ── Is this a Vector Strike server? ──────────────────────────────────
+-- Asked of the campaign API before the key goes out over chat, by the name
+-- this DCS server advertises -- the name bfdb routes on (`dcs_server_name`):
+--  1. /api/cockpit/plugin/version?instance=<name> answers 200 only when that
+--     name is one of bfdb's instances (non-public ones too: the cockpit
+--     routes are open to them), and 400 "unknown instance" otherwise.
+--  2. Failing that, /api/instances: a bfdb with a single campaign that never
+--     set its `dcs_server_name` routes every name to that campaign, and can't
+--     tell its own server from any other. That one is taken at its word.
+-- A pinned `instance` in the config is the player saying which server this
+-- is, and skips the question. The answer holds until the next server.
+
+local function server_answer(name, yes, why)
+    if server_check.name ~= name then return end
+    server_check.asking = false
+    if yes == nil then
+        -- no answer (network, server error): ask again shortly
+        server_check.retry_at = os.clock() + 15
+        logmsg("could not ask whether this is a Vector Strike server: " .. tostring(why))
+        return
+    end
+    server_check.answer = yes
+    server_check.retry_at = os.clock() + 60
+    logmsg((yes and "server confirmed: " or "not sending the panel key: ") .. why)
+    if yes then register_key() end
+end
+
+local function ask_about_server(name)
+    server_check.asking = true
+    api_call("GET", "/api/cockpit/plugin/version", { instance = name }, nil, false, function(_, err, status)
+        if status == 200 then
+            return server_answer(name, true, "the campaign API knows " .. name)
+        elseif status ~= 400 then
+            return server_answer(name, nil, err)
+        end
+        -- `?server=<name>` rides along (api_url): a bfdb with several
+        -- instances turns an unknown one away with 400 here as well.
+        api_call("GET", "/api/instances", nil, nil, false, function(data, err2, status2)
+            if status2 == 400 then
+                return server_answer(name, false, name .. " is not a server the campaign API knows")
+            elseif type(data) ~= 'table' then
+                return server_answer(name, nil, err2)
+            end
+            local rows = type(data.instances) == 'table' and data.instances or {}
+            local unnamed = #rows == 1 and type(rows[1]) == 'table'
+                and not (type(rows[1].dcs_server_name) == 'string' and rows[1].dcs_server_name ~= "")
+            if unnamed then
+                server_answer(name, true, "the campaign API has one campaign and no server names")
+            else
+                server_answer(name, false, name .. " is not a server the campaign API knows")
+            end
+        end)
+    end)
+end
+
+-- true once this server is confirmed; otherwise starts (or waits on) the
+-- question and returns false.
+server_confirmed = function()
+    if cfg.instance then return true end
+    local name = server_name()
+    if not name then return false end
+    if server_check.name ~= name then
+        server_check = fresh_server_check()
+        server_check.name = name
+    end
+    if server_check.answer == true then return true end
+    if not server_check.asking and os.clock() >= server_check.retry_at then
+        ask_about_server(name)
+    end
+    return false
+end
+
+-- What the panel says on a server that is not confirmed, or nil.
+local function server_refused()
+    if cfg.instance or server_check.answer ~= false then return nil end
+    return "The campaign API does not know this server (" .. tostring(server_check.name) .. "), so the panel "
+        .. "stays off here and does not send its key. If this is a Vector Strike server, set "
+        .. "instance = \"<id>\" in Saved Games\\DCS\\Config\\BFCockpit.lua."
 end
 
 -- ── Formatting ───────────────────────────────────────────────────────
@@ -851,12 +1000,13 @@ local function paint_note()
             or (state.update and state.updating == "waiting" and ("Version " .. state.update .. " is downloaded -- it installs when you close DCS"))
             or (state.update and not settings.auto_update and ("Version " .. state.update .. " is available -- turn on auto-update in Options > Special, or re-run the installer"))
             or (state.update and ("Version " .. state.update .. " is available -- re-run the Vector Strike installer"))
+            or (net_mismatch and (net_mismatch .. " -- re-run the Vector Strike installer"))
             or ("Vector Strike " .. BFCOCKPIT_VERSION .. (bound.toggle and ("  ·  " .. bound.toggle:upper() .. " panel") or "")
                 .. (bound.wheel and ("  ·  " .. bound.wheel:upper() .. " wheel") or ""))
         pcall(function()
             w_status:setText(t)
             w_status:setSkin((state.note and state.note.bad) and skins.bad
-                or (state.update and skins.good) or skins.status)
+                or (state.update and skins.good) or (net_mismatch and skins.bad) or skins.status)
         end)
     end
 end
@@ -1669,6 +1819,8 @@ render = function()
         -- No server, no engine, no key to register: nothing would ever load.
         if not in_multiplayer() then
             draw_rows(message_rows("The panel works on the Vector Strike multiplayer servers. Join one and open it again."))
+        elseif server_refused() then
+            draw_rows(message_rows(server_refused()))
         else
             draw_rows(renderers[state.tab]())
         end

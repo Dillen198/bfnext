@@ -1394,8 +1394,45 @@ class OpsApi:
         doc["stale"] = age > REMOTE_STATUS_STALE_SECS
         return doc, None
 
-    def _remote_request(self, kind: str, **fields) -> tuple[Optional[str], Optional[object]]:
-        """Drop a request where the Manager service picks it up: (id, error response)."""
+    @staticmethod
+    def _started_at(s) -> str:
+        try:
+            return datetime.fromisoformat(str(s)).astimezone().strftime("%H:%M:%S")
+        except (TypeError, ValueError):
+            return str(s or "?")
+
+    def _box_busy(self, doc: dict) -> Optional[str]:
+        """Why a backup or check can't start now, or None. The Manager runs one
+        job per box: the service's own job is in its status, one started in the
+        Manager window on the box leaves remote\\job-owner.json (backup.rs,
+        "one job per box") until it ends."""
+        job = doc.get("job")
+        if isinstance(job, dict) and job.get("running"):
+            by = job.get("started_by") or "the Manager service"
+            return (f"a {job.get('kind') or 'job'} is already running on this box (started by {by} at "
+                    f"{self._started_at(job.get('started_at'))}) -- try again when it is done")
+        try:
+            with open(os.path.join(self._remote_dir(), "job-owner.json"), encoding="utf-8") as fh:
+                owner = json.load(fh)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(owner, dict):
+            return None
+        try:
+            import psutil
+            # left behind by a Manager that died mid-job: its lock went with it
+            if owner.get("pid") and not psutil.pid_exists(int(owner["pid"])):
+                return None
+        except (ImportError, TypeError, ValueError):
+            pass
+        return (f"a {owner.get('kind') or 'job'} is already running on this box (started by "
+                f"{owner.get('started_by') or 'Fowl Engine Manager'} at {self._started_at(owner.get('started_at'))})"
+                f" -- try again when it is done")
+
+    def _remote_request(self, kind: str, exclusive: bool = False,
+                        **fields) -> tuple[Optional[str], Optional[object]]:
+        """Drop a request where the Manager service picks it up: (id, error response).
+        `exclusive`: a job of its own (backup, verify), refused while one runs."""
         doc, why = self._remote_status()
         if why:
             return None, self._err(409, why)
@@ -1404,6 +1441,9 @@ class OpsApi:
                                         f"{doc['age_secs'] // 60} min -- is it running?")
         if not doc.get("enabled"):
             return None, self._err(409, "remote backups are turned off in this box's Fowl Engine Manager")
+        busy = self._box_busy(doc) if exclusive else None
+        if busy:
+            return None, self._err(409, busy)
         req_id = f"{time.time_ns()}-{kind}"
         d = os.path.join(self._remote_dir(), "requests")
         try:
@@ -1429,7 +1469,7 @@ class OpsApi:
             return self._err(400, "password must be a string")
         if pw and len(pw) < 8:
             return self._err(400, "the backup password must be at least 8 characters")
-        req_id, err = self._remote_request("backup", password=pw or None)
+        req_id, err = self._remote_request("backup", exclusive=True, password=pw or None)
         if err:
             return err
         await self.cog.notify_ops(f"{icon('settings')} A whole-box backup was asked for over the OPS API.")
@@ -1441,7 +1481,7 @@ class OpsApi:
         if not isinstance(zip_path, str) or not zip_path.strip():
             return self._err(400, "need zip: one of the backups GET backup lists")
         pw = body.get("password")
-        req_id, err = self._remote_request("verify", zip=zip_path.strip(),
+        req_id, err = self._remote_request("verify", exclusive=True, zip=zip_path.strip(),
                                            password=pw if isinstance(pw, str) and pw else None)
         if err:
             return err
