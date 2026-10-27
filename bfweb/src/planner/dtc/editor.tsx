@@ -18,6 +18,8 @@ import {
   changesUnder, entriesOf, humanise, isMatrix, isMatrixList, isObj, isRecordTable, isScalar, labelOf, playerHelp, rowLabel,
   type Ctx, type LeafHit,
 } from './core'
+import { isThreatTable } from './threats'
+import { ThreatTable, ThreatTabs } from './ThreatTable'
 
 // ── controls ──────────────────────────────────────────────────────────────
 
@@ -363,6 +365,7 @@ export function Body({ ctx, segs, depth = 0, scalarsOnly = false }: { ctx: Ctx; 
     return <FieldRow ctx={ctx} segs={segs} />
   }
   if (!scalarsOnly) {
+    if (isThreatTable(v)) return <ThreatTable ctx={ctx} segs={segs} />
     if (isRecordTable(v, a)) return <RecordTable ctx={ctx} segs={segs} />
     if (isMatrixList(v)) return <MatrixGrid ctx={ctx} segs={segs} />
     if (isMatrix(v)) return <MatrixCard ctx={ctx} segs={segs} />
@@ -373,6 +376,10 @@ export function Body({ ctx, segs, depth = 0, scalarsOnly = false }: { ctx: Ctx; 
   })
   const scalars = kids.filter(([, x]) => isScalar(x))
   const groups = scalarsOnly ? [] : kids.filter(([, x]) => !isScalar(x))
+  // Threat tables for each RWR mode: one tab each.
+  if (!scalars.length && groups.length >= 2 && groups.every(([, x]) => isThreatTable(x))) {
+    return <ThreatTabs ctx={ctx} segs={segs} keys={groups.map(([k]) => k)} />
+  }
   return (
     <div>
       {scalars.map(([k]) => <Body key={String(k)} ctx={ctx} segs={[...segs, k]} depth={depth + 1} />)}

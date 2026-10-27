@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ChevronUp, Download, Pencil, Search, X } from '@icons'
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Pencil, Search, X } from '@icons'
 import { AnnotationIndex, applyOverrides, withOverride, type Json, type Overrides } from '../model'
 import { DCS_MAPS, offsetOnGrid, terrainAt, terrainNamed, toDcsXY, type DcsTerrain } from '../nav'
 import { shareString } from '../dcsdtc'
@@ -46,6 +46,8 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
   const [msg, setMsg] = useState<Msg | null>(null)
   // The download and steps stay folded away until asked for.
   const [loadOpen, setLoadOpen] = useState(false)
+  // The map can fold away when a page needs the room (the RWR tables).
+  const [mapOpen, setMapOpen] = useState(true)
 
   // Escape closes, and the page behind does not scroll.
   useEffect(() => {
@@ -105,6 +107,7 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
   const ctx: Ctx = {
     idx, defaults: model.defaults, overrides: ov, value, readOnly, hidden, points,
     set: (segs, v) => onSystems(target.key, withOverride(model.defaults, ov, segs, v)),
+    setMany: pairs => onSystems(target.key, pairs.reduce((o, [segs, v]) => withOverride(model.defaults, o, segs, v), ov)),
   }
 
   /** On, and whether that is automatic (from changes/route) or the pilot's choice. */
@@ -175,7 +178,7 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
           <b style={{ color: 'var(--text)' }}>{METHOD[target.tool].name}</b> · {METHOD[target.tool].blurb}
         </div>
       )}>
-      <div className="dtc-body">
+      <div className={`dtc-body${mapOpen ? '' : ' dtc-map-closed'}`}>
         <aside className="dtc-side" aria-label="Cartridge pages">
           <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
             <label style={{ position: 'relative', display: 'block' }}>
@@ -258,6 +261,14 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
           ) : null}
         </main>
 
+        {!mapOpen ? (
+          <section className="dtc-mapcol dtc-mapcol-closed" aria-label="Map">
+            <button type="button" className="vs-btn-ghost" onClick={() => setMapOpen(true)} title="Show the map" aria-expanded={false}
+              style={{ writingMode: 'vertical-rl', padding: '10px 4px', fontSize: '0.66rem', display: 'flex', gap: 6, alignItems: 'center' }}>
+              <ChevronLeft size={12} /> Show map
+            </button>
+          </section>
+        ) : (
         <section className="dtc-mapcol" aria-label="Map">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
             <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Map</span>
@@ -281,6 +292,8 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
                 </button>
               </span>
             )}
+            <button type="button" className="vs-btn-ghost" onClick={() => setMapOpen(false)} title="Hide the map: more room for the page" aria-label="Hide the map" aria-expanded
+              style={{ padding: '3px 6px', marginLeft: readOnly ? 'auto' : undefined }}><ChevronRight size={12} /></button>
           </div>
           {map && (
             <div style={{ flex: 1, minHeight: 0 }}>
@@ -289,6 +302,7 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
             </div>
           )}
         </section>
+        )}
       </div>
 
       {loadOpen && (

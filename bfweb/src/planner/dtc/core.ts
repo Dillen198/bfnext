@@ -24,6 +24,8 @@ export interface Ctx {
   value: Json
   readOnly: boolean
   set: (segs: Seg[], v: Json) => void
+  /** Several changes at once, e.g. a reorder renumbering many priorities. */
+  setMany?: (pairs: [Seg[], Json][]) => void
   /** Pointers never shown as fields (the load switches). */
   hidden: Set<string>
   points: PointOption[]
