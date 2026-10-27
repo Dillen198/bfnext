@@ -14,11 +14,11 @@ import {
   isAir, isWeapon, isEffect, isSurface, distM, bearingDeg,
 } from './data'
 import { Theater, type Cam3D, type TheaterFrame } from './theater'
-import { gAt, iasOf, machOf, nearest, velAt } from './analysis'
+import { braa, gAt, iasOf, machOf, nearest, velAt } from './analysis'
 import type { HudData } from './hud'
 import { Overlay, SIDE_COLOR, sideKey, type Item, type Polyline, type Ring, type Text2D, type Wedge } from './overlay'
 import { threatOf } from './threats'
-import { type Units, fmtDist, labelAlt, labelSpeed } from './units'
+import { type Units, fmtDist, fmtSpeed, labelAlt, labelSpeed } from './units'
 import { airfields, type Airfield } from './dcs/theatre'
 import { shortNameOf } from '../../../shared/models/catalog'
 
@@ -667,7 +667,11 @@ export class ReplayEngine {
     // BRAA line to the measured object.
     if (this.focus != null && this.measure != null) {
       const a = byIdx.get(this.focus), b = byIdx.get(this.measure)
-      if (a && b) lines.push({ pts: new Float32Array([a.x, a.y, b.x, b.y]), n: 2, color: '#ffffff', alpha: 0.9, width: 1.5, dash: [4, 3] })
+      if (a && b) {
+        lines.push({ pts: new Float32Array([a.x, a.y, b.x, b.y]), n: 2, color: '#ffffff', alpha: 0.9, width: 1.5, dash: [4, 3] })
+        const tag = this.braaTag(a, b)
+        if (tag) texts.push(tag)
+      }
     }
 
     const rings: Ring[] = []
@@ -719,6 +723,21 @@ export class ReplayEngine {
     ov.begin()
     ov.draw2D({ items, lines, rings, wedges, texts, labels: this.opts.labels, scale: this.opts.scale })
     this.hits = items.filter(it => !isEffect(it.kind)).map(it => ({ idx: it.idx, x: it.x, y: it.y, pri: it.pri }))
+  }
+
+  /** Range and closure, on the middle of the line between the followed
+   *  object and the measured one (at those screen points). */
+  private braaTag(a: { x: number; y: number }, b: { x: number; y: number }): Text2D | null {
+    const fs = this.focus != null ? this.store.state(this.focus, this.t) : null
+    const ms = this.measure != null ? this.store.state(this.measure, this.t) : null
+    if (!fs || !ms) return null
+    const r = braa(fs, ms)
+    const u = this.opts.units
+    // Close together, the middle of the line is under their labels: below them instead.
+    const near = Math.hypot(a.x - b.x, a.y - b.y) < 90
+    const x = near ? Math.min(a.x, b.x) - 20 : (a.x + b.x) / 2 + 8
+    const y = near ? Math.max(a.y, b.y) + 34 : (a.y + b.y) / 2 - 8
+    return { x, y, text: `${fmtDist(r.range, u)} · Vc ${fmtSpeed(r.closure, u)}`, color: '#ffffff', box: true }
   }
 
   /** Where a moving object will be `s` seconds on, [lon, lat, alt]. */
@@ -877,6 +896,9 @@ export class ReplayEngine {
     const ov = this.overlay
     ov.begin()
     ov.labels(items, this.opts.labels)
+    const fp = this.focus != null ? pos.get(this.focus) : undefined, mp = this.measure != null ? pos.get(this.measure) : undefined
+    const tag = fp && mp && this.cam !== 'cockpit' ? this.braaTag(fp, mp) : null
+    if (tag) ov.texts([tag])
     this.hits = items.filter(it => !isEffect(it.kind)).map(it => ({ idx: it.idx, x: it.x, y: it.y, pri: it.pri }))
   }
 

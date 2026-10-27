@@ -151,8 +151,9 @@ const ICON_PX: Record<Shape, number> = {
 
 const sprites = new Map<string, HTMLCanvasElement>()
 
-function sprite(shape: Shape, color: string, dpr: number): HTMLCanvasElement {
-  const key = `${shape}|${color}|${dpr}`
+/** An icon in a colour, edged in black -- or in white, for the measured object. */
+function sprite(shape: Shape, color: string, dpr: number, white = false): HTMLCanvasElement {
+  const key = `${shape}|${color}|${dpr}|${white}`
   let cv = sprites.get(key)
   if (cv) return cv
   const px = Math.ceil(ICON_PX[shape] * dpr)
@@ -163,8 +164,8 @@ function sprite(shape: Shape, color: string, dpr: number): HTMLCanvasElement {
   ctx.translate(pad, pad)
   drawShape(ctx, shape, px - pad * 2)
   ctx.lineJoin = 'round'
-  ctx.lineWidth = 2.6 * dpr
-  ctx.strokeStyle = 'rgba(0,0,0,0.8)'
+  ctx.lineWidth = (white ? 3.4 : 2.6) * dpr
+  ctx.strokeStyle = white ? '#ffffff' : 'rgba(0,0,0,0.8)'
   ctx.stroke()
   if (shape === 'vehicle' || shape === 'sam') {
     ctx.lineWidth = 1.6 * dpr
@@ -278,7 +279,13 @@ export class Overlay {
     const items = sc.items
     for (const it of items) this.drawItem(it)
     this.labels(items, sc.labels)
-    for (const t of sc.texts) {
+    this.texts(sc.texts)
+  }
+
+  /** Free text, optionally on a dark box. */
+  texts(texts: Text2D[]) {
+    const ctx = this.ctx
+    for (const t of texts) {
       ctx.font = LABEL_FONT
       if (t.box) {
         const w = ctx.measureText(t.text).width
@@ -332,7 +339,8 @@ export class Overlay {
     }
     const shape = SHAPE[it.kind]
     if (!shape) return
-    const img = sprite(shape, color, this.dpr * this.scale)
+    // The followed object is told apart by its colour, the measured one by a white edge.
+    const img = sprite(shape, color, this.dpr * this.scale, it.target)
     const s = img.width / this.dpr
     if (ROTATES[it.kind]) {
       // A weapon points along its track (its recorded heading can be stale).
@@ -342,12 +350,6 @@ export class Overlay {
       ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
     } else {
       ctx.drawImage(img, x - s / 2, y - s / 2, s, s)
-    }
-    if (it.target) {
-      // Tacview's target box (the followed object is told apart by its colour alone)
-      ctx.strokeStyle = SIDE_COLOR.target
-      ctx.lineWidth = 1.4
-      ctx.strokeRect(x - 13, y - 13, 26, 26)
     }
   }
 

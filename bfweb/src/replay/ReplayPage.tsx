@@ -29,7 +29,7 @@ import Shots from './Shots'
 import Stats from './Stats'
 import { downloadCsv } from './csv'
 import { type Units, fmtAlt, fmtSpeed, fmtVs, fmtWeight, fmtDist } from './units'
-import { braa, aspectWord, gAt, nearest, machOf, iasOf, tasOf, flightStats, M_TO_NM } from './analysis'
+import { braa, gAt, nearest, machOf, iasOf, tasOf, flightStats, M_TO_NM } from './analysis'
 import { bearingDeg, distM } from './data'
 import { dcsXZ, theatreAt } from './dcs/theatre'
 import { tacviewType } from '../../../shared/models/catalog'
@@ -151,6 +151,25 @@ export function Viewer({ source, rec, fileName }: { source: TrackSource; rec: st
 
   // The first-run hint goes once someone has picked something to follow.
   useEffect(() => { if (focus != null && hint) { setHint(false); store('rp-hint-seen', true) } }, [focus, hint])
+  // Shown at the top of the card while measuring, else as a button at the foot.
+  const versus = (f: number) => (
+    <Versus
+      meta={meta}
+      store={source}
+      t={t}
+      focus={f}
+      units={units}
+      a={ui?.focusState ?? null}
+      b={ui?.measureState ?? null}
+      measure={ui?.measure ?? null}
+      measuring={ui?.measuring ?? false}
+      onStart={() => e?.startMeasuring(!ui?.measuring)}
+      onClear={() => e?.setMeasure(null)}
+    />
+  )
+  // Picking the other object of a versus opens the card to show it.
+  const measured = ui?.measure ?? null
+  useEffect(() => { if (measured != null) setCardOpen(true) }, [measured])
 
   // Keyboard, Tacview-ish. `?` lists them.
   useEffect(() => {
@@ -275,6 +294,15 @@ export function Viewer({ source, rec, fileName }: { source: TrackSource; rec: st
             </button>
             {layersOpen && ui && <Layers ui={ui} onSet={o => e?.setOpts(o)} onBasemap={b => e?.setBasemap(b)} onClose={() => setLayersOpen(false)} />}
           </div>
+          {focus != null && (
+            <button
+              className={`rp-tool ${ui?.measure != null || ui?.measuring ? 'on' : ''}`}
+              onClick={() => { if (ui?.measure != null) e?.setMeasure(null); else { if (narrow) setCardOpen(false); e?.startMeasuring(!ui?.measuring) } }}
+              title={ui?.measure != null ? 'Stop measuring (Esc)' : 'Range, closure and the BFM angles to another object: click this, then the other one (B)'}
+            >
+              <Crosshair size={15} /><span>Versus</span>
+            </button>
+          )}
           {mode === '2d' && (
             <button className={`rp-tool rp-wide-only ${ui?.ruling ? 'on' : ''}`} onClick={() => e?.setRuling(!ui?.ruling)} title="Distance and bearing between two points on the map (D)">
               <Compass size={15} /><span>Ruler</span>
@@ -371,19 +399,12 @@ export function Viewer({ source, rec, fileName }: { source: TrackSource; rec: st
                   <button key={c} className={ui?.cam === c ? 'on' : ''} onClick={() => e?.setCam(c)} title={title}>{label}</button>
                 ))}
               </div>
+              {ui?.measure != null && versus(focus)}
               <Identity o={fo} />
               <Telemetry s={ui?.focusState ?? null} kind={fo.k} alive={t >= fo.t0 && t <= fo.t1} g={focusG(source, focus, t)} meta={meta} units={units} />
               <Bullseye source={source} side={fo.c} s={ui?.focusState ?? null} t={t} units={units} />
               {isAir(fo.k) && <FlightSummary meta={meta} store={source} idx={focus} version={source.version} />}
-              <Measure
-                meta={meta}
-                a={ui?.focusState ?? null}
-                b={ui?.measureState ?? null}
-                measure={ui?.measure ?? null}
-                measuring={ui?.measuring ?? false}
-                onStart={() => e?.startMeasuring(!ui?.measuring)}
-                onClear={() => e?.setMeasure(null)}
-              />
+              {ui?.measure == null && versus(focus)}
               <Channels s={ui?.focusState ?? null} meta={meta} />
               <button
                 className="rp-chip rp-wide-btn" title="The whole track and every recorded property, one row per sample"
@@ -657,7 +678,7 @@ function Help({ onClose }: { onClose: () => void }) {
     ['Following', [
       ['Tab', 'next aircraft in the air (Shift: previous)'],
       ['1 2 3 4 5 0', 'external, chase, cockpit, top, padlock, free camera'],
-      ['B', 'measure to another object (or Shift-click it)'],
+      ['B', 'versus another object: range, closure, AA, ATA, HCA (or Shift-click it)'],
       ['Esc', 'stop measuring, then stop following'],
     ]],
     ['View', [
@@ -685,7 +706,7 @@ function Help({ onClose }: { onClose: () => void }) {
         ))}
       </div>
       <p>
-        Click anything on the map to follow it; Shift-click a second object for range, bearing, aspect and closure.
+        Click anything on the map to follow it; Shift-click a second object (or use Versus) for range, closure and the BFM angles between the two.
         Click a mark on the timeline to jump to just before it. Drop a Tacview <code>.acmi</code> file anywhere to
         watch it here -- it is read in your browser and never uploaded.
       </p>
@@ -858,37 +879,74 @@ function FlightSummary({ meta, store, idx, version }: { meta: RecMeta; store: Tr
   )
 }
 
-function Measure({ meta, a, b, measure, measuring, onStart, onClear }: {
-  meta: RecMeta; a: State | null; b: State | null; measure: number | null; measuring: boolean
+/** One aircraft's side of the versus panel: speed, height and G. */
+function vsSide(store: TrackSource, idx: number, st: State, t: number) {
+  const ch = st.ch ?? {}
+  return { tas: ch.TAS ?? tasOf(st), alt: st.alt, g: ch.VerticalGForce ?? focusG(store, idx, t) }
+}
+
+const PURSUIT: Record<'lead' | 'pure' | 'lag', string> = { lead: 'LEAD', pure: 'PURE', lag: 'LAG' }
+
+/**
+ * Tacview's two-object telemetry, for BFM: both jets side by side, then the
+ * geometry between them -- range, closure, the angles off each nose, the
+ * crossing angle and the pursuit the followed one is flying.
+ */
+function Versus({ meta, store, t, focus, a, b, measure, measuring, units, onStart, onClear }: {
+  meta: RecMeta; store: TrackSource; t: number; focus: number; a: State | null; b: State | null
+  measure: number | null; measuring: boolean; units: Units
   onStart: () => void; onClear: () => void
 }) {
   if (measure == null) {
     return (
       <button className={`rp-chip rp-wide-btn ${measuring ? 'on' : ''}`} onClick={onStart}
-        title="Range, bearing, closure and aspect to another object (B, or Shift-click it)">
-        <Crosshair size={11} /> {measuring ? 'Click a target… (Esc cancels)' : 'Measure to another object'}
+        title="Range, closure, aspect and the BFM angles to another object (B, or Shift-click it)">
+        <Crosshair size={11} /> {measuring ? 'Click a target… (Esc cancels)' : 'Versus another object'}
       </button>
     )
   }
-  const o = meta.objects[measure]
+  const o = meta.objects[measure], me = meta.objects[focus]
   const r = a && b ? braa(a, b) : null
+  const sa = a ? vsSide(store, focus, a, t) : null, sb = b ? vsSide(store, measure, b, t) : null
+  const deg = (x: number) => `${Math.round(x)}°`
+  const rows: [string, (s: NonNullable<typeof sa>) => string][] = [
+    ['TAS', s => fmtSpeed(s.tas, units)],
+    ['ALT', s => fmtAlt(s.alt, units)],
+    ['G', s => (s.g != null ? s.g.toFixed(1) : '—')],
+  ]
   return (
     <div className="rp-braa">
-      <div className="rp-card-h">Measuring to</div>
+      <div className="rp-card-h">Versus</div>
       <div className="rp-focus-head">
         <span className="rp-dot" style={{ background: sideHex(o?.c) }} />
         <span className="rp-focus-name">{o ? objLabel(o) : '?'}</span>
         <button className="rp-icon-btn rp-x" onClick={onClear} title="Stop measuring (Esc)"><X size={13} /></button>
       </div>
-      {r ? (
-        <div className="rp-telemetry">
-          <div><span>RANGE</span><b>{(r.range * M_TO_NM).toFixed(1)} nm</b></div>
-          <div><span>BRG</span><b>{String(Math.round(r.bearing) % 360).padStart(3, '0')}°</b></div>
-          <div><span>ALT Δ</span><b>{r.dAlt >= 0 ? '+' : ''}{Math.round(r.dAlt * M_TO_FT).toLocaleString()} ft</b></div>
-          <div><span>CLOSURE</span><b>{Math.round(r.closure * MS_TO_KT)} kt</b></div>
-          <div><span>ASPECT</span><b>{aspectWord(r.aspect)} {Math.round(r.aspect)}°</b></div>
-          <div><span>ATA</span><b>{Math.round(r.ata)}°</b></div>
-        </div>
+      {r && sa && sb ? (
+        <>
+          <table className="rp-vs">
+            <thead>
+              <tr>
+                <th />
+                <th style={{ color: sideHex(me?.c) }} title={me ? objLabel(me) : ''}>{me ? objLabel(me) : 'Followed'}</th>
+                <th style={{ color: sideHex(o?.c) }} title={o ? objLabel(o) : ''}>{o ? objLabel(o) : 'Target'}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(([k, f]) => <tr key={k}><td>{k}</td><td>{f(sa)}</td><td>{f(sb)}</td></tr>)}
+            </tbody>
+          </table>
+          <div className="rp-telemetry">
+            <div><span>RANGE</span><b>{fmtDist(r.range, units)}</b></div>
+            <div><span>CLOSURE</span><b className={r.closure >= 0 ? '' : 'rp-neg'}>{fmtSpeed(r.closure, units)}</b></div>
+            <div><span>ALT Δ</span><b>{r.dAlt >= 0 ? '+' : ''}{fmtAlt(r.dAlt, units)}</b></div>
+            <div title="Antenna train angle: the target's angle off your nose"><span>ATA</span><b>{deg(r.ata)}</b></div>
+            <div title="Aspect angle: your angle off the target's tail (0 = dead six, 180 = head on)"><span>AA</span><b>{deg(r.aspect)}</b></div>
+            <div title="Heading crossing angle: between the two flight paths"><span>HCA</span><b>{deg(r.hca)}</b></div>
+            <div title="Where your flight path points: ahead of the target (lead), at it (pure) or behind it (lag)"><span>PURSUIT</span><b>{r.pursuit ? PURSUIT[r.pursuit] : '—'}</b></div>
+            <div><span>BRG</span><b>{String(Math.round(r.bearing) % 360).padStart(3, '0')}°</b></div>
+          </div>
+        </>
       ) : <div className="rp-card-note">Not both in the picture at this moment</div>}
     </div>
   )

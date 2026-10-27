@@ -671,7 +671,8 @@ export class Theater {
     for (const m of this.pools.values()) m.count = 0
     const buckets = new Map<string, typeof placed>()
     for (const x of placed) {
-      const key = `${x.key}|${x.o.focus ? FOCUS_HEX : x.o.color}`
+      // followed: green; measured: white; the rest their side's colour
+      const key = `${x.key}|${x.o.focus ? FOCUS_HEX : x.o.target ? '#ffffff' : x.o.color}`
       let b = buckets.get(key)
       if (!b) buckets.set(key, (b = []))
       b.push(x)

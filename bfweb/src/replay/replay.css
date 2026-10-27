@@ -208,6 +208,12 @@
 .rp-summary-row.dim { color: var(--text-dim); margin-top: 6px; }
 .rp-wide-btn { margin-top: 10px; width: 100%; justify-content: center; padding: 6px 8px; }
 .rp-braa .rp-focus-head { margin-bottom: 6px; }
+.rp-vs { width: 100%; table-layout: fixed; border-collapse: collapse; margin-bottom: 10px; font: 0.74rem var(--font-mono); }
+.rp-vs th { font: 700 0.62rem var(--font-body); text-align: right; padding: 0 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rp-vs th:first-child, .rp-vs td:first-child { width: 34px; text-align: left; }
+.rp-vs td { padding: 3px 0; text-align: right; color: var(--text); border-top: 1px solid var(--border); }
+.rp-vs td:first-child { font-size: 0.58rem; color: var(--text-dim); letter-spacing: 0.12em; }
+.rp-telemetry b.rp-neg { color: var(--text-muted); }
 
 /* shots tab */
 .rp-shot-sum { padding: 0 10px 6px; font: 0.64rem var(--font-mono); color: var(--text-dim); }
@@ -396,6 +402,8 @@
   .rp-title { flex: 1 1 0; }
   .rp-title-main { font-size: 0.9rem; letter-spacing: 0.06em; }
   .rp-tools { gap: 4px; }
+  /* the pick prompt sits over the transport, clear of the card */
+  .rp-root .rp-ruler { top: auto; bottom: 128px; max-width: calc(100% - 24px); white-space: normal; text-align: center; }
   .rp-tool span { display: none; }
   .rp-seg-view button { min-width: 38px; padding: 4px 6px; }
   .rp-side, .rp-side.wide { left: 6px; right: 6px; width: auto; top: 52px; bottom: 120px; z-index: 4; }

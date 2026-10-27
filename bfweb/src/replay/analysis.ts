@@ -139,11 +139,34 @@ export interface Braa {
   aspect: number
   /** antenna train angle: b's angle off a's nose, deg */
   ata: number
+  /** heading crossing angle: between the two flight paths, deg (0 = same way) */
+  hca: number
+  /** where a's flight path points against b: ahead of it, at it or behind it
+   *  (null when b is not in front of a) */
+  pursuit: 'lead' | 'pure' | 'lag' | null
 }
 
-function velOfState(st: State): [number, number, number] {
+type V3 = [number, number, number]
+const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+const angle = (a: V3, b: V3) => Math.acos(Math.min(1, Math.max(-1, dot(a, b)))) / DEG
+const unit = (h: number, el: number): V3 => [Math.sin(h * DEG) * Math.cos(el * DEG), Math.cos(h * DEG) * Math.cos(el * DEG), Math.sin(el * DEG)]
+
+/** Velocity, east/north/up m/s: along the smoothed flight path when known. */
+function velOfState(st: State): V3 {
+  if (st.path) {
+    const u = unit(st.path.trk, st.path.pitch), v = Math.hypot(st.gs, st.vs)
+    return [u[0] * v, u[1] * v, u[2] * v]
+  }
   return [Math.sin(st.hdg * DEG) * st.gs, Math.cos(st.hdg * DEG) * st.gs, st.vs]
 }
+
+function norm(v: V3): V3 | null {
+  const n = Math.hypot(v[0], v[1], v[2])
+  return n > 1e-6 ? [v[0] / n, v[1] / n, v[2] / n] : null
+}
+
+/** Pursuit within this many degrees of the line of sight is pure. */
+const PURE_DEG = 3
 
 export function braa(a: State, b: State): Braa {
   const brg = bearingDeg(a.lon, a.lat, b.lon, b.lat)
@@ -151,20 +174,34 @@ export function braa(a: State, b: State): Braa {
   const dAlt = b.alt - a.alt
   const range = Math.hypot(ground, dAlt)
   // line of sight a -> b, east/north/up unit vector
-  const los: [number, number, number] = [
+  const los: V3 = [
     (Math.sin(brg * DEG) * ground) / (range || 1),
     (Math.cos(brg * DEG) * ground) / (range || 1),
     dAlt / (range || 1),
   ]
   const va = velOfState(a), vb = velOfState(b)
-  const rel = [vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]]
-  const closure = -(rel[0] * los[0] + rel[1] * los[1] + rel[2] * los[2])
-  // aspect: angle between b's heading and the line b -> a, measured off b's tail
-  const recip = (brg + 180) % 360
-  let off = Math.abs(((recip - b.hdg + 540) % 360) - 180) // 0 = a is on b's nose
-  off = 180 - off // 0 = a is astern of b
-  const ata = Math.abs(((brg - a.hdg + 540) % 360) - 180)
-  return { range, bearing: brg, dAlt, closure, aspect: off, ata }
+  const rel = [vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]] as V3
+  const closure = -dot(rel, los)
+  // Angles in three dimensions, off each nose (its attitude, as Tacview does).
+  const noseA = unit(a.hdg, a.pitch), noseB = unit(b.hdg, b.pitch)
+  const ata = angle(noseA, los)
+  // 0 when b's nose points straight away from a (a sits on its tail)
+  const aspect = angle(noseB, los)
+  const ua = norm(va) ?? noseA, ub = norm(vb) ?? noseB
+  const hca = angle(ua, ub)
+  // Lead, pure or lag: a's flight path off the line of sight, on the side
+  // b is moving across it (ahead) or the other (behind).
+  let pursuit: Braa['pursuit'] = null
+  if (angle(ua, los) < 90) {
+    if (angle(ua, los) <= PURE_DEG) pursuit = 'pure'
+    else {
+      const along = dot(ua, los), across = dot(vb, los)
+      const pa: V3 = [ua[0] - along * los[0], ua[1] - along * los[1], ua[2] - along * los[2]]
+      const pb: V3 = [vb[0] - across * los[0], vb[1] - across * los[1], vb[2] - across * los[2]]
+      pursuit = Math.hypot(...pb) < 1 ? null : dot(pa, pb) > 0 ? 'lead' : 'lag'
+    }
+  }
+  return { range, bearing: brg, dAlt, closure, aspect, ata, hca, pursuit }
 }
 
 /** Cardinal-ish aspect words, as a controller would say them. */
