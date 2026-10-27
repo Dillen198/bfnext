@@ -16,7 +16,7 @@ import { F16_THREATS, HORNET_THREATS } from './dtc/threatDefs'
 import { fromDcsXY, hornetSequences, offsetOnGrid, terrainAt, toDcsXY, type DcsTerrain } from './nav'
 import { aircraftDef, type NativeType, type Plan } from './types'
 import { ExportError, safeName } from './exports'
-import { lar, larCentre } from './f14lar'
+import { lar, launchPoint } from './f14lar'
 
 const FT = 0.3048
 const KTS_TO_KMH = 1.852
@@ -388,7 +388,8 @@ function tomcatRoute(r: RouteFill) {
       if (typeof t.lat !== 'number' || typeof t.lon !== 'number') Object.assign(t, fromDcsXY(t.x as number, t.y as number, r.grid.terrain))
       if (t.elev === 0) zeroElev++
       const l = lar(t.drop_alt as number, t.drop_spd as number)
-      const c = larCentre(t.x as number, t.y as number, (t.attack_heading as number) ?? 0, l)
+      // The pilot's launch point if it is in the LAR, else as the ME puts it.
+      const c = launchPoint(t.x as number, t.y as number, (t.attack_heading as number) ?? 0, l, { x: t.launch_x, y: t.launch_y })
       Object.assign(t, l, { launch_x: c.x, launch_y: c.y })
     }
   }

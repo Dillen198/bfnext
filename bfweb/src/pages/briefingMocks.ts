@@ -4,7 +4,7 @@
 // `bfprotocols::situation::SituationReport`; the Rust-side golden JSON tests
 // are what keep the real wire format honest.
 
-import type { Briefing, SituationReport } from '../api'
+import type { Briefing, SituationReport, TacPicture } from '../api'
 
 type Side = 'Blue' | 'Red'
 
@@ -214,5 +214,26 @@ export function mockSituation(side: Side): SituationReport {
       { name: 'Zugdidi FOB', kind: 'FOB', owner: 'Neutral', lat: 42.51, lon: 41.87, health: 0, logi: 0, threatened: false, captureable: true, priority: false, primary: false },
       { name: 'Lentekhi Outpost', kind: 'FOB', owner: 'Blue', lat: 42.79, lon: 42.72, health: 95, logi: 100, supply: 61, fuel: 70, threatened: false, captureable: false, priority: false, primary: false },
     ],
+  }
+}
+
+/** What JTACs, AWACS and recon see, for the cartridge map in the mock. */
+export function mockTacPicture(side: Side): TacPicture {
+  const enemy = side === 'Blue' ? 'Red' : 'Blue'
+  return {
+    side,
+    time: new Date().toISOString(),
+    bullseye: [{ side, lat: 42.6, lon: 41.6 }],
+    air: [
+      { id: 901, side: enemy, lat: 43.05, lon: 41.0, alt_m: 7600, heading: 135, speed_kts: 420, vspd_ms: 0, iff: 'hostile', class: 'fighter', unit_type: 'MiG-29S', age_s: 12, stale: false, jammed: false, source: 'awacs', label: null },
+    ],
+    ground: [
+      { id: 1, side: enemy, lat: 42.874, lon: 41.142, class: 'airdefense', count: 4, confidence: 0.9, uncertainty_m: 120, source: 'jtac', age_s: 95, threat_range_m: 35000 },
+      { id: 2, side: enemy, lat: 42.83, lon: 41.21, class: 'armor', count: 6, confidence: 0.85, uncertainty_m: 60, source: 'jtac', age_s: 40, threat_range_m: null },
+      { id: 3, side: enemy, lat: 42.91, lon: 41.31, class: 'artillery', count: 3, confidence: 0.6, uncertainty_m: 900, source: 'recon', age_s: 700, threat_range_m: null },
+      { id: 4, side: enemy, lat: 42.31, lon: 41.79, class: 'airdefense', count: 1, confidence: 0.5, uncertainty_m: 3000, source: 'awacs', age_s: 300, threat_range_m: 24000 },
+      { id: 5, side: enemy, lat: 43.12, lon: 40.41, class: 'infantry', count: 12, confidence: 0.7, uncertainty_m: 250, source: 'sf', age_s: 1500, threat_range_m: null },
+    ],
+    radar_rings: [],
   }
 }

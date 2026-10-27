@@ -87,6 +87,8 @@ function detect(ctx: Ctx, segs: Seg[], tmpl: JsonObject, v: Json[]): Detected | 
   const k = fields[0]
   const pa = ctx.idx.get([...segs, 0, k])
   const pointTemplate = clone((pa?.item ?? (tmpl[k] as Json[])[0] ?? { x: 0, y: 0 }) as JsonObject)
+  // Points that switch on and off are fixed slots (F-14 JDAM targets), not a line.
+  if (typeof pointTemplate.active === 'boolean') return null
   const fixed = pa?.fixedLength ?? null
   const rect = fixed === 4
   return {

@@ -63,3 +63,41 @@ export function larPolygon(x: number, y: number, attackHeadingDeg: number, l: La
   for (let i = 5; i >= 0; i--) pts.push(P(rMax, L + ((R - L) / 6) * i))
   return pts
 }
+
+type XY = { x: number; y: number }
+
+function inside(p: XY, poly: XY[]): boolean {
+  let hit = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i]
+    const b = poly[j]
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) hit = !hit
+  }
+  return hit
+}
+
+function nearestOnEdge(p: XY, poly: XY[]): XY {
+  let best = poly[0]
+  let bestD = Infinity
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]
+    const b = poly[(i + 1) % poly.length]
+    const dx = b.x - a.x
+    const dy = b.y - a.y
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)))
+    const q = { x: a.x + t * dx, y: a.y + t * dy }
+    const d = (q.x - p.x) ** 2 + (q.y - p.y) ** 2
+    if (d < bestD) { bestD = d; best = q }
+  }
+  return best
+}
+
+/** The launch point a target keeps, as the ME does on every redraw: the
+ *  pilot's own if it lies in the LAR, pulled onto the LAR's edge if not,
+ *  the LAR's centre when there is none. */
+export function launchPoint(x: number, y: number, attackHeadingDeg: number, l: Lar, launch?: { x?: unknown; y?: unknown }): XY {
+  if (typeof launch?.x !== 'number' || typeof launch?.y !== 'number') return larCentre(x, y, attackHeadingDeg, l)
+  const poly = larPolygon(x, y, attackHeadingDeg, l)
+  const p = { x: launch.x, y: launch.y }
+  return inside(p, poly) ? p : nearestOnEdge(p, poly)
+}

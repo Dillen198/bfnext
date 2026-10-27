@@ -17,6 +17,7 @@ import DtcMap from './DtcMap'
 import OffsetsEditor from './OffsetsEditor'
 import MissionPanel from './MissionPanel'
 import { missionFills, type MissionData, type MissionFill } from './mission'
+import { useTacPicture } from '../../pages/groundwar/commandFeed'
 import './dtc.css'
 
 /** A page path nothing lies under: search results and settings-only pages
@@ -54,6 +55,9 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
   const [query, setQuery] = useState('')
   const [changedOnly, setChangedOnly] = useState(false)
   const [missionOpen, setMissionOpen] = useState(false)
+  // What JTACs, AWACS and recon see now, for the map (live unless handed in).
+  const liveTac = useTacPicture(!!mission && mission.tac === undefined)
+  const intel = useMemo(() => (mission ? { report: mission.report, tac: mission.tac ?? liveTac } : null), [mission, liveTac])
   const [msg, setMsg] = useState<Msg | null>(null)
   // The download and steps stay folded away until asked for.
   const [loadOpen, setLoadOpen] = useState(false)
@@ -343,7 +347,7 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
           {map && (
             <div style={{ flex: 1, minHeight: 0 }}>
               <DtcMap key={map.terrain.name} ctx={ctx} plan={plan} map={map} pageSegs={page && !hits && !changedHits && !page.scalarsOnly ? page.segs : NOWHERE}
-                extras={offsetMarks(plan.waypoints, map)} route={route} />
+                extras={offsetMarks(plan.waypoints, map)} route={route} intel={intel} side={mission?.side} onWaypoints={onWaypoints} />
             </div>
           )}
         </section>

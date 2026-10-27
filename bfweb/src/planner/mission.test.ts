@@ -46,7 +46,7 @@ const mission: MissionData = {
     { objective: 'Kutaisi', kind: 'Airbase', deck: null, lat: 42.18, lon: 42.48, tacan: '44X KTS', ndb_khz: 477, icls: null, link4_mhz: null, acls: false, brc: null },
     { objective: 'Batumi', kind: 'Airbase', deck: null, lat: 41.6, lon: 41.6, tacan: null, ndb_khz: 430, icls: null, link4_mhz: null, acls: false, brc: null },
     { objective: 'CVN', kind: 'Carrier', deck: 'CVN74', lat: 41, lon: 40, tacan: '74X CVN', ndb_khz: null, icls: 1, link4_mhz: 336, acls: true, brc: 0 },
-  ],
+  ],  report: null,
 }
 const plan: Plan = { ...newPlan('F-16C_50'), waypoints: [{ name: 'A', lat: 42.2, lon: 42.4, alt_ft: 20000, elev_ft: 0, target: false, note: '' }] }
 

@@ -6,7 +6,7 @@
 // match DCS's own beacon and runway databases exactly (anything else is
 // deleted on load), which the dashboard does not have.
 
-import type { CommsChannel, MapObjective, NavaidEntry, ThreatArea } from '../../api'
+import type { CommsChannel, MapObjective, NavaidEntry, SituationReport, TacPicture, ThreatArea } from '../../api'
 import { getAt, type Json, type JsonObject, type Seg } from '../model'
 import { distanceNm, toDcsXY, type DcsTerrain } from '../nav'
 import type { Target } from '../targets'
@@ -20,6 +20,10 @@ export interface MissionData {
   threats: ThreatArea[]
   objectives: MapObjective[]
   navaids: NavaidEntry[]
+  /** The whole briefing report, for the cartridge map's picture. */
+  report: SituationReport | null
+  /** A live picture handed in (the mock); otherwise the map streams it. */
+  tac?: TacPicture | null
 }
 
 export interface MissionFill {

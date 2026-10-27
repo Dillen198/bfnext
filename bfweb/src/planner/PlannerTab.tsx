@@ -9,6 +9,7 @@ import { combatFliteXml, download, safeName } from './exports'
 import { routeCardPng } from './card'
 import DtcCard from './dtc/DtcCard'
 import { commsFromCard, type MissionData } from './dtc/mission'
+import { mockTacPicture } from '../pages/briefingMocks'
 import { targetsFor } from './targets'
 import {
   AIRCRAFT, aircraftDef, MAX_CHANNELS, MAX_WAYPOINTS, newPlan,
@@ -29,6 +30,9 @@ function exportsOf(a: AircraftDef): string {
 const hasDtc = (a: AircraftDef) => targetsFor(a).length > 0 || !!a.other
 
 type Side = 'Blue' | 'Red'
+
+/** The dashboard's dev mock (?mock): no engine, canned data. */
+const MOCK = import.meta.env.DEV && new URLSearchParams(location.search).has('mock')
 
 interface Props {
   side: Side
@@ -227,6 +231,8 @@ export default function PlannerTab({ side, adminSide, report, briefing }: Props)
     threats: report?.threats ?? [],
     objectives: report?.map ?? [],
     navaids: briefing?.navaids ?? [],
+    report: report ?? null,
+    tac: MOCK ? mockTacPicture(side) : undefined,
   } : null), [report, briefing, side])
 
   const radioEditor = (radio: 'comm1' | 'comm2', title: string) => {

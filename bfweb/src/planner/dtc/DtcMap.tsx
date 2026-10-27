@@ -2,14 +2,17 @@ import { useMemo, useState } from 'react'
 import Map, { Layer, Marker, Source, type MapLayerMouseEvent } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { useTheme } from '@shared/web/theme'
-import { mapStyleFor } from '../../lib/mapStyle'
+import { MAP_LOOKS, styleFor, type MapLook } from '../../pages/groundwar/mapStyles'
 import { getAt, toPointer, type Json, type JsonObject, type Seg } from '../model'
 import { addableLists, numbered, positions, slotsOn, type AddableList } from './places'
 import { addPoint, addRect, removePoint, shapeLists, shapesOf, type ShapeList } from './shapes'
-import { fromDcsXY, toDcsXY, type DcsTerrain } from '../nav'
-import { lar, larCentre, larPolygon } from '../f14lar'
-import type { Plan } from '../types'
+import { toDcsXY, type DcsTerrain } from '../nav'
+import { drawings, moveHandle } from './drawings'
+import type { Plan, PlanWaypoint } from '../types'
 import type { Ctx } from './core'
+import IntelLayers from './IntelLayers'
+import PickCard from './PickCard'
+import { allPicks, LAYERS, sendTargets, sendTo, type Intel, type LayerKey, type Pick, type SendTarget } from './picks'
 
 interface Props {
   /** Points derived from the route (offset aimpoints, VIP/VRP), drawn from their steerpoint. */
@@ -21,6 +24,11 @@ interface Props {
   /** Drawing the route: a click adds a waypoint, a drag moves one, a
    *  right-click deletes it. Null leaves the route as it is. */
   route?: { add: (lat: number, lon: number) => void; move: (i: number, lat: number, lon: number) => void; remove: (i: number) => void } | null
+  /** The side's picture (briefing report and live JTAC/AWACS/recon contacts). */
+  intel?: Intel | null
+  side?: string
+  /** Change the plan's route (picked targets sent to it). */
+  onWaypoints?: (w: PlanWaypoint[]) => void
 }
 
 /**
@@ -28,9 +36,34 @@ interface Props {
  * you are on (drag to move, click the map to add), and every other cartridge
  * point faintly.
  */
-export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = null }: Props) {
+export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = null, intel = null, side = 'Blue', onWaypoints }: Props) {
   const { theme } = useTheme()
-  const mapStyle = useMemo(() => mapStyleFor(theme), [theme])
+  const [look, setLook] = useState<MapLook>(() => saved('dtc-map-look', 'sat') as MapLook)
+  const mapStyle = useMemo(() => styleFor(look, theme), [look, theme])
+  const [on, setOn] = useState<Record<LayerKey, boolean>>(() => {
+    try { return { ...DEFAULT_LAYERS, ...JSON.parse(saved('dtc-map-layers', '{}')) } } catch { return DEFAULT_LAYERS }
+  })
+  const [layersOpen, setLayersOpen] = useState(false)
+  const toggle = (k: LayerKey) => setOn(o => { const n = { ...o, [k]: !o[k] }; keep('dtc-map-layers', JSON.stringify(n)); return n })
+  const pickLook = (l: MapLook) => { setLook(l); keep('dtc-map-look', l) }
+
+  // What is picked: one thing clicked, or everything in a box.
+  const [picked, setPicked] = useState<Pick[]>([])
+  const [selecting, setSelecting] = useState(false)
+  const [boxCorner, setBoxCorner] = useState<{ lat: number; lon: number } | null>(null)
+  const pickedKeys = useMemo(() => new Set(picked.map(p => p.key)), [picked])
+  const onPick = (p: Pick) => {
+    if (selecting) setPicked(ps => (ps.some(x => x.key === p.key) ? ps.filter(x => x.key !== p.key) : [...ps, p]))
+    else setPicked(ps => (ps.length === 1 && ps[0].key === p.key ? [] : [p]))
+  }
+  const send = (t: SendTarget): string => {
+    const r = sendTo(ctx, plan, t, picked, map)
+    if (r.waypoints) onWaypoints?.(r.waypoints)
+    if (r.writes?.length) (ctx.setMany ?? ((pairs: [Seg[], Json][]) => pairs.forEach(([s, v]) => ctx.set(s, v))))(r.writes)
+    return r.added
+      ? `Sent ${r.added} to ${t.label.toLowerCase()}.${r.skipped ? ` ${r.skipped} did not fit.` : ''}`
+      : 'Nothing sent: it is full.'
+  }
   const pts = useMemo(() => positions(ctx, map, pageSegs), [ctx, map, pageSegs])
   const lists = useMemo(() => shapeLists(ctx, pageSegs), [ctx, pageSegs])
   const shapes = useMemo(() => lists.flatMap(l => shapesOf(ctx, map, l)), [lists, ctx, map])
@@ -59,24 +92,17 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
   const [slotKey, setSlotKey] = useState<string | null>(null)
   const slot = slots.find(x => x.segs.join('/') === slotKey) ?? slots.find(x => !x.placed) ?? slots[0]
 
-  // Release zones of active JDAM targets on this page, as the exporter
-  // computes them, and their launch points.
-  const lars = useMemo(() => {
-    const feats: { type: 'Feature'; properties: object; geometry: { type: 'Polygon'; coordinates: number[][][] } }[] = []
-    const launches: { lat: number; lon: number }[] = []
-    for (const p of pts) {
-      if (!p.here) continue
-      const t = getAt(ctx.value, p.segs) as JsonObject
-      if (typeof t.drop_alt !== 'number' || typeof t.drop_spd !== 'number' || typeof t.x !== 'number' || typeof t.y !== 'number') continue
-      const l = lar(t.drop_alt, t.drop_spd)
-      const head = typeof t.attack_heading === 'number' ? t.attack_heading : 0
-      const ring = larPolygon(t.x, t.y, head, l).map(q => { const ll = fromDcsXY(q.x, q.y, map.terrain); return [ll.lon, ll.lat] })
-      feats.push({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [[...ring, ring[0]]] } })
-      const c = larCentre(t.x, t.y, head, l)
-      launches.push(fromDcsXY(c.x, c.y, map.terrain))
-    }
-    return { geo: { type: 'FeatureCollection' as const, features: feats }, launches }
-  }, [pts, ctx.value, map])
+  // What DCS's own editor draws around items: threat rings, CAP orbits,
+  // corridor edges, JDAM launch zones with launch point and heading.
+  const art = useMemo(() => drawings(ctx, map, pageSegs), [ctx, map, pageSegs])
+  const artGeo = useMemo(() => ({
+    type: 'FeatureCollection' as const,
+    features: art.lines.map(l => ({
+      type: 'Feature' as const,
+      properties: { color: l.color, dashed: l.dashed ? 1 : 0, opacity: l.here ? 0.95 : 0.4, width: l.here ? 1.8 : 1 },
+      geometry: { type: 'LineString' as const, coordinates: l.coords },
+    })),
+  }), [art])
 
   const shapeGeo = useMemo(() => ({
     type: 'FeatureCollection' as const,
@@ -99,7 +125,9 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
   }), [plan.waypoints])
 
   const view = useMemo(() => {
-    const all: [number, number][] = [...plan.waypoints.map(w => [w.lat, w.lon] as [number, number]), ...pts.filter(p => p.here).map(p => [p.lat, p.lon] as [number, number])]
+    let all: [number, number][] = [...plan.waypoints.map(w => [w.lat, w.lon] as [number, number]), ...pts.filter(p => p.here).map(p => [p.lat, p.lon] as [number, number])]
+    // Nothing drawn yet: frame the side's picture (its objectives and contacts).
+    if (!all.length && intel) all = allPicks(intel, side, k => k === 'objective' || k === 'contact').map(p => [p.lat, p.lon])
     if (!all.length) return { latitude: map.terrain.center[0], longitude: map.terrain.center[1], zoom: 6 }
     if (all.length === 1) return { latitude: all[0][0], longitude: all[0][1], zoom: 8 }
     // The whole route and this page's points in view.
@@ -123,6 +151,16 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
 
   const click = (e: MapLayerMouseEvent) => {
     const ll = { lat: e.lngLat.lat, lon: e.lngLat.lng }
+    if (selecting && intel) {
+      // Two clicks, opposite corners: everything shown inside is picked.
+      if (!boxCorner) { setBoxCorner(ll); return }
+      const [s, n] = [Math.min(boxCorner.lat, ll.lat), Math.max(boxCorner.lat, ll.lat)]
+      const [w, ea] = [Math.min(boxCorner.lon, ll.lon), Math.max(boxCorner.lon, ll.lon)]
+      const inside = allPicks(intel, side, k => on[k as LayerKey] ?? false).filter(p => p.lat >= s && p.lat <= n && p.lon >= w && p.lon <= ea)
+      setPicked(inside)
+      setBoxCorner(null)
+      return
+    }
     if (route) { route.add(ll.lat, ll.lon); return }
     if (drawing) {
       if (drawing.rect) {
@@ -163,17 +201,41 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
 
   return (
     <div style={{ position: 'relative', height: '100%', minHeight: 220, borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }}>
-      <Map key={theme} mapStyle={mapStyle} style={{ width: '100%', height: '100%' }} initialViewState={view}
-        dragRotate={false} attributionControl={false} cursor={tool || slot || route ? 'crosshair' : 'grab'} onClick={click}>
-        <Source id="dtc-lar" type="geojson" data={lars.geo}>
-          <Layer id="dtc-lar-fill" type="fill" paint={{ 'fill-color': '#40a6ff', 'fill-opacity': 0.12 }} />
-          <Layer id="dtc-lar-line" type="line" paint={{ 'line-color': '#40a6ff', 'line-width': 1.2, 'line-dasharray': [3, 2] }} />
+      <Map key={theme} mapStyle={mapStyle as never} style={{ width: '100%', height: '100%' }} initialViewState={view}
+        dragRotate={false} attributionControl={false} cursor={selecting || tool || slot || route ? 'crosshair' : 'grab'} onClick={click}>
+        {intel && <IntelLayers intel={intel} side={side} on={on} picked={pickedKeys} onPick={onPick} />}
+        {boxCorner && (
+          <Marker latitude={boxCorner.lat} longitude={boxCorner.lon}>
+            <div title="First corner of the area" style={{ width: 12, height: 12, border: '2px dashed #fff', pointerEvents: 'none' }} />
+          </Marker>
+        )}
+        <Source id="dtc-art" type="geojson" data={artGeo}>
+          <Layer id="dtc-art-solid" type="line" filter={['==', ['get', 'dashed'], 0]} layout={{ 'line-join': 'round' }}
+            paint={{ 'line-color': ['get', 'color'], 'line-width': ['get', 'width'], 'line-opacity': ['get', 'opacity'] }} />
+          <Layer id="dtc-art-dashed" type="line" filter={['==', ['get', 'dashed'], 1]}
+            paint={{ 'line-color': ['get', 'color'], 'line-width': ['get', 'width'], 'line-opacity': ['get', 'opacity'], 'line-dasharray': [3, 2] }} />
         </Source>
-        {lars.launches.map((p, i) => (
-          <Marker key={`launch-${i}`} latitude={p.lat} longitude={p.lon}>
-            <div title="Launch point (centre of the release zone)" style={{ width: 8, height: 8, transform: 'rotate(45deg)', background: '#40a6ff', border: '1px solid #04121f' }} />
+        {art.labels.filter(l => l.text).map((l, i) => (
+          <Marker key={`al-${i}`} latitude={l.lat} longitude={l.lon} anchor="top-left" offset={[8, 4]}>
+            <div style={{ fontSize: 9, fontWeight: 800, color: l.color, opacity: l.here ? 1 : 0.6, textShadow: '0 0 3px #000, 0 0 3px #000', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{l.text}</div>
           </Marker>
         ))}
+        {art.handles.map(h => {
+          const live = h.here && !ctx.readOnly
+          return (
+            <Marker key={h.key} latitude={h.lat} longitude={h.lon} draggable={live}
+              onDragEnd={e => ctx.set(h.segs, moveHandle(ctx, h, e.lngLat.lat, e.lngLat.lng, map))}
+              onClick={e => e.originalEvent.stopPropagation()}>
+              <div title={h.kind === 'launch' ? `${h.label}: launch point${live ? ' (drag within the zone)' : ''}` : `Attack heading ${h.label}${live ? ' (drag to turn the attack)' : ''}`}
+                style={{ position: 'relative', cursor: live ? 'move' : 'default', opacity: h.here ? 1 : 0.5 }}>
+                {h.kind === 'launch'
+                  ? <div style={{ width: 10, height: 10, transform: 'rotate(45deg)', background: h.color, border: '1.5px solid #200' }} />
+                  : <div style={{ width: 12, height: 12, borderRadius: 6, background: '#200', border: `2px solid ${h.color}` }} />}
+                <span style={{ position: 'absolute', left: 14, top: -2, fontSize: 9, fontWeight: 800, color: h.color, textShadow: '0 0 3px #000, 0 0 3px #000', whiteSpace: 'nowrap', pointerEvents: 'none' }}>{h.label}</span>
+              </div>
+            </Marker>
+          )
+        })}
         <Source id="dtc-offsets" type="geojson" data={{
           type: 'FeatureCollection',
           features: extras.map(e => ({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [[e.from.lon, e.from.lat], [e.lon, e.lat]] } })),
@@ -242,6 +304,45 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
           </Marker>
         ))}
       </Map>
+      <div style={{ position: 'absolute', right: 8, top: 8, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, zIndex: 2 }}>
+        <span style={{ ...panel, padding: 2, gap: 2 }}>
+          {MAP_LOOKS.map(l => (
+            <button key={l.key} type="button" title={l.hint} aria-pressed={look === l.key} onClick={() => pickLook(l.key)}
+              style={{ padding: '2px 7px', fontSize: '0.6rem', fontWeight: 800, borderRadius: 3, cursor: 'pointer', border: 'none', background: look === l.key ? 'var(--accent)' : 'transparent', color: look === l.key ? '#0b0f08' : 'var(--text)' }}>
+              {l.label}
+            </button>
+          ))}
+          {intel && (
+            <button type="button" aria-expanded={layersOpen} onClick={() => setLayersOpen(v => !v)}
+              style={{ padding: '2px 7px', fontSize: '0.6rem', fontWeight: 800, borderRadius: 3, cursor: 'pointer', border: 'none', background: layersOpen ? 'var(--bg-elevated)' : 'transparent', color: 'var(--text)' }}>
+              LAYERS
+            </button>
+          )}
+          {intel && (
+            <button type="button" aria-pressed={selecting} title="Pick everything in an area: click two opposite corners"
+              onClick={() => { setSelecting(v => !v); setBoxCorner(null); setPicked([]) }}
+              style={{ padding: '2px 7px', fontSize: '0.6rem', fontWeight: 800, borderRadius: 3, cursor: 'pointer', border: 'none', background: selecting ? '#f0a030' : 'transparent', color: selecting ? '#0b0f08' : 'var(--text)' }}>
+              SELECT AREA
+            </button>
+          )}
+        </span>
+        {layersOpen && intel && (
+          <div style={{ ...panel, flexDirection: 'column', alignItems: 'stretch', gap: 3 }}>
+            {LAYERS.map(l => (
+              <label key={l.key} style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={on[l.key]} onChange={() => toggle(l.key)} /> {l.label}
+                {l.key === 'contact' && <span style={{ color: 'var(--text-dim)' }}>({(intel.tac?.ground ?? []).filter(c => c.side !== side).length})</span>}
+              </label>
+            ))}
+            {!intel.tac && <span style={{ color: 'var(--text-dim)', fontSize: '0.6rem' }}>No live contacts: log in with a coalition to see them.</span>}
+          </div>
+        )}
+      </div>
+      {picked.length > 0 && (
+        <PickCard key={picked.map(p => p.key).join('|')} picks={picked} map={map} readOnly={ctx.readOnly}
+          targets={sendTargets(ctx, plan, pageSegs)} onSend={send}
+          onRemove={k => setPicked(ps => ps.filter(p => p.key !== k))} onClose={() => setPicked([])} />
+      )}
       {tool && (
         <div style={{ position: 'absolute', left: 8, top: 8, right: 8, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', pointerEvents: 'none' }}>
           <label style={{ ...panel, pointerEvents: 'auto' }}>
@@ -280,7 +381,7 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [], route = 
         </label>
       )}
       <div style={{ position: 'absolute', left: 8, bottom: 8, padding: '4px 8px', borderRadius: 4, background: 'var(--bg-card)', border: '1px solid var(--border)', fontSize: '0.62rem', color: 'var(--text-dim)', pointerEvents: 'none' }}>
-        {full ? <span style={{ color: '#f0a030' }}>{full}</span> : drawing ? hint(drawing, sel, flag, !!corner, drawn) : route ? <>Click the map to add waypoint <b style={{ color: 'var(--text)' }}>{plan.waypoints.length + 1}</b>. Drag a waypoint to move it, right-click to delete it.</> : slot && !add ? <>Click the map to place <b style={{ color: 'var(--text)' }}>{slot.label}</b>. Shaded: release zone, ◆ launch point.</> : add ? <>Click the map to add a point to <b style={{ color: 'var(--text)' }}>{add.label}</b>. Drag a blue marker to move it.</> : <><span style={{ color: '#facc15' }}>●</span> your route · <span style={{ color: '#40a6ff' }}>■</span> this page · <span style={{ color: '#9aa3ad' }}>●</span> other cartridge points and lines</>}
+        {selecting ? <>{boxCorner ? 'Click the opposite corner of the area.' : 'Click one corner of the area to pick from, then the opposite one. Or click things one by one.'}</> : full ? <span style={{ color: '#f0a030' }}>{full}</span> : drawing ? hint(drawing, sel, flag, !!corner, drawn) : route ? <>Click the map to add waypoint <b style={{ color: 'var(--text)' }}>{plan.waypoints.length + 1}</b>. Drag a waypoint to move it, right-click to delete it.</> : slot && !add ? <>Click the map to place <b style={{ color: 'var(--text)' }}>{slot.label}</b>. Red outline: release zone; drag ◆ the launch point or ○ the heading handle.</> : add ? <>Click the map to add a point to <b style={{ color: 'var(--text)' }}>{add.label}</b>. Drag a blue marker to move it.</> : <><span style={{ color: '#facc15' }}>●</span> your route · <span style={{ color: '#40a6ff' }}>■</span> this page · <span style={{ color: '#9aa3ad' }}>●</span> other cartridge points and lines</>}
       </div>
     </div>
   )
@@ -310,4 +411,14 @@ function hint(list: ShapeList, sel: number | null, flag: number, cornerSet: bool
   return cur
     ? <>Click to add to {b(cur.name)}.{few} Right-click a point to delete it.</>
     : <>Click to start a new line in {b(list.label)}; keep clicking to add its points.</>
+}
+
+const DEFAULT_LAYERS: Record<LayerKey, boolean> = { front: true, objective: true, threat: true, task: true, contact: true, air: false, bullseye: true }
+
+/** Per-viewer map choices; the map works the same without storage. */
+function saved(key: string, fallback: string): string {
+  try { return localStorage.getItem(key) ?? fallback } catch { return fallback }
+}
+function keep(key: string, v: string) {
+  try { localStorage.setItem(key, v) } catch { /* private window */ }
 }
