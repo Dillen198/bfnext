@@ -92,6 +92,12 @@ had a reason to exploit it, not because it is sound.
 - **`PlayerLeaveUnit` replayed after `force_player_slot`**: unchanged from
   before, the "landed in the last ten seconds" settlement re-reads the unit
   and is skipped if it is gone by the time the queue drains.
+- **Hooks inside our calls.** If DCS asks `onPlayerTryChangeSlot` from
+  inside our own `force_player_slot`, or `onPlayerTrySendChat` from inside
+  our own `send_chat`, the state is held: the hook raises no objection
+  (our own forced move needs no permission, our own message is not a
+  command) instead of a second borrow, and logs that it did. The other hooks
+  take the state strictly.
 - **Hooks state.** A hook (the GUI Lua state) can't drain mission events:
   events its calls fire are queued and handled by the next mission-side
   holder, at most 100 ms later (the admin drain).

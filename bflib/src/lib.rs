@@ -713,7 +713,12 @@ fn on_player_try_send_chat(
     all: bool,
 ) -> Result<Option<String>> {
     let start_ts = Utc::now();
-    let mut ctx_guard = Context::borrow("onPlayerTrySendChat")?;
+    // A message the server sends itself (net.send_chat from the message
+    // drain) may come back through here synchronously: let it through.
+    let Some(mut ctx_guard) = Context::try_borrow() else {
+        debug!("onPlayerTrySendChat inside one of our calls, passed through");
+        return Ok(None);
+    };
     let ctx = &mut *ctx_guard;
     let perf = &mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_hooks;
     // The cockpit overlay's key registration: a credential, so it is neither
@@ -896,7 +901,12 @@ fn on_player_try_change_slot(
 ) -> Result<Option<bool>> {
     info!("onPlayerTryChangeSlot: {:?} {:?} {:?}", id, side, slot);
     let start_ts = Utc::now();
-    let mut ctx_guard = Context::borrow("onPlayerTryChangeSlot")?;
+    // A slot change we force ourselves (net.force_player_slot) may ask
+    // here from inside that call: our own move needs no permission.
+    let Some(mut ctx_guard) = Context::try_borrow() else {
+        info!("onPlayerTryChangeSlot inside one of our calls (a forced move), allowed");
+        return Ok(None);
+    };
     let ctx = &mut *ctx_guard;
     let res = match ctx.connected.get_or_lookup_player_info(lua, id) {
         Err(e) => {
