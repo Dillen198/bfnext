@@ -69,7 +69,7 @@ CI (`.github/workflows/build.yml`) runs these jobs on every push and PR:
 | Job | Runner | What |
 |---|---|---|
 | `check` | Windows | `cargo check` + `cargo test --workspace --locked` (about 450 Rust tests), `cargo check` of bftools |
-| `rust-lint` | Windows | `cargo fmt --all --check` and `cargo clippy --workspace --all-targets`, **report-only** (`continue-on-error`) until the tree is clean |
+| `rust-lint` | Windows | `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings`. Blocking: the tree is clean, and style lints the code does not follow are allowed (with reasons) in `[workspace.lints.clippy]` |
 | `manager` | Windows | `cargo test` for `bfmanager/src-tauri` (own Cargo.lock), after staging a placeholder `bfmanager/dist` and the bundled resources |
 | `frontend` | Ubuntu | bfweb, bfsite, bfwiki, bfrange-web: `npm ci --ignore-scripts`, then `typecheck`/`lint`/`test`/`build` (each `--if-present`), Node 22 |
 | `bot` | Windows | `compileall` over `DCSServerBot/`, then pytest in `DCSServerBot/tests` |

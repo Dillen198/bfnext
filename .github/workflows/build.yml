@@ -77,9 +77,9 @@ jobs:
       - name: cargo check (bftools)
         run: cargo check --locked --manifest-path bftools/Cargo.toml
 
-  # Formatting and lints, report-only for now: the tree is not yet
-  # rustfmt-clean or clippy-clean, so these show up as warnings on the run
-  # without failing it. Drop the continue-on-error lines once they pass.
+  # Formatting and lints. Both fail the run: keep the tree rustfmt-clean and
+  # clippy-clean. Lints the code does not follow on purpose are allowed, with
+  # reasons, in the root Cargo.toml's [workspace.lints.clippy].
   rust-lint:
     runs-on: windows-latest
     steps:
@@ -101,12 +101,10 @@ jobs:
           }
 
       - name: cargo fmt --check
-        continue-on-error: true
         run: cargo fmt --all --check
 
       - name: cargo clippy (workspace)
-        continue-on-error: true
-        run: cargo clippy --workspace --all-targets --locked
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   # Fowl Engine Manager (bfmanager/src-tauri) is not a workspace member: it
   # has its own Cargo.lock. Its build needs what `tauri build` would normally
