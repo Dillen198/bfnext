@@ -312,8 +312,6 @@ pub(crate) async fn api_auth_local_login(
         .unwrap())
 }
 
-// ── Admin handlers ───────────────────────────────────────────────────
-
 /// GET /api/admin/sessions  — list active sessions
 pub(crate) async fn api_admin_sessions(
     session_id: Option<Uuid>,

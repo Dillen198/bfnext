@@ -41,8 +41,6 @@ pub(crate) async fn api_config(cfg_json: Arc<String>) -> impl warp::Reply {
     )
 }
 
-// ── API handlers ────────────────────────────────────────────────────
-
 /// GET /api/rounds — the round history for one DCS server instance.
 ///
 /// `?instance=all` returns every instance's rounds instead; each row carries
@@ -1146,8 +1144,6 @@ pub(crate) async fn api_units(
     Ok(json_response(data))
 }
 
-// ── Auth handlers ────────────────────────────────────────────────────
-
 /// GET /api/trails  — return recent trail points for the active round.
 /// **Admin only** (derived from the raw god's-eye `Export.lua` feed).
 pub(crate) async fn api_trails(
@@ -1178,8 +1174,6 @@ pub(crate) async fn api_trails(
     })?;
     Ok(json_response(data))
 }
-
-// ── Session cookie extraction helper ────────────────────────────────
 
 pub(crate) async fn api_unitdb(db: StatsDb, inst: Inst) -> std::result::Result<impl warp::Reply, Error> {
     let snap = task::block_in_place(|| db.unit_db_latest(&inst.id.to_string()))?;
@@ -1265,8 +1259,6 @@ pub(crate) async fn api_srs(srs_url: Arc<Option<String>>) -> Response {
         Err(_) => empty.into_response(),
     }
 }
-
-// ── Static file serving ─────────────────────────────────────────────
 
 /// `GET /api/instances` -- the DCS servers this bfdb fronts, for the
 /// dashboard's instance selector. Public: it is just names and ids, the same

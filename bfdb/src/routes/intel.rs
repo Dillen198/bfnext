@@ -2,6 +2,12 @@
 
 use crate::*;
 
+// ── Recon intel (TARPS) API ────────────────────────────────────────────────
+//
+// A shared reconnaissance picture built from F-14 TARPS photos, contributed
+// through the dashboard login and locked to the contributor's coalition.
+// Everything is scoped to the active round and wiped by a campaign reset.
+
 /// A TARPS frame is a PNG screenshot; 6 MiB covers a 1440p capture. Was 8,
 /// which with 400 per side per round could put ~6 GB into one round.
 pub(crate) const MAX_INTEL_IMAGE_BYTES: u64 = 6 * 1024 * 1024;

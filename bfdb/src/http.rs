@@ -21,8 +21,6 @@ impl From<anyhow::Error> for Error {
 }
 
 
-// ── Real-time log broadcaster ─────────────────────────────────────────────────
-
 /// A route's query string as a map.
 pub(crate) type Q = std::collections::HashMap<std::string::String, std::string::String>;
 
@@ -66,8 +64,6 @@ pub(crate) fn json_response(data: String) -> impl warp::Reply {
         "no-store",
     )
 }
-
-// ── Campaign config handler ──────────────────────────────────────────
 
 /// Short-lived shared answers for the public read routes that walk whole
 /// trees (kills, per-round aggregates, points) on every request. Every open
@@ -344,8 +340,6 @@ pub(crate) fn with_auth_cfg(cfg: Option<AuthConfig>) -> impl Filter<Extract = (A
 pub(crate) fn with_local_admin(cfg: Option<LocalAdminConfig>) -> impl Filter<Extract = (Option<LocalAdminConfig>,), Error = std::convert::Infallible> + Clone {
     warp::any().map(move || cfg.clone())
 }
-
-// ── Live unit types (from Export.lua UDP feed) ───────────────────────
 
 /// Whether this session cookie belongs to a dashboard admin.
 pub(crate) fn session_is_admin(db: &StatsDb, session_id: Option<Uuid>) -> bool {

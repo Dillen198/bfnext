@@ -24,19 +24,6 @@ pub(crate) async fn api_admin_audit(
     Ok(warp::reply::json(&rows))
 }
 
-// ── Cockpit UI handlers ──────────────────────────────────────────────
-// Identifies the calling player and forwards to a player-scoped bflib RPC
-// (see bflib/src/bg/rpcs.rs "Cockpit UI API"). Two ways in:
-//  - `?playerid=<id>&ckey=<key>` from bfcockpit/Scripts/Hooks/bfcockpit.lua,
-//    the in-DCS Hooks-script overlay. <id> is net.get_my_player_id(), which is
-//    a guessable counter, so it is only honoured together with the key that
-//    overlay registered with the engine over chat (see bflib/src/cockpit.rs,
-//    "Overlay keys"): bflib's "resolve-player-id" RPC checks both. A bare
-//    playerid used to be enough, which let anyone drive anyone's F10 menu.
-//  - a browser session cookie linked to a Discord account, for testing the
-//    standalone /cockpit page outside DCS -- that player acts only as the ucid
-//    their Discord link names, whatever playerid they send.
-
 /// POST /api/admin/reset  — wipe all campaign data, keep auth & Discord links
 pub(crate) async fn api_admin_reset(
     session_id: Option<Uuid>,
@@ -462,8 +449,6 @@ pub(crate) async fn api_admin_cfg_post(
     audit(&db, &who, "save engine config", path.to_str(), Some(&inst.id));
     Ok(warp::reply::json(&serde_json::json!({"ok": true})))
 }
-
-// ── bfwiki content API ─────────────────────────────────────────────────────
 
 /// GET /api/admin/pilot-sides — every pilot's campaign coalition on this
 /// instance, as `[{ucid, name, side}]`.

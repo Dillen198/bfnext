@@ -472,9 +472,3 @@ pub(crate) async fn api_wiki_get_image(
     // the upload check existed may hold anything.
     Ok(websec::serve_upload(image.data, "public, max-age=31536000, immutable"))
 }
-
-// ── Recon intel (TARPS) API ────────────────────────────────────────────────
-//
-// A shared reconnaissance picture built from F-14 TARPS photos, contributed
-// through the dashboard login and locked to the contributor's coalition.
-// Everything is scoped to the active round and wiped by a campaign reset.

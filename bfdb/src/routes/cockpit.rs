@@ -2,6 +2,19 @@
 
 use crate::*;
 
+// ── Cockpit UI handlers ──────────────────────────────────────────────
+// Identifies the calling player and forwards to a player-scoped bflib RPC
+// (see bflib/src/bg/rpcs.rs "Cockpit UI API"). Two ways in:
+//  - `?playerid=<id>&ckey=<key>` from bfcockpit/Scripts/Hooks/bfcockpit.lua,
+//    the in-DCS Hooks-script overlay. <id> is net.get_my_player_id(), which is
+//    a guessable counter, so it is only honoured together with the key that
+//    overlay registered with the engine over chat (see bflib/src/cockpit.rs,
+//    "Overlay keys"): bflib's "resolve-player-id" RPC checks both. A bare
+//    playerid used to be enough, which let anyone drive anyone's F10 menu.
+//  - a browser session cookie linked to a Discord account, for testing the
+//    standalone /cockpit page outside DCS -- that player acts only as the ucid
+//    their Discord link names, whatever playerid they send.
+
 /// How long a verified (instance, playerid, key) stays trusted without asking
 /// the engine again. Short: a key dies with its connection.
 pub(crate) const COCKPIT_ID_CACHE: std::time::Duration = std::time::Duration::from_secs(30);

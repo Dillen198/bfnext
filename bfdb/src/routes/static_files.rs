@@ -47,5 +47,3 @@ pub(crate) fn serve_asset(path: &str) -> Response {
         }
     }
 }
-
-// ── Server setup ────────────────────────────────────────────────────
