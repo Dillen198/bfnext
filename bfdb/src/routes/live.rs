@@ -32,7 +32,7 @@ pub(crate) async fn api_gci_transmit(
     if text.is_empty() || text.chars().count() > 200 {
         return Err(websec::bad_request("a call is 1 to 200 characters").into());
     }
-    gci::human_call(&inst.id, c.side, text).map_err(|e| websec::bad_request(e))?;
+    crate::worker::hub::gci_transmit(&inst.id, c.side, text).await.map_err(websec::bad_request)?;
     log::info!("[{}] human GCI ({}, {:?}): {text}", inst.id, c.session.username, c.side);
     Ok(json_response(r#"{"ok":true}"#.into()))
 }

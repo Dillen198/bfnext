@@ -215,6 +215,16 @@ DEFAULT:
     # ignored for stop_timeout_secs each, a hard kill.
     stop_timeout_secs: 15
     shutdown_path: "/api/admin/shutdown"
+    # Voice and model calls in a process of their own (deploy/bfdb-worker.md).
+    # Off by default: bfdb runs GCI, ATC, the range ATC, the HQ strategist
+    # and the war diary's model/picture calls itself, as it always has. On,
+    # the bot starts a second `bfdb.exe --worker` beside bfdb and supervises
+    # it separately: a voice fault or a stuck model call restarts the worker,
+    # never the API. The model, picture and ATC keys below then go to the
+    # worker only. Needs a bfdb.exe that knows --worker-mode; an older one
+    # keeps everything in-process.
+    # worker: true
+    # worker_listen: "127.0.0.1:8890"            # loopback only
     # news_llm_key is handed to bfdb in its environment (BFDB_NEWS_LLM_KEY),
     # never on its command line.
     #

@@ -36,7 +36,7 @@ pub(crate) const UNKNOWN_DCS_VERSION: &str = "unknown";
 pub(crate) async fn news_generator(
     db: StatsDb,
     inst: Inst,
-    writer: Option<news_llm::WriterCfg>,
+    writer: crate::worker::DiarySource,
     images: Option<Arc<news_image::ImageCfg>>,
 ) {
     use chrono::{Duration as ChronoDuration, Utc};
@@ -52,12 +52,21 @@ pub(crate) async fn news_generator(
     let mut tick = tokio::time::interval(std::time::Duration::from_secs(10 * 60));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut first_pass = true;
+    let mut waiting_noted = false;
     loop {
         tick.tick().await;
+        if !writer.ready() {
+            if !waiting_noted {
+                waiting_noted = true;
+                log::info!("[{}] news: waiting for the worker to connect before the first pass", inst.id);
+            }
+            continue;
+        }
         let inst_id = inst.id.clone();
         let db = db.clone();
         let inst = inst.clone();
-        let writer = writer.clone();
+        // External mode: whatever writer the worker has, this tick.
+        let writer = writer.current();
         let images = images.clone();
         let day_backoff = &mut day_backoff;
         let res = task::block_in_place(move || -> Result<usize> {
@@ -161,12 +170,12 @@ pub(crate) async fn news_generator(
                                 continue;
                             }
                         } else {
-                        match news_llm::write_dispatch(w, &digest, &hist) {
+                        match w.write(&digest, &hist) {
                             Ok(out) => {
                                 day_backoff.remove(&key);
                                 digest.headline = out.headline;
                                 digest.body = out.body;
-                                digest.written_by = w.model.clone();
+                                digest.written_by = w.model().to_string();
                             }
                             Err(e) => {
                                 if e.downcast_ref::<news_llm::RateLimited>().is_some() {

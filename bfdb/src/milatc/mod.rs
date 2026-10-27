@@ -52,8 +52,8 @@ pub(crate) mod tanker;
 pub(crate) mod voices;
 
 use crate::{
-    db::StatsDb,
     voice::{srs, stt, FreqSpec, Radio},
+    worker::host::EngineHost,
 };
 use airport::{Airport, BUILTIN_ANDERSEN};
 use bfprotocols::{atc::AtcPicture, range::RangeLive};
@@ -625,7 +625,7 @@ impl Ctx {
 }
 
 /// Run the range's controllers for one instance until the process exits.
-pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConfig, cfg: RangeAtcConfig) {
+pub(crate) async fn run(inst: EngineHost, gci: crate::gci::GciConfig, cfg: RangeAtcConfig) {
     if !cfg.enabled {
         return;
     }
@@ -683,7 +683,7 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
         opus,
         rx_tx: stt.as_ref().map(|_| rx_tx.clone()),
         cast,
-        engine: Engine { db: db.clone(), inst: inst.clone() },
+        engine: Engine { inst: inst.clone() },
         pool: Mutex::new(Pool { clients: vec![] }),
         stations: std::sync::RwLock::new(vec![]),
         next_index: std::sync::atomic::AtomicUsize::new(0),
@@ -751,7 +751,7 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
     let mut fails = 0u32;
     loop {
         ticker.tick().await;
-        let atc = match fetch(&db, &inst).await {
+        let atc = match fetch(&inst).await {
             Ok(p) => {
                 fails = 0;
                 p
@@ -769,7 +769,7 @@ pub(crate) async fn run(db: StatsDb, inst: crate::Inst, gci: crate::gci::GciConf
         // carriers, tankers and range stations change slowly: every 2 s
         if now - last_range >= 2. {
             last_range = now;
-            match fetch_range(&db, &inst).await {
+            match fetch_range(&inst).await {
                 Ok(r) => range = Some(r),
                 Err(e) => log::debug!("[{}] range ATC: no range picture: {e}", inst.id),
             }
@@ -898,17 +898,14 @@ fn dispatch(st: &Station, out: Vec<Tx>) {
 /// The range engine, for the controllers' commands back to DCS.
 #[derive(Clone)]
 struct Engine {
-    db: StatsDb,
-    inst: crate::Inst,
+    inst: EngineHost,
 }
 
 impl Engine {
     async fn command(&self, action: &str, target: &str, text: &str) {
         let r = tokio::time::timeout(
             Duration::from_secs(5),
-            crate::call_engine_rpc_str(
-                &self.db,
-                &self.inst,
+            self.inst.rpc_str(
                 "range-atc",
                 vec![
                     ("action", netidx::publisher::Value::from(action.to_string())),
@@ -1022,8 +1019,8 @@ async fn transmitter(
     }
 }
 
-async fn fetch_range(db: &StatsDb, inst: &crate::db::InstanceState) -> Result<RangeLive, String> {
-    let res = tokio::time::timeout(Duration::from_secs(4), crate::call_engine_rpc_str(db, inst, "query-range", vec![])).await;
+async fn fetch_range(inst: &EngineHost) -> Result<RangeLive, String> {
+    let res = tokio::time::timeout(Duration::from_secs(4), inst.rpc_str("query-range", vec![])).await;
     match res {
         Ok(Ok(json)) => serde_json::from_str::<RangeLive>(&json).map_err(|e| format!("bad query-range JSON: {e}")),
         Ok(Err(e)) => Err(format!("query-range RPC error: {e:?}")),
@@ -1031,10 +1028,10 @@ async fn fetch_range(db: &StatsDb, inst: &crate::db::InstanceState) -> Result<Ra
     }
 }
 
-async fn fetch(db: &StatsDb, inst: &crate::db::InstanceState) -> Result<AtcPicture, String> {
+async fn fetch(inst: &EngineHost) -> Result<AtcPicture, String> {
     let res = tokio::time::timeout(
         Duration::from_secs(4),
-        crate::call_engine_rpc_str(db, inst, "query-atc", vec![("side", netidx::publisher::Value::from("all"))]),
+        inst.rpc_str("query-atc", vec![("side", netidx::publisher::Value::from("all"))]),
     )
     .await;
     match res {

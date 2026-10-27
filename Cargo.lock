@@ -299,6 +299,7 @@ dependencies = [
  "sysinfo",
  "tokio",
  "tokio-rustls",
+ "tokio-tungstenite",
  "tower-service",
  "urlencoding",
  "uuid",

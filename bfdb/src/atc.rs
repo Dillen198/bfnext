@@ -27,7 +27,7 @@
 //! rather than realism. Tower sequences traffic, warns about it, and always
 //! eventually clears you.
 
-use crate::db::StatsDb;
+use crate::worker::host::EngineHost;
 use crate::voice::{modulation_byte, srs, stt, tts, FreqSpec, Radio};
 use bfprotocols::atc::{AtcAirfield, AtcPicture, AtcTraffic};
 use dcso3::coalition::Side;
@@ -668,8 +668,7 @@ fn match_traffic<'a>(
 /// reads sensibly ("Magic", "Blue ATC") and so a busy tower frequency can never
 /// delay a threat call on the GCI net.
 pub(crate) async fn run(
-    db: StatsDb,
-    inst: crate::Inst,
+    inst: EngineHost,
     gci_cfg: crate::gci::GciConfig,
     cfg: AtcConfig,
     transcript: AtcTranscript,
@@ -759,7 +758,7 @@ pub(crate) async fn run(
     loop {
         ticker.tick().await;
         for (side, key) in [(Side::Blue, "blue"), (Side::Red, "red")] {
-            let picture = match fetch_atc(&db, &inst, if side == Side::Red { "red" } else { "blue" })
+            let picture = match fetch_atc(&inst, if side == Side::Red { "red" } else { "blue" })
                 .await
             {
                 Ok(p) => p,
@@ -898,18 +897,12 @@ impl AtcVoice {
 
 /// Poll the engine for one coalition's ATC picture.
 async fn fetch_atc(
-    db: &StatsDb,
-    inst: &crate::db::InstanceState,
+    inst: &EngineHost,
     side: &'static str,
 ) -> Result<AtcPicture, String> {
     let res = tokio::time::timeout(
         Duration::from_secs(8),
-        crate::call_engine_rpc_str(
-            db,
-            inst,
-            "query-atc",
-            vec![("side", netidx::publisher::Value::from(side))],
-        ),
+        inst.rpc_str("query-atc", vec![("side", netidx::publisher::Value::from(side))]),
     )
     .await;
     match res {

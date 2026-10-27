@@ -81,6 +81,7 @@ mod logs;
 mod routes;
 mod serve;
 mod tasks;
+mod worker;
 #[cfg(test)]
 mod route_tests;
 
@@ -167,6 +168,10 @@ struct Args {
     /// The private key to use for TLS
     #[arg(short, long)]
     key: Option<PathBuf>,
+    /// The voice/model worker: --worker-mode, --worker, --worker-listen,
+    /// --worker-url, --worker-secret-file (src/worker).
+    #[command(flatten)]
+    worker: worker::WorkerArgs,
     /// Path to the netidx-archive stats directory (e.g. "E:/Saved Games/DCS/Logs/stats")
     #[arg(long)]
     stats_dir: Option<PathBuf>,
@@ -647,6 +652,75 @@ fn backup_file_list(args: &Args, db: &StatsDb, intel_dir: &std::path::Path) -> V
 /// the legacy single-server flags synthesized into one instance called
 /// `DEFAULT_INSTANCE` (which is also the id every pre-existing round in the DB
 /// is treated as belonging to, so an upgrade is a no-op).
+/// The HQ strategist's model: its own --hq-llm-* flags, else the diary's
+/// writer with --hq-llm-model swapped in. None when --hq-strategist-minutes 0.
+/// See `hq_strategist.rs`.
+struct HqFlags {
+    minutes: u64,
+    url: Option<String>,
+    key: Option<String>,
+    model: Option<String>,
+}
+
+impl HqFlags {
+    fn of(args: &Args) -> Self {
+        Self {
+            minutes: args.hq_strategist_minutes,
+            url: args.hq_llm_url.clone(),
+            key: args.hq_llm_key.clone(),
+            model: args.hq_llm_model.clone(),
+        }
+    }
+}
+
+fn hq_writer_cfg(args: &HqFlags, news_writer: &Option<news_llm::WriterCfg>) -> Option<news_llm::WriterCfg> {
+    if args.minutes == 0 {
+        None
+    } else if args.url.is_some() || args.key.is_some() {
+        news_llm::WriterCfg::resolve(args.url.clone(), args.key.clone(), args.model.clone())
+    } else {
+        news_writer.clone().map(|mut w| {
+            if let Some(m) = args.model.clone() {
+                w.model = m;
+            }
+            w
+        })
+    }
+}
+
+/// The diary pictures' settings from the --news-image-* flags. `remote`:
+/// the draw happens in the worker, which holds the key.
+fn news_image_args(args: &Args, remote: bool) -> news_image::ImageArgs {
+    news_image::ImageArgs {
+        provider: args.news_image_provider.clone(),
+        url: args.news_image_url.clone(),
+        key: args.news_image_key.clone(),
+        model: args.news_image_model.clone(),
+        size: args.news_image_size.clone(),
+        quality: args.news_image_quality.clone(),
+        style: args.news_image_style.clone(),
+        cf_account_id: args.news_image_cf_account_id.clone(),
+        steps: args.news_image_steps,
+        fallback: args.news_image_fallback.clone(),
+        min_interval_secs: args.news_image_min_interval,
+        per_instance_daily: args.news_image_daily_per_instance,
+        global_daily: args.news_image_daily_global,
+        remote,
+    }
+}
+
+/// The box-wide GCI config, for the worker: --gci-config, else
+/// campaign.json's `gci` block -- the precedence `main` applies.
+fn campaign_gci(args: &Args) -> Option<gci::GciConfig> {
+    let from_campaign = args
+        .config
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| gci::from_campaign_json(&v));
+    args.gci_config.as_ref().and_then(|p| gci::from_file(p)).or(from_campaign)
+}
+
 fn registry_from_args(args: &Args) -> Result<Registry> {
     let legacy_used = args.base.is_some()
         || args.stats_jsonl.is_some()
@@ -922,7 +996,20 @@ async fn main() -> Result<()> {
              use {flag}-file or its BFDB_* environment variable instead"
         );
     }
+    if args.worker.run_worker {
+        // The voice/model worker: no database, no web server.
+        return worker::client::run(args).await;
+    }
+    let external = args.worker.mode == worker::WorkerMode::External;
+    if external {
+        log::info!(
+            "worker mode external: GCI, ATC, range ATC, the HQ strategist and the diary's model calls \
+             run in the bfdb --worker process"
+        );
+    }
     let registry = registry_from_args(&args)?;
+    let hq_flags = HqFlags::of(&args);
+    let image_args = news_image_args(&args, external);
     // True when *any* instance has a live engine to talk to.
     let has_engine = registry.all().iter().any(|i| i.base.is_some());
     let db = {
@@ -1203,6 +1290,7 @@ async fn main() -> Result<()> {
         args.news_llm_model.clone(),
     );
     match &news_writer {
+        _ if external => log::info!("news: dispatches written by the worker's writer, when it has one"),
         Some(w) => log::info!("news: dispatches written by {} at {}", w.model, w.url),
         None => log::info!(
             "news: no --news-llm-url/--news-llm-key -- the war diary will use its template bank"
@@ -1210,19 +1298,9 @@ async fn main() -> Result<()> {
     }
     // The HQ strategist's model: its own flags, else the diary's. See
     // `hq_strategist.rs`.
-    let hq_writer = if args.hq_strategist_minutes == 0 {
-        None
-    } else if args.hq_llm_url.is_some() || args.hq_llm_key.is_some() {
-        news_llm::WriterCfg::resolve(args.hq_llm_url.clone(), args.hq_llm_key.clone(), args.hq_llm_model.clone())
-    } else {
-        news_writer.clone().map(|mut w| {
-            if let Some(m) = args.hq_llm_model.clone() {
-                w.model = m;
-            }
-            w
-        })
-    };
+    let hq_writer = if external { None } else { hq_writer_cfg(&hq_flags, &news_writer) };
     match &hq_writer {
+        _ if external => log::info!("hq strategist: in the worker, if it has a model"),
         Some(w) => log::info!(
             "hq strategist: {} at {}, every {} min",
             w.model,
@@ -1234,21 +1312,9 @@ async fn main() -> Result<()> {
     // Pictures for the diary. Off unless named -- see `news_image.rs`.
     // A misconfigured provider turns pictures off with an error rather than
     // stopping bfdb: they are decoration, the rest of the server is not.
-    let news_images = match news_image::ImageCfg::resolve(news_image::ImageArgs {
-        provider: args.news_image_provider.clone(),
-        url: args.news_image_url.clone(),
-        key: args.news_image_key.clone(),
-        model: args.news_image_model.clone(),
-        size: args.news_image_size.clone(),
-        quality: args.news_image_quality.clone(),
-        style: args.news_image_style.clone(),
-        cf_account_id: args.news_image_cf_account_id.clone(),
-        steps: args.news_image_steps,
-        fallback: args.news_image_fallback.clone(),
-        min_interval_secs: args.news_image_min_interval,
-        per_instance_daily: args.news_image_daily_per_instance,
-        global_daily: args.news_image_daily_global,
-    }) {
+    // In external mode the pictures are drawn by the worker, which holds the
+    // provider's key; bfdb keeps the caps, the bookkeeping and the store.
+    let news_images = match news_image::ImageCfg::resolve(image_args) {
         Ok(c) => c.map(Arc::new),
         Err(e) => {
             log::error!("news: dispatch pictures are OFF -- {e}");
@@ -1308,16 +1374,15 @@ async fn main() -> Result<()> {
                 tokio::spawn(groundfeed::poller(db.clone(), inst.clone(), ground.clone()));
                 tokio::spawn(command::pusher(db.clone(), inst.clone()));
                 tokio::spawn(unitdb_refresher(db.clone(), inst.clone()));
-                tokio::spawn(news_generator(
-                    db.clone(),
-                    inst.clone(),
-                    news_writer.clone(),
-                    news_images.clone(),
-                ));
+                let diary = if external {
+                    worker::DiarySource::Worker
+                } else {
+                    worker::DiarySource::Local(news_writer.clone())
+                };
+                tokio::spawn(news_generator(db.clone(), inst.clone(), diary, news_images.clone()));
                 if let Some(w) = hq_writer.clone() {
                     tokio::spawn(hq_strategist::run(
-                        db.clone(),
-                        inst.clone(),
+                        worker::host::EngineHost::local(&db, inst.clone()),
                         w,
                         std::time::Duration::from_secs(args.hq_strategist_minutes.max(1) * 60),
                     ));
@@ -1343,58 +1408,21 @@ async fn main() -> Result<()> {
         // A dedicated per-instance gci_config wins; otherwise the single-server
         // --gci-config / campaign.json `gci` block applies to the default
         // instance only (there is only one of it).
-        let cfg_for_inst = cfg
-            .gci_config
-            .as_ref()
-            .and_then(|p| gci::from_file(p))
-            .or_else(|| {
-                // never a range's: it has no GCI picture to serve
-                if id == *db.instances().default_id() && !cfg.is_range() {
-                    gci_cfg.clone()
-                } else {
-                    None
-                }
-            });
-        match (cfg.base.is_some(), cfg_for_inst) {
-            // A range has no GCI picture or campaign towers; its voice
-            // service is the military ATC.
-            (true, Some(c)) if cfg.is_range() => {
-                match c.range_atc.clone() {
-                    Some(r) if r.enabled => {
-                        log::info!("[{}] range ATC enabled", cfg.id);
-                        tokio::spawn(milatc::run(db.clone(), inst, c.clone(), r));
-                    }
-                    _ => log::info!("[{}] range instance has a gci_config but no rangeAtc block", cfg.id),
-                }
+        let cfg_for_inst = worker::gci_config_for(cfg, id == *db.instances().default_id(), &gci_cfg);
+        if external {
+            if cfg_for_inst.is_some() {
+                log::info!("[{}] voice runs in the worker", cfg.id);
             }
-            (true, Some(c)) => {
-                log::info!("[{}] live GCI enabled", cfg.id);
-                // ATC rides the same config file and the same voice bus, on
-                // its own SRS clients so a busy tower can never delay a threat
-                // call on the GCI net.
-                if let Some(atc_cfg) = c.atc.clone() {
-                    let atc_transcript: atc::AtcTranscript = Default::default();
-                    tokio::spawn(atc::run(
-                        db.clone(),
-                        inst.clone(),
-                        c.clone(),
-                        atc_cfg,
-                        atc_transcript,
-                    ));
-                }
-                tokio::spawn(gci::run(db.clone(), inst, c, tx.clone(), hist.clone()));
-            }
-            (false, Some(_)) => {
-                log::warn!(
-                    "[{}] GCI configured but disabled: this instance has no netidx base (no live engine to query)",
-                    cfg.id
-                );
-            }
-            _ => {}
+        } else {
+            worker::spawn_voice(worker::host::EngineHost::local(&db, inst), cfg_for_inst, tx.clone(), hist.clone());
         }
         gci_map.insert(id, (tx, hist));
     }
     let gci_map = Arc::new(gci_map);
+    if external {
+        let secret = worker::secret(&args.worker, &args.db, true)?.expect("bfdb makes a secret when there is none");
+        worker::hub::start(args.worker.listen, secret, db.clone(), gci_map.clone())?;
+    }
 
     let routes = build_routes(RouteCtx {
         db: db.clone(),

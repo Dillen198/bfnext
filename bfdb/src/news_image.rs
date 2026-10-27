@@ -180,6 +180,9 @@ pub struct ImageArgs {
     pub min_interval_secs: Option<u32>,
     pub per_instance_daily: u32,
     pub global_daily: u32,
+    /// bfdb in external worker mode: the worker draws, so the key may be
+    /// given to it alone.
+    pub remote: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -210,6 +213,9 @@ pub struct ImageCfg {
     pub min_interval: Duration,
     pub per_instance_daily: u32,
     pub global_daily: u32,
+    /// bfdb in external worker mode: the worker draws (and holds the key);
+    /// this config is the bookkeeping's.
+    pub remote: bool,
 }
 
 impl ImageCfg {
@@ -248,7 +254,7 @@ impl ImageCfg {
         .filter(|f| *f != provider);
         let (url, model, size) = match provider {
             Provider::OpenAi => {
-                if url.is_none() && key.is_none() {
+                if url.is_none() && key.is_none() && !a.remote {
                     bail!("the openai news image provider needs --news-image-url or --news-image-key");
                 }
                 (
@@ -258,7 +264,7 @@ impl ImageCfg {
                 )
             }
             Provider::Cloudflare => {
-                if key.is_none() {
+                if key.is_none() && !a.remote {
                     bail!("the cloudflare news image provider needs an API token (--news-image-key)");
                 }
                 let model = model.unwrap_or_else(|| CF_MODEL.to_string());
@@ -303,6 +309,7 @@ impl ImageCfg {
             min_interval,
             per_instance_daily: a.per_instance_daily,
             global_daily: a.global_daily,
+            remote: a.remote,
         }))
     }
 
@@ -324,6 +331,7 @@ impl ImageCfg {
             min_interval: POLLINATIONS_ANON_SPACING,
             per_instance_daily: self.per_instance_daily,
             global_daily: self.global_daily,
+            remote: false,
         })
     }
 
@@ -2076,6 +2084,15 @@ fn generate_with_fallback(
     cfg: &ImageCfg,
     prompt: &str,
 ) -> std::result::Result<(Vec<u8>, String), GenError> {
+    if cfg.remote {
+        return crate::worker::hub::news_draw(prompt);
+    }
+    draw(cfg, prompt)
+}
+
+/// One picture from this process's provider, and its fallback: (bytes, who
+/// drew it). What the worker runs for bfdb.
+pub(crate) fn draw(cfg: &ImageCfg, prompt: &str) -> std::result::Result<(Vec<u8>, String), GenError> {
     match generate(cfg, prompt) {
         Ok(b) => Ok((b, cfg.label())),
         Err(e) => {

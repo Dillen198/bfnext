@@ -978,7 +978,7 @@ async fn h_replay_results(ctx: Arc<RangeCtx>, rec: String) -> Response {
 async fn h_atc(ctx: Arc<RangeCtx>, q: Q) -> Response {
     let sc = scope_or_400!(ctx, q);
     let since = num::<i64>(&q, "since").unwrap_or(0);
-    ok(&crate::milatc::transcript_json(&sc.primary().id, since))
+    ok(&crate::worker::hub::atc_transcript(&sc.primary().id, since).await)
 }
 
 /// The live ATC feed (LiveATC style): every transmission on `?station=`
@@ -1049,7 +1049,7 @@ async fn atc_live(ws: warp::ws::WebSocket, inst: String, station: String) {
 /// One ATC transmission's audio, as WAV. Kept for the last half hour or so.
 async fn h_atc_audio(ctx: Arc<RangeCtx>, q: Q, id: u64) -> Response {
     let sc = scope_or_400!(ctx, q);
-    match crate::milatc::audio_wav(&sc.primary().id, id) {
+    match crate::worker::hub::atc_audio(&sc.primary().id, id).await {
         Some(w) => bytes_reply((*w).clone(), "audio/wav", 86_400),
         None => err(StatusCode::NOT_FOUND, "that transmission's audio is no longer kept".to_string()),
     }
