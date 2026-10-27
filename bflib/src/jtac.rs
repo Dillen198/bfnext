@@ -46,7 +46,6 @@ use dcso3::{
     spot::{ClassSpot, Spot},
     trigger::{MarkId, SmokeColor, Trigger},
     unit::{ClassUnit, Unit},
-    weapon::Weapon,
 };
 use enumflags2::BitFlags;
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
@@ -138,7 +137,6 @@ pub struct ArtilleryAdjustment {
     adjust: Vector2,
     target: Vector2,
     group: Vec<DcsOid<ClassUnit>>,
-    tracked: Option<(Weapon, Option<Vector3>)>,
 }
 
 /// How far (m) a battery is nudged toward its target before firing so that
@@ -1365,7 +1363,6 @@ impl Jtac {
                 let task = aim_and_fire_route(apos, pos, group_facing(db, gid), task);
                 let group = Group::get_by_name(lua, &name)
                     .with_context(|| format_compact!("getting group {}", name))?;
-                adjustment.tracked = None;
                 for unit in group.get_units()? {
                     let unit = unit?;
                     let id = unit.object_id()?;
@@ -1456,7 +1453,6 @@ impl Jtac {
 
                 let group = Group::get_by_name(lua, &name)
                     .with_context(|| format_compact!("getting group {}", name))?;
-                adjustment.tracked = None;
                 for unit in group.get_units()? {
                     let unit = unit?;
                     let id = unit.object_id()?;
@@ -2040,7 +2036,6 @@ impl Jtacs {
                 adjust: Vector2::zeros(),
                 target: Vector2::zeros(),
                 group: vec![],
-                tracked: None,
             });
         jtac.artillery_mission(db, lua, adjustment, &shooter, n)
     }
@@ -2064,7 +2059,6 @@ impl Jtacs {
                 adjust: Vector2::zeros(),
                 target: Vector2::zeros(),
                 group: vec![],
-                tracked: None,
             });
 
         // Get total ammunition from all units in the artillery group
@@ -2139,7 +2133,6 @@ impl Jtacs {
                     adjust: Vector2::zeros(),
                     target: Vector2::zeros(),
                     group: vec![],
-                    tracked: None,
                 });
             let adjusted_pos = target_pos + adjustment.adjust;
             adjustment.target = target_pos;
@@ -2251,7 +2244,6 @@ impl Jtacs {
                 adjust: Vector2::zeros(),
                 target: Vector2::zeros(),
                 group: vec![],
-                tracked: None,
             });
 
         jtac.artillery_combo_mission(db, lua, adjustment, &shooter, rounds_per_target, num_targets)
