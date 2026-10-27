@@ -284,6 +284,22 @@ fn remove_patiently(p: &Path) -> Result<()> {
     }
 }
 
+/// Compact a redb file, retrying for a few seconds while the handle just
+/// dropped lets go of it (its flush thread can hold it a moment longer).
+fn compact_patiently(path: &Path) -> Result<(u64, u64)> {
+    let mut tries = 0;
+    loop {
+        match yats::backend::compact_redb_file(path) {
+            Ok(r) => return Ok(r),
+            Err(_) if tries < 50 => {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 /// A `--migrate-storage` run.
 #[derive(Debug, Clone)]
 pub(crate) struct MigrateOpts {
@@ -433,6 +449,12 @@ fn migrate_from_staging(
         }
         dst.flush()?;
         drop(dst);
+        if o.to == Backend::Redb {
+            // the copy and then the rewrite of every row leave about a
+            // database's worth of free pages in the file
+            let (before, after) = compact_patiently(&work)?;
+            say(&format!("compacted {}: {} MB -> {} MB", work.display(), before >> 20, after >> 20));
+        }
         Ok(MigrateReport {
             source: src.to_path_buf(),
             target: target.to_path_buf(),

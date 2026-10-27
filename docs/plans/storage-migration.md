@@ -204,10 +204,16 @@ bincode**, exactly as before.
 ## Risks
 
 - **Write throughput.** sled absorbs many small writes; redb pays a commit
-  per write (non-durable, so no fsync, but still a page write). Ingest and
-  `--rebuild-stats` do one write per row. Measure a rebuild of a busy
-  round's archive on redb before the first cutover; if it is too slow,
-  batch ingest writes per stats line.
+  per write (non-durable, so no fsync, but still a page write). Measured
+  with `cargo test -p yats --release -- --ignored writes_per_second` (20k
+  rows, typed tree, dev PC): sled 317k inserts/s and 557k updates/s, redb
+  120k and 108k. A live night is a few hundred writes a second at most, so
+  this only shows in `--rebuild-stats`; still, time a rebuild of a busy
+  round's archive on redb before the first cutover, and batch ingest writes
+  per stats line if it is too slow.
+- **File size after converting.** The copy and then the rewrite of every
+  row leave free pages; the converter compacts the file at the end (a
+  181 MB sled test database became a 288 MB redb file before compaction).
 - **Long-running readers.** redb readers hold their snapshot's pages until
   dropped. Iterators are lazy and short-lived in bfdb, but a slow consumer
   of a big scan holds pages (and grows the file) for as long as it runs.

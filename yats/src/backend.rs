@@ -382,6 +382,24 @@ impl Db {
     }
 }
 
+/// Compact the redb file at `path`, giving back the space a bulk load or a
+/// rewrite of every row leaves free inside it. Nothing may have the file
+/// open. Returns the file's size before and after.
+pub fn compact_redb_file(path: &Path) -> Result<(u64, u64)> {
+    let before = std::fs::metadata(path)?.len();
+    {
+        let mut db = redb::Database::create(path)
+            .with_context(|| format!("opening {} to compact it", path.display()))?;
+        // each pass moves what it can; stop when one finds nothing to do
+        for _ in 0..8 {
+            if !db.compact()? {
+                break;
+            }
+        }
+    }
+    Ok((before, std::fs::metadata(path)?.len()))
+}
+
 fn meta_def() -> Def<'static> {
     Def::new(META_TABLE)
 }
@@ -1042,6 +1060,39 @@ mod tests {
             db.ensure_next_id(1000).unwrap();
             assert!(db.generate_id().unwrap() >= 1000);
         })
+    }
+
+    /// Rough per-write cost on each engine, for the cutover's throughput
+    /// risk: `cargo test -p yats --release -- --ignored --nocapture writes_per_second`.
+    #[test]
+    #[ignore]
+    fn writes_per_second() {
+        use crate::Tree;
+        for e in [Engine::Sled, Engine::Redb] {
+            let db = Db::temporary(e).unwrap();
+            let t: Tree<(u64, u64), (String, f64, Vec<u32>)> = Tree::open(&db, "t").unwrap();
+            let n = 20_000u64;
+            let start = std::time::Instant::now();
+            for i in 0..n {
+                t.insert(&(i % 97, i), &(format!("pilot {i}"), i as f64, vec![1, 2, 3])).unwrap();
+            }
+            let ins = start.elapsed();
+            let start = std::time::Instant::now();
+            for i in 0..n {
+                t.update_and_fetch(&(i % 97, i), |v| v.map(|(s, f, l)| (s, f + 1.0, l))).unwrap();
+            }
+            let upd = start.elapsed();
+            let start = std::time::Instant::now();
+            let scanned = t.iter().count();
+            let scan = start.elapsed();
+            db.flush().unwrap();
+            println!(
+                "{e}: {:.0} inserts/s, {:.0} updates/s, scan of {scanned} rows in {} ms",
+                n as f64 / ins.as_secs_f64(),
+                n as f64 / upd.as_secs_f64(),
+                scan.as_millis()
+            );
+        }
     }
 
     #[test]
