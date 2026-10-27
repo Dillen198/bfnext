@@ -104,9 +104,9 @@ Gameplay is still verified in DCS: `TESTING.md` is the in-game checklist.
 
 ## Workspace Architecture
 
-The root `Cargo.toml` workspace has 9 members: `dcso3`, `livewx`, `bflib`,
-`bfrange`, `bfdb`, `bfprotocols`, `yats`, `bfcockpit/installer` and
-`bfcockpit/net`. `bftools` is excluded and builds on its own (own
+The root `Cargo.toml` workspace has 11 members: `dcso3`, `dcso3-core`,
+`livewx`, `fowlbg`, `bflib`, `bfrange`, `bfdb`, `bfprotocols`, `yats`,
+`bfcockpit/installer` and `bfcockpit/net`. `bftools` is excluded and builds on its own (own
 `Cargo.lock`, vendored Lua).
 
 ### dcso3 - DCS Lua API Bindings
@@ -131,6 +131,17 @@ The root `Cargo.toml` workspace has 9 members: `dcso3`, `livewx`, `bflib`,
 - **Type**: Library, shared by bflib and bfrange
 - **License**: MIT
 
+### fowlbg - Mission DLL Background Plumbing
+- **Purpose**: What bflib and bfrange both need off the DCS thread: the
+  background thread and its tokio runtime (optionally supervised), the logger
+  feeding it (`RUST_LOG`, netidx noise filter, fallback log), log/JSONL
+  rotation and sinks, and the netidx client config and publisher with bind
+  retry. Also the opt-in netidx TLS block (`netidx::Tls`, `deploy/netidx-tls.md`),
+  which bfprotocols and bfdb use with `default-features = false`
+- **Type**: Library; each DLL keeps its own task enum and `Handler`
+- **License**: MIT (`fowlbg/LICENSE`)
+- **Location**: `fowlbg/src/`
+
 ### bflib - Campaign Mission Script
 - **Purpose**: Main campaign logic, loaded as a DLL into the DCS Lua environment
 - **Type**: cdylib
@@ -140,7 +151,7 @@ The root `Cargo.toml` workspace has 9 members: `dcso3`, `livewx`, `bflib`,
   - `lib.rs`: Entry point, event handlers, main game loop
   - `db/`: Campaign state (players, objectives, groups, logistics, cargo, actions)
   - `menu/`: F10 radio menus (actions, JTAC, cargo, troops, EWR, ...)
-  - `bg/`: Background tasks on tokio (netidx, log and stats publishing, RPCs)
+  - `bg/`: Background tasks (saves, netidx stats/log publishing, RPCs) on fowlbg's thread
   - `groundwar/`, `hq/`, `commander.rs`, `modern_war/`: AI ground war and commander
   - `jtac.rs`, `ewr.rs`, `atis.rs`, `navaids.rs`, `cockpit.rs`: player-facing systems
   - `chatcmd.rs`, `admin.rs`, `command/`: chat and admin commands
@@ -240,6 +251,6 @@ The root `Cargo.toml` workspace has 9 members: `dcso3`, `livewx`, `bflib`,
 
 - **Lua linking**: Always use release builds for bflib due to mlua's linking requirements
 - **DCS compatibility**: When DCS updates, verify Lua version compatibility
-- **Licenses**: dcso3 and livewx are MIT, bflib is AGPL v3, bfrange has its own `bfrange/LICENSE`
+- **Licenses**: dcso3, livewx and fowlbg are MIT, bflib is AGPL v3, bfrange has its own `bfrange/LICENSE`
 - **Netidx**: Campaign uses netidx for RPC and stats - requires netidx infrastructure
 - **Tests**: Unit tests cover the Rust crates (see Testing); gameplay is still verified in DCS
