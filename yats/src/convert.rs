@@ -104,8 +104,8 @@ pub enum Mismatch {
 pub struct VerifyReport {
     pub trees: u64,
     pub pairs: u64,
-    /// Values that are MessagePack in the copy and bincode in the source
-    /// (re-encoded after the copy). Only counted with `allow_reencoded`.
+    /// Values in the other codec in the copy than in the source (re-encoded
+    /// after the copy). Only counted with `allow_reencoded`.
     pub reencoded: u64,
     /// Point lookups done, besides the full walk.
     pub lookups: u64,
@@ -130,8 +130,9 @@ impl VerifyReport {
 
 /// Compare `copy` with `source`: the same trees, the same pair count in each,
 /// the same keys in the same order, and the same values -- byte for byte, or,
-/// with `allow_reencoded`, a bincode value in the source may be MessagePack
-/// in the copy (the typed check of those is `Tree::reencode`'s). Every
+/// with `allow_reencoded`, in the other codec (bincode in one, MessagePack in
+/// the other; the typed check of those is `Tree::reencode`'s). Empty trees
+/// count as absent. Every
 /// `sample_every`-th pair is also fetched from the copy by key, which checks
 /// its index as well as its iteration order.
 pub fn verify(source: &Db, copy: &Db, allow_reencoded: bool, sample_every: u64) -> Result<VerifyReport> {
@@ -141,8 +142,10 @@ pub fn verify(source: &Db, copy: &Db, allow_reencoded: bool, sample_every: u64) 
     let mut rep = VerifyReport::default();
     let src_names = source.tree_names()?;
     let copy_names = copy.tree_names()?;
+    // An empty tree and a missing one are the same thing: opening a tree
+    // creates it, and newer builds open trees older ones never had.
     for n in &copy_names {
-        if !src_names.contains(n) {
+        if !src_names.contains(n) && !copy.open_tree(n)?.is_empty() {
             rep.push(Mismatch::ExtraTree(tree_name(n)));
         }
     }
@@ -150,7 +153,9 @@ pub fn verify(source: &Db, copy: &Db, allow_reencoded: bool, sample_every: u64) 
         let tree = tree_name(name);
         rep.trees += 1;
         if !copy_names.contains(name) {
-            rep.push(Mismatch::MissingTree(tree));
+            if !source.open_tree(name)?.is_empty() {
+                rep.push(Mismatch::MissingTree(tree));
+            }
             continue;
         }
         let (a, b) = (source.open_tree(name)?, copy.open_tree(name)?);
@@ -175,7 +180,7 @@ pub fn verify(source: &Db, copy: &Db, allow_reencoded: bool, sample_every: u64) 
                         continue;
                     }
                     if va != vb {
-                        if allow_reencoded && !codec::is_msgpack(&va) && codec::is_msgpack(&vb) {
+                        if allow_reencoded && codec::is_msgpack(&va) != codec::is_msgpack(&vb) {
                             rep.reencoded += 1;
                         } else {
                             rep.push(Mismatch::Value { tree: tree.clone(), key: ka.to_vec() });
@@ -253,7 +258,8 @@ mod tests {
         let b = to.open_tree("b").unwrap();
         b.insert(crate::serialize(&7u64).unwrap(), &b"changed"[..]).unwrap();
         b.insert(crate::serialize(&8u64).unwrap(), &b"extra"[..]).unwrap();
-        to.open_tree("zzz").unwrap();
+        to.open_tree("empty-is-fine").unwrap();
+        to.open_tree("zzz").unwrap().insert(b"k", &b"v"[..]).unwrap();
         let rep = verify(&from, &to, false, 1).unwrap();
         assert!(!rep.ok());
         assert!(rep.mismatches.contains(&Mismatch::ExtraTree("zzz".into())));

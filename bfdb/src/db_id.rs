@@ -49,7 +49,7 @@ macro_rules! db_id {
             }
 
             impl $name {
-                pub fn new(db: &sled::Db) -> anyhow::Result<Self> {
+                pub fn new(db: &yats::Db) -> anyhow::Result<Self> {
                     Ok(Self(db.generate_id()?))
                 }
             }
