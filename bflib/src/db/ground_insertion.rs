@@ -466,7 +466,7 @@ impl Db {
         let waypoints = route.len();
 
         let spawned = {
-            let perf = unsafe { Perf::get_mut() };
+            let mut perf = Perf::get_mut();
             let perf = Arc::make_mut(&mut perf.inner);
             self.ephemeral.spawn_group(
                 perf,

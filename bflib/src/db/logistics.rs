@@ -1509,7 +1509,7 @@ fn is_airframe_item(name: &str) -> bool {
 /// and changed the model in between; the logistics tick itself goes through
 /// `reconcile_warehouse`, which doesn't clobber what DCS spent meanwhile.
 pub(super) fn sync_obj_to_warehouse(obj: &Objective, warehouse: &warehouse::Warehouse) -> Result<()> {
-    let perf = unsafe { Perf::get_mut() };
+    let mut perf = Perf::get_mut();
     let perf = Arc::make_mut(&mut perf.inner);
     for (item, inv) in &obj.warehouse.equipment {
         // Model-only commodities (materiel) have no DCS resource-map entry.
@@ -1608,7 +1608,7 @@ fn reconcile_warehouse(
     warehouse: &warehouse::Warehouse,
     zero_foreign_airframes: bool,
 ) -> Result<()> {
-    let perf = unsafe { Perf::get_mut() };
+    let mut perf = Perf::get_mut();
     let perf = Arc::make_mut(&mut perf.inner);
     if zero_foreign_airframes {
         let mut foreign: SmallVec<[String; 8]> = smallvec![];
@@ -4933,7 +4933,7 @@ impl Db {
         // Spawn the queued group now, with the road route baked in.
         let route_for_trailers = route_points.clone();
         let spawned = {
-            let perf = unsafe { Perf::get_mut() };
+            let mut perf = Perf::get_mut();
             let perf = Arc::make_mut(&mut perf.inner);
             self.ephemeral
                 .spawn_group(
@@ -5141,7 +5141,7 @@ impl Db {
         ];
 
         {
-            let perf = unsafe { Perf::get_mut() };
+            let mut perf = Perf::get_mut();
             let perf = Arc::make_mut(&mut perf.inner);
             self.ephemeral.spawn_group(
                 perf,
@@ -5559,7 +5559,7 @@ impl Db {
         });
 
         {
-            let perf = unsafe { Perf::get_mut() };
+            let mut perf = Perf::get_mut();
             let perf = Arc::make_mut(&mut perf.inner);
             self.ephemeral.spawn_group(
                 perf,
@@ -6164,7 +6164,7 @@ impl Db {
         ];
 
         {
-            let perf = unsafe { Perf::get_mut() };
+            let mut perf = Perf::get_mut();
             let perf = Arc::make_mut(&mut perf.inner);
             self.ephemeral.spawn_group(
                 perf,

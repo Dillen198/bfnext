@@ -604,7 +604,8 @@ impl Context {
 
     fn respawn_groups(&mut self, lua: MizLua, miz: &Miz) -> Result<()> {
         let spctx = SpawnCtx::new(lua)?;
-        let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+        let mut perf_guard = Perf::get_mut();
+        let perf = Arc::make_mut(&mut perf_guard.inner);
         self.db.respawn_after_load(lua, perf, &self.idx, miz, &mut self.landcache, &spctx)
     }
 
@@ -615,8 +616,8 @@ impl Context {
             self.last_perf_log = now;
             self.do_bg_task(bg::Task::LogPerf {
                 players: self.connected.len(),
-                perf: unsafe { Perf::get_mut() }.clone(),
-                api_perf: unsafe { dcso3::perf::Perf::get_mut() }.clone(),
+                perf: Perf::get_mut().clone(),
+                api_perf: dcso3::perf::Perf::get_mut().clone(),
             });
             info!("landcache {}", self.landcache.stats())
         }
@@ -702,7 +703,7 @@ fn on_player_try_connect(
     }
     ctx.db.player_connected(ucid, name.clone());
     ctx.do_bg_task(Task::Stat(Stat::Connect { id: ucid, addr, name }));
-    record_perf(&mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_hooks, ts);
+    record_perf(&mut Arc::make_mut(&mut Perf::get_mut().inner).dcs_hooks, ts);
     Ok(None)
 }
 
@@ -720,7 +721,8 @@ fn on_player_try_send_chat(
         return Ok(None);
     };
     let ctx = &mut *ctx_guard;
-    let perf = &mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_hooks;
+    let mut perf_guard = Perf::get_mut();
+    let perf = &mut Arc::make_mut(&mut perf_guard.inner).dcs_hooks;
     // The cockpit overlay's key registration: a credential, so it is neither
     // logged nor shown in chat (Some("") swallows the line for everybody).
     if let Some(key) = msg.strip_prefix(cockpit::KEY_CMD) {
@@ -926,7 +928,7 @@ fn on_player_try_change_slot(
         }
     };
     record_perf(
-        &mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_hooks,
+        &mut Arc::make_mut(&mut Perf::get_mut().inner).dcs_hooks,
         start_ts,
     );
     res
@@ -1559,7 +1561,7 @@ fn on_event(lua: MizLua, ctx: &mut Context, ev: Event) -> Result<()> {
     };
     let res = handle_event(lua, ctx, ev, start_ts);
     drain_deferred_events(lua, ctx);
-    record_perf(&mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_events, perf_ts);
+    record_perf(&mut Arc::make_mut(&mut Perf::get_mut().inner).dcs_events, perf_ts);
     res
 }
 
@@ -1605,9 +1607,7 @@ fn mission_end(lua: MizLua, ctx: &mut Context) -> Result<()> {
         ctx.do_bg_task(Task::SaveState(ctx.miz_state_path.clone(), snap));
     }
     *ctx = Context::default();
-    // SAFETY: no perf reference is alive here (on_event takes its own after
-    // handling the event, and this returns before that).
-    unsafe { Perf::reset() };
+    Perf::reset();
     ctx.init_async_bg(lua.inner())?;
     // no perf record: the perf context was just reset
     Ok(())
@@ -5729,7 +5729,8 @@ fn run_timed_events(
     // campaign time for the campaign, the wall clock for the perf records
     let ts = ctx.now();
     let perf_ts = Utc::now();
-    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let mut perf_guard = Perf::get_mut();
+    let perf = Arc::make_mut(&mut perf_guard.inner);
     step(lua, ctx, "force to spectators", |ctx| match Net::singleton(lua) {
         Ok(net) => force_players_to_spectators(ctx, &net, ts),
         Err(e) => error!("no net singleton {e:?}"),
@@ -6412,7 +6413,7 @@ fn on_player_disconnect(_: HooksLua, id: PlayerId) -> Result<()> {
         None => DEFERRED.with(|q| q.borrow_mut().push(DeferredEvent::Disconnect(id))),
     }
     record_perf(
-        &mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_hooks,
+        &mut Arc::make_mut(&mut Perf::get_mut().inner).dcs_hooks,
         start_ts,
     );
     Ok(())
@@ -6422,7 +6423,8 @@ fn on_simulation_frame(_: HooksLua) -> Result<()> {
     // Never inside one of our calls, but if it were, a frame's time is not
     // worth a second borrow.
     let Some(mut ctx) = Context::try_borrow() else { return Ok(()) };
-    let frame = Arc::make_mut(&mut unsafe { Perf::get_mut() }.frame);
+    let mut perf_guard = Perf::get_mut();
+    let frame = Arc::make_mut(&mut perf_guard.frame);
     let now = Utc::now();
     match &mut ctx.last_frame {
         Some(last) => {

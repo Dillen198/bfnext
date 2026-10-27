@@ -1273,8 +1273,8 @@ pub(super) fn admin_shutdown(
 ) -> Result<AdminResult> {
     let wait = Arc::new((Mutex::new(false), Condvar::new()));
     let se = {
-        let perf = unsafe { Perf::get_mut() };
-        let api_perf = unsafe { ApiPerf::get_mut() };
+        let perf = Perf::get_mut();
+        let api_perf = ApiPerf::get_mut();
         Stat::SessionEnd {
             perf: (*perf.inner).clone(),
             frame: (*perf.frame).clone(),
@@ -2948,8 +2948,8 @@ fn cluster_gci_contacts(contacts: &mut Vec<bfprotocols::gci::GciContact>) {
 /// bfdb's own `SessionEnd` struct (time/frame/api/engine) so bfdb can
 /// deserialize this JSON straight into it with no translation step.
 pub(crate) fn query_perf() -> serde_json::Value {
-    let perf = unsafe { Perf::get_mut() };
-    let api_perf = unsafe { ApiPerf::get_mut() };
+    let perf = Perf::get_mut();
+    let api_perf = ApiPerf::get_mut();
     let engine = (*perf.inner).clone();
     let frame = (*perf.frame).clone();
     let api = (*api_perf.0).clone();
@@ -3805,7 +3805,8 @@ fn run_admin_command(
                 }
             }
             AdminCommand::CommandOrder { side, ucid, order } => {
-                let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+                let mut perf_guard = Perf::get_mut();
+                let perf = Arc::make_mut(&mut perf_guard.inner);
                 let reply = crate::command::order(lua, ctx, perf, side, ucid, order, ctx.now());
                 match serde_json::to_string(&reply) {
                     Ok(json) => rep.out.push(NetIdxValue::from(json)),

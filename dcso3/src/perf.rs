@@ -22,16 +22,13 @@ macro_rules! record_perf {
     ($key:ident, $e:expr) => {{
         use crate::perf::Perf;
         use std::sync::Arc;
-        // Evaluate first, borrow the global afterwards. `$e` is a Lua call
+        // Evaluate first, borrow the counters afterwards: `$e` is a Lua call
         // that can re-enter Rust (event handlers, timers) and hit another
-        // record_perf!, so holding the &mut from Perf::get_mut across it
-        // created two live aliases of the same static -- UB.
+        // record_perf!, which would then only get a throw-away instance.
         let ts = chrono::Utc::now();
         let res = $e;
         {
-            // SAFETY: the reference ends at the end of this block and
-            // nothing in it can re-enter.
-            let t = unsafe { Perf::get_mut() };
+            let mut t = Perf::get_mut();
             let t = Arc::make_mut(&mut t.0); // takes about 20ns if we don't need to clone
             crate::perf::record_perf(&mut t.$key, ts);
         }

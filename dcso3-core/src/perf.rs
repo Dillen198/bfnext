@@ -22,9 +22,10 @@ use log::info;
 use serde::{de, ser, Deserialize, Serialize};
 use std::{
     borrow::{Borrow, BorrowMut},
-    cell::RefCell,
+    cell::{Cell, RefCell, UnsafeCell},
     ops::{Deref, DerefMut},
     sync::Arc,
+    thread::LocalKey,
 };
 
 #[derive(Debug, Clone)]
@@ -427,6 +428,93 @@ impl PerfStat {
     }
 }
 
+/// The storage behind one `thread_singleton!`: the value and whether a
+/// `SingletonGuard` for it is alive. Allocated once per thread and never
+/// freed.
+#[doc(hidden)]
+pub struct SingletonSlot<T> {
+    held: Cell<bool>,
+    value: UnsafeCell<T>,
+}
+
+enum GuardInner<T: 'static> {
+    Slot(&'static SingletonSlot<T>),
+    Spare(Box<T>),
+}
+
+/// Exclusive access to this thread's instance of a perf singleton (see
+/// `thread_singleton!`). At most one guard per singleton reaches the shared
+/// instance at a time. Asking again while one is alive -- a Lua call that
+/// re-entered an event handler or timer that records perf too -- gets a
+/// fresh, throw-away instance instead: those few samples are lost, and two
+/// `&mut` to the same counters (undefined behaviour) cannot happen.
+///
+/// Not `Send`: it points into this thread's slot.
+pub struct SingletonGuard<T: 'static> {
+    // not `.0`: the guard derefs to tuple structs like `Perf(Arc<..>)`
+    slot_or_spare: GuardInner<T>,
+}
+
+impl<T: Default + 'static> SingletonGuard<T> {
+    #[doc(hidden)]
+    pub fn acquire(key: &'static LocalKey<Cell<Option<&'static SingletonSlot<T>>>>) -> Self {
+        let slot = key.with(|c| match c.get() {
+            Some(slot) => slot,
+            None => {
+                let slot: &'static SingletonSlot<T> = Box::leak(Box::new(SingletonSlot {
+                    held: Cell::new(false),
+                    value: UnsafeCell::new(T::default()),
+                }));
+                c.set(Some(slot));
+                slot
+            }
+        });
+        if slot.held.replace(true) {
+            Self { slot_or_spare: GuardInner::Spare(Box::default()) }
+        } else {
+            Self { slot_or_spare: GuardInner::Slot(slot) }
+        }
+    }
+
+    /// True if this guard reaches the thread's shared instance, false if it
+    /// is a throw-away one (another guard was alive when it was taken).
+    pub fn is_shared(&self) -> bool {
+        matches!(self.slot_or_spare, GuardInner::Slot(_))
+    }
+}
+
+impl<T: 'static> Drop for SingletonGuard<T> {
+    fn drop(&mut self) {
+        if let GuardInner::Slot(slot) = &self.slot_or_spare {
+            slot.held.set(false)
+        }
+    }
+}
+
+impl<T: 'static> Deref for SingletonGuard<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        match &self.slot_or_spare {
+            // SAFETY: `held` was false when this guard was made and stays
+            // true until it drops, so this guard is the only way to the
+            // value; the slot is never freed.
+            GuardInner::Slot(slot) => unsafe { &*slot.value.get() },
+            GuardInner::Spare(t) => t,
+        }
+    }
+}
+
+impl<T: 'static> DerefMut for SingletonGuard<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        match &mut self.slot_or_spare {
+            // SAFETY: as for `deref`; `&mut self` makes this borrow unique.
+            GuardInner::Slot(slot) => unsafe { &mut *slot.value.get() },
+            GuardInner::Spare(t) => t,
+        }
+    }
+}
+
 /// Defines `get_mut()` and `reset()` for a perf singleton of type `$ty`
 /// (which must implement `Default`), inside that type's `impl` block.
 ///
@@ -440,42 +528,23 @@ impl PerfStat {
 #[macro_export]
 macro_rules! thread_singleton {
     ($ty:ty) => {
-        /// This thread's instance, created on first use.
-        ///
-        /// # Safety
-        ///
-        /// The returned reference must not overlap another one from
-        /// `get_mut` on the same thread: do not hold it across a call that
-        /// can re-enter (a Lua call that runs an event handler or timer may
-        /// call `get_mut` again), and do not call `reset` while it is alive.
-        /// Take it, update the counters, let it go.
-        pub unsafe fn get_mut() -> &'static mut $ty {
+        /// This thread's instance, created on first use, behind a guard.
+        /// Take it, update the counters, let it go: while the guard lives,
+        /// another `get_mut` on this thread (a re-entrant Lua callback) gets
+        /// a throw-away instance and its samples are lost.
+        pub fn get_mut() -> $crate::perf::SingletonGuard<$ty> {
             thread_local! {
-                static SLOT: std::cell::Cell<*mut $ty> =
-                    const { std::cell::Cell::new(std::ptr::null_mut()) };
+                static SLOT: std::cell::Cell<
+                    Option<&'static $crate::perf::SingletonSlot<$ty>>,
+                > = const { std::cell::Cell::new(None) };
             }
-            SLOT.with(|slot| {
-                let mut p = slot.get();
-                if p.is_null() {
-                    p = Box::into_raw(Box::new(<$ty as Default>::default()));
-                    slot.set(p);
-                }
-                // SAFETY: `p` is from `Box::into_raw` and never freed, so it
-                // is valid for 'static, and it is only reachable from this
-                // thread's slot, so no other thread can touch it. That the
-                // reference is unique is the caller's contract (see above).
-                unsafe { &mut *p }
-            })
+            $crate::perf::SingletonGuard::acquire(&SLOT)
         }
 
-        /// Put this thread's instance back to its default.
-        ///
-        /// # Safety
-        ///
-        /// No reference from `get_mut` may be alive on this thread.
-        pub unsafe fn reset() {
-            // SAFETY: the caller guarantees no other reference is alive.
-            *unsafe { Self::get_mut() } = <$ty as Default>::default();
+        /// Put this thread's instance back to its default. Does nothing if
+        /// a guard from `get_mut` is alive on this thread.
+        pub fn reset() {
+            *Self::get_mut() = <$ty as Default>::default();
         }
     };
 }
@@ -494,21 +563,46 @@ mod tests {
 
     #[test]
     fn perf_singleton_is_per_thread_and_resettable() {
-        // SAFETY (all blocks below): each reference is used and dropped
-        // before the next get_mut/reset on this thread.
-        let p = unsafe { Perf::get_mut() } as *const Perf;
-        assert_eq!(p, unsafe { Perf::get_mut() } as *const Perf);
-        *Arc::make_mut(&mut unsafe { Perf::get_mut() }.0).get_point += 5;
-        assert_eq!(unsafe { Perf::get_mut() }.get_point.len(), 1);
+        // a block, so the guard drops (`let p = &*Perf::get_mut()` would
+        // extend it to the end of the test)
+        let addr = || {
+            let g = Perf::get_mut();
+            &*g as *const Perf
+        };
+        let p = addr();
+        assert_eq!(p, addr());
+        *Arc::make_mut(&mut Perf::get_mut().0).get_point += 5;
+        assert_eq!(Perf::get_mut().get_point.len(), 1);
         let other = std::thread::spawn(|| {
-            let o = unsafe { Perf::get_mut() };
-            (o as *const Perf as usize, o.get_point.len())
+            let o = Perf::get_mut();
+            (&*o as *const Perf as usize, o.get_point.len())
         })
         .join()
         .unwrap();
         assert_ne!(other.0, p as usize);
         assert_eq!(other.1, 0);
-        unsafe { Perf::reset() };
-        assert_eq!(unsafe { Perf::get_mut() }.get_point.len(), 0);
+        Perf::reset();
+        assert_eq!(Perf::get_mut().get_point.len(), 0);
+    }
+
+    #[test]
+    fn perf_singleton_reentry_gets_a_spare() {
+        let mut outer = Perf::get_mut();
+        assert!(outer.is_shared());
+        *Arc::make_mut(&mut outer.0).get_point += 5;
+        {
+            // what a re-entrant callback would see: not the outer counters
+            let mut inner = Perf::get_mut();
+            assert!(!inner.is_shared());
+            assert_eq!(inner.get_point.len(), 0);
+            *Arc::make_mut(&mut inner.0).get_point += 7;
+            // reset while held does not touch the shared instance
+            Perf::reset();
+        }
+        assert_eq!(outer.get_point.len(), 1);
+        drop(outer);
+        let again = Perf::get_mut();
+        assert!(again.is_shared());
+        assert_eq!(again.get_point.len(), 1);
     }
 }

@@ -1100,7 +1100,8 @@ pub fn call_bomber(lua: MizLua, arg: ArgTriple<JtId, Ucid, String>) -> Result<()
 
 /// `call_bomber` for a caller that already holds the campaign state.
 pub(crate) fn call_bomber_in(lua: MizLua, ctx: &mut Context, arg: ArgTriple<JtId, Ucid, String>) -> Result<()> {
-    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let mut perf_guard = Perf::get_mut();
+    let perf = Arc::make_mut(&mut perf_guard.inner);
     let spctx = SpawnCtx::new(lua)?;
     let jtac = get_jtac(&ctx.jtac, &arg.fst)?;
     let (near, name) = change_info(jtac, &ctx.db, &arg.snd);

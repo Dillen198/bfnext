@@ -181,7 +181,8 @@ fn side_slot_action(ctx: &mut Context, ucid: &Ucid, name: &str) -> Result<(Side,
 fn run_pos_action(lua: MizLua, arg: ArgQuad<Ucid, String, LuaVec3, MarkId>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let mut perf_guard = Perf::get_mut();
+    let perf = Arc::make_mut(&mut perf_guard.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_pos_action(
         ctx,
@@ -310,7 +311,8 @@ fn run_pos_group_action(
 ) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let mut perf_guard = Perf::get_mut();
+    let perf = Arc::make_mut(&mut perf_guard.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_pos_group_action(
         ctx,
@@ -400,7 +402,8 @@ fn do_objective_action(
 fn run_objective_action(lua: MizLua, arg: ArgTriple<Ucid, String, ObjectiveId>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let mut perf_guard = Perf::get_mut();
+    let perf = Arc::make_mut(&mut perf_guard.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_objective_action(
         ctx,
@@ -463,7 +466,8 @@ fn run_enemy_objective_action(
 ) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let mut perf_guard = Perf::get_mut();
+    let perf = Arc::make_mut(&mut perf_guard.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_enemy_objective_action(
         ctx,
@@ -549,7 +553,8 @@ fn run_add_objective_task(
 ) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let mut perf_guard = Perf::get_mut();
+    let perf = Arc::make_mut(&mut perf_guard.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_add_objective_task(
         ctx,
@@ -582,7 +587,8 @@ fn run_add_objective_task(
 fn run_add_task(lua: MizLua, arg: ArgPent<Ucid, String, LuaVec3, MarkId, String>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let mut perf_guard = Perf::get_mut();
+    let perf = Arc::make_mut(&mut perf_guard.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_add_task(
         ctx,
@@ -638,7 +644,8 @@ fn do_remove_task(
 fn run_remove_task(lua: MizLua, arg: ArgTriple<Ucid, String, TaskId>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let mut perf_guard = Perf::get_mut();
+    let perf = Arc::make_mut(&mut perf_guard.inner);
     let (side, slot, action) = side_slot_action(ctx, &arg.fst, &arg.snd)?;
     match do_remove_task(
         ctx,
@@ -670,7 +677,8 @@ fn run_remove_task(lua: MizLua, arg: ArgTriple<Ucid, String, TaskId>) -> Result<
 fn run_global_artillery(lua: MizLua, arg: ArgQuad<Ucid, SlotId, LuaVec3, MarkId>) -> Result<()> {
     let mut entered = crate::Entered::enter(lua)?;
     let ctx = &mut *entered;
-    let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
+    let mut perf_guard = Perf::get_mut();
+    let perf = Arc::make_mut(&mut perf_guard.inner);
     let cfg = match ctx.db.ephemeral.cfg.artillery.clone() {
         Some(c) => c,
         None => return Ok(()),
