@@ -44,3 +44,6 @@ simplelog = { workspace = true }
 smallvec = { workspace = true }
 tokio = { workspace = true }
 zstd = { workspace = true }
+
+[lints]
+workspace = true

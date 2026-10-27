@@ -29,3 +29,6 @@ clap = { workspace = true }
 # Thin Win32 bindings -- no toolkit, no runtime for the player to install.
 # Windows, labels and buttons are core; the rest are opt-in features.
 native-windows-gui = { version = "1", default-features = false, features = ["listbox", "textbox", "file-dialog"] }
+
+[lints]
+workspace = true

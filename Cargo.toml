@@ -77,9 +77,11 @@ warp = { version = "0.4", features = ["server", "websocket", "test"] }
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13" }
 
-# Shared lint levels. Everything here is `warn`, never `deny`, so a new hit
-# cannot break a build; crates opt in with `[lints] workspace = true`.
-# The clippy entries only fire under `cargo clippy`.
+# Shared lint levels, used by every workspace crate (`[lints] workspace =
+# true`). Everything here is `warn` or `allow`, never `deny`, so a new hit
+# cannot break a build; CI's rust-lint job runs clippy with `-D warnings`,
+# so it does fail the lint check. The clippy entries only fire under
+# `cargo clippy`.
 [workspace.lints.rust]
 # `unsafe fn` bodies must still mark each unsafe operation (the 2024 edition
 # default): an unsafe fn is a contract for the caller, not a licence for the
@@ -90,6 +92,22 @@ static_mut_refs = "warn"
 [workspace.lints.clippy]
 # Every `unsafe {}` block says why it is sound.
 undocumented_unsafe_blocks = "warn"
+# Style lints this codebase does not follow, on purpose:
+# - DCS callbacks and spawn helpers take many plain arguments, and their
+#   nested generic types (Lua callbacks, netidx channels) read better inline
+#   than behind one-use aliases.
+too_many_arguments = "allow"
+type_complexity = "allow"
+# Large variants hold mission state that is moved rarely; boxing them would
+# only add allocations on the hot paths.
+large_enum_variant = "allow"
+result_large_err = "allow"
+# `!(a < b)` is how float code here says "not less, NaN included".
+neg_cmp_op_on_partial_ord = "allow"
+# Config and test fixtures build a default and then set a few fields.
+field_reassign_with_default = "allow"
+# Index loops over parallel arrays (grids, waypoints) stay index loops.
+needless_range_loop = "allow"
 
 [workspace]
 resolver = "2"

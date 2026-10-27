@@ -77,3 +77,6 @@ flate2 = "1"
 # Both were already in the build through the TLS stack.
 sha2 = "0.10"
 hmac = "0.12"
+
+[lints]
+workspace = true
