@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Search, X } from '@icons'
+import { ChevronDown, ChevronUp, Download, Search, X } from '@icons'
 import { AnnotationIndex, applyOverrides, withOverride, type Json, type Overrides } from '../model'
 import { offsetOnGrid, terrainAt, toDcsXY, type DcsTerrain } from '../nav'
 import { shareString } from '../dcsdtc'
@@ -43,7 +43,8 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
   const [query, setQuery] = useState('')
   const [changedOnly, setChangedOnly] = useState(false)
   const [msg, setMsg] = useState<Msg | null>(null)
-  const [showMap, setShowMap] = useState(true)
+  // The download and steps stay folded away until asked for.
+  const [loadOpen, setLoadOpen] = useState(false)
 
   // Escape closes, and the page behind does not scroll.
   useEffect(() => {
@@ -109,6 +110,18 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
       const out = await f()
       download(out.filename, out.text, 'application/json')
       setMsg(out.warnings.length ? { kind: 'warn', text: `${done} ${out.warnings.join(' ')}` } : { kind: 'ok', text: done })
+    } catch (e) {
+      setMsg({ kind: 'err', text: e instanceof ExportError ? e.message : String(e) })
+    }
+  }
+  const downloadNative = () => run(() => buildFor(plan, target, model.defaults, ov, tosSeconds, tosText), 'Cartridge downloaded.')
+  const downloadPreset = () => run(() => buildFor(plan, target, model.defaults, ov, tosSeconds, tosText, true), 'Preset downloaded.')
+  const downloadWhole = () => run(() => buildFor(plan, target, model.defaults, ov, tosSeconds, tosText, false), 'Full preset downloaded.')
+  const copyShare = async () => {
+    try {
+      const out = buildFor(plan, target, model.defaults, ov, tosSeconds, tosText, true)
+      await navigator.clipboard.writeText(await shareString(out.text))
+      setMsg({ kind: 'ok', text: 'Share code copied. In DCS-DTC: Load/Save > Load from clipboard.' })
     } catch (e) {
       setMsg({ kind: 'err', text: e instanceof ExportError ? e.message : String(e) })
     }
@@ -218,21 +231,6 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
                 </div>
                 {page.sw && <LoadToggle state={switchState(page.sw)} readOnly={readOnly} onSet={on => setSwitch(page.sw!, on)} />}
               </div>
-              {page.scalarsOnly || !pageHasMap(ctx, page.segs, routeFilled(page, idx, value)) ? null : map ? (
-                <div style={{ marginBottom: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                    <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-                      Map{addableList(ctx, page.segs) ? ' · click to add a point' : ''}
-                    </span>
-                    <button type="button" className="vs-btn-ghost" style={{ fontSize: '0.62rem', padding: '2px 8px' }} onClick={() => setShowMap(v => !v)} aria-expanded={showMap}>
-                      {showMap ? 'Hide map' : 'Show map'}
-                    </button>
-                  </div>
-                  {showMap && <div style={{ height: 300 }}><DtcMap ctx={ctx} plan={plan} map={map} pageSegs={page.segs} extras={STEERPOINT_PAGES.has(page.key) ? offsetMarks(plan.waypoints, map) : []} /></div>}
-                </div>
-              ) : (
-                <div style={{ ...dim, marginBottom: 10 }}>Add your route on the planner map to see this cartridge on a map.</div>
-              )}
               {page.managed
                 ? <>
                     <div style={{ ...dim, padding: '6px 0 12px' }}>This page is filled from your route on the map: {plan.waypoints.length} point{plan.waypoints.length === 1 ? '' : 's'}. Edit the route to change it.</div>
@@ -245,29 +243,45 @@ export default function DtcWorkspace({ plan, targets, target, onTarget, readOnly
           ) : null}
         </main>
 
-        <section className="dtc-load" aria-label="Load into the jet">
-          <h3 style={{ ...h3, marginBottom: 12 }}>Load into the jet</h3>
-          {target.tool === 'native' ? (
-            <NativeGuide type={target.code as NativeType} map={map?.terrain.name} fileName={nativeName} disabled={!!noRoute} why={noRoute}
-              onDownload={() => run(() => buildFor(plan, target, model.defaults, ov, tosSeconds, tosText), 'Cartridge downloaded.')} />
+        <section className="dtc-mapcol" aria-label="Map">
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Map</span>
+            {map && page && !hits && !changedHits && (
+              <span style={{ fontSize: '0.62rem', color: 'var(--text-dim)' }}>
+                {addableList(ctx, page.segs) ? 'click to add a point to this page' : pageHasMap(ctx, page.segs, routeFilled(page, idx, value)) ? 'this page in blue' : 'your route'}
+              </span>
+            )}
+          </div>
+          {map ? (
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <DtcMap ctx={ctx} plan={plan} map={map} pageSegs={page?.segs ?? []} extras={offsetMarks(plan.waypoints, map)} />
+            </div>
           ) : (
-            <DcsDtcGuide code={target.code} label={def.label} disabled={!!noRoute} storeOnly={dcsdtcTarget(target.code)?.storeOnly}
-              onLoadFile={() => run(() => buildFor(plan, target, model.defaults, ov, tosSeconds, tosText, true), 'Preset downloaded.')}
-              onWhole={() => run(() => buildFor(plan, target, model.defaults, ov, tosSeconds, tosText, false), 'Full preset downloaded.')}
-              onShare={async () => {
-                try {
-                  const out = buildFor(plan, target, model.defaults, ov, tosSeconds, tosText, true)
-                  await navigator.clipboard.writeText(await shareString(out.text))
-                  setMsg({ kind: 'ok', text: 'Share code copied. In DCS-DTC: Load/Save > Load from clipboard.' })
-                } catch (e) {
-                  setMsg({ kind: 'err', text: e instanceof ExportError ? e.message : String(e) })
-                }
-              }} />
+            <div style={{ ...dim, flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', textAlign: 'center', border: '1px dashed var(--border)', borderRadius: 6, padding: 20 }}>
+              Draw your route on the planner map first: the cartridge is shown here on it.
+            </div>
           )}
-          {msg && <div role="status" style={{ marginTop: 12, fontSize: '0.7rem', lineHeight: 1.5, color: msg.kind === 'err' ? '#f04747' : msg.kind === 'warn' ? '#f0a030' : 'var(--accent)' }}>{msg.text}</div>}
-          <Summary pages={pages} switchState={switchState} />
         </section>
       </div>
+
+      {loadOpen && (
+        <div className="dtc-foot-steps" id="dtc-load-steps">
+          {target.tool === 'native' ? (
+            <NativeGuide type={target.code as NativeType} map={map?.terrain.name} fileName={nativeName} disabled={!!noRoute} why={noRoute} onDownload={downloadNative} />
+          ) : (
+            <DcsDtcGuide code={target.code} label={def.label} disabled={!!noRoute} storeOnly={dcsdtcTarget(target.code)?.storeOnly}
+              onLoadFile={downloadPreset} onWhole={downloadWhole} onShare={copyShare} />
+          )}
+          <Summary pages={pages} switchState={switchState} />
+        </div>
+      )}
+      <footer className="dtc-foot">
+        <button type="button" className={loadOpen ? 'vs-btn-outline' : 'vs-btn'} aria-expanded={loadOpen} aria-controls="dtc-load-steps"
+          onClick={() => setLoadOpen(v => !v)} style={{ display: 'inline-flex', gap: 6, alignItems: 'center', padding: '6px 12px', fontSize: '0.72rem' }}>
+          <Download size={12} /> Load into the jet {loadOpen ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+        </button>
+        {msg && <span role="status" style={{ ...footHint, flex: '1 1 300px', color: msg.kind === 'err' ? '#f04747' : msg.kind === 'warn' ? '#f0a030' : 'var(--accent)' }}>{msg.text}</span>}
+      </footer>
     </Shell>
   )
 }
@@ -287,6 +301,7 @@ function offsetMarks(w: PlanWaypoint[], map: DcsTerrain) {
 
 const h3 = { margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--text)' } as const
 const dim = { fontSize: '0.7rem', color: 'var(--text-dim)', lineHeight: 1.6 } as const
+const footHint = { fontSize: '0.66rem', color: 'var(--text-dim)', lineHeight: 1.5 } as const
 
 function Chip({ tone, children }: { tone: 'info' | 'accent'; children: React.ReactNode }) {
   return (
@@ -318,7 +333,7 @@ function Summary({ pages, switchState }: { pages: Page[]; switchState: (sw: Load
   const on = pages.filter(p => p.sw && switchState(p.sw).on).map(p => p.label)
   const always = pages.filter(p => !p.sw).map(p => p.label)
   return (
-    <div style={{ marginTop: 18, fontSize: '0.66rem', color: 'var(--text-dim)', lineHeight: 1.6 }}>
+    <div style={{ marginTop: 14, fontSize: '0.66rem', color: 'var(--text-dim)', lineHeight: 1.6 }}>
       <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>What loads</div>
       {on.length > 0 && <div><span style={{ color: 'var(--accent)' }}>●</span> {on.join(', ')}</div>}
       {on.length === 0 && pages.some(p => p.sw) && <div>Nothing switchable is on yet: change a page, or switch it on.</div>}

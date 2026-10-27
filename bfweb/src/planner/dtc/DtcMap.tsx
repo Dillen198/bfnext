@@ -63,9 +63,14 @@ export default function DtcMap({ ctx, plan, map, pageSegs, extras = [] }: Props)
   const view = useMemo(() => {
     const all: [number, number][] = [...plan.waypoints.map(w => [w.lat, w.lon] as [number, number]), ...pts.filter(p => p.here).map(p => [p.lat, p.lon] as [number, number])]
     if (!all.length) return { latitude: map.terrain.center[0], longitude: map.terrain.center[1], zoom: 6 }
-    const lat = all.reduce((s, p) => s + p[0], 0) / all.length
-    const lon = all.reduce((s, p) => s + p[1], 0) / all.length
-    return { latitude: lat, longitude: lon, zoom: 7 }
+    if (all.length === 1) return { latitude: all[0][0], longitude: all[0][1], zoom: 8 }
+    // The whole route and this page's points in view.
+    const lats = all.map(p => p[0])
+    const lons = all.map(p => p[1])
+    return {
+      bounds: [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]] as [[number, number], [number, number]],
+      fitBoundsOptions: { padding: 40, maxZoom: 10 },
+    }
     // Only on mount and theme: editing never yanks the view.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theme])
