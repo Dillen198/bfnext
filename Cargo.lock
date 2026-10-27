@@ -269,6 +269,7 @@ dependencies = [
  "enumflags2",
  "env_logger",
  "flate2",
+ "fowlbg",
  "futures",
  "fxhash",
  "hmac",

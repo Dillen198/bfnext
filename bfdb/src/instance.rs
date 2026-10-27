@@ -76,6 +76,14 @@ pub(crate) struct InstanceCfg {
     /// instance shares bfdb's default client config.
     #[serde(default)]
     pub netidx_config: Option<PathBuf>,
+    /// Mutual TLS for this instance's netidx connection (deploy/
+    /// netidx-tls.md): bfdb's certificate and the resolver's name, applied
+    /// over `netidx_config` (or over the default config, replacing
+    /// `--netidx-tls` for this instance). Unset, an instance with its own
+    /// `netidx_config` uses it as written, and one on the default config
+    /// follows `--netidx-tls`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub netidx_tls: Option<fowlbg::netidx::Tls>,
     /// Starting guess for the sortie (netidx path segment) this instance's
     /// bflib publishes under. Leave it unset.
     ///

@@ -7,7 +7,7 @@ use bfprotocols::cfg::UnitTag;
 use clap::Parser;
 use db::{IntelCapture, IntelMarkup, SessionData, SessionEnd, StatsDb, WikiImage, WikiPage};
 use futures::{SinkExt, StreamExt};
-use netidx::{config::Config, path::Path as NetidxPath, subscriber::SubscriberBuilder};
+use netidx::path::Path as NetidxPath;
 
 use rust_embed::RustEmbed;
 use serde_derive::{Deserialize, Serialize};
@@ -69,6 +69,7 @@ mod gci;
 mod voice;
 mod intel;
 mod instance;
+mod netidx_client;
 mod range;
 mod replay;
 mod websec;
@@ -156,6 +157,13 @@ struct Args {
     /// "default", which is exactly the pre-multi-instance behaviour.
     #[arg(long)]
     instances: Option<PathBuf>,
+    /// Mutual TLS for the default netidx client config (deploy/netidx-tls.md):
+    /// a JSON file with bfdb's certificate and the resolver's name, the same
+    /// block as `netidx_tls` in the engine configs. Omit it and the client
+    /// config is used as written (normally Anonymous). An instance with its
+    /// own `netidx_config` sets `netidx_tls` in the instances file instead.
+    #[arg(long)]
+    netidx_tls: Option<PathBuf>,
     /// UDP port the DCS `Export.lua` live-unit feed arrives on (single-server
     /// mode only -- with `--instances`, set `export_port` per instance).
     #[arg(long, default_value_t = crate::instance::DEFAULT_EXPORT_PORT)]
@@ -755,6 +763,7 @@ fn registry_from_args(args: &Args) -> Result<Registry> {
             label: None,
             base: args.base.clone(),
             netidx_config: None,
+            netidx_tls: None,
             sortie: args.sortie.clone(),
             stats_jsonl: args.stats_jsonl.clone(),
             stats_dir: args.stats_dir.clone(),
@@ -797,6 +806,7 @@ fn open_db_offline(args: &Args, db_path: PathBuf) -> Result<StatsDb> {
             label: None,
             base: None,
             netidx_config: None,
+            netidx_tls: None,
             sortie: None,
             stats_jsonl: None,
             stats_dir: None,
@@ -1031,23 +1041,8 @@ async fn main() -> Result<()> {
         // One subscriber per netidx client config: normally just the default
         // one, plus one for each instance that reaches its engine through a
         // resolver of its own (a DCS server on another PC).
-        use anyhow::Context as _;
-        let mut subscribers = std::collections::HashMap::new();
-        for cfg in registry.all().iter().filter(|i| i.base.is_some()) {
-            if subscribers.contains_key(&cfg.netidx_config) {
-                continue;
-            }
-            let ncfg = match &cfg.netidx_config {
-                None => Config::load_default()?,
-                Some(p) => Config::load(p).with_context(|| {
-                    format!("instance {:?}: loading netidx config {}", cfg.id, p.display())
-                })?,
-            };
-            if let Some(p) = &cfg.netidx_config {
-                log::info!("instance {:?}: netidx via {}", cfg.id, p.display());
-            }
-            subscribers.insert(cfg.netidx_config.clone(), SubscriberBuilder::new().config(ncfg).build()?);
-        }
+        let netidx_tls = netidx_client::load_tls_file(args.netidx_tls.as_deref())?;
+        let subscribers = netidx_client::subscribers(registry.all(), netidx_tls.as_ref())?;
         if !has_engine {
             log::info!("Running in offline mode (no instance has a netidx base, Netidx disabled)");
         }
