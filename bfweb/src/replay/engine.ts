@@ -102,6 +102,9 @@ export interface EngineUi {
 const BULLSEYE_NM = [20, 40, 60, 80, 100]
 const NM = 1852
 const DEG = Math.PI / 180
+
+/** Ctrl-click (Cmd-click on a Mac) picks the object to measure to, as in Tacview. */
+export const versusClick = (ev: MouseEvent) => ev.ctrlKey || ev.metaKey
 const LOCK_KEYS = ['LockedTarget', 'LockedTarget2', 'LockedTarget3', 'LockedTarget4', 'LockedTarget5', 'LockedTarget6', 'LockedTarget7', 'LockedTarget8', 'LockedTarget9']
 
 /** The F10-style map: OpenFreeMap's vector tiles (OpenStreetMap; free, no
@@ -246,7 +249,14 @@ export class ReplayEngine {
     this.map.on('render', () => { if (this.mode === '2d') this.paint2D() })
     this.map.on('click', e => {
       if (this.ruling) this.rulerClick([e.lngLat.lng, e.lngLat.lat])
-      else this.pick(e.point.x, e.point.y, (e.originalEvent as MouseEvent).shiftKey)
+      else this.pick(e.point.x, e.point.y, versusClick(e.originalEvent))
+    })
+    // Ctrl with the right button picks the versus object too (and on a Mac
+    // Ctrl-click arrives as a context menu).
+    this.map.on('contextmenu', e => {
+      if (!versusClick(e.originalEvent)) return
+      e.originalEvent.preventDefault()
+      this.pick(e.point.x, e.point.y, true)
     })
     this.map.on('mousemove', e => {
       this.cursor = [e.lngLat.lng, e.lngLat.lat]
@@ -404,10 +414,12 @@ export class ReplayEngine {
       this.root.insertBefore(th.el, this.overlay.el)
       th.onChange = () => this.kick()
       th.onUserMove = () => { if (this.cam !== 'free' && this.cam !== 'follow') this.setCam('follow') }
-      th.el.addEventListener('click', ev => {
+      const pickAt = (ev: MouseEvent, versus: boolean) => {
         const r = th.el.getBoundingClientRect()
-        this.pick(ev.clientX - r.left, ev.clientY - r.top, ev.shiftKey)
-      })
+        this.pick(ev.clientX - r.left, ev.clientY - r.top, versus)
+      }
+      th.el.addEventListener('click', ev => pickAt(ev, versusClick(ev)))
+      th.el.addEventListener('contextmenu', ev => { if (versusClick(ev)) { ev.preventDefault(); pickAt(ev, true) } })
       this.theater = th
     }
     if (this.theater) this.theater.el.style.display = three ? '' : 'none'
@@ -942,8 +954,8 @@ export class ReplayEngine {
   }
 
   /** The drawn object nearest a screen point (aircraft over what they fly
-   *  over); shift-click (or the measure tool) picks the BRAA target. */
-  private pick(x: number, y: number, shift = false) {
+   *  over); Ctrl-click (or the measure tool) picks the versus object. */
+  private pick(x: number, y: number, versus = false) {
     let best: { idx: number; d: number; pri: number } | null = null
     for (const h of this.hits) {
       const d = Math.hypot(h.x - x, h.y - y)
@@ -952,7 +964,7 @@ export class ReplayEngine {
       if (!best || score < best.d) best = { idx: h.idx, d: score, pri: h.pri }
     }
     if (!best) return
-    if ((shift || this.measuring) && best.idx !== this.focus && this.focus != null) this.setMeasure(best.idx)
+    if ((versus || this.measuring) && best.idx !== this.focus && this.focus != null) this.setMeasure(best.idx)
     else this.setFocus(best.idx)
   }
 }

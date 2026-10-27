@@ -22,7 +22,7 @@ import {
   fmtDuration, fmtClock, gameClock, M_TO_FT, MS_TO_KT,
   type RecMeta, type RecEvent, type RecFlight, type RecObject, type State, type RangeHit, type TrackSource, type Kind,
 } from './data'
-import { ReplayEngine, type EngineUi, type ViewMode, type CamMode, type ViewOpts, type Basemap } from './engine'
+import { ReplayEngine, versusClick, type EngineUi, type ViewMode, type CamMode, type ViewOpts, type Basemap } from './engine'
 import * as mgrs from 'mgrs'
 import Charts from './Charts'
 import Shots from './Shots'
@@ -163,7 +163,7 @@ export function Viewer({ source, rec, fileName }: { source: TrackSource; rec: st
       b={ui?.measureState ?? null}
       measure={ui?.measure ?? null}
       measuring={ui?.measuring ?? false}
-      onStart={() => e?.startMeasuring(!ui?.measuring)}
+      onStart={() => { if (narrow) setCardOpen(false); e?.startMeasuring(!ui?.measuring) }}
       onClear={() => e?.setMeasure(null)}
     />
   )
@@ -294,15 +294,6 @@ export function Viewer({ source, rec, fileName }: { source: TrackSource; rec: st
             </button>
             {layersOpen && ui && <Layers ui={ui} onSet={o => e?.setOpts(o)} onBasemap={b => e?.setBasemap(b)} onClose={() => setLayersOpen(false)} />}
           </div>
-          {focus != null && (
-            <button
-              className={`rp-tool ${ui?.measure != null || ui?.measuring ? 'on' : ''}`}
-              onClick={() => { if (ui?.measure != null) e?.setMeasure(null); else { if (narrow) setCardOpen(false); e?.startMeasuring(!ui?.measuring) } }}
-              title={ui?.measure != null ? 'Stop measuring (Esc)' : 'Range, closure and the BFM angles to another object: click this, then the other one (B)'}
-            >
-              <Crosshair size={15} /><span>Versus</span>
-            </button>
-          )}
           {mode === '2d' && (
             <button className={`rp-tool rp-wide-only ${ui?.ruling ? 'on' : ''}`} onClick={() => e?.setRuling(!ui?.ruling)} title="Distance and bearing between two points on the map (D)">
               <Compass size={15} /><span>Ruler</span>
@@ -346,7 +337,7 @@ export function Viewer({ source, rec, fileName }: { source: TrackSource; rec: st
           {side === 'objects' && (
             <ObjectTree
               meta={meta} t={t} focus={focus} measure={ui?.measure ?? null}
-              onPick={(i, shift) => { if (shift && focus != null && i !== focus) e?.setMeasure(i); else follow(i) }}
+              onPick={(i, versus) => { if (versus && focus != null && i !== focus) e?.setMeasure(i); else follow(i) }}
             />
           )}
           {side === 'shots' && (
@@ -678,7 +669,7 @@ function Help({ onClose }: { onClose: () => void }) {
     ['Following', [
       ['Tab', 'next aircraft in the air (Shift: previous)'],
       ['1 2 3 4 5 0', 'external, chase, cockpit, top, padlock, free camera'],
-      ['B', 'versus another object: range, closure, AA, ATA, HCA (or Shift-click it)'],
+      ['B', 'versus another object: range, closure, AA, ATA, HCA (or Ctrl-click it)'],
       ['Esc', 'stop measuring, then stop following'],
     ]],
     ['View', [
@@ -706,7 +697,7 @@ function Help({ onClose }: { onClose: () => void }) {
         ))}
       </div>
       <p>
-        Click anything on the map to follow it; Shift-click a second object (or use Versus) for range, closure and the BFM angles between the two.
+        Click anything on the map to follow it; Ctrl-click a second object (either mouse button) for range, closure and the BFM angles between the two.
         Click a mark on the timeline to jump to just before it. Drop a Tacview <code>.acmi</code> file anywhere to
         watch it here -- it is read in your browser and never uploaded.
       </p>
@@ -900,7 +891,7 @@ function Versus({ meta, store, t, focus, a, b, measure, measuring, units, onStar
   if (measure == null) {
     return (
       <button className={`rp-chip rp-wide-btn ${measuring ? 'on' : ''}`} onClick={onStart}
-        title="Range, closure, aspect and the BFM angles to another object (B, or Shift-click it)">
+        title="Range, closure, aspect and the BFM angles to another object (B, or Ctrl-click it)">
         <Crosshair size={11} /> {measuring ? 'Click a target… (Esc cancels)' : 'Versus another object'}
       </button>
     )
@@ -1150,7 +1141,7 @@ const ROW_CAP = 250
 /** Everything in the picture at `t`, by coalition and category, as
  *  Tacview's object list shows it. Effects (shells, flares) are left out. */
 function ObjectTree({ meta, t, focus, measure, onPick }: {
-  meta: RecMeta; t: number; focus: number | null; measure: number | null; onPick: (i: number, shift: boolean) => void
+  meta: RecMeta; t: number; focus: number | null; measure: number | null; onPick: (i: number, versus: boolean) => void
 }) {
   const [q, setQ] = useState('')
   const [all, setAll] = useState(false)
@@ -1199,8 +1190,9 @@ function ObjectTree({ meta, t, focus, measure, onPick }: {
           <button
             key={i}
             className={`rp-tree-row ${i === focus ? 'on' : ''} ${i === measure ? 'tgt' : ''} ${live ? '' : 'dim'}`}
-            onClick={ev => onPick(i, ev.shiftKey)}
-            title="Click to follow; Shift-click to measure to it"
+            onClick={ev => onPick(i, versusClick(ev.nativeEvent))}
+            onContextMenu={ev => { if (versusClick(ev.nativeEvent)) { ev.preventDefault(); onPick(i, true) } }}
+            title="Click to follow; Ctrl-click to measure to it"
           >
             <span className="rp-row-name">{o.p ?? (o.n ?? o.k).replace(/_/g, ' ')}</span>
             {o.p && <span className="rp-row-sub">{(o.n ?? '').replace(/_/g, ' ')}</span>}
