@@ -21,6 +21,7 @@ mod atis;
 mod bg;
 mod carp;
 mod chatcmd;
+mod clock;
 mod cockpit;
 mod command;
 mod commander;
@@ -557,6 +558,12 @@ impl Context {
         Some(CtxGuard { _not_send: std::marker::PhantomData })
     }
 
+    /// Campaign time now (`crate::clock`): what campaign timers are measured
+    /// on. Not for log or perf stamps, stats records or real-world schedules.
+    fn now(&self) -> DateTime<Utc> {
+        self.db.ephemeral.now()
+    }
+
     /// `borrow` for a timer callback, which can't return the error: logs it.
     pub(crate) fn borrow_logged(what: &str) -> Option<CtxGuard> {
         Self::borrow(what).map_err(|e| error!("{e:?}")).ok()
@@ -669,6 +676,7 @@ fn on_player_try_connect(
     if let Some((until, _)) = ctx.db.ephemeral.cfg.banned.get(&ucid) {
         match until {
             None => return Ok(Some("you are banned forever".into())),
+            // a ban is a real-world date: wall clock
             Some(until) if until >= &Utc::now() => {
                 return Ok(Some(
                     format_compact!("you are banned until {}", until).into(),
@@ -719,7 +727,8 @@ fn on_player_try_send_chat(
         return Ok(Some("".into()));
     }
     info!("onPlayerTrySendChat id: {:?}, msg: {:?}, all: {:?}", id, msg, all);
-    let r = chatcmd::process(ctx, lua, start_ts, id, msg);
+    let now = ctx.now();
+    let r = chatcmd::process(ctx, lua, now, id, msg);
     record_perf(perf, start_ts);
     match r {
         Ok(_) => Ok(None),
@@ -835,7 +844,7 @@ fn try_occupy_slot(
     side: Side,
     slot: SlotId,
 ) -> Result<bool> {
-    let now = Utc::now();
+    let now = ctx.now();
     match ctx.db.try_occupy_slot(now, side, slot, &ifo.ucid) {
         SlotAuth::NotRegistered(side) => {
             let name = ifo.name.clone();
@@ -1022,7 +1031,7 @@ fn unit_killed(
         error!("jtac unit dead failed for {:?} {:?}", id, e)
     }
     menu::jtac::flush_jtac_notices(ctx);
-    if let Err(e) = ctx.db.unit_dead(&id, Utc::now()) {
+    if let Err(e) = ctx.db.unit_dead(&id, ctx.now()) {
         error!("unit dead failed for {:?} {:?}", id, e);
     }
     Ok(())
@@ -1220,7 +1229,7 @@ fn drain_deferred_events(lua: MizLua, ctx: &mut Context) {
         if events.is_empty() {
             return;
         }
-        let now = Utc::now();
+        let now = ctx.now();
         for ev in events {
             match ev {
                 DeferredEvent::Birth(oid) => match dcso3::object::Object::get_instance(lua, &oid) {
@@ -1288,7 +1297,7 @@ fn handle_birth(lua: MizLua, ctx: &mut Context, initiator: &dcso3::object::Objec
         {
             return Ok(());
         }
-        ctx.recently_born.insert(unit.object_id()?, Utc::now());
+        ctx.recently_born.insert(unit.object_id()?, ctx.now());
         match ctx.db.unit_born(lua, &unit, &ctx.connected) {
             Ok(BirthRes::None) => (),
             Ok(BirthRes::OccupiedSlot(slot)) => {
@@ -1528,14 +1537,19 @@ fn on_event_raw<'lua>(lua: MizLua<'lua>, raw: mlua::Value<'lua>) -> Result<()> {
 }
 
 fn on_event(lua: MizLua, ctx: &mut Context, ev: Event) -> Result<()> {
-    let start_ts = Utc::now();
+    let perf_ts = Utc::now();
     if let Event::MissionEnd = ev {
         DEFERRED.with(|q| q.borrow_mut().clear());
         return mission_end(lua, ctx);
     }
+    // between ticks the clock would be up to 100 ms stale
+    let start_ts = match Timer::singleton(lua).and_then(|t| t.get_time()) {
+        Ok(t) => ctx.db.ephemeral.clock.advance(t.0),
+        Err(_) => ctx.now(),
+    };
     let res = handle_event(lua, ctx, ev, start_ts);
     drain_deferred_events(lua, ctx);
-    record_perf(&mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_events, start_ts);
+    record_perf(&mut Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner).dcs_events, perf_ts);
     res
 }
 
@@ -1915,7 +1929,7 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
                         unit.get_player_name().ok().flatten().map(|n| n.to_string()).unwrap_or_default()
                     );
                 } else if ctx.airborne.remove(&id) {
-                    ctx.recently_landed.insert(id, Utc::now());
+                    ctx.recently_landed.insert(id, ctx.now());
                 }
             }
         }
@@ -1956,12 +1970,12 @@ fn handle_event(lua: MizLua, ctx: &mut Context, ev: Event, start_ts: DateTime<Ut
 }
 
 pub(crate) fn lives(db: &mut Db, ucid: &Ucid, typfilter: Option<LifeType>) -> Result<CompactString> {
-    db.maybe_reset_lives(ucid, Utc::now())?;
+    db.maybe_reset_lives(ucid, db.ephemeral.now())?;
     let player = db.player(ucid).ok_or_else(|| anyhow!("no such player {:?}", ucid))?;
     let cfg = &db.ephemeral.cfg;
     let lives = &player.lives;
     let mut msg = CompactString::new("");
-    let now = Utc::now();
+    let now = db.ephemeral.now();
     for (typ, (n, reset_after)) in &cfg.default_lives {
         if typfilter.is_none() || Some(*typ) == typfilter {
             match lives.get(typ) {
@@ -1994,7 +2008,7 @@ fn process_takeoff(
     let slot = unit.slot()?;
     warn_taxiway_takeoff(lua, ctx, unit, place, position, &slot);
     check_banned_loadout(ctx, unit, &slot, now);
-    match ctx.db.takeoff(Utc::now(), slot, unit, position) {
+    match ctx.db.takeoff(ctx.now(), slot, unit, position) {
         Err(e) => error!("could not process takeoff, {:?}", e),
         Ok(TakeoffRes::NoLifeTaken | TakeoffRes::NotPlayerSlot) => (),
         Ok(TakeoffRes::TookLife(typ)) => {
@@ -2846,8 +2860,10 @@ fn check_auto_shutdown(
         // Announce at most one warning per tick, the tightest threshold that
         // has just been crossed. If the restart time moves in (or the engine
         // was busy), crossing three thresholds at once says "5 minutes" once
-        // rather than stacking three lines that contradict each other.
-        let left = asd.when - now;
+        // rather than stacking three lines that contradict each other. The
+        // restart is a real-world time: wall clock, not campaign time.
+        let wall = Utc::now();
+        let left = asd.when - wall;
         let mut due: Option<usize> = None;
         for (i, (mins, _)) in SHUTDOWN_WARNINGS.iter().enumerate() {
             if !asd.warned[i] && left <= Duration::minutes(*mins) {
@@ -2859,7 +2875,7 @@ fn check_auto_shutdown(
             let msg = format_compact!("The server will restart in {}", SHUTDOWN_WARNINGS[i].1);
             ctx.db.ephemeral.msgs().panel_to_all(60, i > 0, msg);
         }
-        if now > asd.when {
+        if wall > asd.when {
             return admin::admin_shutdown(ctx, lua, None);
         }
     }
@@ -3543,7 +3559,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                         );
                         ctx.event_scheduler.cap_spawn_ts.insert(
                             gid,
-                            crate::db::events::CapSpawnWatch::new(Utc::now()),
+                            crate::db::events::CapSpawnWatch::new(ctx.now()),
                         );
                         ctx.event_scheduler.cap_groups
                             .entry(event_id)
@@ -3561,7 +3577,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
                             .unwrap_or(600);
                         ctx.event_scheduler.cap_hard_expiry.insert(
                             event_id,
-                            Utc::now() + chrono::Duration::seconds(2 * duration as i64),
+                            ctx.now() + chrono::Duration::seconds(2 * duration as i64),
                         );
                         // Queue initial task -- deferred until DCS reports the group alive.
                         ctx.event_scheduler.pending_cap_tasks.insert(gid, (obj_pos, rotary));
@@ -3641,7 +3657,7 @@ fn apply_event_effects(lua: MizLua, ctx: &mut Context, effects: Vec<EventEffect>
 
             // E: Remove all CAP groups when the event expires
             EventEffect::DespawnCap { event_id, cap_side, objective, rotary } => {
-                let now = Utc::now();
+                let now = ctx.now();
                 // Determine if this was a shootdown (all aircraft dead) or natural expiry.
                 // If shot down, record the time so check_air_threats can enforce a cooldown.
                 let was_shot_down = ctx.event_scheduler.cap_groups.get(&event_id)
@@ -5200,7 +5216,7 @@ fn run_slow_timed_events(
             if ts - ctx.last_slow_timed_events < freq {
                 return Ok(AdminResult::Continue);
             }
-            let start_ts = Utc::now();
+            let start_ts = ctx.now();
             ctx.last_slow_timed_events = start_ts;
             (0, slow_tick_buckets(freq_secs), start_ts)
         }
@@ -5347,10 +5363,11 @@ fn slow_phase_0(
     // "threatened", and a threatened base never repairs.
     step(lua, ctx, "ghost units", |ctx| ctx.db.reconcile_ghosts(lua, ts));
     step(lua, ctx, "repairs", |ctx| {
+        let perf_ts = Utc::now();
         if let Err(e) = ctx.db.maybe_do_repairs(ts) {
             error!("error doing repairs {:?}", e)
         }
-        record_perf(&mut perf.do_repairs, start_ts);
+        record_perf(&mut perf.do_repairs, perf_ts);
     });
 
     step(lua, ctx, "navaids", |ctx| maybe_reallocate_navaids(lua, ctx));
@@ -5390,7 +5407,7 @@ fn slow_phase_1(
     start_ts: DateTime<Utc>,
 ) -> Result<AdminResult> {
     step(lua, ctx, "ewr tracks", |ctx| {
-        let ts = Utc::now();
+        let (ts, perf_ts) = (ctx.now(), Utc::now());
         if let Err(e) = ctx.ewr.update_tracks(
             lua,
             &mut ctx.landcache,
@@ -5401,7 +5418,7 @@ fn slow_phase_1(
         ) {
             error!("could not update ewr tracks {e}")
         }
-        record_perf(&mut perf.ewr_tracks, ts);
+        record_perf(&mut perf.ewr_tracks, perf_ts);
     });
 
     // ELINT/SIGINT: decay intel contacts and refresh/remove their F10 marks.
@@ -5409,26 +5426,31 @@ fn slow_phase_1(
     // in the same pass instead of fading out over the JTAC half-life.
     step(lua, ctx, "intel decay", |ctx| {
         ctx.db.retire_dead_jtac_intel();
-        ctx.db.ephemeral.tick_intel_decay(Utc::now())
+        let now = ctx.now();
+        ctx.db.ephemeral.tick_intel_decay(now)
     });
 
     // Player recon passes: advance timers, run scans, reveal contacts.
     step(lua, ctx, "recon sessions", |ctx| {
-        if let Err(e) = ctx.db.tick_recon_sessions(lua, &mut ctx.landcache, Utc::now()) {
+        let now = ctx.now();
+        if let Err(e) = ctx.db.tick_recon_sessions(lua, &mut ctx.landcache, now) {
             error!("could not tick recon sessions {e}")
         }
     });
 
     step(lua, ctx, "ewr reports", |ctx| {
-        let ts = Utc::now();
+        let (ts, perf_ts) = (ctx.now(), Utc::now());
         if let Err(e) = generate_ewr_reports(ctx, ts) {
             error!("could not generate ewr reports {e}")
         }
-        record_perf(&mut perf.ewr_reports, ts);
+        record_perf(&mut perf.ewr_reports, perf_ts);
     });
-    step(lua, ctx, "buddy spikes", |ctx| check_buddy_spikes(ctx, lua, Utc::now()));
+    step(lua, ctx, "buddy spikes", |ctx| {
+        let now = ctx.now();
+        check_buddy_spikes(ctx, lua, now)
+    });
     step(lua, ctx, "unit culling", |ctx| {
-        let ts = Utc::now();
+        let (ts, perf_ts) = (ctx.now(), Utc::now());
         match ctx.db.cull_or_respawn_objectives(lua, &mut ctx.landcache, ts) {
             Err(e) => error!("could not cull or respawn objectives {e}"),
             Ok((threatened, cleared)) => {
@@ -5494,7 +5516,7 @@ fn slow_phase_1(
         if let Some(losing_side) = ctx.db.check_last_stand(ts) {
             ctx.db.trigger_last_stand_victory(ts, losing_side.opposite());
         }
-        record_perf(&mut perf.unit_culling, ts);
+        record_perf(&mut perf.unit_culling, perf_ts);
     });
     Ok(AdminResult::Continue)
 }
@@ -5517,7 +5539,7 @@ fn slow_phase_2(
         record_perf(&mut perf.remark_objectives, ts);
     });
     step(lua, ctx, "production", |ctx| {
-        let ts = Utc::now();
+        let ts = ctx.now();
         if let Err(e) = ctx.db.run_factory_production(ts) {
             error!("could not run factory production {e}")
         }
@@ -5526,7 +5548,7 @@ fn slow_phase_2(
         }
     });
     step(lua, ctx, "carrier repairs", |ctx| {
-        let ts = Utc::now();
+        let ts = ctx.now();
         match ctx.db.check_carrier_repairs(ts) {
             Ok(completed) => {
                 for (oid, name) in completed {
@@ -5542,7 +5564,7 @@ fn slow_phase_2(
         }
     });
     step(lua, ctx, "carrier capture", |ctx| {
-        let ts = Utc::now();
+        let ts = ctx.now();
         match ctx.db.check_carrier_group_capture(lua, &ctx.idx, ts) {
             Ok(captures) => {
                 for (oid, old_owner, new_owner) in captures {
@@ -5572,11 +5594,11 @@ fn slow_phase_2(
         }
     });
     step(lua, ctx, "frontline", |ctx| {
-        let ts = Utc::now();
+        let (ts, perf_ts) = (ctx.now(), Utc::now());
         update_frontline(ctx, ts, false);
-        record_perf(&mut perf.frontline, ts);
+        record_perf(&mut perf.frontline, perf_ts);
     });
-    let now = Utc::now();
+    let now = ctx.now();
     step(lua, ctx, "tasks", |ctx| ctx.db.tick_tasks(now));
     step(lua, ctx, "map layer", |ctx| {
         ctx.db.ephemeral.update_map_layer(&ctx.db.persisted, now)
@@ -5708,7 +5730,9 @@ fn run_timed_events(
     lua: MizLua,
     path: &PathBuf,
 ) -> Result<AdminResult> {
-    let ts = Utc::now();
+    // campaign time for the campaign, the wall clock for the perf records
+    let ts = ctx.now();
+    let perf_ts = Utc::now();
     let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
     step(lua, ctx, "force to spectators", |ctx| match Net::singleton(lua) {
         Ok(net) => force_players_to_spectators(ctx, &net, ts),
@@ -5726,10 +5750,10 @@ fn run_timed_events(
                 }
             }
         }
-        record_perf(&mut perf.unit_positions, ts);
+        record_perf(&mut perf.unit_positions, perf_ts);
     });
     step(lua, ctx, "player positions", |ctx| {
-        let ts = Utc::now();
+        let (ts, perf_ts) = (ctx.now(), Utc::now());
         match ctx.db.update_player_positions_incremental(lua, ts, ctx.last_player_position) {
             Err(e) => error!("could not update player positions {e}"),
             Ok((i, dead)) => {
@@ -5741,7 +5765,7 @@ fn run_timed_events(
                 }
             }
         }
-        record_perf(&mut perf.player_positions, ts);
+        record_perf(&mut perf.player_positions, perf_ts);
     });
 
     step(lua, ctx, "takeoff holds", |ctx| announce_takeoff_holds(lua, ctx, ts));
@@ -5812,7 +5836,7 @@ fn run_timed_events(
         }
     });
     record_perf(&mut perf.advise_capturable, now);
-    let now = Utc::now();
+    let (now, perf_now) = (ctx.now(), Utc::now());
     step(lua, ctx, "jtac target positions", |ctx| {
         match ctx.jtac.update_target_positions(lua, now, &mut ctx.db) {
             Err(e) => error!("error updating jtac target positions {:?}", e),
@@ -5825,7 +5849,7 @@ fn run_timed_events(
             }
         }
     });
-    record_perf(&mut perf.jtac_target_positions, now);
+    record_perf(&mut perf.jtac_target_positions, perf_now);
     let now = Utc::now();
     let max_rate = ctx.db.ephemeral.cfg.max_msgs_per_second;
     {
@@ -5898,7 +5922,7 @@ fn run_timed_events(
     });
     step(lua, ctx, "brief requests", |ctx| chatcmd::run_brief_requests(ctx, lua));
     ctx.load_state.step();
-    record_perf(&mut perf.timed_events, ts);
+    record_perf(&mut perf.timed_events, perf_ts);
     ctx.log_perf(now);
     ctx.check_bg_health(now);
     Ok(AdminResult::Continue)
@@ -5925,6 +5949,7 @@ fn start_msgq_drain(lua: MizLua) -> Result<()> {
             return Ok(Some(now + period));
         };
         let ctx = &mut *ctx_guard;
+        ctx.db.ephemeral.clock.advance(now.0);
         // Round up so a rate that does not divide evenly is never throttled
         // below its configured value.
         let per_pass = ctx
@@ -5982,6 +6007,7 @@ fn start_admin_drain(lua: MizLua) -> Result<()> {
                 // shutting down: the 1 s tick owns the exit retries
                 return Ok(None);
             }
+            ctx.db.ephemeral.clock.advance(now.0);
             let res = step(lua, &mut ctx, "admin commands", |ctx| run_admin_commands(ctx, lua));
             match res {
                 Some(Err(e)) => error!("failed to run admin commands {e:?}"),
@@ -6105,7 +6131,7 @@ fn try_exit_dcs(lua: MizLua, ctx: &mut Context) -> bool {
 }
 
 fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<()> {
-    ctx.last_slow_timed_events = Utc::now();
+    ctx.last_slow_timed_events = ctx.now();
     start_msgq_drain(lua)?;
     start_admin_drain(lua)?;
     let timer = Timer::singleton(lua)?;
@@ -6117,6 +6143,7 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
                 return Ok(Some(now + 1.));
             };
             let ctx = &mut *ctx_guard;
+            ctx.db.ephemeral.clock.advance(now.0);
             if ctx.exit_attempts.is_some() {
                 // already shutting down and the last exit call failed; don't
                 // run the campaign any further, just try to exit again
@@ -6126,7 +6153,9 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
             if let Some((model_then, wall_then)) = ctx.last_tick_clocks.replace((now.0, wall)) {
                 if let Some(gap) = rules::clock_gap_secs(model_then, now.0, wall_then, wall) {
                     warn!(
-                        "the simulation stood still for about {gap} s while the wall clock ran                          (paused, loading or hung). Campaign timers run on the wall clock, so                          anything that came due meanwhile fires now; see                          docs/plans/bflib-model-time.md"
+                        "the simulation stood still for about {gap} s while the wall clock ran \
+                         (paused, loading or hung). Campaign timers run on mission time and \
+                         stood still with it (see crate::clock)"
                     );
                 }
             }
@@ -6153,6 +6182,20 @@ fn start_timed_events(ctx: &mut Context, lua: MizLua, path: PathBuf) -> Result<(
             Ok(Some(now + 1.))
         }
     })?;
+    Ok(())
+}
+
+/// Start the campaign clock (`crate::clock`) at the save's clock plus the
+/// downtime, or the wall clock for a new campaign or an older save.
+fn start_clock(lua: MizLua, ctx: &mut Context) -> Result<()> {
+    let wall = Utc::now();
+    let campaign = clock::SavedClock::resume(ctx.db.persisted.clock, wall);
+    let model = Timer::singleton(lua)?.get_time()?.0;
+    ctx.db.ephemeral.clock.start(campaign, model);
+    let behind = wall - campaign;
+    if behind > Duration::seconds(1) {
+        info!("campaign clock resumed {}s behind the wall clock (time the simulation stood still)", behind.num_seconds());
+    }
     Ok(())
 }
 
@@ -6240,6 +6283,9 @@ fn delayed_init_miz(lua: MizLua, ctx: &mut Context) -> Result<()> {
         debug!("saved state exists, loading it");
         ctx.db = Db::load(&miz, &ctx.idx, to_bg, cfg, &path)
             .context("loading the saved state")?;
+        // Resume the campaign clock where the save left it (plus the
+        // downtime), before anything below stamps a time.
+        start_clock(lua, ctx)?;
         // Db::init runs this on a fresh campaign start, but a loaded save
         // never goes through init at all -- run it here too so an objective
         // that's missing its logistics-defense group (e.g. saved before a
@@ -6258,6 +6304,7 @@ fn delayed_init_miz(lua: MizLua, ctx: &mut Context) -> Result<()> {
         .cfg
         .shutdown
         .map(|hrs| {
+            // a real-world schedule: wall clock
             let now = Utc::now();
             AutoShutdown::scheduled(now + Duration::hours(hrs as i64), now)
         });
@@ -6265,6 +6312,9 @@ fn delayed_init_miz(lua: MizLua, ctx: &mut Context) -> Result<()> {
         stop: ctx.shutdown.map(|a| a.when),
         cfg: Box::new((*ctx.db.ephemeral.cfg).clone()),
     }));
+    if !ctx.db.ephemeral.clock.started() {
+        start_clock(lua, ctx)?;
+    }
     ctx.db_loaded = true;
     info!("spawning units");
     {
@@ -6318,7 +6368,8 @@ fn delayed_init_miz(lua: MizLua, ctx: &mut Context) -> Result<()> {
             let frontline = frontline::FrontLine::new(frontline_cfg.clone());
             ctx.frontline = Some(frontline);
             // Perform initial frontline calculation
-            update_frontline(ctx, Utc::now(), true);
+            let now = ctx.now();
+    update_frontline(ctx, now, true);
         }
     }
 

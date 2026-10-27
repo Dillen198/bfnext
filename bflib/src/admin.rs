@@ -2225,7 +2225,7 @@ pub(crate) fn query_tacmap(ctx: &Context, lua: MizLua, side: Side) -> bfprotocol
     use crate::db::intel::{IntelSource, IntelUnitClass};
     use crate::ewr::ContactClass;
 
-    let now = Utc::now();
+    let now = ctx.now();
     let db = &ctx.db;
     let coord = dcso3::coord::Coord::singleton(lua).ok();
     let to_ll = |x: f64, z: f64| -> (f64, f64) {
@@ -2426,7 +2426,7 @@ pub(crate) fn query_gci(
     };
     use crate::ewr::{Aspect, ContactClass, EwrUnits};
 
-    let now = Utc::now();
+    let now = ctx.now();
     let db = &ctx.db;
     let coord = dcso3::coord::Coord::singleton(lua).ok();
     let to_ll = |x: f64, z: f64| -> (f64, f64) {
@@ -3452,7 +3452,7 @@ fn run_admin_command(
             }
             AdminCommand::Repair { airbase } => {
                 let oid = airbase!(&airbase);
-                match ctx.db.admin_repair_objective(oid, Utc::now()) {
+                match ctx.db.admin_repair_objective(oid, ctx.now()) {
                     Ok(0) => reply_ok!("{airbase} has no damaged groups to repair"),
                     Ok(1) => reply_ok!("repaired {airbase} (1 group)"),
                     Ok(n) => reply_ok!("repaired {airbase} ({n} groups)"),
@@ -3461,7 +3461,7 @@ fn run_admin_command(
             }
             AdminCommand::Capture { objective, side } => {
                 let oid = airbase!(&objective);
-                match ctx.db.force_capture(lua, &ctx.idx, oid, side, Utc::now()) {
+                match ctx.db.force_capture(lua, &ctx.idx, oid, side, ctx.now()) {
                     Ok(prev) => reply_ok!("{objective}: {prev:?} -> {side:?}"),
                     Err(e) => reply_err!("capture failed: {e:?}"),
                 }
@@ -3635,7 +3635,7 @@ fn run_admin_command(
                 }
             }
             AdminCommand::PurgeGhosts => {
-                let (groups, units) = ctx.db.admin_purge_ghosts(lua, Utc::now());
+                let (groups, units) = ctx.db.admin_purge_ghosts(lua, ctx.now());
                 reply_ok!("purged {units} ghost unit(s) in {groups} group(s)")
             }
             // Naming a winner ends the round the way a map win does: the
@@ -3643,7 +3643,7 @@ fn run_admin_command(
             // down here instead left nothing said in-game -- anything queued
             // now is never drawn, as the shutdown blocks the message drain.
             AdminCommand::Reset { winner: Some(side) } => {
-                ctx.db.declare_victory(Utc::now(), side);
+                ctx.db.declare_victory(ctx.now(), side);
                 reply_ok!("{side:?} has been declared the winner; the server announces it and resets after the countdown")
             }
             AdminCommand::Reset { winner: None } => match admin_shutdown(ctx, lua, Some(None)) {
@@ -3798,7 +3798,7 @@ fn run_admin_command(
                 }
             }
             AdminCommand::QueryCommand { side } => {
-                let picture = crate::command::picture(lua, ctx, side, Utc::now());
+                let picture = crate::command::picture(lua, ctx, side, ctx.now());
                 match serde_json::to_string(&picture) {
                     Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize the command picture: {e:?}"),
@@ -3806,7 +3806,7 @@ fn run_admin_command(
             }
             AdminCommand::CommandOrder { side, ucid, order } => {
                 let perf = Arc::make_mut(&mut unsafe { Perf::get_mut() }.inner);
-                let reply = crate::command::order(lua, ctx, perf, side, ucid, order, Utc::now());
+                let reply = crate::command::order(lua, ctx, perf, side, ucid, order, ctx.now());
                 match serde_json::to_string(&reply) {
                     Ok(json) => rep.out.push(NetIdxValue::from(json)),
                     Err(e) => reply_err!("failed to serialize the command reply: {e:?}"),

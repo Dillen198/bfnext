@@ -792,7 +792,7 @@ fn sanitize(ctx: &Context, cfg: &HqCfg, side: Side, d: &mut Directive) {
 
 /// A directive from bfdb's strategist (`hq-directive`).
 pub(crate) fn directive(ctx: &mut Context, side: Side, mut d: Directive) -> HqReply {
-    let now = Utc::now();
+    let now = ctx.now();
     let Some((_, cfg)) = cfg(ctx) else {
         return reply(false, "the HQ is not enabled on this server");
     };
@@ -982,7 +982,7 @@ pub(crate) fn command(
     cmd: HqCommand,
     from: Option<Vector2>,
 ) -> HqReply {
-    let now = Utc::now();
+    let now = ctx.now();
     let Some((_, cfg)) = cfg(ctx) else {
         return reply(false, "the HQ is not enabled on this server");
     };

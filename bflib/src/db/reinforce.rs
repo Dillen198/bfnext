@@ -245,7 +245,7 @@ impl Db {
             player: ucid,
             name: name.clone(),
             spec: action,
-            time: Utc::now(),
+            time: self.ephemeral.now(),
             destination: Some(tpos),
             rtb: Some(spos),
             origin: Some(source),

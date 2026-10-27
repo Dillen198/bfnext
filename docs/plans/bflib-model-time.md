@@ -1,6 +1,7 @@
-# bflib: campaign timers on DCS model time
+# bflib: campaign timers on DCS model time -- done
 
-Audit finding f37. Status: plan only — no contained change fixes it.
+Audit finding f37. Status: **done** (branch `bflib-redesign-870271`). The
+problem as it was found, then what was built.
 
 ## The problem
 
@@ -27,53 +28,56 @@ diverge when:
   time. This one is often *wanted* (life resets, `max_round_days`) and has
   to stay that way.
 
-## Why there is no contained fix
+## What was built
 
-The gating of the slow pass itself is fine: the 1 s tick only runs while
-model time runs, so `last_slow_timed_events` can't fire early. The issue is
-in the ~200 places that compute "has X seconds passed", and in the persisted
-timestamps. Switching some but not others would make durations inconsistent
-with each other, which is worse.
+- **`crate::clock`** (`bflib/src/clock.rs`): `CampaignClock`, anchored at
+  mission start and moved only by model time (`timer.getTime()`), so it
+  stops while DCS is paused and runs slow in slow motion. It lives in
+  `Ephemeral::clock`; `ctx.now()` / `db.ephemeral.now()` read it. Until the
+  mission starts it reads the wall clock (so does anything in tests that
+  never starts it). It is advanced by the 1 s tick, the 5 Hz message drain,
+  the 10 Hz admin drain and on every event, so it is never more than
+  ~100 ms stale.
+- **Restarts.** A snapshot writes `Persisted::clock` (campaign time and the
+  wall clock at the same moment); the next mission starts the clock at
+  `saved.campaign + (wall_now - saved.wall)`, so the downtime still counts
+  (as before) and what was paused last session stays paused. Save schema
+  bumped to 2. A save without the field (schema 0/1) resumes at the wall
+  clock, which is what its timestamps were measured on, so nothing in it
+  needs rewriting; the conversion on load is choosing the anchor.
+- **Classification.** Every `Utc::now()` in bflib (outside `bg/`, which only
+  stamps logs, stats and saves) was sorted into:
+  - *campaign time*: cooldowns, holds, repairs, production, CSAR, C-130
+    cargo, capture timers, recon, intel decay, takeoff holds, banned-weapon
+    deadlines, event and CAP expiry, HQ operations, ground war, JTAC smoke
+    cooldown, the slow-pass schedule, lives (resets and penalties), the tick
+    and event timestamps handed to all of the above;
+  - *wall clock, on purpose*: log and perf stamps (`record_perf` gets its own
+    wall-clock start everywhere), spawn and logistics time budgets, the
+    loading state machine, ban expiry, the auto shutdown and its warnings
+    (`check_auto_shutdown`, `-time`, Info > Time), the round length
+    (`max_round_days`), stats records (stamped by the background thread),
+    the cockpit message feed's `at`, the briefing's `generated`, rate limits
+    on log lines.
+- The pause detector (`rules::clock_gap_secs`) stays: it now says the
+  campaign timers stood still with the simulation.
 
-## Plan
+## Known edges
 
-1. **A campaign clock.** Add `CampaignClock` to `Context` (session state)
-   that maps model time to a campaign `DateTime<Utc>`:
-
-   ```text
-   campaign_now = anchor_wall + (model_now - anchor_model)
-   ```
-
-   anchored at mission start (`anchor_wall = Utc::now()`, `anchor_model =
-   timer.getTime()`), advanced only by the tick (store the latest
-   `model_now`, so it is cheap to read anywhere). While DCS is paused the
-   campaign clock stops; at 0.5x it runs at half speed.
-2. **One accessor.** `ctx.now()` (and `db.now()` for code that only has the
-   Db: give `Ephemeral` a copy updated each tick). Pure functions keep taking
-   `now: DateTime<Utc>` as a parameter, as most already do.
-3. **Classify every `Utc::now()`.** Three kinds:
-   - *campaign durations* (cooldowns, holds, repairs, production, deadlines,
-     takeoff confirmation) -> `ctx.now()`;
-   - *real-world times that must survive a restart* (life resets,
-     `max_round_days`, sortie start/end for stats, ban expiry) -> keep
-     `Utc::now()`, and say so in a comment;
-   - *logging, perf, rate limits on log lines* -> keep `Utc::now()`.
-   `grep -rn "Utc::now()" bflib/src` gives the list (202 at the time of
-   writing). Do it file by file; each file is a reviewable PR.
-4. **Persisted timestamps across a restart.** The campaign clock is anchored
-   to the wall clock at mission start, so timestamps saved in campaign time
-   stay comparable after a restart: the downtime still counts. That matches
-   today's behaviour, so the save format does not change. If a timer should
-   *not* run during downtime (e.g. a repair), store the remaining duration
-   instead of a deadline -- a per-field decision, made in step 3.
-5. **Detect pauses until then.** Cheap and independent: in the 1 s tick,
-   compare the wall-clock and model-time deltas since the last tick; if the
-   wall clock jumped by more than, say, 30 s more than model time, log a
-   warning with the size of the gap. That at least names the cause when a
-   resume sets off a burst of expired timers.
+- Absolute campaign timestamps that leave the engine (a hold's or repair's
+  start in an admin query, life-reset stamps in player stats) are campaign
+  time, up to the session's paused time behind the wall clock. Anything that
+  turns them into a countdown against the real clock (a browser) is off by
+  that much until the next restart re-anchors.
+- An older engine reading a schema 2 save treats its timestamps as wall
+  clock: the same error, once.
 
 ## Testing
 
-Unit tests for `CampaignClock` (pause, slow motion, restart anchoring). In
-DCS: pause a running server for 5 minutes with a capture hold, a repair and a
-takeoff hold in progress, unpause, and check none of them completed early.
+`clock::tests` (pause, slow motion, never backwards, restart anchoring, save
+round trip), `db::ephemeral::clock_tests` (a 30-minute ramp block survives a
+pause), `db::persisted::tests` (old save has no clock, the clock round
+trips). In DCS: see the release checklist in the branch report -- pause a
+running server for 5 minutes with a capture hold, a repair and a takeoff
+hold in progress, unpause, and check none of them completed early; restart
+and check the downtime counted.

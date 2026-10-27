@@ -16,7 +16,6 @@ for more details.
 
 use super::{slot_for_group, Pager};
 use anyhow::{Context as ErrContext, Result};
-use chrono::prelude::*;
 use dcso3::{
     env::miz::GroupId,
     mission_commands::{GroupSubMenu, MissionCommands},
@@ -28,7 +27,7 @@ fn start_recon(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = &mut *entered;
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
-        let msg = ctx.db.recon_start(&ucid, Utc::now());
+        let msg = ctx.db.recon_start(&ucid, ctx.now());
         ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg);
     }
     Ok(())
@@ -39,7 +38,7 @@ fn cancel_recon(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = &mut *entered;
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
-        let msg = ctx.db.recon_cancel(&ucid, Utc::now());
+        let msg = ctx.db.recon_cancel(&ucid, ctx.now());
         ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg);
     }
     Ok(())
@@ -50,7 +49,7 @@ fn recon_status(lua: MizLua, gid: GroupId) -> Result<()> {
     let ctx = &mut *entered;
     let (_, slot) = slot_for_group(lua, ctx, &gid).context("getting slot for group")?;
     if let Some(ucid) = ctx.db.ephemeral.player_in_slot(&slot).copied() {
-        let msg = ctx.db.recon_status(&ucid, Utc::now());
+        let msg = ctx.db.recon_status(&ucid, ctx.now());
         ctx.db.ephemeral.msgs().panel_to_group(10, false, gid, msg);
     }
     Ok(())

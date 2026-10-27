@@ -904,7 +904,7 @@ impl Db {
                     cost,
                     &args.cfg,
                     args.pos,
-                    Utc::now(),
+                    self.ephemeral.now(),
                 )
                 .context("calling the fat cow")?;
                 None
@@ -994,7 +994,7 @@ impl Db {
             ActionArgs::AddTask(args) => {
                 match args.at {
                     TaskAt::Pos(pos) => self
-                        .add_task(&args.cfg, side, ucid.clone(), args.kind.as_str(), pos, Utc::now())
+                        .add_task(&args.cfg, side, ucid.clone(), args.kind.as_str(), pos, self.ephemeral.now())
                         .context("posting task")?,
                     TaskAt::Obj(oid) => self
                         .add_objective_task(
@@ -1003,7 +1003,7 @@ impl Db {
                             ucid.clone(),
                             args.kind.as_str(),
                             oid,
-                            Utc::now(),
+                            self.ephemeral.now(),
                         )
                         .context("posting objective task")?,
                 };
@@ -1107,7 +1107,7 @@ impl Db {
         idx: &MizIndex,
         gid: GroupId,
     ) -> Result<()> {
-        let now = Utc::now();
+        let now = self.ephemeral.now();
         let spawn_pos = self.group_center(&gid)?;
         let group = group!(self, gid)?;
         let side = group.side;
@@ -1451,7 +1451,7 @@ impl Db {
             IntelSource::ReconFlight,
             None,
             true,
-            Utc::now(),
+            self.ephemeral.now(),
         );
         Ok(Some(gid))
     }
@@ -2451,7 +2451,7 @@ impl Db {
                 // isn't firing these at land (anti-ship missiles that report
                 // as cruise missiles). Red's ships "fired" 157 times a night
                 // with 48 left every time. Don't count or task them again.
-                let now = Utc::now();
+                let now = self.ephemeral.now();
                 if let Some((before, at)) = self.ephemeral.naval_strike_fired.get(&name).copied() {
                     if cruise >= before && now - at >= chrono::Duration::minutes(3) {
                         warn!(
@@ -3457,7 +3457,7 @@ impl Db {
             player: ucid.clone(),
             name,
             spec: action,
-            time: Utc::now(),
+            time: self.ephemeral.now(),
             destination,
             // The field itself, not the spot on it: a logistics transfer
             // takes its cargo from the objective nearest this point.
@@ -4103,7 +4103,7 @@ impl Db {
         if let Some(ucid) = ucid {
             self.ephemeral.stat(Stat::Repair { id: oid, by: ucid });
         }
-        self.repair_one_logi_step(side, Utc::now(), oid)?;
+        self.repair_one_logi_step(side, self.ephemeral.now(), oid)?;
         Ok(())
     }
 
@@ -4731,7 +4731,7 @@ impl Db {
         if d > range {
             bail!("{name} reaches {:.1} km; that is {:.1} km away", range / 1000., d / 1000.)
         }
-        let now = Utc::now();
+        let now = self.ephemeral.now();
         let cooldown = Duration::seconds(cfg.cooldown_secs as i64);
         if let Some(t) = self.ephemeral.arty_last_fired.get(&gid) {
             if now - *t < cooldown {
@@ -4774,7 +4774,7 @@ impl Db {
         // had no limit, so one player could keep every gun on the map firing
         // without pause. Each battery now needs `cooldown_secs` between
         // missions; one still reloading is passed over for the next in range.
-        let now = Utc::now();
+        let now = self.ephemeral.now();
         let cooldown = Duration::seconds(cfg.cooldown_secs as i64);
         self.ephemeral
             .arty_last_fired

@@ -25,7 +25,6 @@ use crate::{
 };
 use anyhow::{Context as ErrContext, Result};
 use bfprotocols::db::objective::{ObjectiveId, ObjectiveKind};
-use chrono::Utc;
 use compact_str::{format_compact, CompactString};
 use dcso3::{
     coalition::Side,
@@ -276,7 +275,7 @@ fn repair_state(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString {
         return CompactString::from("stalled -- logistics defense destroyed");
     }
     let pulse = db.repair_pulse_secs(obj).max(1.0);
-    let elapsed = (chrono::Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
+    let elapsed = (db.ephemeral.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
     let remaining = (pulse - elapsed).max(0.0);
     format_compact!(
         "active -- next pulse in ~{:.0}m{}",
@@ -337,7 +336,7 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective) -> CompactString 
         return CompactString::from("logistics destroyed (logi 0%) -- cannot self-repair");
     }
     let pulse = db.repair_pulse_secs(obj).max(1.0);
-    let elapsed = (chrono::Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
+    let elapsed = (db.ephemeral.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
     let remaining = (pulse - elapsed).max(0.0);
     format_compact!(
         "WILL self-repair -- next pulse ~{:.0}m{}; act fast or it heals back above 20%",
@@ -841,7 +840,7 @@ fn dispatch_helo(
     let Some(ucid) = ucid_for_menu_call(ctx, lua, &gid) else {
         return CompactString::from("could not identify you as a player -- are you in a slot?");
     };
-    let now = Utc::now();
+    let now = ctx.now();
     let (what, res) = if kind == HELO_TROOPS {
         (
             "Helo troop insertion",

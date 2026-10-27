@@ -1018,7 +1018,7 @@ impl Db {
         spec: &Deployable,
         parts: &DeployableObjective,
     ) -> Result<ObjectiveId> {
-        let now = Utc::now();
+        let now = self.ephemeral.now();
         let land = Land::singleton(spctx.lua())?;
         let DeployableObjective {
             pad_templates: _,
@@ -1265,7 +1265,7 @@ impl Db {
         self.stock_fat_cow_warehouse(&oid)
             .context("stocking fat cow warehouse")?;
         self.setup_supply_lines().context("setup supply lines")?;
-        let now = chrono::Utc::now();
+        let now = self.ephemeral.now();
         let trs = self
             .deliver_supplies_from_logistics_hubs(lua, now)
             .context("distributing supplies")?;
@@ -2522,16 +2522,20 @@ impl Db {
             }
         }
         // A round that has run `max_round_days` ends in a draw (`Neutral`).
+        // Real-world days, so the wall clock and not campaign time (see
+        // `crate::clock`): a round started on a Monday ends on schedule however
+        // long the server stood paused.
+        let wall = Utc::now();
         let started = match self.persisted.round_started {
             Some(t) => t,
             None => {
-                self.persisted.round_started = Some(now);
+                self.persisted.round_started = Some(wall);
                 self.ephemeral.dirty();
-                now
+                wall
             }
         };
         if let Some(days) = self.ephemeral.cfg.max_round_days.filter(|d| *d > 0) {
-            if now - started >= Duration::days(days as i64) {
+            if wall - started >= Duration::days(days as i64) {
                 info!("round has run {days} day(s): ending it in a draw");
                 self.ephemeral.victory = Some((now, Side::Neutral));
                 self.ephemeral.victory_countdown_last = None;
@@ -3243,7 +3247,7 @@ impl Db {
     /// `by_side` is the side asking (normally the requesting player's
     /// coalition); troop status is reported for that side's capture groups.
     pub fn capture_diagnosis(&self, oid: &ObjectiveId, by_side: Side) -> Result<CaptureDiagnosis> {
-        let now = Utc::now();
+        let now = self.ephemeral.now();
         let obj = objective!(self, oid)?;
         let cev = self.ephemeral.cfg.campaign_events.as_ref();
         let min_unit_pct = cev.map(|c| c.capture_min_unit_pct_destroyed).unwrap_or(0.0);
@@ -3540,7 +3544,7 @@ impl Db {
             .filter(|(_, o)| o.capture_hold.contains(gid))
             .map(|(oid, _)| *oid)
             .collect();
-        let now = Utc::now();
+        let now = self.ephemeral.now();
         for oid in holding {
             let groups = &self.persisted.groups;
             let Some(obj) = self.persisted.objectives.get_mut_cow(&oid) else {

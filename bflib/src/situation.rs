@@ -116,7 +116,7 @@ fn brg_rng_opt(from: Option<Vector2>, to: Vector2) -> (Option<u32>, Option<f64>)
 pub(crate) fn build(ctx: &Context, lua: MizLua, side: Side, opts: Opts) -> SituationReport {
     let db = &ctx.db;
     let cfg = &db.ephemeral.cfg;
-    let now = Utc::now();
+    let now = ctx.now();
     let coord = dcso3::coord::Coord::singleton(lua).ok();
     let to_ll = |p: Vector2| -> (f64, f64) {
         coord
@@ -572,7 +572,7 @@ fn repair_outlook(db: &Db, oid: &ObjectiveId, obj: &Objective, friendly: bool) -
         return CompactString::from("logistics destroyed (logi 0%) -- cannot self-repair");
     }
     let pulse = db.repair_pulse_secs(obj).max(1.0);
-    let elapsed = (Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
+    let elapsed = (db.ephemeral.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
     format_compact!(
         "self-repairing -- next pulse in ~{:.0}m",
         ((pulse - elapsed).max(0.0) / 60.0).ceil()
@@ -588,7 +588,7 @@ where
     use crate::db::intel::{IntelSource, IntelUnitClass};
     let db = &ctx.db;
     let cfg = &db.ephemeral.cfg;
-    let now = Utc::now();
+    let now = ctx.now();
 
     // Emitter ranges for the auto ring: every live enemy search radar, as
     // (position, range). A contact inherits the widest range of any emitter
@@ -1734,7 +1734,7 @@ fn assign_paid_task(
         TaskKind::Recon => 25_000.,
         _ => 15_000.,
     };
-    ctx.db.assign_task(ucid, miz_gid, pos, radius, task.title.as_str(), chrono::Utc::now());
+    ctx.db.assign_task(ucid, miz_gid, pos, radius, task.title.as_str(), ctx.now());
     let mut line = format!(
         "YOUR TASK: {} -- x{} points and bonus XP inside the zone marked on your map ({:.0} km)",
         task.title,

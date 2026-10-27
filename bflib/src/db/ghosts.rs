@@ -664,7 +664,7 @@ impl Db {
                 .map(|t| {
                     let mut s = format_compact!(
                         " [ghost {}s",
-                        (Utc::now() - t.first_seen).num_seconds()
+                        (self.ephemeral.now() - t.first_seen).num_seconds()
                     );
                     if t.respawned.is_some() {
                         s.push_str(", respawn tried");
@@ -831,7 +831,7 @@ impl Db {
         // The threat has gone; `threatened` holds for the cooldown after it.
         let cooldown =
             chrono::Duration::seconds(self.ephemeral.cfg.threatened_cooldown as i64);
-        let left = (obj.last_threatened_ts + cooldown - Utc::now()).num_seconds();
+        let left = (obj.last_threatened_ts + cooldown - self.ephemeral.now()).num_seconds();
         Some(format_compact!(
             "FROZEN -- threat has cleared, repairs resume in ~{}",
             fmt_mins(left)
@@ -845,7 +845,7 @@ impl Db {
             return vec![CompactString::from("no such objective")];
         };
         let cfg = &self.ephemeral.cfg;
-        let now = Utc::now();
+        let now = self.ephemeral.now();
         let mut lines = vec![format_compact!(
             "{} ({:?} {}): health {}% logi {}% supply {}% spawned {}",
             obj.name,

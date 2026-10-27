@@ -282,14 +282,15 @@ pub(super) fn format_duration(d: Duration) -> CompactString {
     format_compact!("{:02}:{:02}:{:02}", hrs, min, sec)
 }
 
-fn time_command(ctx: &mut Context, id: PlayerId, now: DateTime<Utc>) {
+fn time_command(ctx: &mut Context, id: PlayerId) {
     match ctx.shutdown.as_ref() {
         None => ctx.db.ephemeral.msgs().send(
             MsgTyp::Chat(Some(id)),
             "The server isn't configured to restart automatically",
         ),
         Some(asd) => {
-            let remains = format_duration(asd.when - now);
+            // the restart is a real-world time
+            let remains = format_duration(asd.when - Utc::now());
             ctx.db.ephemeral.msgs().send(
                 MsgTyp::Chat(Some(id)),
                 format_compact!("The server will shutdown in {remains}"),
@@ -1284,7 +1285,7 @@ pub(super) fn process(
         }
         Ok("".into())
     } else if msg.eq_ignore_ascii_case("-time") {
-        time_command(ctx, id, now);
+        time_command(ctx, id);
         Ok("".into())
     } else if msg.eq_ignore_ascii_case("-weather") {
         weather_command(ctx, lua, id);

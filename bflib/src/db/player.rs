@@ -1051,7 +1051,7 @@ impl Db {
                 Contribution::Troops(_) | Contribution::Deployed(_) => None,
             };
             if let Some(p) = at
-                && self.in_task_zone(&ucid, p, Utc::now())
+                && self.in_task_zone(&ucid, p, self.ephemeral.now())
             {
                 self.task_bonus_xp(ucid, super::tasking::TASK_JOB_XP, "objective work");
             }
@@ -1080,7 +1080,7 @@ impl Db {
         if let Some(ucid) = self.ephemeral.players_by_slot.get(&slot).copied()
             && let Some(landed) = self.ephemeral.open_sorties.get_mut(&ucid)
         {
-            *landed = Some(Utc::now());
+            *landed = Some(self.ephemeral.clock.now());
         }
         let sifo = match self.ephemeral.slot_info.get(&slot) {
             Some(sifo) => sifo,
@@ -1851,7 +1851,7 @@ impl Db {
         let takeoff_ok_at = match self.ephemeral.cfg.takeoff_delay_secs {
             secs if secs > 0 && !in_air => {
                 let secs = (secs as f64 * hold_factor).round() as i64;
-                Some(Utc::now() + Duration::seconds(secs))
+                Some(self.ephemeral.now() + Duration::seconds(secs))
             }
             _ => None,
         };
@@ -2090,7 +2090,7 @@ impl Db {
             .as_ref()
             .map(|p| p.tk_window as i64)
             .unwrap_or(0);
-        let now = Utc::now();
+        let now = self.ephemeral.now();
         player.prune_team_kills(now, window);
         match victim_info.as_ref() {
             None => {
@@ -2143,7 +2143,7 @@ impl Db {
                 let mut life_type = *life_type;
                 let deplane = loop {
                     let (_, player_lives) = player.lives.get_or_insert_cow(life_type, || {
-                        (Utc::now(), self.ephemeral.cfg.default_lives[&life_type].0)
+                        (self.ephemeral.now(), self.ephemeral.cfg.default_lives[&life_type].0)
                     });
                     if *player_lives as u32 >= penalty_lives {
                         lost.push((life_type, penalty_lives as u8));

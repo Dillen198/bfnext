@@ -227,7 +227,7 @@ fn package_flights(
         return out;
     }
     let avail = super::planner::available(ctx, cfg, side);
-    let pic = super::picture::build(ctx, cfg, side, Utc::now());
+    let pic = super::picture::build(ctx, cfg, side, ctx.now());
     let night = ctx.hq.night;
     let Ok(spctx) = SpawnCtx::new(lua) else { return out };
     let fly = |ctx: &mut Context, perf: &mut PerfInner, kind: OpKind, role: &'static str, pos| {
@@ -261,7 +261,8 @@ fn package_flights(
         if let Some(gid) = fly(ctx, perf, OpKind::Cap, "escort", c.pos) {
             out.push((gid, "escort"));
             if let Some(main) = main {
-                ctx.hq.side(side).escorts.push(super::PendingEscort { escort: gid, escorted: main, since: Utc::now() });
+                let since = ctx.now();
+                ctx.hq.side(side).escorts.push(super::PendingEscort { escort: gid, escorted: main, since });
             }
         }
     }

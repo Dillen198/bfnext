@@ -42,7 +42,7 @@ fn ts(t: DateTime<Utc>) -> String {
 /// The view of `side`'s HQ, for `viewer` (whether they may command it).
 /// `lua` is only for map coordinates.
 pub(crate) fn view(ctx: &Context, lua: MizLua, side: Side, viewer: Option<&dcso3::net::Ucid>) -> HqView {
-    let now = Utc::now();
+    let now = ctx.now();
     let coord = Coord::singleton(lua).ok();
     let ll = |p: Vector2| -> LatLon {
         coord
@@ -277,7 +277,7 @@ pub(crate) fn ops_text(ctx: &Context, side: Side) -> CompactString {
     let Some(rt) = ctx.hq.sides.get(&side) else {
         return "HQ has run no operations yet.".into();
     };
-    let now = Utc::now();
+    let now = ctx.now();
     let mut s = CompactString::from("HQ -- OPERATIONS\n");
     let mut any = false;
     for o in rt.ops.iter().rev().take(12) {

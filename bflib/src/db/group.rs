@@ -1210,7 +1210,7 @@ impl Db {
             }
             DeployKind::Dismount { .. } => {
                 self.persisted.dismounts.insert_cow(gid);
-                self.persisted.dismount_spawned.insert_cow(gid, Utc::now());
+                self.persisted.dismount_spawned.insert_cow(gid, self.ephemeral.now());
             }
         }
         self.persisted.groups.insert_cow(gid, spawned);
@@ -1755,7 +1755,7 @@ impl Db {
             .get(&typ)
             .unwrap_or(&UnitTags::default());
         if deferred_validate {
-            match self.try_occupy_slot_deferred(Utc::now(), &ucid, slot) {
+            match self.try_occupy_slot_deferred(self.ephemeral.now(), &ucid, slot) {
                 SlotAuth::Yes(typ) => {
                     self.ephemeral.stat(Stat::Slot { id: ucid, slot, typ });
                 }

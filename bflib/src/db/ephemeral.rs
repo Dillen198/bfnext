@@ -219,6 +219,9 @@ pub(super) struct Production {
 
 #[derive(Debug)]
 pub struct Ephemeral {
+    /// Campaign time (`crate::clock`): what every campaign timer is
+    /// measured on. Advanced by the engine's timers and on each event.
+    pub clock: crate::clock::CampaignClock,
     pub(super) dirty: bool,
     pub cfg: Arc<Cfg>,
     pub(super) to_bg: Option<UnboundedSender<Task>>,
@@ -582,6 +585,7 @@ fn stock_for_ground_start(
 impl Default for Ephemeral {
     fn default() -> Self {
         Self {
+            clock: crate::clock::CampaignClock::default(),
             dirty: false,
             cfg: Arc::new(Cfg::default()),
             to_bg: None,
@@ -772,6 +776,11 @@ fn keep_fixed_structures_out_of_lead(units: &LuaTable) -> Result<Lead> {
 }
 
 impl Ephemeral {
+    /// Campaign time now, see `crate::clock`.
+    pub fn now(&self) -> DateTime<Utc> {
+        self.clock.now()
+    }
+
     /// Where `side`'s convoys, cargo flights, supply ships and helo missions
     /// are headed.
     pub(crate) fn transport_destinations(&self, side: Side) -> impl Iterator<Item = ObjectiveId> + '_ {
@@ -884,7 +893,7 @@ impl Ephemeral {
     pub(super) fn ramp_blocked(&self, oid: &ObjectiveId) -> bool {
         self.ramp_blocked
             .get(oid)
-            .map_or(false, |t| Utc::now() - *t < chrono::Duration::seconds(RAMP_BLOCK_SECS))
+            .map_or(false, |t| self.now() - *t < chrono::Duration::seconds(RAMP_BLOCK_SECS))
     }
 
     /// Once a second: flash the F10 icon of every base under attack
@@ -963,7 +972,7 @@ impl Ephemeral {
         if total == 0 {
             return None;
         }
-        let elapsed = (Utc::now() - *start).num_seconds().max(0);
+        let elapsed = (self.now() - *start).num_seconds().max(0);
         Some(((elapsed as f64 / total as f64) * 100.0).clamp(0.0, 100.0) as u8)
     }
 
@@ -991,7 +1000,7 @@ impl Ephemeral {
             if total <= 0.0 {
                 return None;
             }
-            let elapsed = (Utc::now() - *start).num_seconds().max(0) as f64;
+            let elapsed = (self.now() - *start).num_seconds().max(0) as f64;
             let pct = ((elapsed / total) * 100.0).clamp(0.0, 100.0) as u8;
             return Some((
                 bucket_pct(pct),
@@ -1011,7 +1020,7 @@ impl Ephemeral {
             if !total.is_finite() || total <= 0.0 {
                 return None;
             }
-            let elapsed = (Utc::now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
+            let elapsed = (self.now() - obj.repair_clock_start()).num_seconds().max(0) as f64;
             // A working repair resets last_change_ts each tick it fires, so a
             // real countdown never sits past `total`. If elapsed has run well
             // past it, the repair is blocked (contested, no revivable groups,
@@ -1415,7 +1424,7 @@ impl Ephemeral {
         side: Side,
         msg: CompactString,
     ) {
-        self.restart_notices.push((Utc::now() + delay, side, msg));
+        self.restart_notices.push((self.now() + delay, side, msg));
     }
 
     /// Deliver the restart notices that have come due.
@@ -1712,7 +1721,7 @@ impl Ephemeral {
 
     pub fn force_player_to_spectators(&mut self, ucid: &Ucid) {
         self.force_to_spectators
-            .entry(Utc::now())
+            .entry(self.now())
             .or_default()
             .push(ucid.clone())
     }
@@ -1741,7 +1750,7 @@ impl Ephemeral {
                 if !player.changing_slots && !player.jtac_or_spectators {
                     info!("queuing force player {ucid} to spectators");
                     self.force_to_spectators
-                        .entry(Utc::now())
+                        .entry(self.now())
                         .or_default()
                         .push(ucid.clone());
                 }
@@ -2091,7 +2100,7 @@ impl Ephemeral {
         group: &SpawnedGroup,
         mission: Vec<MissionPoint<'lua>>,
     ) -> Result<Option<Spawned<'lua>>> {
-        let ts = Utc::now();
+        let ts = self.now();
 
         // Check if this is a carrier group defined in config, or falls back to prefix matching
         // For carrier groups, spawn via coalition.addGroup() with positions set to the saved
@@ -2804,7 +2813,7 @@ impl Ephemeral {
                             first.eta = Some(dcso3::Time(0.));
                             first.eta_locked = Some(true);
                             if !helicopter {
-                                self.ramp_watch.insert(group.id, (Utc::now(), launch_oid));
+                                self.ramp_watch.insert(group.id, (self.now(), launch_oid));
                             }
                             start_warehouse = airbase.as_ref().and_then(|ab| {
                                 let field = launch_oid
@@ -3308,3 +3317,32 @@ impl Ephemeral {
         }
     }
 }
+
+#[cfg(test)]
+mod clock_tests {
+    use super::*;
+    use chrono::{Duration, TimeZone};
+
+    /// A campaign timer measured on the campaign clock: a pause, however
+    /// long on the wall clock, doesn't run it down.
+    #[test]
+    fn ramp_block_survives_a_pause() {
+        let mut e = Ephemeral::default();
+        let t0 = Utc.with_ymd_and_hms(2026, 10, 27, 12, 0, 0).unwrap();
+        e.clock.start(t0, 0.);
+        let oid = ObjectiveId::from(1);
+        e.ramp_blocked.insert(oid, e.now());
+        // 29 minutes of play
+        e.clock.advance(29. * 60.);
+        assert!(e.ramp_blocked(&oid));
+        // the server stands paused for hours: model time doesn't move, and
+        // the first tick after it reads the same model time
+        e.clock.advance(29. * 60.);
+        assert!(e.ramp_blocked(&oid), "the pause did not count");
+        // two more minutes of play and it is over
+        e.clock.advance(31. * 60.);
+        assert!(!e.ramp_blocked(&oid));
+        assert_eq!(e.now(), t0 + Duration::minutes(31));
+    }
+}
+

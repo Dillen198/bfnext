@@ -195,8 +195,8 @@ impl Db {
             aircraft: 100,
             supply: 0,
             fuel: 0,
-            last_change_ts: Utc::now(),
-            last_threatened_ts: Utc::now(),
+            last_change_ts: self.ephemeral.now(),
+            last_threatened_ts: self.ephemeral.now(),
             warehouse: Warehouse::default(),
             points: 0,
             capture_hold: vec![],
@@ -671,8 +671,8 @@ impl Db {
                                     aircraft: 100,
                                     supply: 100,
                                     fuel: 100,
-                                    last_change_ts: Utc::now(),
-                                    last_threatened_ts: Utc::now(),
+                                    last_change_ts: self.ephemeral.now(),
+                                    last_threatened_ts: self.ephemeral.now(),
                                     warehouse: Warehouse::default(),
                                     points: 0,
                                     capture_hold: vec![],
@@ -1141,8 +1141,8 @@ impl Db {
                 aircraft: 100,
                 supply: 0,
                 fuel: 0,
-                last_change_ts: Utc::now(),
-                last_threatened_ts: Utc::now(),
+                last_change_ts: self.ephemeral.now(),
+                last_threatened_ts: self.ephemeral.now(),
                 warehouse: Warehouse::default(),
                 points: 0,
                 capture_hold: vec![],
@@ -1222,7 +1222,7 @@ impl Db {
                     }
                 }
             }
-            self.update_objective_status(&id, Utc::now())?;
+            self.update_objective_status(&id, self.ephemeral.now())?;
         }
         Ok(())
     }
@@ -1780,7 +1780,7 @@ impl Db {
                 }
             }
         }
-        let now = Utc::now();
+        let now = t.ephemeral.now();
         let ids = t
             .persisted
             .objectives
@@ -1930,7 +1930,7 @@ impl Db {
             .context("purging carried-over crates")?;
         info!("[CARRIER_LOAD] Spawning carrier groups before other entities");
         while self.ephemeral.spawnq_len() > 0 {
-            self.ephemeral.process_spawn_queue(perf, &self.persisted, Utc::now(), idx, spctx)?
+            self.ephemeral.process_spawn_queue(perf, &self.persisted, self.ephemeral.now(), idx, spctx)?
         }
         info!("[CARRIER_LOAD] Carrier groups spawned, now spawning deployed/logistics/crates");
 
@@ -2006,7 +2006,7 @@ impl Db {
 
         // spawn everything before setting up warehouses, so that ship warehouses will also be set up correctly
         while self.ephemeral.spawnq_len() > 0 {
-            self.ephemeral.process_spawn_queue(perf, &self.persisted, Utc::now(), idx, spctx)?
+            self.ephemeral.process_spawn_queue(perf, &self.persisted, self.ephemeral.now(), idx, spctx)?
         }
         self.setup_warehouses_after_load(spctx.lua())
             .context("setting up warehouses")?;
@@ -2046,7 +2046,7 @@ impl Db {
             Ok(())
         };
         queue_check_close_enemies().context("queuing unit pos checks")?;
-        self.cull_or_respawn_objectives(spctx.lua(), landcache, Utc::now())
+        self.cull_or_respawn_objectives(spctx.lua(), landcache, self.ephemeral.now())
             .context("initial cull or respawn")?;
         // return lives to pilots who were airborne on the last restart --
         // only the life their takeoff actually took (see `FlightCharge`; a

@@ -1032,7 +1032,7 @@ pub(crate) fn room(cfg: &HqCfg, ctx: &Context, side: Side, kind: OpKind) -> u32 
 /// relieved: the HQ's own, players' and commanders', and flights a restart
 /// respawned (whose HQ operations it forgot).
 fn support_up(cfg: &HqCfg, ctx: &Context, side: Side, kind: OpKind) -> u32 {
-    let now = Utc::now();
+    let now = ctx.now();
     super::picture::support_flights(ctx, side)
         .iter()
         .filter(|f| f.kind == kind && !f.relief_due(now, cfg.support.relief_secs))

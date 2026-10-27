@@ -20,7 +20,6 @@ use crate::{
     Context,
 };
 use anyhow::{Context as ErrContext, Result};
-use chrono::prelude::*;
 use compact_str::{format_compact, CompactString};
 use dcso3::{net::Ucid, Vector2, env::miz::GroupId, mission_commands::MissionCommands, MizLua};
 use std::fmt::Write;
@@ -49,7 +48,7 @@ pub(crate) fn build_braa_report(ctx: &mut Context, ucid: &Ucid, friendly: bool) 
         if let Some((_, Some(inst))) = &player.current_slot {
             let contacts = ctx
                 .ewr
-                .where_chicken(&ctx.db, Utc::now(), friendly, true, ucid, player, inst, mode, delay);
+                .where_chicken(&ctx.db, ctx.db.ephemeral.now(), friendly, true, ucid, player, inst, mode, delay);
             let _ = write!(report, "{}\n", ewr::HEADER);
             for braa in contacts {
                 let _ = write!(report, "{braa}\n");

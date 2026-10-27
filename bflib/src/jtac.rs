@@ -1294,10 +1294,9 @@ impl Jtac {
         (n, nearest)
     }
 
-    pub fn smoke_target(&mut self, lua: MizLua) -> Result<()> {
+    pub fn smoke_target(&mut self, lua: MizLua, now: DateTime<Utc>) -> Result<()> {
         if let Some(target) = &self.target {
             if let Some(ct) = self.contacts.get(&target.id) {
-                let now = Utc::now();
                 let cooldown = Duration::seconds(60);
                 let since = now - self.last_smoke;
                 if since < cooldown {
@@ -2684,7 +2683,7 @@ impl Jtacs {
             .collect();
 
         let mut to_remove: SmallVec<[EnId; 32]> = smallvec![];
-        let now = Utc::now();
+        let now = db.ephemeral.now();
 
         for unit in &units_snap {
             let id = EnId::Unit(unit.id);

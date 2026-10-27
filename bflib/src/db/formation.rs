@@ -2916,7 +2916,7 @@ impl Db {
             _ => (vec![], false),
         };
         let deployed = matches!(f.deployment, Deployment::Deployed | Deployment::DugIn) && !f.broken;
-        let roe = f.dcs_roe(Utc::now());
+        let roe = f.dcs_roe(self.ephemeral.now());
         let speed = self.route_speeds_mps(cfg, f);
         let land = Land::singleton(lua)?;
         // The persisted positions carry the map's x/y; DCS wants the ground
@@ -2961,7 +2961,7 @@ impl Db {
                 _ => (vec![], false),
             };
             let deployed = matches!(f.deployment, Deployment::Deployed | Deployment::DugIn) && !f.broken;
-            let roe = f.dcs_roe(Utc::now());
+            let roe = f.dcs_roe(self.ephemeral.now());
             let speed = self.route_speeds_mps(cfg, f);
             for gid in f.groups.iter().filter(|g| rt.live.contains(g)) {
                 let Some(g) = self.persisted.groups.get(gid) else { continue };

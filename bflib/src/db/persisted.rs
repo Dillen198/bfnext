@@ -38,7 +38,15 @@ use serde_derive::{Deserialize, Serialize};
 /// save wrongly or drop data from it -- not for a plain `#[serde(default)]`
 /// addition, which older engines already ignore. Saves from before this
 /// field existed load as version 0.
-pub const SAVE_SCHEMA_VERSION: u32 = 1;
+///
+/// 2: campaign timestamps are campaign time (`crate::clock`), and the save
+/// carries the clock (`Persisted::clock`) so the next mission resumes it.
+/// Before 2 they were wall clock; such a save has no clock, and the campaign
+/// clock then starts at the wall clock -- what those timestamps mean -- so
+/// they need no rewriting. An older engine reading a schema 2 save compares
+/// its timestamps with the wall clock, which is at most the paused time of
+/// the last session off.
+pub const SAVE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Persisted {
@@ -167,6 +175,10 @@ pub struct Persisted {
     /// from quietly cancelling a losing side's last-stand countdown.
     #[serde(default)]
     pub last_stand_state: Option<(DateTime<Utc>, Side)>,
+    /// The campaign clock at the snapshot (schema 2 on). `None` in older
+    /// saves, see `SAVE_SCHEMA_VERSION`.
+    #[serde(default)]
+    pub clock: Option<crate::clock::SavedClock>,
     /// Mirror of `Ephemeral::last_owner_change` (same arrangement as
     /// `last_stand_state`), so the post-capture cooldown survives a restart
     /// instead of a restart re-opening every freshly flipped base at once.
@@ -274,6 +286,15 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
+    #[test]
+    fn the_clock_round_trips() {
+        let mut p = Persisted::default();
+        let wall = Utc.with_ymd_and_hms(2026, 10, 27, 12, 0, 0).unwrap();
+        p.clock = Some(crate::clock::SavedClock { campaign: wall - chrono::Duration::minutes(5), wall });
+        let back: Persisted = serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
+        assert_eq!(back.clock, p.clock);
+    }
+
     /// A save in the format written before `schema_version` existed.
     const V0: &str = include_str!("testdata/persisted_v0.json");
 
@@ -281,6 +302,9 @@ mod tests {
     fn old_save_loads_as_schema_0() {
         let p: Persisted = serde_json::from_str(V0).unwrap();
         assert_eq!(p.schema_version, 0);
+        // no campaign clock: it resumes at the wall clock, which is what an
+        // old save's timestamps were measured on
+        assert!(p.clock.is_none());
         assert!(p.schema_warning().is_none());
         assert_eq!((p.oid, p.gid, p.uid), (2, 10, 20));
         assert_eq!((p.blue_treasury, p.red_treasury), (1000, 900));

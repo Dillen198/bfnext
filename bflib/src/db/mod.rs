@@ -488,6 +488,12 @@ impl Db {
     pub fn snapshot(&mut self) -> Persisted {
         self.ephemeral.take_dirty();
         self.persisted.schema_version = persisted::SAVE_SCHEMA_VERSION;
+        // Only once the mission has started the clock: before that it reads
+        // the wall clock, and a save then would record no pause at all --
+        // harmless, but the clock the load resumed is more accurate.
+        if self.ephemeral.clock.started() {
+            self.persisted.clock = Some(self.ephemeral.clock.saved(chrono::Utc::now()));
+        }
         self.persisted.oid = ObjectiveId::seq();
         self.persisted.gid = GroupId::seq();
         self.persisted.uid = UnitId::seq();
@@ -501,7 +507,7 @@ impl Db {
             .as_ref()
             .map(|c| c.capture_cooldown_secs as i64)
             .unwrap_or(120);
-        let now = chrono::Utc::now();
+        let now = self.ephemeral.now();
         self.persisted.last_owner_change = self
             .ephemeral
             .last_owner_change

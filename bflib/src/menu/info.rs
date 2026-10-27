@@ -150,7 +150,7 @@ fn build_support(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactStr
 
 fn build_convoys(ctx: &Context, side: Side, from: Option<Vector2>) -> CompactString {
     let db = &ctx.db;
-    let now = chrono::Utc::now();
+    let now = ctx.now();
     let mut report = CompactString::from("=== Supply Convoys ===\n");
     let mut any = false;
     for c in db.convoys_for_side(side) {

@@ -547,7 +547,7 @@ fn request_smoke(lua: MizLua, gid: GroupId) -> Result<()> {
                 .as_ref()
                 .map(|c| c.smoke_cooldown as i64)
                 .unwrap_or(300);
-            let now: chrono::DateTime<chrono::Utc> = chrono::Utc::now();
+            let now: chrono::DateTime<chrono::Utc> = ctx.now();
             let last_smoke = ctx
                 .db
                 .ephemeral

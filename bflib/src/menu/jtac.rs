@@ -352,9 +352,10 @@ pub fn jtac_smoke_target(lua: MizLua, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
 
 /// `jtac_smoke_target` for a caller that already holds the campaign state.
 pub(crate) fn jtac_smoke_target_in(lua: MizLua, ctx: &mut Context, arg: ArgTuple<Ucid, JtId>) -> Result<()> {
+    let now = ctx.now();
     let jtac = get_jtac_mut(&mut ctx.jtac, &arg.snd)?;
     let (near, name) = change_info(jtac, &ctx.db, &arg.fst);
-    match jtac.smoke_target(lua).context("smoking jtac target") {
+    match jtac.smoke_target(lua, now).context("smoking jtac target") {
         // a cooldown or no target is the requester's business alone
         Err(e) => tell(ctx, 10,
             &arg.fst,

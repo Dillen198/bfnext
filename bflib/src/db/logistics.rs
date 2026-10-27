@@ -3082,7 +3082,7 @@ impl Db {
         };
         info!(
             "[LOGI_CARGO] {id} delivered {units} unit(s) to {dest_name} after {} min{}",
-            (Utc::now() - p.departed).num_minutes(),
+            (self.ephemeral.now() - p.departed).num_minutes(),
             if overflow.is_empty() {
                 CompactString::default()
             } else {
@@ -3099,7 +3099,7 @@ impl Db {
             let units: u32 = p.transfers.iter().map(|t| t.amount).fold(0, u32::saturating_add);
             info!(
                 "[LOGI_CARGO] {id} lost with its transport after {} min, {units} unit(s) destroyed",
-                (Utc::now() - p.departed).num_minutes()
+                (self.ephemeral.now() - p.departed).num_minutes()
             );
             self.persisted.pending_cargo.remove_cow(&key);
             self.ephemeral.dirty();
@@ -3137,7 +3137,7 @@ impl Db {
                 .get(&pending.origin)
                 .map(|o| o.name.clone())
                 .unwrap_or_default(),
-            (Utc::now() - pending.departed).num_minutes()
+            (self.ephemeral.now() - pending.departed).num_minutes()
         );
     }
 
@@ -7467,7 +7467,7 @@ impl Db {
                 // A sunk carrier, most often. Say so once; the warehouse syncs
                 // then leave it alone for a while (see `airbase_gone`) instead
                 // of failing on every logistics pass.
-                if self.ephemeral.airbase_gone.insert(oid, Utc::now()).is_none() {
+                if self.ephemeral.airbase_gone.insert(oid, self.ephemeral.now()).is_none() {
                     warn!(
                         "{obj_name}: its airbase ({name}) no longer exists in DCS,                          warehouse sync paused until it is back"
                     );
@@ -7672,7 +7672,7 @@ impl Db {
         };
         // Production runs when `now - last >= interval`, so a timestamp in
         // the future holds it off for `pause` on top of the normal cycle.
-        *last_production_ts = Some(Utc::now() + pause);
+        *last_production_ts = Some(self.ephemeral.now() + pause);
         self.ephemeral.dirty();
         Ok(true)
     }
@@ -7797,7 +7797,7 @@ impl Db {
                     "in flight {id}: {} -> {}, {units} unit(s), {} min out\n",
                     self.persisted.objectives.get(&p.origin).map(|o| o.name.as_str()).unwrap_or("?"),
                     self.persisted.objectives.get(&p.destination).map(|o| o.name.as_str()).unwrap_or("?"),
-                    (Utc::now() - p.departed).num_minutes()
+                    (self.ephemeral.now() - p.departed).num_minutes()
                 );
             }
         }

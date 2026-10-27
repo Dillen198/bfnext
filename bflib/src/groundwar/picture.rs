@@ -42,7 +42,6 @@ use bfprotocols::{
         GroundUnit, LatLon, LivePlayer,
     },
 };
-use chrono::prelude::*;
 use dcso3::{coalition::Side, coord::Coord, group::GroupCategory, unit::Unit, LuaVec3, MizLua, Vector2, Vector3};
 use std::collections::BTreeMap;
 
@@ -181,7 +180,7 @@ fn players(ctx: &Context, lua: MizLua, geo: &Geo, side: Side) -> Vec<LivePlayer>
 }
 
 pub(crate) fn picture(ctx: &Context, lua: MizLua, side: Side) -> GroundPicture {
-    let now = Utc::now();
+    let now = ctx.now();
     let geo = Geo { coord: Coord::singleton(lua).ok() };
     let Some(cfg) = cfg(ctx) else {
         return GroundPicture {

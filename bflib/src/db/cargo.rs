@@ -354,6 +354,7 @@ impl C130Cargo {
         pos: Vector2,
         crate_def: Crate,
         auto_unpack: bool,
+        now: DateTime<Utc>,
     ) -> Self {
         Self {
             name,
@@ -366,7 +367,7 @@ impl C130Cargo {
             side,
             last_pos: pos,
             spawn_pos: pos,
-            spawn_time: Utc::now(),
+            spawn_time: now,
             airborne_time: None,
             crate_def,
             vehicle_def: None,
@@ -393,6 +394,7 @@ impl C130Cargo {
         pos: Vector2,
         crate_def: Crate,
         vehicle_def: C130Vehicle,
+        now: DateTime<Utc>,
     ) -> Self {
         Self {
             name,
@@ -405,7 +407,7 @@ impl C130Cargo {
             side,
             last_pos: pos,
             spawn_pos: pos,
-            spawn_time: Utc::now(),
+            spawn_time: now,
             airborne_time: None,
             crate_def,
             vehicle_def: Some(vehicle_def),
@@ -1304,7 +1306,7 @@ impl Db {
             .find(|ci| self.is_emergency_repair_crate(ci.crate_def.name.as_str()))
             .cloned()
         {
-            match self.deliver_emergency_repair(st.ucid, st.side, cr.pos, cr.origin, Utc::now())? {
+            match self.deliver_emergency_repair(st.ucid, st.side, cr.pos, cr.origin, self.ephemeral.now())? {
                 Ok(msg) => {
                     self.delete_group(&cr.group)?;
                     return Ok(Unpakistan::EmergencyRepaired(msg));
@@ -1339,7 +1341,7 @@ impl Db {
                     }
                     reasons.push("objective logistics are completely repaired".into());
                 } else {
-                    self.repair_one_logi_step(st.side, Utc::now(), oid)?;
+                    self.repair_one_logi_step(st.side, self.ephemeral.now(), oid)?;
                     let gid = *base_repairs.keys().next()
                         .ok_or_else(|| anyhow!("no base repair crates found"))?;
                     // Who loaded it, and where: the pay is for the haul.
@@ -2142,7 +2144,7 @@ impl Db {
         self.persisted.downed_pilots.insert_cow(gid);
         self.persisted
             .downed_pilot_spawn_times
-            .insert_cow(gid, Utc::now());
+            .insert_cow(gid, self.ephemeral.now());
 
         // Spawn enemy search parties if configured
         let enemy_side = match side {
@@ -2380,7 +2382,7 @@ impl Db {
             None
         };
         let rescue_reward = csar.rescue_reward;
-        let now = Utc::now();
+        let now = self.ephemeral.now();
         let move_interval = chrono::Duration::seconds(3);
 
         // ---- Collect ALL helicopters with pilot slots (airborne + ground) ----
@@ -3317,6 +3319,7 @@ impl Db {
             point,
             crate_def,
             auto_unpack,
+            self.ephemeral.now(),
         );
         c130_cargo.fat_cow_stock = packed;
 
@@ -3568,6 +3571,7 @@ impl Db {
             point,
             dummy_crate,
             vehicle_cfg.clone(),
+            self.ephemeral.now(),
         );
 
         // Charge points if enabled, and remember the split so the deployed
@@ -3664,7 +3668,7 @@ impl Db {
         self.check_can_issue_supply(origin)?;
 
         let num_to_spawn = crate_list.len().min(max_spawn);
-        let mut spawn_time = Utc::now();
+        let mut spawn_time = self.ephemeral.now();
 
         for (idx, (crate_name, crate_def)) in crate_list.into_iter().take(num_to_spawn).enumerate() {
             spawn_time = spawn_time + chrono::Duration::seconds(spawn_delay as i64);
@@ -3700,7 +3704,7 @@ impl Db {
     /// parameter needed, since each queued crate already carries its own
     /// frozen spawn anchor from when it was queued.
     pub fn process_c130_spawn_queue(&mut self, lua: MizLua, idx: &MizIndex) -> Result<()> {
-        let now = Utc::now();
+        let now = self.ephemeral.now();
         let to_spawn: Vec<_> = self.ephemeral
             .c130_spawn_queue
             .range(..=now)
@@ -3810,6 +3814,7 @@ impl Db {
                                 point,
                                 crate_def,
                                 auto_unpack,
+                                self.ephemeral.now(),
                             );
 
                             debug!("[C130_CARGO] Spawned crate: name='{}', group_id={:?}", group_name, group_id);
@@ -4017,7 +4022,7 @@ impl Db {
                     if speed > 50.0 || (left_aircraft && speed > 10.0) {
                         info!("[C130_CARGO] Crate '{}' transitioned to Airborne (speed={:.2}m/s)", crate_name, speed);
                         crate_data.state = C130CargoState::Airborne;
-                        crate_data.airborne_time = Some(Utc::now());
+                        crate_data.airborne_time = Some(self.ephemeral.clock.now());
                     } else if speed < 1.0 {
                         // Delivered without ever being seen falling: a helo
                         // slingload (the static is just placed at the new
@@ -4043,7 +4048,7 @@ impl Db {
                     // If crate has landed (low speed) and been airborne for at least 3 seconds
                     if speed < 1.0 {
                         if let Some(airborne_time) = crate_data.airborne_time {
-                            let airborne_duration = Utc::now().signed_duration_since(airborne_time);
+                            let airborne_duration = self.ephemeral.clock.now().signed_duration_since(airborne_time);
                             if airborne_duration.num_seconds() >= 3 {
                                 crate_data.state = C130CargoState::Landed;
                                 if crate_data.auto_unpack {
@@ -4064,7 +4069,7 @@ impl Db {
                     // its docs on C130Cargo).
                     let backing_off = crate_data
                         .retry_after
-                        .map(|t| Utc::now() < t)
+                        .map(|t| self.ephemeral.clock.now() < t)
                         .unwrap_or(false);
                     if crate_data.auto_unpack && !backing_off {
                         retries.push(crate_name.clone());
@@ -4181,7 +4186,7 @@ impl Db {
             }
         }
         if let Some(c) = self.ephemeral.c130_crates.get_mut(crate_name) {
-            c.retry_after = Some(Utc::now() + chrono::Duration::seconds(60));
+            c.retry_after = Some(self.ephemeral.clock.now() + chrono::Duration::seconds(60));
         }
         String::from(why)
     }
@@ -4965,14 +4970,13 @@ impl Db {
                     .map(|(oid, _)| *oid);
 
                 if let Some(carrier_id) = nearest_carrier {
-                    use chrono::Utc;
 
                     // Get carrier name before mutation
                     let carrier_name = self.persisted.objectives.get(&carrier_id)
                         .map(|o| o.name.clone())
                         .unwrap_or_else(|| String::from("Unknown"));
 
-                    let now = Utc::now();
+                    let now = self.ephemeral.now();
                     let repair_time_secs = self.ephemeral.cfg.carrier
                         .as_ref()
                         .map(|c| c.repair_time)
@@ -5031,7 +5035,7 @@ impl Db {
                     crate_data.side,
                     crate_data.last_pos,
                     crate_data.origin,
-                    Utc::now(),
+                    self.ephemeral.now(),
                 )? {
                     Ok(msg) => {
                         self.ephemeral.c130_crates.remove(crate_name);
@@ -5096,7 +5100,7 @@ impl Db {
                             // the per-tick auto-unpack retry re-running this scan
                             // forever. Moving the crate clears the backoff.
                             if let Some(c) = self.ephemeral.c130_crates.get_mut(crate_name) {
-                                c.retry_after = Some(Utc::now() + chrono::Duration::seconds(60));
+                                c.retry_after = Some(self.ephemeral.clock.now() + chrono::Duration::seconds(60));
                             }
                             return Ok(String::from(format!(
                                 "{} logistics are already fully repaired -- crate left on the ground",
@@ -5111,8 +5115,7 @@ impl Db {
                         )));
                     }
 
-                    use chrono::Utc;
-                    self.repair_one_logi_step(crate_data.side, Utc::now(), oid)?;
+                    self.repair_one_logi_step(crate_data.side, self.ephemeral.now(), oid)?;
                     let new_logi = self.persisted.objectives.get(&oid).map(|o| o.logi).unwrap_or(logi);
                     self.ephemeral.stat(Stat::Repair { id: oid, by: crate_data.player });
                     self.ephemeral.dirty();

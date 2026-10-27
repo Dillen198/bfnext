@@ -183,7 +183,7 @@ fn slot_context(
         });
 
     let takeoff_ok_in_secs = inst.takeoff_ok_at.map(|t| {
-        (t - chrono::Utc::now()).num_seconds().max(0)
+        (t - ctx.now()).num_seconds().max(0)
     });
 
     SlotContext {

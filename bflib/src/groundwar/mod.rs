@@ -235,7 +235,7 @@ pub(crate) fn dashboard_command(
     ucid: Ucid,
     cmd: GroundCommand,
 ) -> GroundCommandReply {
-    let now = Utc::now();
+    let now = ctx.now();
     let Some(cfg) = cfg(ctx) else {
         return GroundCommandReply {
             ok: false,
