@@ -200,7 +200,9 @@ DEFAULT:
     # never rewritten, so make that one TLS by hand.
     # netidx_tls:
     #   dir: "C:\\fowl\\tls"                 # ca.pem, <name>.crt and <name>.key for each name below
-    #   resolver: "resolver.campaign.fowl"   # this box's resolver (its certificate's name)
+    #   resolver: "resolver.campaign.fowl"   # this box's resolver (its certificate's name); leave it
+    #                                        # out to keep this box's resolver Anonymous and use TLS
+    #                                        # only towards a range PC (netidx_tls_resolver below)
     #   identity: "bfdb.fowl"                # bfdb's certificate
     #   grant: ["engine.campaign.fowl"]      # the engines' certificates: full access, like bfdb
     #   # domain: "fowl"                     # default: the last label of `resolver`

@@ -1498,10 +1498,12 @@ class Procman:
         must not take the resolver down). deploy/netidx-tls.md.
 
         `dir` holds `ca.pem` and `<name>.crt` / `<name>.key` for each name:
-        `resolver` (the resolver procman runs on this box) and `identity`
-        (bfdb's own). `grant` names the other identities (the engines) the
-        resolver gives full access, besides bfdb's; `perms` replaces the
-        generated permissions outright."""
+        `identity` (bfdb's own) and `resolver` (the resolver procman runs on
+        this box). Without `resolver` that shared resolver stays Anonymous and
+        only instances naming a TLS resolver of their own
+        (`netidx_tls_resolver`) use TLS: the range-first rollout. `grant` names
+        the other identities (the engines) the resolver gives full access,
+        besides bfdb's; `perms` replaces the generated permissions outright."""
         t = self.cfg.get("netidx_tls")
         if not t:
             return None
@@ -1511,13 +1513,13 @@ class Procman:
         d = _expand(t.get("dir"))
         resolver = str(t.get("resolver") or "").strip()
         identity = str(t.get("identity") or "").strip()
-        if not (d and resolver and identity):
+        if not (d and identity):
             self.log.error(
-                "FowlEngine/procman: bfdb.netidx_tls needs dir, resolver and identity -- netidx stays Anonymous"
+                "FowlEngine/procman: bfdb.netidx_tls needs dir and identity -- netidx stays Anonymous"
             )
             return None
         domain = str(t.get("domain") or "").strip(".") or resolver.rsplit(".", 1)[-1]
-        if not _tls_under(resolver, domain):
+        if resolver and not _tls_under(resolver, domain):
             self.log.error(
                 f"FowlEngine/procman: bfdb.netidx_tls.resolver {resolver!r} is not under domain {domain!r} "
                 f"-- netidx stays Anonymous"
@@ -1529,7 +1531,7 @@ class Procman:
         return {
             "dir": d,
             "trusted": _expand(t.get("trusted")) or os.path.join(d, "ca.pem"),
-            "resolver": resolver,
+            "resolver": resolver or None,
             "identity": identity,
             "domain": str(t.get("domain") or "").strip(".") or None,
             "grant": [str(g).strip() for g in grant if str(g).strip()],
@@ -1571,7 +1573,7 @@ class Procman:
         """`--netidx-tls`: <home>/netidx-tls.bfdb.json for the shared resolver,
         or None with TLS off."""
         tls = self.netidx_tls()
-        if not tls or not self.home:
+        if not tls or not tls["resolver"] or not self.home:
             return None
         return self._write_json(
             os.path.join(self.home, "netidx-tls.bfdb.json"), self._tls_client_block(tls, tls["resolver"])
@@ -1590,6 +1592,12 @@ class Procman:
             self.log.error(
                 f"FowlEngine/procman: instance {inst.get('id')} sets netidx_tls_resolver but bfdb.netidx_tls "
                 f"is not set up -- this instance stays Anonymous"
+            )
+            return None
+        if tls["domain"] and not _tls_under(name, tls["domain"]):
+            self.log.error(
+                f"FowlEngine/procman: instance {inst.get('id')}: netidx_tls_resolver {name!r} is not under "
+                f"bfdb.netidx_tls.domain {tls['domain']!r} -- this instance stays Anonymous"
             )
             return None
         return self._tls_client_block(tls, name)
@@ -1657,7 +1665,7 @@ class Procman:
         <home>/netidx-resolver.tls.json, instead."""
         rcfg = self._resolved("netidx_resolver_config")
         tls = self.netidx_tls()
-        if tls and rcfg:
+        if tls and tls["resolver"] and rcfg:
             self.log.warning(
                 f"FowlEngine/procman: bfdb.netidx_tls is set but netidx_resolver_config names your own "
                 f"resolver config ({rcfg}) -- procman leaves it alone, so switch its member server and "
@@ -1665,7 +1673,7 @@ class Procman:
             )
         if rcfg or not self.home:
             return rcfg
-        if tls:
+        if tls and tls["resolver"]:
             return self._tls_resolver_config(tls)
         path = os.path.join(self.home, "netidx-resolver.json")
         if not os.path.exists(path):

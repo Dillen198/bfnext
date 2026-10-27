@@ -2041,10 +2041,28 @@ def test_netidx_tls_explicit_perms_and_own_resolver_config(tmp_path):
     assert pm2._resolver_config() == str(mine)
 
 
+def test_netidx_tls_range_first_keeps_the_shared_resolver_anonymous(tmp_path):
+    """No `resolver`: only the range PC's resolver is TLS."""
+    pm, _ = _bare_pm(tmp_path, netidx_tls={"dir": "C:/fowl/tls", "identity": "bfdb.fowl"},
+                     instances=[dict(_RANGE_INST, netidx_tls_resolver="resolver.range.fowl")])
+    assert "--netidx-tls" not in pm._build_args("pw", False)
+    path = pm._resolver_config()
+    assert path == str(tmp_path / "netidx-resolver.json")
+    assert json.loads(Path(path).read_text())["member_servers"][0]["auth"] == "Anonymous"
+    entry = json.loads(Path(pm._render_instances()).read_text())["instances"][0]
+    assert entry["netidx_tls"]["resolver_name"] == "resolver.range.fowl"
+    assert entry["netidx_tls"]["certificate"] == os.path.join("C:/fowl/tls", "bfdb.fowl.crt")
+    # a resolver name outside an explicit domain is refused for that instance
+    pm2, _ = _bare_pm(tmp_path, netidx_tls={"dir": "C:/fowl/tls", "identity": "bfdb.fowl", "domain": "campaign.fowl"},
+                      instances=[dict(_RANGE_INST, netidx_tls_resolver="resolver.range.fowl")])
+    entry = json.loads(Path(pm2._render_instances()).read_text())["instances"][0]
+    assert "netidx_tls" not in entry
+
+
 @pytest.mark.parametrize("bad", [
     "yes",
     {"dir": "C:/fowl/tls", "resolver": "resolver.campaign.fowl"},          # no identity
-    {"dir": "C:/fowl/tls", "identity": "bfdb.fowl"},                        # no resolver
+    {"resolver": "resolver.campaign.fowl", "identity": "bfdb.fowl"},        # no dir
     dict(_TLS, domain="example.com"),                                       # resolver not under it
 ])
 def test_netidx_tls_unusable_block_stays_anonymous(tmp_path, bad):
