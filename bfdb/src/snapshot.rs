@@ -318,7 +318,8 @@ async fn body_of<R: Reply>(r: std::result::Result<R, crate::Error>) -> Option<Ve
         log::debug!("snapshot: render answered {}", resp.status());
         return None;
     }
-    warp::hyper::body::to_bytes(resp.into_body()).await.ok().map(|b| b.to_vec())
+    use http_body_util::BodyExt as _;
+    resp.into_body().collect().await.ok().map(|b| b.to_bytes().to_vec())
 }
 
 fn query(pairs: &[(&str, &str)]) -> HashMap<String, String> {
@@ -1171,8 +1172,9 @@ mod tests {
             s.lock().unwrap().remove(p.as_str());
             warp::http::StatusCode::NO_CONTENT
         });
-        let (addr, server) = warp::serve(put.or(get).or(del)).bind_ephemeral(([127, 0, 0, 1], 0));
-        tokio::spawn(server);
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(crate::serve::serve_on(listener, put.or(get).or(del), None));
 
         let (db, dir) = temp_db(three_instances());
         let long = "x".repeat(4000);

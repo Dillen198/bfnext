@@ -79,6 +79,7 @@ mod engine;
 mod http;
 mod logs;
 mod routes;
+mod serve;
 mod tasks;
 #[cfg(test)]
 mod route_tests;
@@ -1433,28 +1434,32 @@ async fn main() -> Result<()> {
             .map(|tail: warp::path::Tail| serve_site_asset(tail.as_str()))
             .with(site_cors);
         log::info!("Site server listening on http://{}", site_addr);
-        tokio::spawn(warp::serve(site_only).run(site_addr));
+        tokio::spawn(async move {
+            if let Err(e) = serve::serve(site_only, site_addr, None).await {
+                log::error!("site server: {e:#}");
+            }
+        });
     }
 
     // Serve until a shutdown is requested, then flush and exit. Not warp's
     // own graceful shutdown: it waits for every open connection to finish,
     // and dashboard WebSockets never do, so it would wait until the
     // supervisor gave up and hard-killed us -- the very thing this avoids.
-    let server = async {
-        match (&args.cert, &args.key) {
-            (_, None) | (None, _) => warp::serve(routes).run(args.listen_address).await,
-            (Some(cert), Some(key)) => {
-                warp::serve(routes)
-                    .tls()
-                    .cert_path(cert)
-                    .key_path(key)
-                    .run(args.listen_address)
-                    .await
-            }
-        }
+    // A bad --cert/--key stops startup here, before anything listens.
+    let tls = match (&args.cert, &args.key) {
+        (Some(cert), Some(key)) => Some(serve::load_tls(cert, key)?),
+        _ => None,
     };
+    let server = serve::serve(routes, args.listen_address, tls);
     tokio::select! {
-        _ = server => log::warn!("web server stopped"),
+        r = server => match r {
+            Ok(()) => log::warn!("web server stopped"),
+            Err(e) => {
+                log::error!("web server: {e:#}");
+                log::logger().flush();
+                std::process::exit(1)
+            }
+        },
         _ = shutdown.wait() => (),
     }
     let flush_db = db.clone();
